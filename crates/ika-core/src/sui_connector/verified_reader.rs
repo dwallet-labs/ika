@@ -289,9 +289,11 @@ impl OcsVerifiedReader {
     /// throttles dwallet advancement (the heaviest integration file). `high_water`
     /// still rejects a rollback, so only a stale-BUT-monotonic anchor is served;
     /// a genuine cache miss (or a high-water rejection — a newer version was
-    /// already served) falls through to the verified network path. Direct nodes
-    /// only: mirror nodes have no local verified cache (`cache_first` is false)
-    /// and keep the per-read-verified path.
+    /// already served) falls through to the verified network path. Both roles
+    /// serve here: a direct node from its fold-backed always-cache; a mirror
+    /// node from its shadow cache, but only when the committee-signed changeset
+    /// index confirms the cached version is still current (see
+    /// [`Self::anchor_cache_hit`]).
     async fn verified_anchor_object(&self, id: ObjectID) -> Result<VerifiedObject, ReaderError> {
         // Serve the committee-verified cached snapshot, but only while it is
         // within `ANCHOR_REFRESH_INTERVAL` of its last verified network re-read.
@@ -301,12 +303,15 @@ impl OcsVerifiedReader {
         // served forever and wedge the epoch (#1736). The interval keeps this off
         // the hot path — the ~120ms executor polls serve cache between refreshes —
         // so it can't relatch the per-tick reach-back feedback loop the
-        // cache-first anchor path exists to avoid.
-        if self.cache_first && !self.anchor_refresh_due(id) {
-            if let Some(hit) = self.cache_fallback(id) {
+        // cache-first anchor path exists to avoid. The same interval is the
+        // mirror path's safety bound: a stalled changeset stream that freezes
+        // `currency` at `Current` still gets a forced verified re-read every
+        // interval, so it can never serve a stale anchor indefinitely.
+        if !self.anchor_refresh_due(id) {
+            if let Some((hit, label)) = self.anchor_cache_hit(id) {
                 self.metrics
                     .cache_read_total
-                    .with_label_values(&["anchor"])
+                    .with_label_values(&[label])
                     .inc();
                 return Ok(hit);
             }
@@ -321,6 +326,37 @@ impl OcsVerifiedReader {
             self.anchor_refreshed_at.lock().insert(id, Instant::now());
         }
         result
+    }
+
+    /// Anchor cache hit for whichever node role has one (with its metric label);
+    /// `None` forces the verified network read.
+    ///
+    /// - **Direct** (`cache_first`): the fold-backed always-cache
+    ///   ([`Self::cache_fallback`]). The local pusher fold is authoritative, so
+    ///   `high_water` monotonicity is the only extra gate.
+    /// - **Mirror** (a changeset index is wired): the shadow cache, served only
+    ///   on a *positive* currency confirmation — the committee-signed changeset
+    ///   index says the cached version is still the id's latest (`Current`).
+    ///   `Unknown` (the index can't vouch: anchor outside the folded range),
+    ///   `Stale`/`NotLive`, or an empty shadow cache all return `None` and fall
+    ///   through to the per-read-verified network path. Bounded staleness comes
+    ///   from the caller's `ANCHOR_REFRESH_INTERVAL` re-read, not currency alone:
+    ///   `Current` only proves "unchanged up to the changeset index's contiguous
+    ///   head," which can lag the relay head, so a positive verdict is necessary
+    ///   but not sufficient — the interval re-read is what caps the gap.
+    fn anchor_cache_hit(&self, id: ObjectID) -> Option<(VerifiedObject, &'static str)> {
+        if self.cache_first {
+            return self.cache_fallback(id).map(|hit| (hit, "anchor"));
+        }
+        let index = self.changeset_index.as_ref()?;
+        // `cache_fallback` records high-water; on a non-`Current` verdict below
+        // that is a monotonic no-op (the shadow version was already served on a
+        // prior read), so reusing it before the currency gate is harmless.
+        let hit = self.cache_fallback(id)?;
+        match index.read().currency(id, hit.source_checkpoint_seq) {
+            CurrencyVerdict::Current => Some((hit, "mirror_anchor")),
+            _ => None,
+        }
     }
 
     /// Whether the cached anchor `id` is due for a forced verified network
@@ -1641,6 +1677,187 @@ mod tests {
             refreshed.object.version(),
             SequenceNumber::from(6u64),
             "past the interval the anchor refreshes from the network"
+        );
+    }
+
+    /// Build a single-changeset index whose contiguous frontier is exactly
+    /// `[seq, seq]`, recording each object in `objects` as modified at `seq`. So
+    /// `currency(id, seq)` is `Current` for those ids, and `Unknown` for a lower
+    /// `anchored_seq` (below the folded floor).
+    fn index_folded_at(
+        committee: &SuiCommittee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        objects: &[&Object],
+    ) -> SharedChangesetIndex {
+        let object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)> = objects
+            .iter()
+            .map(|o| {
+                let (id, version, digest) = o.compute_object_reference();
+                (id, (version, digest))
+            })
+            .collect();
+        let artifacts = CheckpointArtifacts::from_object_states(object_states.clone());
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts.digest().unwrap())],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let cert =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee);
+        let mut index = ChangesetIndex::new();
+        index
+            .absorb(&cert, object_states)
+            .expect("bootstrap changeset absorbs");
+        Arc::new(RwLock::new(index))
+    }
+
+    /// A mirror node (`cache_first = false`, changeset index wired) serves the
+    /// shadow-cached anchor when the committee-signed changeset index confirms
+    /// it current (`currency == Current`) — killing the per-tick relay re-verify.
+    /// Critically, the `ANCHOR_REFRESH_INTERVAL` re-read still fires even while
+    /// the verdict stays `Current`, so a *stalled* changeset stream (which would
+    /// freeze `Current` forever) can never serve the stale snapshot indefinitely
+    /// and wedge the epoch (the #1736 stale-anchor class). Removing the TTL
+    /// re-read would make the past-interval assertion serve the stale v5.
+    #[tokio::test]
+    async fn mirror_serves_current_anchor_from_cache_yet_ttl_still_refreshes() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+
+        let id = ObjectID::from_single_byte(0x55);
+        let stale = test_object(id, 5, address_owner(0x02));
+        // The changeset index says id was last modified at seq 42 -> Current@42.
+        let index = index_folded_at(&committee, &keys, 42, &[&stale]);
+
+        // The relay holds a fresher v6@seq50 for the forced re-read below.
+        let fresh = test_object(id, 6, address_owner(0x02));
+        let (net_summary, net_proof) = sign_inclusion(&committee, &keys, 50, &[&fresh], &fresh);
+        let reader = OcsVerifiedReader::new(
+            StagedProvider::object(object_response(fresh, net_summary, net_proof, 50)),
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            false, // cache_first = false -> MIRROR (sui-state-mirrored)
+            None,
+        )
+        .with_changeset_index(Some(index));
+
+        // Shadow-populate the cache with the anchor at v5@seq42, as a prior read would.
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        reader.cache.absorb_entries(
+            &summary,
+            &[VerifiedObjectEntry {
+                object: stale,
+                checkpoint_seq: 42,
+                proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
+            }],
+        );
+
+        // Within the interval + currency Current -> served from the shadow cache
+        // (v5), no relay round-trip.
+        let served = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(
+            served.object.version(),
+            SequenceNumber::from(5u64),
+            "mirror serves the current cached anchor without a relay round-trip"
+        );
+
+        // Age the refresh clock past the interval. Currency is STILL Current (the
+        // index is unchanged — a frozen stream), yet the forced re-read returns the
+        // FRESH network anchor: the TTL, not currency, is what bounds staleness.
+        {
+            let mut refreshed_at = reader.anchor_refreshed_at.lock();
+            let aged = Instant::now()
+                .checked_sub(ANCHOR_REFRESH_INTERVAL + Duration::from_secs(1))
+                .expect("monotonic clock far enough along to back-date");
+            refreshed_at.insert(id, aged);
+        }
+        let refreshed = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(
+            refreshed.object.version(),
+            SequenceNumber::from(6u64),
+            "past the interval the anchor refreshes from the network even while currency stays Current"
+        );
+    }
+
+    /// A mirror node NEVER serves the shadow cache without a positive `Current`
+    /// verdict: here the changeset index can't vouch for the anchor (its
+    /// checkpoint is below the folded frontier -> `Unknown`), so the read takes
+    /// the per-read-verified network path and returns the fresh version, not the
+    /// stale cached snapshot.
+    #[tokio::test]
+    async fn mirror_does_not_serve_cache_without_a_current_verdict() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+
+        let id = ObjectID::from_single_byte(0x55);
+        let stale = test_object(id, 5, address_owner(0x02));
+        // Index folded only at seq 60 (a different object) -> currency(id, 42) is
+        // `Unknown` (42 is below the folded floor), so the cache is not served.
+        let other = test_object(ObjectID::from_single_byte(0x66), 1, address_owner(0x02));
+        let index = index_folded_at(&committee, &keys, 60, &[&other]);
+
+        let fresh = test_object(id, 6, address_owner(0x02));
+        let (net_summary, net_proof) = sign_inclusion(&committee, &keys, 50, &[&fresh], &fresh);
+        let reader = OcsVerifiedReader::new(
+            StagedProvider::object(object_response(fresh, net_summary, net_proof, 50)),
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        )
+        .with_changeset_index(Some(index));
+
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        reader.cache.absorb_entries(
+            &summary,
+            &[VerifiedObjectEntry {
+                object: stale,
+                checkpoint_seq: 42,
+                proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
+            }],
+        );
+
+        // currency == Unknown -> the shadow cache is NOT served; the network read
+        // returns the fresh v6, not the stale cached v5.
+        let read = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(
+            read.object.version(),
+            SequenceNumber::from(6u64),
+            "without a Current verdict the mirror reads the network, not the stale cache"
         );
     }
 
