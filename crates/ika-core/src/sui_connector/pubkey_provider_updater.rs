@@ -57,7 +57,9 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
 /// epoch (so its `committee_store` has no entry for it). The membership
 /// is decoded with `read_bls_committee`; each member's consensus key is
 /// fetched and carried on the committee so its prior-epoch handoff
-/// signatures verify by name. The class-groups / PVSS maps are left empty:
+/// signatures verify by name (best-effort per member: one whose
+/// validator_info fails to decode is skipped and only its signatures are
+/// lost, never the whole committee). The class-groups / PVSS maps are left empty:
 /// handoff-cert verification (`verify_certified_handoff_attestation`) only
 /// needs membership, voting power, the quorum threshold, and the consensus
 /// keys.
@@ -99,12 +101,28 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         .map(|m| m.validator_id)
         .collect();
     let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
+    // Tolerate a member whose validator_info fails to decode: `verify()`
+    // rejects on ANY malformed metadata field (addresses, next-epoch keys),
+    // not just the consensus key needed here, and the member may have
+    // departed the active set with no one left to fix its stale record.
+    // Skipping costs only that member's handoff signature (it drops as
+    // unverifiable — same as a byzantine signer); failing the whole fetch
+    // would block joiner bootstrap on a deterministic error forever, since
+    // the cert only needs a quorum of the members that DO verify.
     let mut consensus_keys: HashMap<AuthorityName, Ed25519PublicKey> = HashMap::new();
     for pool in &staking_pools {
-        let verified = pool
-            .validator_info
-            .verify()
-            .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+        let verified = match pool.validator_info.verify() {
+            Ok(verified) => verified,
+            Err(code) => {
+                warn!(
+                    code,
+                    validator_id = ?pool.id,
+                    "prior-committee member validator_info failed verify; skipping — \
+                     its handoff signatures won't count toward the cert quorum"
+                );
+                continue;
+            }
+        };
         let name: AuthorityName = (&verified.protocol_pubkey).into();
         consensus_keys.insert(name, verified.consensus_pubkey.clone());
     }
