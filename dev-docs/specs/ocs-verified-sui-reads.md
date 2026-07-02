@@ -210,15 +210,16 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
   peer-only role. A fresh peer-only node can't dial out to reach the relay,
   so existing validators *dial it inbound* off the on-chain `pending_active_set`
   — see [`trusted-peer-discovery.md`](trusted-peer-discovery.md).
-- **Notifier / fullnode** — read gRPC at one endpoint; notifiers are the
-  only nodes that submit transactions and always use a direct uplink.
+- **Notifier / fullnode** — on a new-style config, read gRPC at one endpoint;
+  notifiers are the only nodes that submit transactions and always use a
+  direct uplink.
 
 **Config-shape gate** (evaluated at startup, `ika-node` boot):
 
 | `sui-data-source` | `sui-rpc-url` | result |
 |---|---|---|
 | absent | absent | error: no Sui endpoint |
-| absent | present | old-style: validators → legacy JSON-RPC; notifier/fullnode → gRPC at `sui-rpc-url` |
+| absent | present | old-style: legacy JSON-RPC for **every role** — the transport this exact config selected on 1.1.8. A binary upgrade must not flip a node's transport under an unchanged config (a `sui-rpc-url` endpoint need not serve Sui gRPC; a notifier failing softly on gRPC stalls epoch advance network-wide). Moving to gRPC is an explicit migration: add `sui-data-source` |
 | present | present | new-style wins; info log to drop `sui-rpc-url` |
 | present | — | new-style: gRPC + OCS; a **validator** additionally requires a Sui committee trust root |
 
