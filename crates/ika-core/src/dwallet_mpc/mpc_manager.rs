@@ -6,7 +6,12 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
-use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::dwallet_mpc::dwallet_mpc_metrics::{
+    AGE_BUCKET_OVERFLOW, AGE_BUCKETS, ALL_SESSION_STATES, ALL_SESSION_TYPES, DWalletMPCMetrics,
+    READY_RESULT_ERR, READY_RESULT_NOT_READY, READY_RESULT_READY, SESSION_STATE_ACTIVE,
+    SESSION_STATE_COMPLETED, SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED,
+    SESSION_STATE_WAITING_FOR_REQUEST, session_type_label,
+};
 use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
     session_input_from_request,
@@ -55,7 +60,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ConciseableName, ObjectID};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace, warn};
@@ -305,6 +310,12 @@ pub(crate) struct DWalletMPCManager {
     /// The most recently consensus-agreed Sui chain context (None at startup).
     agreed_sui_chain_context: Option<SuiChainContext>,
 
+    /// User-session sequence numbers that were last emitted to the per-seq
+    /// `ika_dwallet_mpc_user_session_*` gauges. Used to zero out series for
+    /// sessions that have left `self.sessions` so dashboards don't read a
+    /// stale "this session is still in state X" forever.
+    previously_emitted_user_session_seqs: HashSet<u64>,
+
     /// NOA finalization observation votes: tx_ref → set of party IDs that observed finalization.
     noa_finalization_observations: HashMap<NOACheckpointTxRef, HashSet<PartyID>>,
     /// NOA failure observation votes: (tx_ref, retry_round) → set of party IDs.
@@ -414,6 +425,11 @@ impl DWalletMPCManager {
         };
         let dwallet_network_keys = DwalletMPCNetworkKeys::new(validator_private_data);
 
+        // The per-seq user-session series are labeled by chain sequence numbers
+        // this (per-epoch) manager will re-emit from scratch; clear the previous
+        // epoch's series so its final tick doesn't linger as stale values.
+        dwallet_mpc_metrics.reset_per_session_series();
+
         // Re-initialize the malicious handler every epoch. This is done intentionally:
         // We want to "forget" the malicious actors from the previous epoch and start from scratch.
         Ok(Self {
@@ -478,6 +494,7 @@ impl DWalletMPCManager {
             network_owned_address_sign_output_sender,
             sui_chain_observations_by_party: HashMap::new(),
             agreed_sui_chain_context: None,
+            previously_emitted_user_session_seqs: HashSet::new(),
             noa_finalization_observations: HashMap::new(),
             noa_failure_observations: HashMap::new(),
             finalized_tx_refs: HashSet::new(),
@@ -528,6 +545,27 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Stamp the quorum round on the session before
+                    // `complete_mpc_session` clears its data — first-write-wins
+                    // so a duplicate agreed output doesn't move the recorded
+                    // quorum point. Feeds the per-seq quorum-round gauge and
+                    // the self-output→quorum latency histogram (observed only
+                    // on the first quorum transition, and only when this
+                    // validator submitted its own output — otherwise the
+                    // latency is meaningless from this node's perspective).
+                    if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                        let first_quorum_transition = session.quorum_consensus_round.is_none();
+                        session
+                            .quorum_consensus_round
+                            .get_or_insert(consensus_round);
+                        if first_quorum_transition
+                            && let Some(self_output_round) = session.self_output_consensus_round
+                        {
+                            self.dwallet_mpc_metrics
+                                .self_output_to_quorum_consensus_rounds
+                                .observe(consensus_round.saturating_sub(self_output_round) as f64);
+                        }
+                    }
                     // Recovery net: cache quorum-agreed network-key outputs
                     // locally even when this validator didn't produce them
                     // (see `cache_network_key_output_from_quorum`).
@@ -2129,6 +2167,8 @@ impl DWalletMPCManager {
                     return None;
                 };
 
+                let protocol_metric_data =
+                    DWalletSessionRequestMetricData::from(&request.protocol_data);
                 let protocol_cryptographic_data = match self.generate_protocol_cryptographic_data(
                     &session.computation_type,
                     &request.protocol_data,
@@ -2136,13 +2176,37 @@ impl DWalletMPCManager {
                     public_input.clone(),
                     &self.protocol_config,
                 ) {
-                    Ok(protocol_cryptographic_data) => protocol_cryptographic_data,
+                    Ok(protocol_cryptographic_data) => {
+                        let ready_result = if protocol_cryptographic_data.is_some() {
+                            READY_RESULT_READY
+                        } else {
+                            READY_RESULT_NOT_READY
+                        };
+                        self.dwallet_mpc_metrics
+                            .ready_to_advance_result_total
+                            .with_label_values(&[protocol_metric_data.name(), ready_result])
+                            .inc();
+
+                        protocol_cryptographic_data
+                    }
                     Err(e) => {
+                        // Counted unconditionally (unlike the once-per-session
+                        // log dedup below) so the error rate stays visible for
+                        // a session stuck failing every tick.
+                        self.dwallet_mpc_metrics
+                            .ready_to_advance_result_total
+                            .with_label_values(&[protocol_metric_data.name(), READY_RESULT_ERR])
+                            .inc();
+                        self.dwallet_mpc_metrics
+                            .protocol_data_generation_errors_total
+                            .with_label_values(&[protocol_metric_data.name(), e.kind()])
+                            .inc();
+
                         // The skip is correct (the session simply isn't
                         // advanceable this tick); the silence was the bug.
                         failed_cryptographic_data_generations.push((
                             session.session_identifier,
-                            DWalletSessionRequestMetricData::from(&request.protocol_data),
+                            protocol_metric_data,
                             e,
                         ));
 
@@ -2961,11 +3025,15 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         session_type: SessionComputationType,
+        session_sequence_number: Option<u64>,
+        on_chain_session_type: SessionType,
     ) {
         match self.sessions.entry(*session_identifier) {
-            Entry::Occupied(session) => session
-                .into_mut()
-                .mark_mpc_session_as_computation_completed(),
+            Entry::Occupied(session) => {
+                let session = session.into_mut();
+                session.mark_mpc_session_as_computation_completed();
+                session.set_request_metadata(session_sequence_number, on_chain_session_type);
+            }
             Entry::Vacant(_) => {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
@@ -2976,6 +3044,9 @@ impl DWalletMPCManager {
                     None, // chain unknown until request arrives
                     session_type,
                 );
+                if let Some(session) = self.sessions.get_mut(session_identifier) {
+                    session.set_request_metadata(session_sequence_number, on_chain_session_type);
+                }
             }
         };
     }
@@ -2995,5 +3066,232 @@ impl DWalletMPCManager {
             number_of_ready_to_advance_sessions + number_of_executing_sessions;
         let threshold = self.protocol_config.idle_session_count_threshold();
         total_session_count < threshold as usize
+    }
+
+    /// Refreshes the gauges that summarize the in-memory `sessions` map, the
+    /// request parking lots, the loaded network keys, and the per-user-session
+    /// diagnostic series. O(sessions × committee) and idempotent; called once
+    /// per service tick — the per-tick re-emission (explicit zeros included
+    /// for empty buckets/states) is what clears stale values when sessions
+    /// move between buckets or leave the map.
+    pub(crate) fn refresh_observability_metrics(&mut self) {
+        let metrics = &self.dwallet_mpc_metrics;
+        let now = Instant::now();
+
+        // ----- session-state counts + Active-session age buckets -----
+        // Only Active sessions get an age: Completed/Failed entries stay in
+        // the map until epoch end and don't represent in-flight work.
+        let mut state_counts: HashMap<&str, i64> = HashMap::new();
+        let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
+        for session in self.sessions.values() {
+            *state_counts
+                .entry(session_state_label(&session.status))
+                .or_default() += 1;
+            if let SessionStatus::Active { request, .. } = &session.status {
+                let age = now.saturating_duration_since(session.created_at);
+                let age_bucket = AGE_BUCKETS
+                    .iter()
+                    .find(|(_, threshold)| age < *threshold)
+                    .map_or(AGE_BUCKET_OVERFLOW, |(label, _)| *label);
+                *age_bucket_counts
+                    .entry((session_type_label(request.session_type), age_bucket))
+                    .or_default() += 1;
+            }
+        }
+        for state in ALL_SESSION_STATES.iter().copied() {
+            metrics
+                .session_state_count
+                .with_label_values(&[state])
+                .set(state_counts.get(state).copied().unwrap_or(0));
+        }
+        for session_type in ALL_SESSION_TYPES.iter().copied() {
+            let age_buckets = AGE_BUCKETS
+                .iter()
+                .map(|(label, _)| *label)
+                .chain([AGE_BUCKET_OVERFLOW]);
+            for age_bucket in age_buckets {
+                metrics
+                    .active_sessions_by_age
+                    .with_label_values(&[session_type, age_bucket])
+                    .set(
+                        age_bucket_counts
+                            .get(&(session_type, age_bucket))
+                            .copied()
+                            .unwrap_or(0),
+                    );
+            }
+        }
+
+        // ----- request parking lots -----
+        for (key_id, requests) in &self.requests_pending_for_network_key {
+            metrics
+                .requests_pending_for_network_key
+                .with_label_values(&[&key_id.to_string()])
+                .set(requests.len() as i64);
+        }
+        metrics
+            .requests_pending_for_next_active_committee
+            .set(self.requests_pending_for_next_active_committee.len() as i64);
+        metrics
+            .requests_pending_for_frozen_mpc_data
+            .set(self.requests_pending_for_frozen_mpc_data.len() as i64);
+
+        // ----- per-network-encryption-key loaded epoch -----
+        // Drift between this and the current epoch is the silent-skip cause
+        // ("network key epoch does not match current epoch, ignoring") —
+        // operators can alert on |loaded_epoch − current_epoch| > 0.
+        for (key_id, public_data) in &self.network_keys.network_encryption_keys {
+            metrics
+                .network_key_loaded_epoch
+                .with_label_values(&[&key_id.to_string()])
+                .set(public_data.epoch() as i64);
+        }
+
+        // ----- per-user-session series, labeled by sequence number -----
+        // Cardinality bound: max_active_sessions_buffer sessions × 5 states
+        // (plus × committee size for the output-received-from matrix).
+        let mut current_seqs = HashSet::new();
+        let mut sessions_with_self_output_no_quorum = 0i64;
+        for session in self.sessions.values() {
+            let (Some(session_sequence_number), Some(SessionType::User)) =
+                (session.session_sequence_number, session.session_type)
+            else {
+                // Non-user sessions, and entries that haven't seen their
+                // request yet (no sequence number to label by — they are
+                // exposed once the request arrives).
+                continue;
+            };
+
+            let seq_label = session_sequence_number.to_string();
+            let current_state = session_state_label(&session.status);
+            for state in ALL_SESSION_STATES.iter().copied() {
+                metrics
+                    .user_session_state
+                    .with_label_values(&[seq_label.as_str(), state])
+                    .set((state == current_state) as i64);
+            }
+
+            metrics
+                .user_session_first_output_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(
+                    session
+                        .first_output_consensus_round
+                        .map_or(-1, |round| round as i64),
+                );
+            metrics
+                .user_session_self_output_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(
+                    session
+                        .self_output_consensus_round
+                        .map_or(-1, |round| round as i64),
+                );
+            metrics
+                .user_session_quorum_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(
+                    session
+                        .quorum_consensus_round
+                        .map_or(-1, |round| round as i64),
+                );
+            metrics
+                .user_session_distinct_output_authorities
+                .with_label_values(&[&seq_label])
+                .set(session.distinct_output_authorities.len() as i64);
+            metrics
+                .user_session_local_output_rejected
+                .with_label_values(&[&seq_label])
+                .set(match session.local_output_rejected {
+                    None => -1,
+                    Some(false) => 0,
+                    Some(true) => 1,
+                });
+            metrics
+                .user_session_distinct_output_digests
+                .with_label_values(&[&seq_label])
+                .set(session.distinct_output_digests.len() as i64);
+
+            // Full committee iteration so "which validators have NOT
+            // submitted for session N" is directly queryable.
+            for authority_name in self.committee.names() {
+                let received = session.distinct_output_authorities.contains(authority_name);
+                metrics
+                    .user_session_output_received_from
+                    .with_label_values(&[&seq_label, &authority_name.concise().to_string()])
+                    .set(received as i64);
+            }
+
+            // "We did our part, the network didn't" — the single most useful
+            // gauge for "are we stuck waiting on quorum from peers".
+            if session.self_output_consensus_round.is_some()
+                && session.quorum_consensus_round.is_none()
+            {
+                sessions_with_self_output_no_quorum += 1;
+            }
+
+            current_seqs.insert(session_sequence_number);
+        }
+        metrics
+            .sessions_with_self_output_no_quorum
+            .set(sessions_with_self_output_no_quorum);
+
+        // Sessions that left `self.sessions` since the previous tick get one
+        // final emission flipping the state series to 0 and the round gauges
+        // to their "not set" sentinels, so dashboards reflect "no longer
+        // tracked here" instead of the last live value.
+        for stale_seq in self
+            .previously_emitted_user_session_seqs
+            .difference(&current_seqs)
+        {
+            let seq_label = stale_seq.to_string();
+            for state in ALL_SESSION_STATES.iter().copied() {
+                metrics
+                    .user_session_state
+                    .with_label_values(&[seq_label.as_str(), state])
+                    .set(0);
+            }
+            metrics
+                .user_session_first_output_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(-1);
+            metrics
+                .user_session_self_output_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(-1);
+            metrics
+                .user_session_quorum_consensus_round
+                .with_label_values(&[&seq_label])
+                .set(-1);
+            metrics
+                .user_session_distinct_output_authorities
+                .with_label_values(&[&seq_label])
+                .set(0);
+            metrics
+                .user_session_local_output_rejected
+                .with_label_values(&[&seq_label])
+                .set(-1);
+            metrics
+                .user_session_distinct_output_digests
+                .with_label_values(&[&seq_label])
+                .set(0);
+            for authority_name in self.committee.names() {
+                metrics
+                    .user_session_output_received_from
+                    .with_label_values(&[&seq_label, &authority_name.concise().to_string()])
+                    .set(0);
+            }
+        }
+        self.previously_emitted_user_session_seqs = current_seqs;
+    }
+}
+
+fn session_state_label(status: &SessionStatus) -> &'static str {
+    match status {
+        SessionStatus::Active { .. } => SESSION_STATE_ACTIVE,
+        SessionStatus::WaitingForSessionRequest => SESSION_STATE_WAITING_FOR_REQUEST,
+        SessionStatus::ComputationCompleted => SESSION_STATE_COMPUTATION_COMPLETED,
+        SessionStatus::Completed => SESSION_STATE_COMPLETED,
+        SessionStatus::Failed => SESSION_STATE_FAILED,
     }
 }

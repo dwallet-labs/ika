@@ -4,17 +4,20 @@
 mod input;
 
 use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
+use fastcrypto::hash::HashFunction;
 use group::PartyID;
-use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, DefaultHash};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
-    SessionIdentifier,
+    SessionIdentifier, SessionType,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry::Vacant;
+use std::time::Instant;
 use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info, warn};
 
@@ -62,6 +65,54 @@ pub(crate) struct DWalletSession {
     /// semantics — all validators must agree on which round's output is "last" for
     /// each party, which requires ordered iteration.
     outputs_by_consensus_round: BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
+
+    /// Monotonic-clock timestamp of when this session entry was first created on this
+    /// validator. Feeds the "session has been Active for N seconds" age-bucket metric.
+    pub(super) created_at: Instant,
+
+    /// Sequence number of this session on chain. `None` if the session was first observed
+    /// via a stray message/output (i.e. created in `WaitingForSessionRequest`) and no
+    /// request has arrived since. Populated as soon as we ever see a `DWalletSessionRequest`
+    /// for this session, and *preserved* across status transitions to ComputationCompleted /
+    /// Completed / Failed (whose variants are unit and drop the request). Used by metrics
+    /// to label sessions by sequence number.
+    pub(super) session_sequence_number: Option<u64>,
+
+    /// Same idea — set to `Some(_)` once we've seen a request, preserved across transitions.
+    pub(super) session_type: Option<SessionType>,
+
+    // -------- per-session timing/diagnostic counters --------
+    // All of these are populated in this process's lifetime only — pre-restart events
+    // do not contribute. They feed the `ika_dwallet_mpc_user_session_*` per-seq gauges.
+    /// Earliest consensus round (since this process started) at which *any* validator's
+    /// output for this session was received. `None` until the first output arrives.
+    pub(super) first_output_consensus_round: Option<u64>,
+
+    /// Consensus round at which this validator saw its own output loop back through
+    /// consensus (i.e., the round in which we transitioned to `ComputationCompleted`).
+    pub(super) self_output_consensus_round: Option<u64>,
+
+    /// Consensus round at which 2/3 quorum was first reached on this session's output
+    /// (`mpc_manager::handle_consensus_round_outputs` saw the output agreed). `None` if
+    /// quorum was never observed during this process's lifetime — either it really hasn't
+    /// been reached or it was reached before we restarted.
+    pub(super) quorum_consensus_round: Option<u64>,
+
+    /// Set of authorities that submitted an output for this session this lifetime.
+    /// `.len()` is exposed as the `_distinct_output_authorities` metric.
+    pub(super) distinct_output_authorities: HashSet<AuthorityName>,
+
+    /// Whether the output *this* validator submitted to consensus was `rejected: true`.
+    /// `None` until we submit an output; `Some(true)` for an MPC failure /
+    /// `submit_failed_session` path; `Some(false)` for a normal `Finalize`.
+    pub(super) local_output_rejected: Option<bool>,
+
+    /// Distinct output digests seen this lifetime for this session. `len() > 1` ⇒ vote
+    /// split: validators submitted different output content. The digest is `DefaultHash`
+    /// over the BCS bytes of the `DWalletMPCOutputKind` (sender and malicious-authorities
+    /// envelope excluded), so identical outputs from different validators collapse to one
+    /// digest.
+    pub(super) distinct_output_digests: HashSet<[u8; 32]>,
 }
 
 /// Possible statuses of a session:
@@ -136,6 +187,14 @@ impl DWalletSession {
         counterparty_chain: Option<CounterpartyChainKind>,
         computation_type: SessionComputationType,
     ) -> Self {
+        // If the new session is created with an Active status the request is right there;
+        // pull seq/type out of it so they survive any later transition to a unit variant.
+        let (session_sequence_number, session_type) = match &status {
+            SessionStatus::Active { request, .. } => {
+                (request.session_sequence_number, Some(request.session_type))
+            }
+            _ => (None, None),
+        };
         Self {
             status,
             outputs_by_consensus_round: BTreeMap::new(),
@@ -144,7 +203,28 @@ impl DWalletSession {
             counterparty_chain,
             validator_name,
             computation_type,
+            created_at: Instant::now(),
+            session_sequence_number,
+            session_type,
+            first_output_consensus_round: None,
+            self_output_consensus_round: None,
+            quorum_consensus_round: None,
+            distinct_output_authorities: HashSet::new(),
+            local_output_rejected: None,
+            distinct_output_digests: HashSet::new(),
         }
+    }
+
+    /// Records the session's on-chain identity (sequence number + type) on this session
+    /// entry so it survives status transitions to the unit variants (which drop the
+    /// request). Idempotent; a `Some` sequence number is never clobbered by `None`.
+    pub(crate) fn set_request_metadata(
+        &mut self,
+        session_sequence_number: Option<u64>,
+        session_type: SessionType,
+    ) {
+        self.session_sequence_number = self.session_sequence_number.or(session_sequence_number);
+        self.session_type = Some(session_type);
     }
 
     pub(crate) fn clear_data(&mut self) {
@@ -259,12 +339,29 @@ impl DWalletSession {
             "Received a dWallet MPC output",
         );
 
+        // Diagnostic counters for the per-session metrics. Updated even for sessions in
+        // non-Active state — the data is meaningful for sessions stuck in
+        // `ComputationCompleted` awaiting quorum. These never decrement.
+        self.first_output_consensus_round = Some(
+            self.first_output_consensus_round
+                .map_or(consensus_round, |previous| previous.min(consensus_round)),
+        );
+        self.distinct_output_authorities.insert(output.authority());
+
         if sender_party_id == self.party_id {
+            // First occurrence wins — a later retransmission of our output shouldn't
+            // overwrite the round in which it originally looped back.
+            self.self_output_consensus_round
+                .get_or_insert(consensus_round);
+            self.local_output_rejected = Some(output.rejected());
+
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 session_identifier = ?self.session_identifier,
                 session_sequence_number = ?self.status.session_sequence_number(),
                 authority = ?self.validator_name,
+                consensus_round,
+                rejected = output.rejected(),
                 "Received our output from consensus, marking session as computation completed",
             );
 
@@ -278,6 +375,13 @@ impl DWalletSession {
 
         let malicious_authorities = output.malicious_authorities();
         if let Ok(output) = output.output() {
+            // Hash the output content (sender + malicious-authorities envelope excluded) so
+            // identical outputs from different validators collapse to the same digest —
+            // more than one digest here is the split-vote signal.
+            if let Ok(output_bytes) = bcs::to_bytes(&output) {
+                let digest: [u8; 32] = DefaultHash::digest(&output_bytes).into();
+                self.distinct_output_digests.insert(digest);
+            }
             if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
                 e.insert(DWalletMPCSessionOutput {
                     output,
@@ -672,6 +776,10 @@ impl DWalletMPCManager {
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
             session.counterparty_chain = request.counterparty_chain;
+            // Record seq + type on the session entry so they survive future transitions to
+            // unit-variant states (ComputationCompleted/Completed/Failed) which would
+            // otherwise discard this information.
+            session.set_request_metadata(request.session_sequence_number, request.session_type);
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -693,6 +801,11 @@ impl DWalletMPCManager {
                 request.counterparty_chain,
                 new_type,
             );
+            // `DWalletSession::new` pulls seq/type out of an Active status itself; the
+            // explicit set covers the non-Active creation path (e.g. Failed).
+            if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                session.set_request_metadata(request.session_sequence_number, request.session_type);
+            }
         }
         Some(status)
     }

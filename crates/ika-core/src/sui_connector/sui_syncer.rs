@@ -142,10 +142,12 @@ where
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
+                sui_client_clone.clone(),
                 system_object_receiver.clone(),
                 dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
                 noa_checkpoints_finalized,
+                self.metrics.clone(),
             ));
             info!("Syncing last session to complete in current epoch");
             tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
@@ -162,6 +164,7 @@ where
                         dwallet_coordinator_object_receiver.clone(),
                         system_object_receiver.clone(),
                         uncompleted_requests_sender,
+                        self.metrics.clone(),
                     ));
                 }
             }
@@ -260,6 +263,7 @@ where
         >,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         loop {
@@ -278,6 +282,10 @@ where
                 .await
             {
                 Ok((events, epoch)) => {
+                    // Expose the backlog as a single gauge so operators can see "chain
+                    // has N uncompleted sessions from this validator's perspective" at
+                    // a glance.
+                    metrics.uncompleted_events_backlog.set(events.len() as i64);
                     let requests = events.iter().filter_map(|event| {
                         debug!(
                             event_type=?event.type_.clone(),
@@ -1122,12 +1130,14 @@ where
     }
 
     async fn sync_dwallet_end_of_publish(
+        sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         end_of_publish_sender: Sender<Option<u64>>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
         // Consecutive ticks the end-of-publish gate has stayed unsatisfied. A
         // healthy epoch boundary clears it in 1-2 ticks; a wedged reconfiguration
@@ -1154,6 +1164,60 @@ where
                 continue;
             };
             let DWalletCoordinatorInner::V1(coordinator) = coordinator_inner;
+
+            // Mirror raw chain state on the validator so an operator can see it
+            // from a dashboard without a Sui RPC round-trip. Exposed every tick,
+            // regardless of whether the gate below is satisfied.
+            metrics
+                .chain_received_end_of_publish
+                .with_label_values(&["system"])
+                .set(system_inner_v1.received_end_of_publish as i64);
+            metrics
+                .chain_received_end_of_publish
+                .with_label_values(&["coordinator"])
+                .set(coordinator.received_end_of_publish as i64);
+            metrics.chain_active_user_sessions_count.set(
+                coordinator
+                    .sessions_manager
+                    .user_sessions_keeper
+                    .sessions
+                    .size as i64,
+            );
+            metrics.chain_active_system_sessions_count.set(
+                coordinator
+                    .sessions_manager
+                    .system_sessions_keeper
+                    .sessions
+                    .size as i64,
+            );
+
+            // user_sessions_lag = target - completed; can be negative if completed >
+            // target (which would itself be a bug, hence the signed gauge).
+            let lock_target = coordinator
+                .sessions_manager
+                .last_user_initiated_session_to_complete_in_current_epoch
+                as i64;
+            let completed_user_sessions = coordinator
+                .sessions_manager
+                .user_sessions_keeper
+                .completed_sessions_count as i64;
+            metrics
+                .chain_user_sessions_lag
+                .set(lock_target - completed_user_sessions);
+
+            // chain_epoch_overdue_seconds — best effort; if the clock fetch fails we
+            // leave the previous value in place rather than zeroing it (zero is
+            // meaningful here).
+            if let Ok(clock) = sui_client.get_clock().await {
+                let epoch_end_ms = system_inner_v1
+                    .epoch_start_timestamp_ms
+                    .saturating_add(system_inner_v1.epoch_duration_ms);
+                let overdue_ms = clock.timestamp_ms.saturating_sub(epoch_end_ms);
+                metrics
+                    .chain_epoch_overdue_seconds
+                    .set((overdue_ms / 1000) as i64);
+            }
+
             // Check if we can advance the epoch.
             let all_epoch_sessions_finished = coordinator
                 .sessions_manager
@@ -1190,6 +1254,30 @@ where
                 && all_network_encryption_keys_reconfiguration_completed
                 && all_noa_checkpoints_finalized
                 && no_pricing_calculation_votes;
+            // Scrapable mirror of the gate breakdown: 1 = this condition is
+            // currently blocking end-of-publish. Set every tick (also when the
+            // gate is satisfied) so all reasons read 0 once the gate clears.
+            let blocked_by = [
+                ("not_locked", !session_locked),
+                ("user_sessions_lag", !all_epoch_sessions_finished),
+                ("system_sessions_lag", !all_immediate_sessions_completed),
+                ("next_committee_missing", !next_epoch_committee_exists),
+                (
+                    "network_keys_reconfig_lag",
+                    !all_network_encryption_keys_reconfiguration_completed,
+                ),
+                (
+                    "noa_checkpoints_unfinalized",
+                    !all_noa_checkpoints_finalized,
+                ),
+                ("pricing_votes_open", !no_pricing_calculation_votes),
+            ];
+            for (reason, is_blocking) in blocked_by {
+                metrics
+                    .end_of_publish_blocked_reason
+                    .with_label_values(&[reason])
+                    .set(is_blocking as i64);
+            }
             if !ready_to_end_publish {
                 // The breakdown each tick (debug) pinpoints a stuck
                 // reconfiguration — e.g. a restarted validator that left a
