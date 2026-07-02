@@ -75,107 +75,93 @@ pub struct ConsensusAdapterMetrics {
     pub sequencing_certificate_processed: IntCounterVec,
     pub sequencing_in_flight_semaphore_wait: IntGauge,
     pub sequencing_in_flight_submissions: IntGauge,
-    pub sequencing_estimated_latency: IntGauge,
-    pub sequencing_resubmission_interval_ms: IntGauge,
 }
 
 impl ConsensusAdapterMetrics {
     pub fn new(registry: &Registry) -> Self {
         Self {
             sequencing_certificate_attempt: register_int_counter_vec_with_registry!(
-                "sequencing_certificate_attempt",
+                "ika_sequencing_certificate_attempt",
                 "Counts the number of certificates the validator attempts to sequence.",
                 &["tx_type"],
                 registry,
             )
                 .unwrap(),
             sequencing_certificate_success: register_int_counter_vec_with_registry!(
-                "sequencing_certificate_success",
+                "ika_sequencing_certificate_success",
                 "Counts the number of successfully sequenced certificates.",
                 &["tx_type"],
                 registry,
             )
                 .unwrap(),
             sequencing_certificate_failures: register_int_counter_vec_with_registry!(
-                "sequencing_certificate_failures",
+                "ika_sequencing_certificate_failures",
                 "Counts the number of sequenced certificates that failed other than by timeout.",
                 &["tx_type"],
                 registry,
             )
                 .unwrap(),
                 sequencing_certificate_status: register_int_counter_vec_with_registry!(
-                "sequencing_certificate_status",
+                "ika_sequencing_certificate_status",
                 "The status of the certificate sequencing as reported by consensus. The status can be either sequenced or garbage collected.",
                 &["tx_type", "status"],
                 registry,
             )
                 .unwrap(),
             sequencing_certificate_inflight: register_int_gauge_vec_with_registry!(
-                "sequencing_certificate_inflight",
+                "ika_sequencing_certificate_inflight",
                 "The inflight requests to sequence certificates.",
                 &["tx_type"],
                 registry,
             )
                 .unwrap(),
             sequencing_acknowledge_latency: register_histogram_vec_with_registry!(
-                "sequencing_acknowledge_latency",
+                "ika_sequencing_acknowledge_latency",
                 "The latency for acknowledgement from sequencing engine. The overall sequencing latency is measured by the sequencing_certificate_latency metric",
                 &["retry", "tx_type"],
                 SEQUENCING_CERTIFICATE_LATENCY_SEC_BUCKETS.to_vec(),
                 registry,
             ).unwrap(),
             sequencing_certificate_latency: register_histogram_vec_with_registry!(
-                "sequencing_certificate_latency",
+                "ika_sequencing_certificate_latency",
                 "The latency for sequencing a certificate.",
                 &["position", "tx_type", "processed_method"],
                 SEQUENCING_CERTIFICATE_LATENCY_SEC_BUCKETS.to_vec(),
                 registry,
             ).unwrap(),
             sequencing_certificate_authority_position: register_histogram_with_registry!(
-                "sequencing_certificate_authority_position",
+                "ika_sequencing_certificate_authority_position",
                 "The position of the authority when submitted a certificate to consensus.",
                 SEQUENCING_CERTIFICATE_POSITION_BUCKETS.to_vec(),
                 registry,
             ).unwrap(),
             sequencing_certificate_positions_moved: register_histogram_with_registry!(
-                "sequencing_certificate_positions_moved",
+                "ika_sequencing_certificate_positions_moved",
                 "The number of authorities ahead of ourselves that were filtered out when submitting a certificate to consensus.",
                 SEQUENCING_CERTIFICATE_POSITION_BUCKETS.to_vec(),
                 registry,
             ).unwrap(),
             sequencing_certificate_preceding_disconnected: register_histogram_with_registry!(
-                "sequencing_certificate_preceding_disconnected",
+                "ika_sequencing_certificate_preceding_disconnected",
                 "The number of authorities that were hashed to an earlier position that were filtered out due to being disconnected when submitting to consensus.",
                 SEQUENCING_CERTIFICATE_POSITION_BUCKETS.to_vec(),
                 registry,
             ).unwrap(),
             sequencing_certificate_processed: register_int_counter_vec_with_registry!(
-                "sequencing_certificate_processed",
+                "ika_sequencing_certificate_processed",
                 "The number of certificates that have been processed either by consensus or checkpoint.",
                 &["source"],
                 registry
             ).unwrap(),
             sequencing_in_flight_semaphore_wait: register_int_gauge_with_registry!(
-                "sequencing_in_flight_semaphore_wait",
+                "ika_sequencing_in_flight_semaphore_wait",
                 "How many requests are blocked on submit_permit.",
                 registry,
             )
                 .unwrap(),
             sequencing_in_flight_submissions: register_int_gauge_with_registry!(
-                "sequencing_in_flight_submissions",
+                "ika_sequencing_in_flight_submissions",
                 "Number of transactions submitted to local consensus instance and not yet sequenced",
-                registry,
-            )
-                .unwrap(),
-            sequencing_estimated_latency: register_int_gauge_with_registry!(
-                "sequencing_estimated_latency",
-                "Consensus latency estimated by consensus adapter in milliseconds",
-                registry,
-            )
-                .unwrap(),
-            sequencing_resubmission_interval_ms: register_int_gauge_with_registry!(
-                "sequencing_resubmission_interval_ms",
-                "Resubmission interval used by consensus adapter in milliseconds",
                 registry,
             )
                 .unwrap(),

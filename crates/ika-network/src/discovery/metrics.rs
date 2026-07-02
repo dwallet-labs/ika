@@ -44,7 +44,7 @@ impl Inner {
     pub fn new(registry: &Registry) -> Arc<Self> {
         Self {
             num_peers_with_external_address: register_int_gauge_with_registry!(
-                "num_peers_with_external_address",
+                "ika_num_peers_with_external_address",
                 "Number of peers with an external address configured for discovery",
                 registry
             )

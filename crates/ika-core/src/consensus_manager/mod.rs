@@ -186,7 +186,7 @@ impl ConsensusManager {
             .find(|(_, a)| a.protocol_key == own_protocol_key)
             .expect("Own authority should be among the consensus authorities!");
 
-        let registry = Registry::new_custom(Some("consensus".to_string()), None).unwrap();
+        let registry = Registry::new_custom(Some("ika_consensus".to_string()), None).unwrap();
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
@@ -453,13 +453,13 @@ impl ConsensusManagerMetrics {
     pub fn new(registry: &Registry) -> Self {
         Self {
             start_latency: register_int_gauge_with_registry!(
-                "consensus_manager_start_latency",
+                "ika_consensus_manager_start_latency",
                 "The latency of starting up consensus nodes",
                 registry,
             )
             .unwrap(),
             shutdown_latency: register_int_gauge_with_registry!(
-                "consensus_manager_shutdown_latency",
+                "ika_consensus_manager_shutdown_latency",
                 "The latency of shutting down consensus nodes",
                 registry,
             )

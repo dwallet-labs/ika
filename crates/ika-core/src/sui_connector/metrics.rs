@@ -66,7 +66,7 @@ impl SuiConnectorMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         let this = Self {
             last_synced_sui_checkpoints: register_int_gauge_vec_with_registry!(
-                "sui_connector_last_synced_sui_checkpoints",
+                "ika_sui_connector_last_synced_sui_checkpoints",
                 "The latest sui checkpoints synced for each module",
                 &["module_name"],
                 registry,
@@ -74,90 +74,90 @@ impl SuiConnectorMetrics {
             .unwrap(),
 
             gas_coin_balance: register_int_gauge_with_registry!(
-                "sui_connector_gas_coin_balance",
+                "ika_sui_connector_gas_coin_balance",
                 "Current balance of gas coin, in mist",
                 registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_sequence: register_int_gauge_with_registry!(
-                "sui_connector_dwallet_checkpoint_sequence",
+                "ika_sui_connector_dwallet_checkpoint_sequence",
                 "Sequence number of the next dwallet checkpoint to write to Sui",
                 registry,
             )
             .unwrap(),
 
             last_written_dwallet_checkpoint_sequence: register_int_gauge_with_registry!(
-                "sui_connector_last_written_dwallet_checkpoint_sequence",
+                "ika_sui_connector_last_written_dwallet_checkpoint_sequence",
                 "Sequence number of the last dwallet checkpoint successfully written to Sui",
                 registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_write_requests_total: register_int_gauge_with_registry!(
-                "sui_connector_dwallet_checkpoint_write_requests_total",
+                "ika_sui_connector_dwallet_checkpoint_write_requests_total",
                 "Total number of dwallet checkpoint write requests sent to Sui",
                 registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_writes_success_total: register_int_gauge_with_registry!(
-                "sui_connector_dwallet_checkpoint_writes_success_total",
+                "ika_sui_connector_dwallet_checkpoint_writes_success_total",
                 "Total number of successful dwallet checkpoint writes to Sui",
                 registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_writes_failure_total: register_int_gauge_with_registry!(
-                "sui_connector_dwallet_checkpoint_writes_failure_total",
+                "ika_sui_connector_dwallet_checkpoint_writes_failure_total",
                 "Total number of failed dwallet checkpoint writes to Sui",
                 registry,
             )
             .unwrap(),
             system_checkpoint_writes_failure_total: register_int_gauge_with_registry!(
-                "sui_connector_system_checkpoint_writes_failure_total",
+                "ika_sui_connector_system_checkpoint_writes_failure_total",
                 "Total number of failed system checkpoint writes to Sui",
                 registry,
             )
             .unwrap(),
             system_checkpoint_writes_success_total: register_int_gauge_with_registry!(
-                "sui_connector_system_checkpoint_writes_success_total",
+                "ika_sui_connector_system_checkpoint_writes_success_total",
                 "Total number of successful system checkpoint writes to Sui",
                 registry,
             )
             .unwrap(),
             system_checkpoint_write_requests_total: register_int_gauge_with_registry!(
-                "sui_connector_system_checkpoint_write_requests_total",
+                "ika_sui_connector_system_checkpoint_write_requests_total",
                 "Total number of system checkpoint write requests sent to Sui",
                 registry,
             )
             .unwrap(),
             system_checkpoint_sequence: register_int_gauge_with_registry!(
-                "sui_connector_system_checkpoint_sequence",
+                "ika_sui_connector_system_checkpoint_sequence",
                 "Sequence number of the next system checkpoint to write to Sui",
                 registry,
             )
             .unwrap(),
             last_written_system_checkpoint_sequence: register_int_gauge_with_registry!(
-                "sui_connector_last_written_system_checkpoint_sequence",
+                "ika_sui_connector_last_written_system_checkpoint_sequence",
                 "Sequence number of the last system checkpoint successfully written to Sui",
                 registry,
             )
             .unwrap(),
             network_key_overlay_incomplete: register_int_gauge_with_registry!(
-                "network_key_overlay_incomplete",
+                "ika_network_key_overlay_incomplete",
                 "Number of network keys whose off-chain overlay is missing a required output",
                 registry,
             )
             .unwrap(),
             off_chain_assembly_incomplete_ticks_total: register_int_counter_with_registry!(
-                "off_chain_assembly_incomplete_ticks_total",
+                "ika_off_chain_assembly_incomplete_ticks_total",
                 "Total sync ticks on which the off-chain validator-mpc_data assembly was incomplete",
                 registry,
             )
             .unwrap(),
             off_chain_assembly_wedged: register_int_gauge_with_registry!(
-                "off_chain_assembly_wedged",
+                "ika_off_chain_assembly_wedged",
                 "1 while the off-chain validator-mpc_data assembly is permanently incomplete",
                 registry,
             )

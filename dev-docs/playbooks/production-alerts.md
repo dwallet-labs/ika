@@ -25,7 +25,7 @@ histogram quantify the wait. See `../specs/handoff.md`
 ## Alert 2: off-chain assembly permanently wedged
 
 ```promql
-off_chain_assembly_wedged != 0
+ika_off_chain_assembly_wedged != 0
 # for: 5m (the gauge holds the wedged epoch; it clears on the next
 #          successful assembly — non-zero is already the signal)
 ```
@@ -58,8 +58,8 @@ and the peer set before bringing it back.
 
 - `last_pruned_authority_db_epoch` / `last_pruned_consensus_db_epoch`
   not advancing across epochs → pruners dead, disk will grow.
-- `dwallet_mpc_global_presign_requests_waiting` climbing without
+- `ika_dwallet_mpc_global_presign_requests_waiting` climbing without
   draining → presign pool starvation (see
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)).
-- `dwallet_handoff_signatures_rejected_total` increasing → a peer is signing
+- `ika_dwallet_handoff_signatures_rejected_total` increasing → a peer is signing
   divergent attestations (benign if transient at boundaries).

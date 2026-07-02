@@ -181,108 +181,108 @@ impl DWalletMPCMetrics {
 
         Arc::new(Self {
             session_start_count: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_session_start_count",
+                "ika_dwallet_mpc_session_start_count",
                 "Number of MPC protocol sessions started",
                 &protocol_metric_labels,
                 registry
             )
             .unwrap(),
             received_requests_start_count: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_received_requests_start_count",
+                "ika_dwallet_mpc_received_requests_start_count",
                 "Number of received requests",
                 &protocol_metric_labels,
                 registry
             )
             .unwrap(),
             advance_mpc_calls: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_advance_calls",
+                "ika_dwallet_mpc_advance_calls",
                 "Number of advance calls",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
             native_calls: register_int_gauge_vec_with_registry!(
-                "dwallet_nativee_calls",
+                "ika_dwallet_native_calls",
                 "Number of native session calls",
                 &protocol_metric_labels,
                 registry
             )
             .unwrap(),
             computation_duration_variance: register_gauge_vec_with_registry!(
-                "dwallet_mpc_computation_duration_variance",
+                "ika_dwallet_mpc_computation_duration_variance",
                 "Variance of the duration of MPC computations in milliseconds",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
             computation_duration_avg: register_gauge_vec_with_registry!(
-                "dwallet_mpc_computation_duration_avg",
+                "ika_dwallet_mpc_computation_duration_avg",
                 "Average duration of MPC computations in milliseconds",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
             advance_completions: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_advance_completions",
+                "ika_dwallet_mpc_advance_completions",
                 "Number of advance completions",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
             native_completions: register_int_gauge_vec_with_registry!(
-                "dwallet_native_completions",
+                "ika_dwallet_native_completions",
                 "Number of native sessions completions",
                 &protocol_metric_labels,
                 registry
             )
             .unwrap(),
             completions_count: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_completions_count",
+                "ika_dwallet_mpc_completions_count",
                 "Number of completions",
                 &protocol_metric_labels,
                 registry
             )
             .unwrap(),
             last_completion_duration: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_last_completion_duration",
+                "ika_dwallet_mpc_last_completion_duration",
                 "Duration of the last completion in milliseconds",
                 &round_metric_labels,
                 registry
             )
             .unwrap(),
             number_of_unexpected_sign_sessions: register_int_gauge_with_registry!(
-                "dwallet_mpc_number_of_unexpected_sign_sessions",
+                "ika_dwallet_mpc_number_of_unexpected_sign_sessions",
                 "Number of unexpected sign sessions",
                 registry
             )
             .unwrap(),
             number_of_expected_sign_sessions: register_int_gauge_with_registry!(
-                "dwallet_mpc_number_of_expected_sign_sessions",
+                "ika_dwallet_mpc_number_of_expected_sign_sessions",
                 "Number of expected sign sessions",
                 registry
             )
             .unwrap(),
             last_process_mpc_consensus_round: register_int_gauge_with_registry!(
-                "last_process_mpc_consensus_round",
+                "ika_last_process_mpc_consensus_round",
                 "Last process mpc consensus round",
                 registry
             )
             .unwrap(),
             internal_presign_pool_size: register_int_gauge_vec_with_registry!(
-                "dwallet_mpc_internal_presign_pool_size",
+                "ika_dwallet_mpc_internal_presign_pool_size",
                 "Internal presign pool size per (curve, signature_algorithm, key_role)",
                 &["curve", "signature_algorithm", "key_role"],
                 registry
             )
             .unwrap(),
             global_presign_requests_waiting: register_int_gauge_with_registry!(
-                "dwallet_mpc_global_presign_requests_waiting",
+                "ika_dwallet_mpc_global_presign_requests_waiting",
                 "Global presign requests waiting because the internal pool is empty",
                 registry
             )
             .unwrap(),
             global_presigns_served_total: register_int_counter_vec_with_registry!(
-                "dwallet_mpc_global_presigns_served_total",
+                "ika_dwallet_mpc_global_presigns_served_total",
                 "Global presign requests served from the internal pool",
                 &["signature_algorithm"],
                 registry
@@ -290,7 +290,7 @@ impl DWalletMPCMetrics {
             .unwrap(),
             network_key_instantiation_sub_call_duration_seconds:
                 register_histogram_vec_with_registry!(
-                    "dwallet_mpc_network_key_instantiation_sub_call_duration_seconds",
+                    "ika_dwallet_mpc_network_key_instantiation_sub_call_duration_seconds",
                     "Duration of each network-key instantiation sub-call",
                     &["sub_call"],
                     vec![
@@ -300,7 +300,7 @@ impl DWalletMPCMetrics {
                 )
                 .unwrap(),
             network_key_instantiations_in_flight: register_int_gauge_with_registry!(
-                "dwallet_mpc_network_key_instantiations_in_flight",
+                "ika_dwallet_mpc_network_key_instantiations_in_flight",
                 "Network-key instantiations currently in flight on the rayon pool",
                 registry
             )
@@ -312,7 +312,7 @@ impl DWalletMPCMetrics {
             )
             .unwrap(),
             network_key_instantiation_failures_total: register_int_counter_vec_with_registry!(
-                "dwallet_mpc_network_key_instantiation_failures_total",
+                "ika_dwallet_mpc_network_key_instantiation_failures_total",
                 "Network-key instantiation failures by reason",
                 &["reason"],
                 registry
