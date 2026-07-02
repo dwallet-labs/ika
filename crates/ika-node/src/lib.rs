@@ -497,9 +497,9 @@ impl IkaNode {
         let mut peer_only_stack: Option<sui_connector_setup::SuiConnectorStack> = None;
         let sui_client = if legacy_json_rpc {
             warn!(
-                "DEPRECATED: old-style config (no sui-data-source) — this validator reads Sui \
-                 over JSON-RPC, which Sui is sunsetting; migrate by adding sui-data-source plus \
-                 a trust anchor"
+                "DEPRECATED: old-style config (no sui-data-source) — this node talks to Sui \
+                 over JSON-RPC, which Sui is sunsetting; migrate by adding sui-data-source \
+                 (plus a trust anchor on validators)"
             );
             let rpc_url = config
                 .sui_connector_config

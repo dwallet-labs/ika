@@ -346,16 +346,21 @@ pub struct SuiCheckpointArchiveConfig {
 /// flag can't halt running validators en masse at an upgrade boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuiTransportPlan {
-    /// Old-style config (no `sui-data-source`) on a validator: the deprecated
-    /// JSON-RPC read path — the only one that serves `query_events`, which a
-    /// validator needs for MPC event ingestion. Sui is sunsetting JSON-RPC.
+    /// Old-style config (no `sui-data-source`), any role: the deprecated
+    /// JSON-RPC path — the 1.1.8 behavior the config shape used to select.
+    /// A binary upgrade must not change a node's transport under an
+    /// unchanged config (an endpoint that serves JSON-RPC need not serve
+    /// Sui gRPC, and for a notifier that mismatch surfaces as a
+    /// network-wide epoch-advance stall); moving to gRPC is an explicit
+    /// config migration (`sui-data-source`). Also the only path serving
+    /// `query_events`, which a validator needs for MPC event ingestion.
+    /// Sui is sunsetting JSON-RPC.
     LegacyJsonRpc,
     /// `sui-state-mirrored` with no `fallback-grpc-url`: the node has no direct
     /// Sui uplink, so every read crosses the verified OCS relay.
     PeerOnlyRelay,
-    /// A direct gRPC uplink: `sui-state-direct`, `sui-state-mirrored` with a
-    /// fallback, or a notifier/fullnode on an old-style config (Sui fullnodes
-    /// serve gRPC at the same endpoint as JSON-RPC).
+    /// A direct gRPC uplink: `sui-state-direct`, or `sui-state-mirrored` with a
+    /// fallback.
     Grpc,
 }
 
@@ -400,14 +405,17 @@ pub fn select_sui_transport(
                         .to_string(),
                 );
             }
-            // A validator reads MPC events over JSON-RPC `query_events` (gRPC
-            // cannot serve them); notifiers/fullnodes run no event ingestion and
-            // read gRPC at the same fullnode endpoint.
-            Ok(if mode.is_validator() {
-                SuiTransportPlan::LegacyJsonRpc
-            } else {
-                SuiTransportPlan::Grpc
-            })
+            // Every role keeps the JSON-RPC path the same config selected on
+            // 1.1.8: a binary upgrade must not silently change a node's
+            // transport (`sui-rpc-url` endpoints are not guaranteed to serve
+            // Sui gRPC — many managed providers don't — and for the notifier,
+            // the sole submitter of checkpoints and advance_epoch, a soft
+            // gRPC failure is a network-wide epoch-advance stall). Moving to
+            // gRPC is an explicit migration: add `sui-data-source`. The
+            // JSON-RPC backend serves every role's needs, as on 1.1.8:
+            // `query_events` for validator MPC ingestion, quorum-driver
+            // submission for the notifier.
+            Ok(SuiTransportPlan::LegacyJsonRpc)
         }
         // New-style config (`sui-data-source` present): all Sui I/O over gRPC.
         Some(source) => {
@@ -1328,23 +1336,21 @@ mod tests {
         }
     }
 
-    /// An old-style validator (only `sui-rpc-url`, no anchor) keeps the
-    /// deprecated JSON-RPC path; a notifier/fullnode on the same config reads
-    /// gRPC at that endpoint.
+    /// An old-style config (only `sui-rpc-url`, no anchor) keeps the
+    /// deprecated JSON-RPC path for EVERY role — the transport a 1.1.8 node
+    /// ran on that exact config. A binary upgrade must never flip transport
+    /// under an unchanged config (the endpoint may not serve Sui gRPC, and a
+    /// notifier failing softly on gRPC stalls epoch advance network-wide);
+    /// gRPC requires explicitly configuring `sui-data-source`.
     #[test]
-    fn old_style_routes_by_role() {
-        assert_eq!(
-            select_sui_transport(None, true, false, NodeMode::Validator),
-            Ok(SuiTransportPlan::LegacyJsonRpc)
-        );
-        assert_eq!(
-            select_sui_transport(None, true, false, NodeMode::Fullnode),
-            Ok(SuiTransportPlan::Grpc)
-        );
-        assert_eq!(
-            select_sui_transport(None, true, false, NodeMode::Notifier),
-            Ok(SuiTransportPlan::Grpc)
-        );
+    fn old_style_keeps_legacy_json_rpc_for_every_role() {
+        for mode in ALL_MODES {
+            assert_eq!(
+                select_sui_transport(None, true, false, mode),
+                Ok(SuiTransportPlan::LegacyJsonRpc),
+                "mode={mode}"
+            );
+        }
     }
 
     /// A trust anchor without a `sui-data-source` section is rejected (the
