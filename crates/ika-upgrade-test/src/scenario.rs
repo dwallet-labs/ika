@@ -47,6 +47,12 @@ pub enum Step {
         buffer_bps: u64,
     },
     ExpectProtocolVersionAtLeast(u64),
+    /// Instantaneous ceiling assertion: fails if the network already upgraded
+    /// past `version`. Brackets a workload that must run in a pre-upgrade
+    /// window — without the ceiling, timing drift silently erodes the window
+    /// and the workload degrades into an ordinary post-upgrade test while the
+    /// run stays green.
+    ExpectProtocolVersionAtMost(u64),
     /// Poll until every running validator reports a canonical network DKG
     /// output version `>= at_least` (via its `/metrics`), or time out. Confirms
     /// the off-chain handoff migrated the DKG output (e.g. 2 -> 3 after the v4
@@ -109,6 +115,9 @@ impl std::fmt::Display for Step {
             Step::SetBufferStake { buffer_bps } => write!(f, "set_buffer_stake({buffer_bps})"),
             Step::ExpectProtocolVersionAtLeast(v) => {
                 write!(f, "expect_protocol_version_at_least({v})")
+            }
+            Step::ExpectProtocolVersionAtMost(v) => {
+                write!(f, "expect_protocol_version_at_most({v})")
             }
             Step::ExpectNetworkDkgOutputVersionAtLeast(v) => {
                 write!(f, "expect_network_dkg_output_version_at_least({v})")
@@ -244,6 +253,14 @@ impl Scenario {
 
     pub fn expect_protocol_version_at_least(mut self, version: u64) -> Self {
         self.steps.push(Step::ExpectProtocolVersionAtLeast(version));
+        self
+    }
+
+    /// Assert the network has NOT upgraded past `version` yet. Place around a
+    /// workload that must run in a pre-upgrade window, so the window closing
+    /// early fails loudly instead of silently voiding the workload's purpose.
+    pub fn expect_protocol_version_at_most(mut self, version: u64) -> Self {
+        self.steps.push(Step::ExpectProtocolVersionAtMost(version));
         self
     }
 
@@ -458,6 +475,24 @@ impl Scenario {
                         got,
                         expected = *version,
                         "protocol version assertion passed"
+                    );
+                }
+                Step::ExpectProtocolVersionAtMost(version) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectProtocolVersionAtMost before StartAll")?;
+                    let got = c.current_protocol_version().await?;
+                    if got > *version {
+                        bail!(
+                            "protocol version {got} > expected at most {version} — the \
+                             pre-upgrade window closed before/during the bracketed workload, \
+                             which therefore did not witness the pre-upgrade behavior"
+                        );
+                    }
+                    tracing::info!(
+                        got,
+                        expected_at_most = *version,
+                        "protocol version ceiling assertion passed"
                     );
                 }
                 Step::ExpectNetworkDkgOutputVersionAtLeast(at_least) => {

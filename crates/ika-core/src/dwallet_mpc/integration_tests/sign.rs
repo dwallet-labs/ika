@@ -142,11 +142,19 @@ async fn sign_flow_test() {
     );
     let (_, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round + 1).await;
-    let DWalletCheckpointMessageKind::RespondDWalletSign(_sign_output) =
+    let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
         sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet sign output message");
     };
+    assert!(
+        !sign_output.rejected,
+        "the sign session must produce a signature, not a rejection"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "the sign output must carry signature bytes"
+    );
 }
 
 #[tokio::test]
@@ -250,11 +258,16 @@ async fn future_sign_flow_test() {
     let (consensus_round, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round + 1).await;
     let DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(
-        _sign_output,
+        partial_signature_output,
     ) = sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet future sign output message");
     };
+    assert!(
+        !partial_signature_output.rejected,
+        "the partial-signature verification must accept the centralized signature, \
+         not reject it"
+    );
     send_start_future_sign_event(
         epoch_id,
         &test_state.sui_data_senders,
@@ -272,11 +285,19 @@ async fn future_sign_flow_test() {
     );
     let (_, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round + 1).await;
-    let DWalletCheckpointMessageKind::RespondDWalletSign(_sign_output) =
+    let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
         sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet future sign output message");
     };
+    assert!(
+        !sign_output.rejected,
+        "the future-sign session must produce a signature, not a rejection"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "the future-sign output must carry signature bytes"
+    );
 }
 
 pub(crate) fn send_start_sign_event(
@@ -757,11 +778,19 @@ async fn external_vss_sign_flow(
     );
     let (_, sign_checkpoint) =
         utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round + 1).await;
-    let DWalletCheckpointMessageKind::RespondDWalletSign(_sign_output) =
+    let DWalletCheckpointMessageKind::RespondDWalletSign(sign_output) =
         sign_checkpoint.messages().clone().pop().unwrap()
     else {
         panic!("Expected DWallet sign output message");
     };
+    assert!(
+        !sign_output.rejected,
+        "the sign session must produce a signature, not a rejection"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "the sign output must carry signature bytes"
+    );
     info!(
         ?curve,
         ?signature_algorithm,
