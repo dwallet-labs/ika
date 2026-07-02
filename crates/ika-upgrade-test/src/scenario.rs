@@ -179,6 +179,12 @@ pub struct Scenario {
     /// these; joiners added via `join_validator_mirrored` mirror through them
     /// too. Empty (default) = every validator reads Sui directly.
     pub direct_validators: Vec<usize>,
+    /// Boot the whole cluster (validators + notifier) from old-style
+    /// (1.1.8-shape) configs: `sui-rpc-url` only, no `sui-data-source`, no
+    /// trust anchor — the deprecated JSON-RPC transport every mainnet node
+    /// runs on rollout day. Not compatible with `direct_validators` or
+    /// mirrored joiners (those require `sui-data-source`).
+    pub legacy_sui_config: bool,
 }
 
 impl Scenario {
@@ -201,7 +207,15 @@ impl Scenario {
             ika_cli: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
             direct_validators: Vec::new(),
+            legacy_sui_config: false,
         }
+    }
+
+    /// Boot the whole cluster from old-style (1.1.8-shape) configs — the
+    /// legacy JSON-RPC path for every role. See the field doc.
+    pub fn with_legacy_sui_config(mut self) -> Self {
+        self.legacy_sui_config = true;
+        self
     }
 
     /// Path to the `ika` CLI binary; required by `run_workload` steps.
@@ -394,6 +408,9 @@ impl Scenario {
                     .with_epoch_duration_ms(self.epoch_duration_ms)
                     .with_genesis_protocol_version(ProtocolVersion::MIN)
                     .with_genesis_global_presign_config(self.genesis_global_presign_config);
+                    if self.legacy_sui_config {
+                        builder = builder.with_legacy_sui_config();
+                    }
                     if let Some(dir) = &self.base_dir {
                         builder = builder.with_base_dir(dir.clone());
                     }

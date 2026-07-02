@@ -29,6 +29,12 @@ name: Upgrade Test
 #                  so the v4 reshare of the 1.1.8-origin key includes a new
 #                  party (exercises the OCS joiner trust-anchor path from a real
 #                  1.1.8 origin). Same defaults as v118_upgrade.
+#   legacy_config — rollout-day config rehearsal: the current build on
+#                  old-style (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
+#                  sui-data-source — for all validators AND the notifier
+#                  (the legacy JSON-RPC transport nothing else covers). Full
+#                  lifecycle at v3, the v3 -> v4 vote, lifecycle again at v4.
+#                  Current build only.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -116,7 +122,7 @@ jobs:
           TEST: ${{ inputs.test }}
         run: |
           set -euo pipefail
-          ALL="smoke workload cross_binary v118_upgrade v118_churn"
+          ALL="smoke workload cross_binary v118_upgrade v118_churn legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -228,6 +234,7 @@ jobs:
             cross_binary) RUN_FLAG=RUN_CROSS_BINARY ;;
             v118_upgrade) RUN_FLAG=RUN_V118_UPGRADE ;;
             v118_churn)   RUN_FLAG=RUN_V118_CHURN ;;
+            legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
