@@ -70,8 +70,8 @@ pub async fn record_snapshot(
                 continue;
             }
         };
-        let completions = parse_metric(&body, "dwallet_mpc_advance_completions");
-        let avgs = parse_metric(&body, "dwallet_mpc_computation_duration_avg");
+        let completions = parse_metric(&body, "ika_dwallet_mpc_advance_completions");
+        let avgs = parse_metric(&body, "ika_dwallet_mpc_computation_duration_avg");
         for (key, count) in completions {
             let avg = avgs.get(&key).copied().unwrap_or(0.0);
             let entry = acc.entry(key).or_insert((0, 0.0));
@@ -306,7 +306,7 @@ mod tests {
             "dwallet_mpc_computation_duration_avg{curve=\"Secp256k1\",hash_scheme=\"\",mpc_round=\"second_round\",protocol_name=\"Presign\",signature_algorithm=\"ECDSA\"} 100\n",
             "other_metric{mpc_round=\"x\"} 5\n",
         );
-        let parsed = parse_metric(body, "dwallet_mpc_computation_duration_avg");
+        let parsed = parse_metric(body, "ika_dwallet_mpc_computation_duration_avg");
         assert_eq!(parsed.len(), 2);
         assert_eq!(
             parsed[&(

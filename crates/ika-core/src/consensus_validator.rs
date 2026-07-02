@@ -243,9 +243,6 @@ impl TransactionVerifier for IkaTxValidator {
 }
 
 pub struct IkaTxValidatorMetrics {
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    certificate_signatures_verified: IntCounter,
     dwallet_checkpoint_signatures_verified: IntCounter,
     system_checkpoint_signatures_verified: IntCounter,
 }
@@ -253,20 +250,14 @@ pub struct IkaTxValidatorMetrics {
 impl IkaTxValidatorMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         Arc::new(Self {
-            certificate_signatures_verified: register_int_counter_with_registry!(
-                "certificate_signatures_verified",
-                "Number of certificates verified in consensus batch verifier",
-                registry
-            )
-            .unwrap(),
             dwallet_checkpoint_signatures_verified: register_int_counter_with_registry!(
-                "dwallet_checkpoint_signatures_verified",
+                "ika_dwallet_checkpoint_signatures_verified",
                 "Number of dwallet checkpoint verified in consensus batch verifier",
                 registry
             )
             .unwrap(),
             system_checkpoint_signatures_verified: register_int_counter_with_registry!(
-                "system_checkpoint_signatures_verified",
+                "ika_system_checkpoint_signatures_verified",
                 "Number of system checkpoints signatures verified in consensus batch verifier",
                 registry
             )

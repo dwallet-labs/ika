@@ -95,7 +95,7 @@ impl IkaNodeMetrics {
             )
             .unwrap(),
             mpc_data_blob_fetch_total: register_int_counter_vec_with_registry!(
-                "dwallet_mpc_data_blob_fetch_total",
+                "ika_dwallet_mpc_data_blob_fetch_total",
                 "P2P mpc_data blob fetch outcomes",
                 &["result"],
                 registry,

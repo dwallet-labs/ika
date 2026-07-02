@@ -106,40 +106,40 @@ impl Inner {
     pub fn new(registry: &Registry) -> Arc<Self> {
         Self {
             highest_known_dwallet_checkpoint: register_int_gauge_with_registry!(
-                "highest_known_dwallet_checkpoint",
+                "ika_highest_known_dwallet_checkpoint",
                 "Highest known dwallet checkpoint",
                 registry
             )
             .unwrap(),
 
             highest_verified_dwallet_checkpoint: register_int_gauge_with_registry!(
-                "highest_verified_dwallet_checkpoint",
+                "ika_highest_verified_dwallet_checkpoint",
                 "Highest verified dwallet checkpoint",
                 registry
             )
             .unwrap(),
 
             highest_synced_dwallet_checkpoint: register_int_gauge_with_registry!(
-                "highest_synced_dwallet_checkpoint",
+                "ika_highest_synced_dwallet_checkpoint",
                 "Highest synced dwallet checkpoint",
                 registry
             )
             .unwrap(),
 
             highest_known_system_checkpoint: register_int_gauge_with_registry!(
-                "highest_known_system_checkpoint",
+                "ika_highest_known_system_checkpoint",
                 "Highest known system message",
                 registry
             )
             .unwrap(),
             highest_verified_system_checkpoint: register_int_gauge_with_registry!(
-                "highest_verified_system_checkpoint",
+                "ika_highest_verified_system_checkpoint",
                 "Highest verified system message",
                 registry
             )
             .unwrap(),
             highest_synced_system_checkpoint: register_int_gauge_with_registry!(
-                "highest_synced_system_checkpoint",
+                "ika_highest_synced_system_checkpoint",
                 "Highest synced system message",
                 registry
             )
