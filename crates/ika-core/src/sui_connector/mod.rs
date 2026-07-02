@@ -216,6 +216,7 @@ impl SuiConnectorService {
                     new_requests_sender,
                     uncompleted_requests_sender,
                     ocs_metrics,
+                    sui_connector_metrics.clone(),
                     // 50 ms tick. Bandwidth dropped ~3 orders of magnitude when
                     // we moved from full-checkpoint shipping to inclusion proofs,
                     // so the relay can absorb 20 Hz polling cleanly. Drives MPC

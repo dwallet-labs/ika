@@ -20,13 +20,15 @@
 //! - **mpc_round**: The specific round number within a protocol session
 
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
+use ika_types::messages_dwallet_mpc::SessionType;
 use prometheus::{
-    GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    GaugeVec, Histogram, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Registry,
     register_gauge_vec_with_registry, register_histogram_vec_with_registry,
-    register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
-    register_int_gauge_with_registry,
+    register_histogram_with_registry, register_int_counter_vec_with_registry,
+    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Prometheus metrics for DWallet MPC operations.
 ///
@@ -151,6 +153,118 @@ pub struct DWalletMPCMetrics {
     /// detection fired — used by the cross-binary malicious-detection test to
     /// assert exclusion programmatically instead of grepping logs.
     pub(crate) malicious_actors_count: IntGauge,
+
+    /// Histogram-by-bucket of how long each currently-Active session has been
+    /// tracked for. Labels: `session_type` (`user` / `system` /
+    /// `internal_presign` / `noa_sign`), `age_bucket` (`<30s`, `<5m`, `<30m`,
+    /// `<2h`, `>=2h`). A non-zero `>=2h` bucket for user sessions is the
+    /// smoking gun of an MPC deadlock.
+    pub(crate) active_sessions_by_age: IntGaugeVec,
+
+    /// Counts of sessions currently tracked by the manager grouped by status.
+    /// Labels: `state` in {`active`, `waiting_for_session_request`,
+    /// `computation_completed`, `completed`, `failed`}.
+    pub(crate) session_state_count: IntGaugeVec,
+
+    /// Counter for the outcome of every per-tick readiness check
+    /// (`generate_protocol_cryptographic_data`) on an advanceable session.
+    /// Labels: `protocol`, `result` in {`ready`, `not_ready`, `err`}.
+    /// A growing `not_ready` or `err` count for a specific protocol explains
+    /// why `ika_dwallet_mpc_advance_completions` is stuck.
+    pub(crate) ready_to_advance_result_total: IntCounterVec,
+
+    /// Counter for `generate_protocol_cryptographic_data` errors (the session
+    /// is skipped for the tick and retried). Labels: `protocol`, `error`
+    /// (a stable short string for the error class).
+    pub(crate) protocol_data_generation_errors_total: IntCounterVec,
+
+    /// Counter for every call into `submit_failed_session` in
+    /// dwallet_mpc_service. Labels: `protocol`, `reason` (the error class,
+    /// e.g. `mpc_error`, `mpc_session_error`).
+    pub(crate) sessions_rejected_total: IntCounterVec,
+
+    /// Size of each parking lot in `DWalletMPCManager.requests_pending_for_network_key`.
+    /// Labels: `network_encryption_key_id`. Sustained non-zero values indicate the validator
+    /// is missing the key data needed to process incoming sessions.
+    pub(crate) requests_pending_for_network_key: IntGaugeVec,
+
+    /// Size of `DWalletMPCManager.requests_pending_for_next_active_committee`.
+    pub(crate) requests_pending_for_next_active_committee: IntGauge,
+
+    /// Size of `DWalletMPCManager.requests_pending_for_frozen_mpc_data` — network
+    /// DKG / reconfiguration requests parked on the off-chain mpc_data freeze
+    /// gate. A session invisibly parked here is exactly the class of wedge the
+    /// pending-request gauges target.
+    pub(crate) requests_pending_for_frozen_mpc_data: IntGauge,
+
+    /// One series per user session currently tracked in `DWalletMPCManager.sessions`,
+    /// labeled by `session_seq` (as a string) and `state`. Value is 1 for the
+    /// state the session is currently in, 0 for the other four states. Sessions that leave
+    /// the tracking map have all five state series flipped to 0 (one final emission).
+    ///
+    /// Cardinality is bounded by `max_active_sessions_buffer` on chain (~100 in practice),
+    /// times 5 states. Lets an operator answer "is session 6713 on this validator?" from
+    /// `curl /metrics | grep session_seq=\"6713\"`.
+    pub(crate) user_session_state: IntGaugeVec,
+
+    /// Per-user-session: earliest consensus round (since this process started) at which any
+    /// output for this session arrived. `-1` until the first output. Label: `session_seq`.
+    pub(crate) user_session_first_output_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: consensus round at which *this* validator's own output looped back.
+    /// `-1` if this validator hasn't submitted an output. Label: `session_seq`.
+    pub(crate) user_session_self_output_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: consensus round at which 2/3 quorum was first observed.
+    /// `-1` if quorum hasn't been observed in this process's lifetime. A stuck session in
+    /// `computation_completed` with this gauge at `-1` is the exact symptom of "submitted,
+    /// no quorum". Label: `session_seq`.
+    pub(crate) user_session_quorum_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: count of distinct authorities from which we've received an output.
+    /// Compare to the committee's validity-threshold to see if a session is starved for
+    /// participation. Label: `session_seq`.
+    pub(crate) user_session_distinct_output_authorities: IntGaugeVec,
+
+    /// Per-user-session: -1 = haven't submitted, 0 = submitted success, 1 = submitted rejected.
+    /// Label: `session_seq`.
+    pub(crate) user_session_local_output_rejected: IntGaugeVec,
+
+    /// Per (session, authority): 1 if we've received an output for this session from this
+    /// authority during the current process lifetime, 0 otherwise. Authority label uses the
+    /// concise (4-byte prefix) form, the same one used in tracing logs.
+    /// Cardinality: ~max_active_sessions_buffer × committee_size (≤ ~15k series).
+    /// Answers "which validators failed to submit for session N?" without log access.
+    pub(crate) user_session_output_received_from: IntGaugeVec,
+
+    /// Per session: number of *distinct* output digests observed this lifetime. `1` ⇒ all
+    /// submitters agreed on a single value (typical happy path even pre-quorum). `>1` ⇒ a
+    /// vote split — different validators are submitting different outputs. Compare with the
+    /// `_distinct_output_authorities` count and quorum_threshold to see if a split has
+    /// stalled quorum. Label: `session_seq`.
+    pub(crate) user_session_distinct_output_digests: IntGaugeVec,
+
+    /// Mirror of `DWalletMPCService.end_of_publish` — 0 or 1. Once it flips to 1, the service
+    /// stops persisting new pending dwallet checkpoints, silently dropping any quorum-reached
+    /// output that arrives after. A value of 1 paired with a chain-side
+    /// `received_end_of_publish == 0` means: this validator declared end-of-publish locally
+    /// but the network never confirmed it — checkpoint messages are being eaten.
+    pub(crate) service_end_of_publish_local: IntGauge,
+
+    /// Per-network-encryption-key: the `epoch` of the loaded public data on this validator.
+    /// If it doesn't match the current epoch, the validator will silently skip sessions
+    /// targeting this key. Labels: `network_encryption_key_id`.
+    pub(crate) network_key_loaded_epoch: IntGaugeVec,
+
+    /// How many user sessions on this validator are stuck in the
+    /// `self_output set && quorum_consensus_round = None` state — i.e., we submitted but
+    /// nobody (us included) has seen quorum. Per-tick gauge.
+    pub(crate) sessions_with_self_output_no_quorum: IntGauge,
+
+    /// Per-completion: number of consensus rounds elapsed between this validator submitting
+    /// its own output and 2/3 quorum being reached. Wide tails ≡ slow consensus, lots of
+    /// retries. Observed once per session at the moment quorum is reached.
+    pub(crate) self_output_to_quorum_consensus_rounds: Histogram,
 }
 
 impl DWalletMPCMetrics {
@@ -324,7 +438,162 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
+            active_sessions_by_age: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_active_sessions_by_age",
+                "Active session count by session type and age bucket",
+                &["session_type", "age_bucket"],
+                registry,
+            )
+            .unwrap(),
+            session_state_count: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_session_state_count",
+                "Number of sessions currently tracked, grouped by status",
+                &["state"],
+                registry,
+            )
+            .unwrap(),
+            ready_to_advance_result_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_ready_to_advance_result_total",
+                "Counts of ready-to-advance readiness-check outcomes per protocol",
+                &["protocol", "result"],
+                registry,
+            )
+            .unwrap(),
+            protocol_data_generation_errors_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_protocol_data_generation_errors_total",
+                "Count of generate_protocol_cryptographic_data errors, by protocol and error class",
+                &["protocol", "error"],
+                registry,
+            )
+            .unwrap(),
+            sessions_rejected_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_sessions_rejected_total",
+                "Count of submit_failed_session calls, by protocol and reason",
+                &["protocol", "reason"],
+                registry,
+            )
+            .unwrap(),
+            requests_pending_for_network_key: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_requests_pending_for_network_key",
+                "Per-key pending session-request parking lot size",
+                &["network_encryption_key_id"],
+                registry,
+            )
+            .unwrap(),
+            requests_pending_for_next_active_committee: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_requests_pending_for_next_active_committee",
+                "Sessions parked waiting for the next active committee",
+                registry,
+            )
+            .unwrap(),
+            requests_pending_for_frozen_mpc_data: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_requests_pending_for_frozen_mpc_data",
+                "Sessions parked waiting for the off-chain mpc_data freeze gate",
+                registry,
+            )
+            .unwrap(),
+            user_session_state: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_state",
+                "1 if user session is in this state on this validator, 0 otherwise (one series per (seq, state))",
+                &["session_seq", "state"],
+                registry,
+            )
+            .unwrap(),
+            user_session_first_output_consensus_round: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_first_output_consensus_round",
+                "Earliest consensus round (this process lifetime) at which any output for the session arrived. -1 if none.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_self_output_consensus_round: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_self_output_consensus_round",
+                "Consensus round at which this validator's own output for the session looped back. -1 if not yet.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_quorum_consensus_round: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_quorum_consensus_round",
+                "Consensus round at which quorum was first observed on the session output. -1 if not in this lifetime.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_distinct_output_authorities: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_distinct_output_authorities",
+                "Number of distinct authorities that submitted an output for the session.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_local_output_rejected: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_local_output_rejected",
+                "-1 if this validator hasn't submitted an output, 0 if submitted success, 1 if submitted rejected.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_output_received_from: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_output_received_from",
+                "1 if we've received an output for this (session, authority) this lifetime, 0 otherwise.",
+                &["session_seq", "authority"],
+                registry,
+            )
+            .unwrap(),
+            user_session_distinct_output_digests: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_user_session_distinct_output_digests",
+                "Number of distinct output digests observed for the session this lifetime. >1 = vote split.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            service_end_of_publish_local: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_service_end_of_publish_local",
+                "1 if DWalletMPCService.end_of_publish has been set this epoch; checkpoint messages after this are dropped",
+                registry,
+            )
+            .unwrap(),
+            network_key_loaded_epoch: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_network_key_loaded_epoch",
+                "Loaded epoch of the network encryption key public data per key_id",
+                &["network_encryption_key_id"],
+                registry,
+            )
+            .unwrap(),
+            sessions_with_self_output_no_quorum: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_sessions_with_self_output_no_quorum",
+                "User sessions where this validator submitted an output but no quorum has been observed.",
+                registry,
+            )
+            .unwrap(),
+            self_output_to_quorum_consensus_rounds: register_histogram_with_registry!(
+                "ika_dwallet_mpc_self_output_to_quorum_consensus_rounds",
+                "Consensus rounds elapsed between this validator submitting an output and quorum being reached on it.",
+                vec![
+                    0.0, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0
+                ],
+                registry,
+            )
+            .unwrap(),
         })
+    }
+
+    /// Clears every per-session-sequence-number series. Called at
+    /// `DWalletMPCManager` construction: the manager (and its
+    /// `previously_emitted_user_session_seqs` diff set) is per-epoch, so the
+    /// cross-tick diff zeroing can never clear series emitted by the previous
+    /// epoch's manager — without this reset the final tick's series from
+    /// epoch N would linger as stale values for the whole of epoch N+1.
+    pub(crate) fn reset_per_session_series(&self) {
+        self.user_session_state.reset();
+        self.user_session_first_output_consensus_round.reset();
+        self.user_session_self_output_consensus_round.reset();
+        self.user_session_quorum_consensus_round.reset();
+        self.user_session_distinct_output_authorities.reset();
+        self.user_session_local_output_rejected.reset();
+        self.user_session_output_received_from.reset();
+        self.user_session_distinct_output_digests.reset();
     }
 }
 
@@ -623,6 +892,59 @@ impl DWalletMPCMetrics {
                 &protocol_data.signature_algorithm(),
             ])
             .set(duration_ms);
+    }
+}
+
+/// Age buckets used by `active_sessions_by_age`. Order matters: sessions are
+/// bucketed into the FIRST bucket whose threshold exceeds their age. Keep
+/// label strings stable — alerts depend on them.
+pub(crate) const AGE_BUCKETS: &[(&str, Duration)] = &[
+    ("<30s", Duration::from_secs(30)),
+    ("<5m", Duration::from_secs(300)),
+    ("<30m", Duration::from_secs(1800)),
+    ("<2h", Duration::from_secs(7200)),
+];
+/// Open-ended bucket label for ages >= the last `AGE_BUCKETS` threshold.
+pub(crate) const AGE_BUCKET_OVERFLOW: &str = ">=2h";
+
+/// Stable label strings for the `state` label of `session_state_count` and
+/// `user_session_state`.
+pub(crate) const SESSION_STATE_ACTIVE: &str = "active";
+pub(crate) const SESSION_STATE_WAITING_FOR_REQUEST: &str = "waiting_for_session_request";
+pub(crate) const SESSION_STATE_COMPUTATION_COMPLETED: &str = "computation_completed";
+pub(crate) const SESSION_STATE_COMPLETED: &str = "completed";
+pub(crate) const SESSION_STATE_FAILED: &str = "failed";
+pub(crate) const ALL_SESSION_STATES: &[&str] = &[
+    SESSION_STATE_ACTIVE,
+    SESSION_STATE_WAITING_FOR_REQUEST,
+    SESSION_STATE_COMPUTATION_COMPLETED,
+    SESSION_STATE_COMPLETED,
+    SESSION_STATE_FAILED,
+];
+
+/// Stable label strings for `ready_to_advance_result_total`.
+pub(crate) const READY_RESULT_READY: &str = "ready";
+pub(crate) const READY_RESULT_NOT_READY: &str = "not_ready";
+pub(crate) const READY_RESULT_ERR: &str = "err";
+
+/// Stable label strings for the `session_type` label.
+pub(crate) const SESSION_TYPE_USER: &str = "user";
+pub(crate) const SESSION_TYPE_SYSTEM: &str = "system";
+pub(crate) const SESSION_TYPE_INTERNAL_PRESIGN: &str = "internal_presign";
+pub(crate) const SESSION_TYPE_NOA_SIGN: &str = "noa_sign";
+pub(crate) const ALL_SESSION_TYPES: &[&str] = &[
+    SESSION_TYPE_USER,
+    SESSION_TYPE_SYSTEM,
+    SESSION_TYPE_INTERNAL_PRESIGN,
+    SESSION_TYPE_NOA_SIGN,
+];
+
+pub(crate) fn session_type_label(session_type: SessionType) -> &'static str {
+    match session_type {
+        SessionType::User => SESSION_TYPE_USER,
+        SessionType::System => SESSION_TYPE_SYSTEM,
+        SessionType::InternalPresign => SESSION_TYPE_INTERNAL_PRESIGN,
+        SessionType::NetworkOwnedAddressSign => SESSION_TYPE_NOA_SIGN,
     }
 }
 
