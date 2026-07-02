@@ -45,13 +45,13 @@ impl ArchiveMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         let this = Self {
             latest_dwallet_checkpoint_archived: register_int_gauge_with_registry!(
-                "latest_dwallet_checkpoint_archived",
+                "ika_latest_dwallet_checkpoint_archived",
                 "Latest dwallet checkpoint to have archived to the remote store",
                 registry
             )
             .unwrap(),
             latest_system_checkpoint_archived: register_int_gauge_with_registry!(
-                "latest_system_checkpoint_archived",
+                "ika_latest_system_checkpoint_archived",
                 "Latest system checkpoint to have archived to the remote store",
                 registry
             )

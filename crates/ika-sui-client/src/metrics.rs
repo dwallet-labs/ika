@@ -45,14 +45,14 @@ impl SuiClientMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         let this = Self {
             sui_rpc_errors: register_int_counter_vec_with_registry!(
-                "sui_client_sui_rpc_errors",
+                "ika_sui_client_sui_rpc_errors",
                 "Total number of errors from sui RPC, by RPC method",
                 &["method"],
                 registry,
             )
             .unwrap(),
             chain_blob_reads: register_int_counter_vec_with_registry!(
-                "sui_client_chain_blob_reads",
+                "ika_sui_client_chain_blob_reads",
                 "Total chain-side blob reads (mpc_data, network DKG output, reconfig output)",
                 &["method"],
                 registry,

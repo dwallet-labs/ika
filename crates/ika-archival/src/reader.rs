@@ -46,21 +46,21 @@ impl ArchiveReaderMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         let this = Self {
             archive_actions_read: register_int_counter_vec_with_registry!(
-                "archive_actions_read",
+                "ika_archive_actions_read",
                 "Number of actions read from archive",
                 &["bucket"],
                 registry
             )
             .unwrap(),
             archive_dwallet_checkpoints_read: register_int_counter_vec_with_registry!(
-                "archive_dwallet_checkpoints_read",
+                "ika_archive_dwallet_checkpoints_read",
                 "Number of dwallet checkpoints read from the archive",
                 &["bucket"],
                 registry
             )
             .unwrap(),
             archive_system_checkpoints_read: register_int_counter_vec_with_registry!(
-                "archive_system_checkpoints_read",
+                "ika_archive_system_checkpoints_read",
                 "Number of system checkpoints read from the archive",
                 &["bucket"],
                 registry

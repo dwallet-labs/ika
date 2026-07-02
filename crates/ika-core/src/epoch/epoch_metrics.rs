@@ -197,7 +197,7 @@ impl EpochMetrics {
                 registry
             ).unwrap(),
             epoch_total_computation_reward: register_int_gauge_with_registry!(
-                "epoch_total_computation_reward",
+                "ika_epoch_total_computation_reward",
                 "Total amount of computation rewards in the epoch",
                 registry
             ).unwrap(),
@@ -227,7 +227,7 @@ impl EpochMetrics {
                 registry
             ).unwrap(),
             epoch_first_system_checkpoint_created_time_since_epoch_begin_ms: register_int_gauge_with_registry!(
-                "epoch_first_system_checkpoint_created_time_since_epoch_begin_ms",
+                "ika_epoch_first_system_checkpoint_created_time_since_epoch_begin_ms",
                 "Time interval from when the epoch opens at new epoch to the first params message is created locally",
                 registry
             ).unwrap(),
@@ -273,74 +273,74 @@ impl EpochMetrics {
             )
             .unwrap(),
             dwallet_mpc_data_freeze_epoch: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_freeze_epoch",
+                "ika_dwallet_mpc_data_freeze_epoch",
                 "Epoch of the most recent mpc_data freeze observed locally",
                 registry
             )
             .unwrap(),
             dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_excluded_validators",
+                "ika_dwallet_mpc_data_excluded_validators",
                 "Number of validators the mpc_data freeze partition excluded this epoch",
                 registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_signals: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_ready_signals",
+                "ika_dwallet_mpc_data_ready_signals",
                 "Number of distinct EpochMpcDataReadySignal signers recorded this epoch",
                 registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_signal_stake: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_ready_signal_stake",
+                "ika_dwallet_mpc_data_ready_signal_stake",
                 "Stake attested by the recorded mpc_data ready signals this epoch",
                 registry
             )
             .unwrap(),
             dwallet_mpc_data_locally_validated_peers: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_locally_validated_peers",
+                "ika_dwallet_mpc_data_locally_validated_peers",
                 "This validator's locally-validated mpc_data peer count",
                 registry
             )
             .unwrap(),
             dwallet_mpc_data_announcements_received: register_int_gauge_with_registry!(
-                "dwallet_mpc_data_announcements_received",
+                "ika_dwallet_mpc_data_announcements_received",
                 "Number of validator mpc_data announcements recorded this epoch",
                 registry
             )
             .unwrap(),
             dwallet_handoff_cert_epoch: register_int_gauge_with_registry!(
-                "dwallet_handoff_cert_epoch",
+                "ika_dwallet_handoff_cert_epoch",
                 "Epoch of the most recent certified handoff attestation formed locally",
                 registry
             )
             .unwrap(),
             dwallet_handoff_signatures_collected: register_int_gauge_with_registry!(
-                "dwallet_handoff_signatures_collected",
+                "ika_dwallet_handoff_signatures_collected",
                 "Number of distinct verified handoff signatures aggregated this epoch",
                 registry
             )
             .unwrap(),
             dwallet_handoff_signatures_stake: register_int_gauge_with_registry!(
-                "dwallet_handoff_signatures_stake",
+                "ika_dwallet_handoff_signatures_stake",
                 "Stake accumulated by the verified handoff signatures this epoch",
                 registry
             )
             .unwrap(),
             dwallet_handoff_signatures_buffered: register_int_gauge_with_registry!(
-                "dwallet_handoff_signatures_buffered",
+                "ika_dwallet_handoff_signatures_buffered",
                 "Depth of the pending handoff-signature buffer",
                 registry
             )
             .unwrap(),
             dwallet_handoff_signatures_rejected_total: register_int_counter_vec_with_registry!(
-                "dwallet_handoff_signatures_rejected_total",
+                "ika_dwallet_handoff_signatures_rejected_total",
                 "Handoff signatures rejected by the verification path, by verdict",
                 &["verdict"],
                 registry
             )
             .unwrap(),
             own_mpc_data_blob_unhealthy: register_int_gauge_with_registry!(
-                "own_mpc_data_blob_unhealthy",
+                "ika_own_mpc_data_blob_unhealthy",
                 "1 while this validator's own mpc_data blob is missing/invalid in perpetual storage",
                 registry
             )
