@@ -80,6 +80,18 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
     ),
 }
 
+/// Builds the per-MPC-round consensus-delay map, OMITTING zero-valued
+/// entries. A zero delay must produce the exact map 1.1.8 passed (no entry
+/// at all, `HashMap::new()`), not an explicit `(round, 0)` — the map crosses
+/// into the crypto crate's `ready_to_advance`, and byte-identical v3
+/// behavior must not depend on how that side treats an explicit zero.
+fn round_delays<const N: usize>(entries: [(u64, u64); N]) -> HashMap<u64, u64> {
+    entries
+        .into_iter()
+        .filter(|(_, delay)| *delay > 0)
+        .collect()
+}
+
 impl PresignAdvanceRequestByProtocol {
     pub fn try_new(
         protocol: &DWalletSignatureAlgorithm,
@@ -112,7 +124,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
+                    round_delays([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -125,7 +137,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
+                    round_delays([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -138,7 +150,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([(2, schnorr_presign_second_round_delay)]),
+                    round_delays([(2, schnorr_presign_second_round_delay)]),
                     &serialized_messages_by_consensus_round,
                 )?;
 
@@ -166,7 +178,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([
+                    round_delays([
                         (2, schnorr_presign_second_round_delay),
                         (3, schnorr_presign_third_round_delay),
                     ]),
@@ -182,7 +194,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([
+                    round_delays([
                         (2, schnorr_presign_second_round_delay),
                         (3, schnorr_presign_third_round_delay),
                     ]),
@@ -198,7 +210,7 @@ impl PresignAdvanceRequestByProtocol {
                     party_id,
                     access_structure,
                     consensus_round,
-                    HashMap::from([
+                    round_delays([
                         (2, schnorr_presign_second_round_delay),
                         (3, schnorr_presign_third_round_delay),
                     ]),

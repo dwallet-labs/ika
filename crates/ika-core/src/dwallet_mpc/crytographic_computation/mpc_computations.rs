@@ -142,7 +142,9 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
-                    protocol_config.schnorr_presign_third_round_delay(),
+                    protocol_config
+                        .schnorr_presign_third_round_delay_as_option()
+                        .unwrap_or(0),
                     serialized_messages_by_consensus_round,
                 )?;
 
@@ -167,7 +169,9 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
-                    protocol_config.schnorr_presign_third_round_delay(),
+                    protocol_config
+                        .schnorr_presign_third_round_delay_as_option()
+                        .unwrap_or(0),
                     serialized_messages_by_consensus_round,
                 )?;
 
