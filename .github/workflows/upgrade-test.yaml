@@ -24,6 +24,11 @@ name: Upgrade Test
 #                  `mainnet-v1.1.8` binary, swap all to the current build,
 #                  confirm v4 and continued serving. Defaults to
 #                  old_ref=mainnet-v1.1.8, old_bin_name=ika-node.
+#   v118_churn   — v118_upgrade + post-upgrade committee churn: after the
+#                  atomic 1.1.8 -> local swap, join a brand-new local validator
+#                  so the v4 reshare of the 1.1.8-origin key includes a new
+#                  party (exercises the OCS joiner trust-anchor path from a real
+#                  1.1.8 origin). Same defaults as v118_upgrade.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -39,19 +44,15 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "Which upgrade scenario to run"
-        type: choice
+        description: "Scenarios: 'all', or a comma-separated subset e.g. 'smoke,cross_binary,v118_churn'. Each runs as its own job on its own runner, in parallel."
+        type: string
         required: true
-        # cross_binary is the most robust real upgrade test: its OLD binary is
-        # built from THIS branch (current toolchain, same crypto), so it does
-        # not depend on an old tag still building. v118_upgrade is the literal
-        # mainnet rehearsal — pick it explicitly before a mainnet upgrade.
-        default: "cross_binary"
-        options:
-          - smoke
-          - workload
-          - cross_binary
-          - v118_upgrade
+        # Default 'all' = every scenario. Or a comma-separated subset. Each
+        # selected scenario is a separate matrix job (separate runner), with
+        # fail-fast disabled. Per-run overrides (old_ref/old_max_protocol_version)
+        # apply to EVERY selected scenario, so leave them empty unless running a
+        # single scenario (each scenario otherwise uses its own defaults).
+        default: "all"
       old_ref:
         description: "Git ref/tag/sha/branch for the OLD binary (cross_binary & v118_upgrade; empty = per-scenario default)"
         type: string
@@ -68,7 +69,12 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (only cross_binary/v118_upgrade honor it; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (only cross_binary/v118_upgrade/v118_churn honor it; empty = scenario default)"
+        type: string
+        required: false
+        default: ""
+      max_mpc_computation_cores:
+        description: "Cap each validator's concurrent dwallet-MPC computations (bounds peak memory for co-located test validators; empty = node default = host cores)"
         type: string
         required: false
         default: ""
@@ -77,6 +83,11 @@ on:
         type: string
         required: false
         default: "info"
+      heap_profile:
+        description: "Enable jemalloc heap profiling (jeprof) to find what holds validator memory — pair with ONE light scenario, e.g. test=workload"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -92,8 +103,46 @@ env:
   rust_stable: "1.94"
 
 jobs:
+  # Resolve `inputs.test` into the matrix of scenarios to run: 'all' fans every
+  # scenario out (each as its own job on its own runner); a single scenario
+  # runs just that one.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          TEST: ${{ inputs.test }}
+        run: |
+          set -euo pipefail
+          ALL="smoke workload cross_binary v118_upgrade v118_churn"
+          if [ "$TEST" = "all" ]; then
+            SELECTED="$ALL"
+          else
+            # Comma-separated subset -> space-separated, whitespace trimmed.
+            SELECTED=$(echo "$TEST" | tr ',' ' ' | xargs)
+          fi
+          json=""
+          for t in $SELECTED; do
+            case " $ALL " in
+              *" $t "*) ;;
+              *) echo "unknown scenario '$t' (valid: $ALL, or 'all')" >&2; exit 1 ;;
+            esac
+            json="$json\"$t\","
+          done
+          [ -n "$json" ] || { echo "no scenarios selected" >&2; exit 1; }
+          echo "matrix={\"test\":[${json%,}]}" >> "$GITHUB_OUTPUT"
+          echo "selected scenarios: $SELECTED"
+
   upgrade-test:
-    name: ${{ inputs.test }}
+    needs: setup
+    # One job per scenario, each on its own runner, in parallel. fail-fast off
+    # so one scenario's failure (or a runner death) doesn't cancel the others.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    name: ${{ matrix.test }}
     runs-on: ika-k8s-large
     # An upgrade scenario crosses several long epochs plus a cold build of
     # both the current binaries and the OLD ref; the ceiling covers that.
@@ -161,11 +210,13 @@ jobs:
           curl -L "https://github.com/MystenLabs/sui/releases/download/${SUI_TAG}/sui-${SUI_TAG}-ubuntu-x86_64.tgz" > sui.tgz
           tar -xzf sui.tgz
           cp ./sui "$HOME/.local/bin/sui"
+          chmod +x "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/sui" --version
 
       - name: Resolve test selection
         env:
-          TEST: ${{ inputs.test }}
+          TEST: ${{ matrix.test }}
           IN_OLD_REF: ${{ inputs.old_ref }}
           IN_OLD_BIN_NAME: ${{ inputs.old_bin_name }}
           IN_PATCH_MAX: ${{ inputs.old_max_protocol_version }}
@@ -176,6 +227,7 @@ jobs:
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             cross_binary) RUN_FLAG=RUN_CROSS_BINARY ;;
             v118_upgrade) RUN_FLAG=RUN_V118_UPGRADE ;;
+            v118_churn)   RUN_FLAG=RUN_V118_CHURN ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -184,7 +236,7 @@ jobs:
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           PATCH_MAX="$IN_PATCH_MAX"
           case "$TEST" in
-            v118_upgrade)
+            v118_upgrade | v118_churn)
               : "${OLD_REF:=mainnet-v1.1.8}"
               : "${OLD_BIN_NAME:=ika-node}"
               ;;
@@ -204,17 +256,33 @@ jobs:
           echo "test=$TEST flag=$RUN_FLAG old_ref=${OLD_REF:-<none>} old_bin=${OLD_BIN_NAME:-<none>} patch_max=${PATCH_MAX:-<none>}"
 
       - name: Build current binaries
+        # When heap_profile is on, keep full symbols IN the binary so jeprof can
+        # name frames: the release profile has `debug = 1` but
+        # `strip = 'debuginfo'` + `split-debuginfo = 'packed'`, which moves the
+        # line tables OUT to a side file — jeprof reads only the binary, so it
+        # falls back to `::clone@<addr>`. Overriding strip=none + split=off
+        # embeds them (keeps the target dir at target/release/, unlike switching
+        # to the release-dbgsym profile). Off → the repo defaults (stripped, ~1GB
+        # smaller binary), so non-profiling runs are unchanged.
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
         run: |
           set -euo pipefail
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
-          # green. `--no-default-features` drops ika-node's enforce-minimum-cpu.
-          cargo build --release --no-default-features -p ika-node --bin ika-validator --bin ika-notifier
+          # green. `--no-default-features --features jemalloc` drops ika-node's
+          # enforce-minimum-cpu (panics on cgroup-throttled pods) but KEEPS
+          # jemalloc. Both are in `default`, so `--no-default-features` alone
+          # ALSO dropped jemalloc — leaving CI on the glibc allocator, so the
+          # jemalloc background_threads memory fix and heap profiling (the
+          # `profiling` feature) never took effect. Prod uses jemalloc; so does CI now.
+          cargo build --release --no-default-features --features jemalloc -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ inputs.test == 'cross_binary' || inputs.test == 'v118_upgrade' }}
+        if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -242,16 +310,7 @@ jobs:
           echo "OLD_BIN=$OLD_BIN" >> "$GITHUB_ENV"
           echo "built OLD binary: $OLD_BIN"
 
-      - name: Start CPU sampler
-        run: |
-          # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
-          # actually consumed; nr_throttled/throttled_usec -> CFS quota
-          # stalls) + loadavg. Answers "does this workload USE the vCPUs"
-          # rather than inferring it from wall-clock.
-          nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
-          echo $! > cpu-sampler.pid
-
-      - name: Run ${{ inputs.test }}
+      - name: Run ${{ matrix.test }}
         env:
           # smoke/workload read IKA_VALIDATOR_BIN/IKA_NOTIFIER_BIN/IKA_BIN;
           # cross_binary/v118_upgrade read NEW_BIN/NOTIFIER_BIN/OLD_BIN/IKA_BIN.
@@ -272,32 +331,135 @@ jobs:
           # Empty string fails to parse and the test falls back to its own
           # default, so this is safe to pass unconditionally.
           EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+          # Cap concurrent dwallet-MPC computations per validator. NOTE: this
+          # bounds CPU concurrency (each computation already fans out across the
+          # whole rayon pool via the `parallel` crypto feature), not memory
+          # directly, and is NOT proven to prevent the cross_binary runner
+          # death — v118 passes with or without it. Empty -> node default.
+          MAX_MPC_COMPUTATION_CORES: ${{ inputs.max_mpc_computation_cores }}
+          # Shrink the per-curve presign pools (production maxima 30k-150k each x
+          # 10 pools, RocksDB-backed) for the out-of-process test validators —
+          # they otherwise fill GiB-scale pools the test never uses (a Sign needs
+          # a handful of presigns). The node honors this env via
+          # ProtocolConfig::enable_small_presign_pools_for_local_swarm; mainnet
+          # never sets it. This is the other half of the per-validator RSS that
+          # parks the 5-validator pod at the 96 GiB ceiling.
+          IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
+          # heap_profile: turn on jemalloc heap profiling. prof IS compiled in
+          # (tikv-jemalloc-sys `profiling` feature). The conf env-var NAME depends
+          # on the jemalloc symbol prefix: librocksdb-sys feature-unifies
+          # `unprefixed_malloc_on_supported_platforms` onto the shared
+          # tikv-jemalloc-sys, so on Linux the allocator is UNPREFIXED and reads
+          # `MALLOC_CONF` — NOT `_RJEM_MALLOC_CONF`. Earlier runs set only the
+          # prefixed name and got zero dumps regardless of interval/load. Set BOTH
+          # so it works whichever prefix a given build resolves to. Each validator
+          # dumps a `.heap` per pid every ~256 MiB allocated (lg_prof_interval:28);
+          # the "Heap profile" step below symbolizes the latest with jeprof.
+          # Empty when off — the compiled-in background_thread:true still applies
+          # and is what bounds RSS / fixed the OOM, independent of this var.
+          MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
+          _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
           mkdir -p "$UPGRADE_TEST_DIR"
           echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"
+          # Resource sampler (CPU + MEMORY) -> resource-sampler.log, BACKGROUNDED
+          # so the test runs in the FOREGROUND and its [flow N/total] progress +
+          # logs stream LIVE to the step log (via tee), not only the artifact.
+          # Every 15s: effective CPUs, loadavg, mem current/max/pct, swap, the
+          # cgroup oom_kill counter, top-RSS. (This file is lost on a "runner
+          # lost communication" death — the cross_binary OOM — which also wipes
+          # any runner-emitted annotations, so we don't emit them; that death is
+          # an OOMKilled/137 at the pod's 96 GiB cgroup limit, captured off-pod
+          # via `kubectl top`/describe or node dmesg. Idle validators ~7.5-8 GB.)
+          ( set +eu
+            CG=/sys/fs/cgroup
+            prev=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo 0)
+            memmax=$(cat "$CG/memory.max" 2>/dev/null || echo 0); case "$memmax" in ''|max) memmax=0;; esac
+            while true; do
+              sleep 15
+              cur=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo "$prev")
+              cpus="$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 ))"; prev=$cur
+              load=$(cut -d' ' -f1-3 /proc/loadavg)
+              memcur=$(cat "$CG/memory.current" 2>/dev/null || echo 0)
+              swap=$(cat "$CG/memory.swap.current" 2>/dev/null || echo 0)
+              oom=$(awk '/^oom_kill /{print $2}' "$CG/memory.events" 2>/dev/null || echo 0); [ -n "$oom" ] || oom=0
+              pct=0; [ "$memmax" -gt 0 ] && pct=$(( memcur * 100 / memmax ))
+              top=$(ps -eo rss,comm --sort=-rss 2>/dev/null | awk 'NR>1 && NR<=4{printf "%s:%dM ",$2,$1/1024}')
+              echo "$(date -u +%T) cpus=$cpus load=$load mem=$((memcur/1048576))M/$((memmax/1048576))M pct=${pct}% swap=$((swap/1048576))M oom_kill=$oom top=[$top]" >> resource-sampler.log
+            done ) &
+          SAMPLER_PID=$!
           # One scenario, one process: the harness binds fixed Sui ports and
-          # chdirs during publish, so --test-threads=1 is mandatory.
-          time cargo test --release -p ika-upgrade-test --test "$TEST_NAME" \
+          # chdirs during publish, so --test-threads=1 is mandatory. `tee`
+          # streams the test output (incl. [flow N/total]) LIVE to the step log
+          # AND to the artifact; PIPESTATUS[0] is cargo's exit code, not tee's.
+          set +e
+          cargo test --release -p ika-upgrade-test --test "$TEST_NAME" \
             -- --nocapture --test-threads=1 2>&1 | tee upgrade-test.log
+          rc=${PIPESTATUS[0]}
+          kill "$SAMPLER_PID" 2>/dev/null || true
+          # The RUN_* gate makes the scenario #[ignore]d when unset, so a
+          # misconfigured gate (or a harness that leaves child processes and
+          # muddies cargo's exit code) could SKIP the test yet still exit 0 — a
+          # false green (#1714). Assert the gated test actually ran and passed;
+          # this run step uses `set -uo pipefail` (no -e), so fail rc explicitly
+          # rather than relying on grep's exit status.
+          if [ "$rc" -eq 0 ] && ! grep -q "test result: ok. 1 passed" upgrade-test.log; then
+            echo "::error::$TEST_NAME exited 0 but did not report 'test result: ok. 1 passed' (gate misfire / skipped)"
+            rc=1
+          fi
+          exit "$rc"
 
       - name: Summarize results
         if: always()
         run: |
-          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked" upgrade-test.log | tail -60 || true
+          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
 
-      - name: Stop CPU sampler
-        if: always()
-        run: kill "$(cat cpu-sampler.pid)" 2>/dev/null || true
+      - name: Heap profile (jeprof)
+        if: ${{ always() && inputs.heap_profile }}
+        run: |
+          set +e
+          DIR="${{ github.workspace }}/upgrade-test-data"
+          BIN="${{ github.workspace }}/target/release/ika-validator"
+          echo "heap dumps under $DIR:"; ls -la "$DIR"/jeprof.*.heap 2>/dev/null | tail -12
+          # jeprof ships with libjemalloc-dev; it reads the .heap dump + the
+          # binary's symbols to attribute live bytes to call paths. The build
+          # step above keeps full symbols in the binary when heap_profile is on
+          # (strip=none, split-debuginfo=off), so frames resolve to names.
+          if ! command -v jeprof >/dev/null; then
+            if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+            $SUDO apt-get -o Acquire::ForceIPv4=true install -y libjemalloc-dev 2>&1 | tail -3
+          fi
+          LAST=$(ls -t "$DIR"/jeprof.*.heap 2>/dev/null | head -1)
+          if [ -n "$LAST" ] && command -v jeprof >/dev/null; then
+            # Read by CUMULATIVE and hide jemalloc's own sampling frames
+            # (prof_backtrace*/prof_dump* are the universal backtrace-capture
+            # leaf — flat-sorted they show ~99% and bury the real call sites).
+            echo "=== jeprof --inuse_space --cum (top allocation call paths; jemalloc prof frames hidden) — $LAST ==="
+            jeprof --text --cum --show_bytes --inuse_space \
+              --ignore='prof_backtrace|prof_dump|prof_alloc|prof_tctx|je_prof' \
+              "$BIN" "$LAST" 2>/dev/null | head -50
+          else
+            echo "no heap dumps or jeprof missing — heap_profile must be on AND a workload-bearing scenario must have run"
+          fi
 
-      - name: Upload CPU sampler log
+      - name: Upload heap dumps
+        if: ${{ always() && inputs.heap_profile }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jeprof-${{ matrix.test }}-${{ github.run_attempt }}
+          path: upgrade-test-data/jeprof.*.heap
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload resource sampler log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-sampler-${{ inputs.test }}-${{ github.run_attempt }}
-          path: cpu-sampler.log
+          name: resource-sampler-${{ matrix.test }}-${{ github.run_attempt }}
+          path: resource-sampler.log
           retention-days: 7
 
       - name: Upload test log
@@ -306,7 +468,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: upgrade-test-log-${{ inputs.test }}-${{ github.run_attempt }}
+          name: upgrade-test-log-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test.log
           retention-days: 7
 
@@ -315,7 +477,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # Logs only — the data dirs hold multi-GB RocksDB state.
-          name: upgrade-test-node-logs-${{ inputs.test }}-${{ github.run_attempt }}
+          name: upgrade-test-node-logs-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test-data/**/*.log
           retention-days: 7
           if-no-files-found: ignore

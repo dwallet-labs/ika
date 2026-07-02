@@ -15,9 +15,13 @@ use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::{
     ClassGroupsDecryptionKey, RistrettoPvssDecryptionKey, Secp256k1PvssDecryptionKey,
 };
+use dwallet_mpc_centralized_party::{
+    network_dkg_public_output_to_protocol_pp_inner,
+    reconfiguration_public_output_to_protocol_pp_inner,
+};
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
-    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    NetworkKeyId, SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedNetworkDkgOutput,
 };
 use group::PartyID;
@@ -848,8 +852,7 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
 /// from the reconfiguration output). The result matches what
 /// instantiation computes because both seed `compute_noa_dkg` on the
 /// curve25519 encryption-key parameters.
-#[cfg(test)]
-pub fn derive_curve25519_network_owned_address_public_key(
+pub(crate) fn derive_curve25519_network_owned_address_public_key(
     curve25519_protocol_public_parameters: &[u8],
 ) -> DwalletMPCResult<Vec<u8>> {
     let protocol_public_parameters: twopc_mpc::curve25519::class_groups::ProtocolPublicParameters =
@@ -865,6 +868,77 @@ pub fn derive_curve25519_network_owned_address_public_key(
     Ok(noa.public_key)
 }
 
+/// Derives a network key's content-derived [`NetworkKeyId`] from its raw
+/// chain blobs and records the temporary `ObjectID` <-> `NetworkKeyId`
+/// mapping, on the rayon pool.
+///
+/// Normally the mapping registers at instantiation
+/// ([`DwalletMPCNetworkKeys::update_network_key`]), but a validator
+/// consuming a handoff cert for a key it never instantiated (a joiner on
+/// any key absent from the seeded map) needs the mapping *before*
+/// instantiation — the cert keys by `NetworkKeyId`, and cert-gated
+/// adoption is what leads to instantiation in the first place. The
+/// derivation is an expensive class-groups computation (deserialize the
+/// curve25519 protocol public parameters + the deterministic NOA DKG),
+/// so it runs off the MPC service loop; the adoption pass re-evaluates
+/// each tick and proceeds once the registration lands.
+pub(crate) fn spawn_network_key_id_registration(
+    key_id: ObjectID,
+    network_dkg_public_output: Vec<u8>,
+    current_reconfiguration_public_output: Vec<u8>,
+) {
+    // msim: rayon worker threads have no simulated-node context, so capture
+    // the originating NodeHandle and enter it before any tracing call
+    // inside the worker.
+    #[cfg(msim)]
+    let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
+    rayon::spawn_fifo(move || {
+        #[cfg(msim)]
+        let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+
+        // Derive from the same source instantiation would use: the
+        // reconfiguration output when present, else the DKG output. The
+        // resulting id is identical either way — resharing preserves the
+        // collective encryption key the id is derived from.
+        let curve25519_protocol_pp = if current_reconfiguration_public_output.is_empty() {
+            network_dkg_public_output_to_protocol_pp_inner(
+                DWalletCurve::Curve25519 as u32,
+                network_dkg_public_output,
+            )
+        } else {
+            reconfiguration_public_output_to_protocol_pp_inner(
+                DWalletCurve::Curve25519 as u32,
+                current_reconfiguration_public_output,
+                network_dkg_public_output,
+            )
+        };
+        let network_key_id = curve25519_protocol_pp
+            .map_err(|e| DwalletMPCError::InternalError(e.to_string()))
+            .and_then(|pp| derive_curve25519_network_owned_address_public_key(&pp))
+            .and_then(|public_key| {
+                NetworkKeyId::from_bytes(&public_key)
+                    .map_err(|e| DwalletMPCError::InternalError(e.to_string()))
+            });
+        match network_key_id {
+            Ok(network_key_id) => {
+                crate::network_key_id_mapping::register(key_id, network_key_id);
+                info!(
+                    ?key_id,
+                    ?network_key_id,
+                    "derived and registered the NetworkKeyId from locally-held key data"
+                );
+            }
+            Err(e) => error!(
+                ?key_id,
+                error = ?e,
+                "failed to derive the NetworkKeyId from locally-held key data — \
+                 cert-anchored adoption for this key stays deferred"
+            ),
+        }
+    });
+}
+
 /// One-off tool (not a unit test): fetches the deployed network key from
 /// testnet/mainnet and prints its `NetworkKeyId` (curve25519 NOA ed25519
 /// pubkey) for baking into the temporary static ObjectID->NetworkKeyId
@@ -872,8 +946,8 @@ pub fn derive_curve25519_network_owned_address_public_key(
 ///   cargo test -p ika-core --release print_deployed_network_key_ids -- --ignored --nocapture
 #[cfg(test)]
 mod network_key_id_derivation_tool {
-    use super::derive_curve25519_network_owned_address_public_key;
-    use dwallet_mpc_centralized_party::{
+    use super::{
+        derive_curve25519_network_owned_address_public_key,
         network_dkg_public_output_to_protocol_pp_inner,
         reconfiguration_public_output_to_protocol_pp_inner,
     };

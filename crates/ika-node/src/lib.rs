@@ -35,6 +35,7 @@ use tower::ServiceBuilder;
 use tracing::{debug, warn};
 use tracing::{error, info};
 
+use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 pub use handle::IkaNodeHandle;
 use ika_archival::reader::ArchiveReaderBalancer;
 use ika_archival::writer::ArchiveWriter;
@@ -3286,7 +3287,8 @@ impl IkaNode {
             // Surface the breakdown roughly every 10s so a hang is never
             // silent on a dashboard or in the logs.
             if retries.is_multiple_of(10) {
-                let (cert_reconfiguration_items, missing_key_ids) = match &cert {
+                let (cert_reconfiguration_items, missing_key_ids, unmapped_cert_keys) = match &cert
+                {
                     Some(cert) => {
                         let total = cert
                             .attestation
@@ -3312,9 +3314,32 @@ impl IkaNode {
                                 _ => None,
                             })
                             .collect();
-                        (total, missing)
+                        // Cert keys with NO ObjectID mapping (this validator
+                        // never instantiated the key and it is not seeded)
+                        // are exactly the keys the gate can never satisfy,
+                        // yet the translation above drops them from
+                        // `missing` — report them separately so an
+                        // unmapped-key wedge no longer reads as
+                        // `missing_locally=0`. The MPC service's adoption
+                        // pass derives and registers the mapping in the
+                        // background; this state should clear on its own.
+                        let unmapped: Vec<NetworkKeyId> = cert
+                            .attestation
+                            .items
+                            .iter()
+                            .filter_map(|(item, _)| match item {
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id }
+                                    if ika_core::network_key_id_mapping::object_id_for(key_id)
+                                        .is_none() =>
+                                {
+                                    Some(*key_id)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        (total, missing, unmapped)
                     }
-                    None => (0, Vec::new()),
+                    None => (0, Vec::new(), Vec::new()),
                 };
                 warn!(
                     next_epoch,
@@ -3323,6 +3348,7 @@ impl IkaNode {
                     cert_reconfiguration_items,
                     missing_locally = missing_key_ids.len(),
                     missing_key_ids = ?missing_key_ids,
+                    unmapped_cert_keys = ?unmapped_cert_keys,
                     retries,
                     "prepare-then-start: still awaiting full verified handoff data for epoch \
                      {next_epoch}"

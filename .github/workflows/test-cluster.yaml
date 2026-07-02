@@ -6,10 +6,19 @@ name: Test Cluster
 # msim determinism. The slower `#[sim_test]` variant lives in
 # `.github/workflows/simtest.yaml`.
 #
-# Default runs the FULL cluster suite serialized (`--test-threads=1`): each
-# test boots a whole 4-validator network, and concurrent clusters contend on
-# CPU hard enough to produce false timeout failures even on large machines.
-# Crank `test_threads` up only if the runner has headroom to spare.
+# Runs via cargo-nextest with parallel tests. Two facts make this work:
+#   1. nextest runs each test in its OWN PROCESS, which isolates the
+#      `IkaTestClusterBuilder` publish flow's process-global
+#      `set_current_dir` (the `Pub.<env>.toml` parking) — under plain
+#      `cargo test` threads, parallel tests race on cwd and corrupt each
+#      other's contract publishes. (Concurrent boots are serialized by the
+#      builder's cross-process boot lock to avoid port-probe races.)
+#   2. The suite is latency-bound (each cluster spends most wall time
+#      waiting on consensus rounds and epoch timers), so parallel clusters
+#      mostly interleave waiting.
+# MEMORY is the parallelism ceiling, not CPU: each cluster is a full Sui
+# swarm + ika validators (multi-GB); 8-way has OOM-killed the runner pod
+# (96Gi limit) — keep `test_threads` at 4 unless the runner spec grows.
 #
 # See the "## Testing" section in CLAUDE.md for the strategy split between
 # tokio and sim_test.
@@ -23,20 +32,20 @@ on:
         required: false
         default: "ika-test-cluster"
       test_filter:
-        description: "Test name filter passed to cargo test (empty = full suite)"
+        description: "Test name filter passed to nextest (empty = full suite)"
         type: string
         required: false
         default: ""
       test_threads:
-        description: "Concurrent test count (1 = serialized, recommended)"
+        description: "Concurrent test count (nextest process-per-test; memory-bound — 8-way OOM-killed the 96Gi runner pod)"
         type: string
         required: false
-        default: "1"
-      rustflags:
-        description: "Extra RUSTFLAGS (e.g. '-C target-cpu=native' — baseline x86-64 codegen lacks the BMI2/ADX carry-chain instructions the class-groups bignum arithmetic wants)"
+        default: "4"
+      rust_log:
+        description: "RUST_LOG for the test run (default error; scope debug to specific modules — full-debug replays are multi-GB)"
         type: string
         required: false
-        default: ""
+        default: "error"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -48,17 +57,16 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  RUST_LOG: error
+  RUST_LOG: ${{ inputs.rust_log || 'error' }}
   rust_stable: "1.94"
 
 jobs:
   test-cluster:
-    name: cargo test --release
+    name: cargo nextest --release
     runs-on: ika-k8s-large
-    # The full suite serialized is ~12 tests x 2-30 min each on a fast
-    # workstation; the runner pods pace 2-7x slower (per-round orchestration
-    # stall under investigation), so the full suite needs 5-7h.
-    timeout-minutes: 420
+    # The full suite at 4-way runs in ~35 minutes; the ceiling covers a
+    # cold build cache plus contention outliers.
+    timeout-minutes: 150
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -105,6 +113,11 @@ jobs:
           # default release profile.
           prefix-key: "test-cluster"
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Start CPU sampler
         run: |
           # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
@@ -114,26 +127,39 @@ jobs:
           nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
           echo $! > cpu-sampler.pid
 
+      - name: Build test cluster
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          # Compilation in its own step: the Downloaded/Compiling stream is
+          # the majority of this workflow's log volume (~57% measured), and
+          # a separate step collapses in the UI when green, leaving the test
+          # step with only nextest progress and failure replays.
+          cargo nextest run --no-run --release -p "$PACKAGE"
+
       - name: Run test cluster
         env:
           PACKAGE: ${{ inputs.package }}
           TEST_FILTER: ${{ inputs.test_filter }}
           TEST_THREADS: ${{ inputs.test_threads }}
-          EXTRA_RUSTFLAGS: ${{ inputs.rustflags }}
         run: |
           set -o pipefail
-          # RUSTFLAGS env overrides .cargo/config build.rustflags entirely, so
-          # when extra flags are requested, re-include the config defaults.
-          if [ -n "$EXTRA_RUSTFLAGS" ]; then
-            export RUSTFLAGS="-C force-frame-pointers=yes -C force-unwind-tables=yes $EXTRA_RUSTFLAGS"
-          fi
-          cargo test --release -p "$PACKAGE" $TEST_FILTER -- \
-            --test-threads="$TEST_THREADS" --nocapture 2>&1 | tee cluster-tests.log
+          # nextest: process-per-test (isolates the publish-flow cwd
+          # mutation), captured per-test output (failures replay theirs at
+          # the end — no more multi-GB interleaved logs), and no fail-fast
+          # so one wedged cluster can't hide the rest of the suite's
+          # results. Long tests surface via nextest's default SLOW markers.
+          # Failure replays stay inline ON PURPOSE: when the runner pod dies
+          # (OOM/eviction) the artifact upload never happens and the live
+          # log is the only surviving evidence.
+          cargo nextest run --release -p "$PACKAGE" $TEST_FILTER \
+            --test-threads "$TEST_THREADS" --no-fail-fast --cargo-quiet \
+            2>&1 | tee cluster-tests.log
 
       - name: Summarize results
         if: always()
         run: |
-          grep -E "^test .*(ok|FAILED)|test result" cluster-tests.log | tail -40 || true
+          grep -E "PASS |FAIL |SLOW |Summary" cluster-tests.log | tail -40 || true
 
       - name: Upload CPU sampler log
         if: always()
@@ -149,6 +175,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cluster-tests-log
+          name: cluster-tests-log-${{ github.run_attempt }}
           path: cluster-tests.log
           retention-days: 7

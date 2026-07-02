@@ -14,8 +14,15 @@
 //! planned before the on-chain request event starts carrying the
 //! `NetworkKeyId` directly. The known deployed keys are seeded as
 //! constants so the mapping is available *before* instantiation — a
-//! joiner consuming the handoff cert needs it then; tests/localnet that
-//! DKG a fresh key call [`register`] at instantiation to self-populate.
+//! joiner consuming the handoff cert needs it then. For keys outside the
+//! seed (every localnet/CI cluster's fresh DKG), [`register`] runs at
+//! instantiation, and a validator that never instantiated the key (a
+//! joiner) derives the id from its locally-held key blobs in the
+//! background when a handoff cert forces the translation — see
+//! `spawn_network_key_id_registration` in `network_dkg`. Without that
+//! path, adoption needs the mapping, the mapping registers at
+//! instantiation, and instantiation needs adoption: a deadlock that
+//! wedges the joiner's epoch entry.
 //!
 //! TODO(NetworkKeyId-from-event): delete this module once the request
 //! event carries the `NetworkKeyId`. The runtime/tables then key by
