@@ -24,12 +24,6 @@ pub struct EpochMetrics {
     /// until the current epoch store is replaced with the next epoch store.
     pub epoch_total_duration: IntGauge,
 
-    /// Number of checkpoints in the epoch.
-    pub epoch_checkpoint_count: IntGauge,
-
-    /// Number of transactions in the epoch.
-    pub epoch_transaction_count: IntGauge,
-
     /// Total amount of computation rewards in the epoch.
     pub epoch_total_computation_reward: IntGauge,
 
@@ -44,16 +38,6 @@ pub struct EpochMetrics {
     // 7. After reconfiguration, and eventually consensus starts successfully, at some point the first
     //    checkpoint of the new epoch will be created.
     // We introduce various metrics to cover the latency of above steps.
-    /// The duration from when the epoch is closed (i.e. validator halted) to when all pending
-    /// certificates are processed (i.e. ready to send EndOfPublish message).
-    /// This is the duration of (1) through (2) above.
-    pub epoch_pending_certs_processed_time_since_epoch_close_ms: IntGauge,
-
-    /// The interval from when the epoch is closed to when we created the last checkpoint of the
-    /// epoch.
-    /// This is the duration of (1) through (4) above.
-    pub epoch_last_checkpoint_created_time_since_epoch_close_ms: IntGauge,
-
     /// The interval from when the epoch is closed to when we finished executing the last transaction
     /// of the checkpoint (and hence triggering reconfiguration process).
     /// This is the duration of (1) through (5) above.
@@ -75,28 +59,6 @@ pub struct EpochMetrics {
 
     /// Buffer stake current in effect for this epoch
     pub effective_buffer_stake: IntGauge,
-
-    /// Set to 1 if the random beacon DKG protocol failed for the most recent epoch.
-    pub epoch_random_beacon_dkg_failed: IntGauge,
-
-    /// The number of shares held by this node after the random beacon DKG protocol completed.
-    pub epoch_random_beacon_dkg_num_shares: IntGauge,
-
-    /// The amount of time taken from epoch start to completion of random beacon DKG protocol,
-    /// for the most recent epoch.
-    pub epoch_random_beacon_dkg_epoch_start_completion_time_ms: IntGauge,
-
-    /// The amount of time taken to complete random beacon DKG protocol from the time it was
-    /// started (which may be a bit after the epcoh began), for the most recent epoch.
-    pub epoch_random_beacon_dkg_completion_time_ms: IntGauge,
-
-    /// The amount of time taken to start first phase of the random beacon DKG protocol,
-    /// at which point the node has submitted a DKG Message, for the most recent epoch.
-    pub epoch_random_beacon_dkg_message_time_ms: IntGauge,
-
-    /// The amount of time taken to complete first phase of the random beacon DKG protocol,
-    /// at which point the node has submitted a DKG Confirmation, for the most recent epoch.
-    pub epoch_random_beacon_dkg_confirmation_time_ms: IntGauge,
 
     /// Epoch of the most recent mpc_data freeze observed locally. Alert when
     /// it lags `current_epoch` well past the freeze grace window — a freeze
@@ -158,7 +120,7 @@ impl EpochMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         let this = Self {
             current_epoch: register_int_gauge_with_registry!(
-                "current_epoch",
+                "ika_current_epoch",
                 "Current epoch ID",
                 registry
             )
@@ -176,24 +138,14 @@ impl EpochMetrics {
             )
             .unwrap(),
             current_voting_right: register_int_gauge_with_registry!(
-                "current_voting_right",
+                "ika_current_voting_right",
                 "Current voting right of the validator",
                 registry
             )
             .unwrap(),
-            epoch_checkpoint_count: register_int_gauge_with_registry!(
-                "epoch_checkpoint_count",
-                "Number of checkpoints in the epoch",
-                registry
-            ).unwrap(),
             epoch_total_duration: register_int_gauge_with_registry!(
-                "epoch_total_duration",
+                "ika_epoch_total_duration",
                 "Total duration of the epoch",
-                registry
-            ).unwrap(),
-            epoch_transaction_count: register_int_gauge_with_registry!(
-                "epoch_transaction_count",
-                "Number of transactions in the epoch",
                 registry
             ).unwrap(),
             epoch_total_computation_reward: register_int_gauge_with_registry!(
@@ -201,28 +153,18 @@ impl EpochMetrics {
                 "Total amount of computation rewards in the epoch",
                 registry
             ).unwrap(),
-            epoch_pending_certs_processed_time_since_epoch_close_ms: register_int_gauge_with_registry!(
-                "epoch_pending_certs_processed_time_since_epoch_close_ms",
-                "Time interval from when epoch was closed to when all pending certificates are processed",
-                registry
-            ).unwrap(),
-            epoch_last_checkpoint_created_time_since_epoch_close_ms: register_int_gauge_with_registry!(
-                "epoch_last_checkpoint_created_time_since_epoch_close_ms",
-                "Time interval from when epoch was closed to when the last checkpoint of the epoch is created",
-                registry
-            ).unwrap(),
             epoch_reconfig_start_time_since_epoch_close_ms: register_int_gauge_with_registry!(
-                "epoch_reconfig_start_time_since_epoch_close_ms",
+                "ika_epoch_reconfig_start_time_since_epoch_close_ms",
                 "Total time duration from when epoch was closed to when we begin to reconfigure the validator",
                 registry
             ).unwrap(),
             epoch_validator_halt_duration_ms: register_int_gauge_with_registry!(
-                "epoch_validator_halt_duration_ms",
+                "ika_epoch_validator_halt_duration_ms",
                 "Total time duration when the validator was halted (i.e. epoch closed)",
                 registry
             ).unwrap(),
             epoch_first_checkpoint_created_time_since_epoch_begin_ms: register_int_gauge_with_registry!(
-                "epoch_first_checkpoint_created_time_since_epoch_begin_ms",
+                "ika_epoch_first_checkpoint_created_time_since_epoch_begin_ms",
                 "Time interval from when the epoch opens at new epoch to the first checkpoint is created locally",
                 registry
             ).unwrap(),
@@ -232,46 +174,10 @@ impl EpochMetrics {
                 registry
             ).unwrap(),
             effective_buffer_stake: register_int_gauge_with_registry!(
-                "effective_buffer_stake",
+                "ika_effective_buffer_stake",
                 "Buffer stake current in effect for this epoch",
                 registry,
             ).unwrap(),
-            epoch_random_beacon_dkg_failed: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_failed",
-                "Set to 1 if the random beacon DKG protocol failed for the most recent epoch.",
-                registry
-            )
-            .unwrap(),
-            epoch_random_beacon_dkg_num_shares: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_num_shares",
-                "The number of shares held by this node after the random beacon DKG protocol completed",
-                registry
-            )
-            .unwrap(),
-            epoch_random_beacon_dkg_epoch_start_completion_time_ms: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_epoch_start_completion_time_ms",
-                "The amount of time taken from epoch start to completion of random beacon DKG protocol, for the most recent epoch",
-                registry
-            )
-            .unwrap(),
-            epoch_random_beacon_dkg_completion_time_ms: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_completion_time_ms",
-                "The amount of time taken to complete random beacon DKG protocol from the time it was started (which may be a bit after the epoch began), for the most recent epoch",
-                registry
-            )
-            .unwrap(),
-            epoch_random_beacon_dkg_message_time_ms: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_message_time_ms",
-                "The amount of time taken to start first phase of the random beacon DKG protocol, at which point the node has submitted a DKG Message, for the most recent epoch",
-                registry
-            )
-            .unwrap(),
-            epoch_random_beacon_dkg_confirmation_time_ms: register_int_gauge_with_registry!(
-                "epoch_random_beacon_dkg_confirmation_time_ms",
-                "The amount of time taken to complete first phase of the random beacon DKG protocol, at which point the node has submitted a DKG Confirmation, for the most recent epoch",
-                registry
-            )
-            .unwrap(),
             dwallet_mpc_data_freeze_epoch: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_freeze_epoch",
                 "Epoch of the most recent mpc_data freeze observed locally",

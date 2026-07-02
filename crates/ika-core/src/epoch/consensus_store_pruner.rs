@@ -27,19 +27,19 @@ impl Metrics {
     fn new(registry: &Registry, kind: &str) -> Self {
         Self {
             last_pruned_db_epoch: register_int_gauge_with_registry!(
-                format!("last_pruned_{kind}_db_epoch"),
+                format!("ika_last_pruned_{kind}_db_epoch"),
                 format!("The last epoch for which the {kind} store was pruned"),
                 registry
             )
             .unwrap(),
             successfully_pruned_dbs: register_int_counter_with_registry!(
-                format!("successfully_pruned_{kind}_dbs"),
+                format!("ika_successfully_pruned_{kind}_dbs"),
                 format!("The number of {kind} dbs successfully pruned"),
                 registry
             )
             .unwrap(),
             error_pruning_dbs: register_int_counter_vec_with_registry!(
-                format!("error_pruning_{kind}_dbs"),
+                format!("ika_error_pruning_{kind}_dbs"),
                 format!("The number of errors encountered while pruning {kind} dbs"),
                 &["mode"],
                 registry

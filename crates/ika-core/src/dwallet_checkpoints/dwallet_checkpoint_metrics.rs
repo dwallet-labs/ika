@@ -21,7 +21,6 @@ pub struct DWalletCheckpointMetrics {
     pub last_sent_dwallet_checkpoint_signature: IntGauge,
     pub last_skipped_dwallet_checkpoint_signature_submission: IntGauge,
     pub last_ignored_dwallet_checkpoint_signature_received: IntGauge,
-    pub highest_accumulated_epoch: IntGauge,
     pub dwallet_checkpoint_creation_latency: Histogram,
     pub remote_dwallet_checkpoint_forks: IntCounter,
     pub split_brain_dwallet_checkpoint_forks: IntCounter,
@@ -109,12 +108,6 @@ impl DWalletCheckpointMetrics {
             last_ignored_dwallet_checkpoint_signature_received: register_int_gauge_with_registry!(
                 "ika_last_ignored_dwallet_checkpoint_signature_received",
                 "Last received dwallet checkpoint signature that this validator ignored because it was already certfied.",
-                registry
-            )
-            .unwrap(),
-            highest_accumulated_epoch: register_int_gauge_with_registry!(
-                "highest_accumulated_epoch",
-                "Highest accumulated epoch",
                 registry
             )
             .unwrap(),

@@ -8,20 +8,25 @@ name must either start with `ika_` or appear in the frozen legacy
 allowlist (`scripts/metric-name-allowlist.txt`) — the allowlist is
 never added to.
 
-**As of 1.2.0, every ika-native metric carries the `ika_` prefix** —
-the legacy ika-native names (~97: `dwallet_*`, `sui_connector_*`,
-checkpoint/state-sync families adapted to dwallet/system checkpoints,
-handoff, off-chain assembly, …) were renamed in one shot at the 1.2.0
-release boundary, when operators rebuild dashboards anyway. The full
-old→new table is at the bottom of this file.
+**As of 1.2.0, every metric ika exports carries the `ika_` prefix — the
+allowlist is empty.** The rename happened in one shot at the 1.2.0
+release boundary (when operators rebuild dashboards anyway), in three
+parts:
 
-What deliberately KEEPS its un-prefixed name: any metric whose name a
-Sui-lineage family carries verbatim or near-verbatim from upstream Sui
-(`authority_*`, `consensus_*`, `sequencing_*`, `transaction_manager_*`,
-`execution_*`, epoch/reconfiguration timings, …). Operators reuse Sui
-dashboards for those, and renaming would diverge from upstream forever
-(merge churn on every Sui sync). The allowlist now contains exactly this
-upstream-matching set plus the dynamic pruner family.
+- the ~97 ika-native legacy names and the ~35 live Sui-lineage names
+  (`consensus_handler_*`, `sequencing_*`, `current_epoch`, epoch
+  timings, …) were renamed with a mechanical `ika_` prefix — full
+  old→new table at the bottom of this file;
+- the **Mysticeti-internal metrics** (registered by upstream Sui's
+  `consensus-core` crate, not by ika code) are prefixed via their
+  per-epoch registry's namespace — `Registry::new_custom(Some("ika_consensus"))`
+  in `consensus_manager/mod.rs` — so they export as `ika_consensus_*`
+  without any upstream code change. Consequence: upstream Mysticeti
+  Grafana dashboards need a prefix adjustment to be reused;
+- ~85 registered-but-never-set fork-residue metrics (tx-deny, zklogin,
+  Move-verifier/execution, transaction-manager caches, random-beacon —
+  subsystems ika does not run) were **deleted**, not renamed: they only
+  ever exported constant zeros.
 
 **Before writing an alert or dashboard, check the name here or via
 `./scripts/check-metric-names.sh --list`** — a wrong metric name in an
@@ -72,71 +77,26 @@ instead of matching a log line. Log-level discipline itself lives in
 Regenerate with: `./scripts/check-metric-names.sh --list`
 
 ```
-authority_load_shedding_percentage
-authority_overload_status
-authority_state_commit_certificate_latency
-authority_state_execute_certificate_latency
-authority_state_execution_load_input_objects_latency
-authority_state_handle_transaction_latency
-authority_state_handle_transaction_v2_latency
-authority_state_internal_execution_latency
-authority_state_prepare_certificate_latency
-await_transaction_latency
-batch_size
-certificate_signatures_verified
-consensus_calculated_throughput
-consensus_calculated_throughput_profile
-consensus_committed_messages
-consensus_committed_subdags
-consensus_committed_user_transactions
-consensus_handler_cancelled_transactions
-consensus_handler_congested_transactions
-consensus_handler_deferred_transactions
-consensus_handler_max_congestion_control_object_costs
-consensus_handler_num_low_scoring_authorities
-consensus_handler_processed
-consensus_handler_scores
-consensus_handler_transaction_sizes
-consensus_manager_shutdown_latency
-consensus_manager_start_latency
-consensus_transaction_handler_fastpath_executions
-consensus_transaction_handler_processed
-current_epoch
-current_voting_right
-db_checkpoint_latency
-effective_buffer_stake
-epoch_checkpoint_count
-epoch_first_checkpoint_created_time_since_epoch_begin_ms
-epoch_last_checkpoint_created_time_since_epoch_close_ms
-epoch_pending_certs_processed_time_since_epoch_close_ms
-epoch_random_beacon_dkg_completion_time_ms
-epoch_random_beacon_dkg_confirmation_time_ms
-epoch_random_beacon_dkg_epoch_start_completion_time_ms
-epoch_random_beacon_dkg_failed
-epoch_random_beacon_dkg_message_time_ms
-epoch_random_beacon_dkg_num_shares
-epoch_reconfig_start_time_since_epoch_close_ms
-epoch_total_duration
-epoch_transaction_count
-epoch_validator_halt_duration_ms
-excessive_deleted_move_object_ids_size
-excessive_estimated_effects_size
-excessive_new_move_object_ids_size
-excessive_object_runtime_cached_objects_size
-excessive_object_runtime_store_entries_size
-excessive_transferred_move_object_ids_size
-excessive_written_objects_size
-execution_driver_dispatch_queue
-execution_driver_executed_transactions
-execution_gas_latency_ratio
-execution_queueing_delay_s
-highest_accumulated_epoch
 ika_archive_actions_read
 ika_archive_dwallet_checkpoints_read
 ika_archive_system_checkpoints_read
 ika_binary_max_protocol_version
 ika_configured_max_protocol_version
+ika_consensus_calculated_throughput
+ika_consensus_calculated_throughput_profile
+ika_consensus_committed_messages
+ika_consensus_committed_subdags
+ika_consensus_committed_user_transactions
+ika_consensus_handler_cancelled_transactions
+ika_consensus_handler_num_low_scoring_authorities
+ika_consensus_handler_processed
+ika_consensus_handler_scores
+ika_consensus_handler_transaction_sizes
+ika_consensus_manager_shutdown_latency
+ika_consensus_manager_start_latency
+ika_current_epoch
 ika_current_protocol_version
+ika_current_voting_right
 ika_dwallet_checkpoint_creation_latency
 ika_dwallet_checkpoint_errors
 ika_dwallet_checkpoint_participation
@@ -174,8 +134,13 @@ ika_dwallet_mpc_received_requests_start_count
 ika_dwallet_mpc_session_start_count
 ika_dwallet_native_calls
 ika_dwallet_native_completions
+ika_effective_buffer_stake
+ika_epoch_first_checkpoint_created_time_since_epoch_begin_ms
 ika_epoch_first_system_checkpoint_created_time_since_epoch_begin_ms
+ika_epoch_reconfig_start_time_since_epoch_close_ms
 ika_epoch_total_computation_reward
+ika_epoch_total_duration
+ika_epoch_validator_halt_duration_ms
 ika_handoff_prepare_duration_seconds
 ika_handoff_prepare_retries_total
 ika_handoff_prepare_waiting
@@ -214,6 +179,7 @@ ika_mpc_blob_store_evictions_total
 ika_mpc_blob_store_size_bytes
 ika_mpc_data_announcement_blob_bytes
 ika_network_key_overlay_incomplete
+ika_num_peers_with_external_address
 ika_ocs_anchor_info
 ika_ocs_bag_omission_suspected_total
 ika_ocs_cache_first_stale_total
@@ -252,6 +218,21 @@ ika_off_chain_assembly_wedged
 ika_own_mpc_data_blob_unhealthy
 ika_remote_dwallet_checkpoint_forks
 ika_remote_system_checkpoint_forks
+ika_sequencing_acknowledge_latency
+ika_sequencing_certificate_attempt
+ika_sequencing_certificate_authority_position
+ika_sequencing_certificate_failures
+ika_sequencing_certificate_inflight
+ika_sequencing_certificate_latency
+ika_sequencing_certificate_positions_moved
+ika_sequencing_certificate_preceding_disconnected
+ika_sequencing_certificate_processed
+ika_sequencing_certificate_status
+ika_sequencing_certificate_success
+ika_sequencing_in_flight_semaphore_wait
+ika_sequencing_in_flight_submissions
+ika_skipped_consensus_txns
+ika_skipped_consensus_txns_cache_hit
 ika_split_brain_dwallet_checkpoint_forks
 ika_split_brain_system_checkpoint_forks
 ika_sui_client_chain_blob_reads
@@ -273,67 +254,6 @@ ika_system_checkpoint_errors
 ika_system_checkpoint_participation
 ika_system_checkpoint_roots_count
 ika_system_checkpoint_signatures_verified
-multisig_sig_count
-num_input_objects
-num_peers_with_external_address
-num_shared_obj_tx
-num_shared_objects
-num_sponsored_tx
-num_tx_already_processed
-post_processing_total_events_emitted
-post_processing_total_failures
-post_processing_total_tx_had_event_processed
-post_processing_total_tx_indexed
-prepare_cert_gas_latency_ratio
-sequencing_acknowledge_latency
-sequencing_certificate_attempt
-sequencing_certificate_authority_position
-sequencing_certificate_failures
-sequencing_certificate_inflight
-sequencing_certificate_latency
-sequencing_certificate_positions_moved
-sequencing_certificate_preceding_disconnected
-sequencing_certificate_processed
-sequencing_certificate_status
-sequencing_certificate_success
-sequencing_estimated_latency
-sequencing_in_flight_semaphore_wait
-sequencing_in_flight_submissions
-sequencing_resubmission_interval_ms
-skipped_consensus_txns
-skipped_consensus_txns_cache_hit
-total_handle_certificate_attempts
-total_transaction_certificates
-total_transaction_effects
-total_transaction_orders
-transaction_manager_num_enqueued_certificates
-transaction_manager_num_executing_certificates
-transaction_manager_num_missing_objects
-transaction_manager_num_pending_certificates
-transaction_manager_num_ready
-transaction_manager_object_cache_evictions
-transaction_manager_object_cache_hits
-transaction_manager_object_cache_misses
-transaction_manager_object_cache_size
-transaction_manager_package_cache_evictions
-transaction_manager_package_cache_hits
-transaction_manager_package_cache_misses
-transaction_manager_package_cache_size
-transaction_manager_transaction_queue_age_s
-transaction_overload_sources
-tx_deny_config_num_denied_addresses
-tx_deny_config_num_denied_objects
-tx_deny_config_num_denied_packages
-tx_deny_config_package_publish_disabled
-tx_deny_config_package_upgrade_disabled
-tx_deny_config_shared_object_disabled
-tx_deny_config_user_transaction_disabled
-verifier_runtime_per_module_success_latency
-verifier_runtime_per_module_timeout_latency
-verifier_runtime_per_ptb_success_latency
-verifier_runtime_per_ptb_timeout_latency
-verifier_timeout_metrics
-zklogin_sig_count
 ```
 
 ## 1.2.0 rename table (legacy → current)
@@ -440,3 +360,41 @@ Renamed in the 1.2.0 release; update dashboards/alerts accordingly.
 | `system_checkpoint_participation` | `ika_system_checkpoint_participation` |
 | `system_checkpoint_roots_count` | `ika_system_checkpoint_roots_count` |
 | `system_checkpoint_signatures_verified` | `ika_system_checkpoint_signatures_verified` |
+| `consensus_calculated_throughput` | `ika_consensus_calculated_throughput` |
+| `consensus_calculated_throughput_profile` | `ika_consensus_calculated_throughput_profile` |
+| `consensus_committed_messages` | `ika_consensus_committed_messages` |
+| `consensus_committed_subdags` | `ika_consensus_committed_subdags` |
+| `consensus_committed_user_transactions` | `ika_consensus_committed_user_transactions` |
+| `consensus_handler_cancelled_transactions` | `ika_consensus_handler_cancelled_transactions` |
+| `consensus_handler_num_low_scoring_authorities` | `ika_consensus_handler_num_low_scoring_authorities` |
+| `consensus_handler_processed` | `ika_consensus_handler_processed` |
+| `consensus_handler_scores` | `ika_consensus_handler_scores` |
+| `consensus_handler_transaction_sizes` | `ika_consensus_handler_transaction_sizes` |
+| `current_epoch` | `ika_current_epoch` |
+| `current_voting_right` | `ika_current_voting_right` |
+| `effective_buffer_stake` | `ika_effective_buffer_stake` |
+| `epoch_first_checkpoint_created_time_since_epoch_begin_ms` | `ika_epoch_first_checkpoint_created_time_since_epoch_begin_ms` |
+| `epoch_reconfig_start_time_since_epoch_close_ms` | `ika_epoch_reconfig_start_time_since_epoch_close_ms` |
+| `epoch_total_duration` | `ika_epoch_total_duration` |
+| `epoch_validator_halt_duration_ms` | `ika_epoch_validator_halt_duration_ms` |
+| `num_peers_with_external_address` | `ika_num_peers_with_external_address` |
+| `sequencing_acknowledge_latency` | `ika_sequencing_acknowledge_latency` |
+| `sequencing_certificate_attempt` | `ika_sequencing_certificate_attempt` |
+| `sequencing_certificate_authority_position` | `ika_sequencing_certificate_authority_position` |
+| `sequencing_certificate_failures` | `ika_sequencing_certificate_failures` |
+| `sequencing_certificate_inflight` | `ika_sequencing_certificate_inflight` |
+| `sequencing_certificate_latency` | `ika_sequencing_certificate_latency` |
+| `sequencing_certificate_positions_moved` | `ika_sequencing_certificate_positions_moved` |
+| `sequencing_certificate_preceding_disconnected` | `ika_sequencing_certificate_preceding_disconnected` |
+| `sequencing_certificate_processed` | `ika_sequencing_certificate_processed` |
+| `sequencing_certificate_status` | `ika_sequencing_certificate_status` |
+| `sequencing_certificate_success` | `ika_sequencing_certificate_success` |
+| `sequencing_in_flight_semaphore_wait` | `ika_sequencing_in_flight_semaphore_wait` |
+| `sequencing_in_flight_submissions` | `ika_sequencing_in_flight_submissions` |
+| `skipped_consensus_txns` | `ika_skipped_consensus_txns` |
+| `skipped_consensus_txns_cache_hit` | `ika_skipped_consensus_txns_cache_hit` |
+| `consensus_manager_start_latency` | `ika_consensus_manager_start_latency` |
+| `consensus_manager_shutdown_latency` | `ika_consensus_manager_shutdown_latency` |
+| `last_pruned_{kind}_db_epoch` | `ika_last_pruned_{kind}_db_epoch` |
+| `successfully_pruned_{kind}_dbs` | `ika_successfully_pruned_{kind}_dbs` |
+| `error_pruning_{kind}_dbs` | `ika_error_pruning_{kind}_dbs` |
