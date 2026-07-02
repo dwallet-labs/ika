@@ -187,7 +187,15 @@ async fn v118_atomic_upgrade_to_local_build() {
         // (`all_current_epoch_sessions_completed`) and wedge the network at
         // v3 forever, since the pool that could otherwise serve it only
         // fills at v4.
+        //
+        // Bracketed by protocol-version ceilings: the probe's whole purpose
+        // is witnessing the pre-pool fallback AT v3, and nothing else in the
+        // flow pins that — if the capability vote lands early, the probe
+        // silently degrades into an ordinary v4 pool test. The trailing
+        // ceiling is the load-bearing one (the version can flip mid-workload).
+        .expect_protocol_version_at_most(3)
         .run_workload("pre-activation-window")
+        .expect_protocol_version_at_most(3)
         .record_mpc_timings("pre-activation-window")
         // Boundary 2->3: the local binaries reshare the 1.1.8-created key
         // and the capability vote advances v3 -> v4.
