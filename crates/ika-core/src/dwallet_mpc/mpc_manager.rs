@@ -11,8 +11,10 @@ use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
     session_input_from_request,
 };
-use crate::dwallet_mpc::network_dkg::spawn_network_encryption_key_public_data_instantiation;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
+use crate::dwallet_mpc::network_dkg::{
+    spawn_network_encryption_key_public_data_instantiation, spawn_network_key_id_registration,
+};
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
     class_groups_keys_by_party_id, generate_access_structure_from_committee,
@@ -252,6 +254,13 @@ pub(crate) struct DWalletMPCManager {
     /// debug thereafter.
     warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
 
+    /// Keys whose background `NetworkKeyId` derivation has been spawned by
+    /// the adoption pass, so the expensive class-groups derive runs at most
+    /// once per key per manager (i.e. per epoch). A successful derivation
+    /// registers in the process-global mapping, so later epochs resolve the
+    /// key without re-deriving.
+    pub(crate) network_key_id_derivations_spawned: HashSet<ObjectID>,
+
     /// Sessions whose protocol-cryptographic-data generation already
     /// failed and was logged. The generation re-runs every 20ms service
     /// iteration, so a stuck session would otherwise emit ~50 identical
@@ -459,6 +468,7 @@ impl DWalletMPCManager {
             pending_network_key_instantiations: HashMap::new(),
             last_cert_read_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
+            network_key_id_derivations_spawned: HashSet::new(),
             warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
@@ -937,6 +947,7 @@ impl DWalletMPCManager {
             }
         }
         let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
+        let mut deferred_unmapped_cert_key = false;
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
@@ -979,10 +990,39 @@ impl DWalletMPCManager {
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
             // The cert is keyed by the content-derived NetworkKeyId; translate
             // this overlay key's ObjectID via the temporary map. An unmapped
-            // key (e.g. a brand-new key not yet instantiated/registered) is
-            // treated as not-pinned-by-the-cert — correct for a fresh key,
-            // which the prior epoch's cert never references.
+            // key is ambiguous: a brand-new key the prior epoch's cert never
+            // references (genuinely not-pinned), or a key this validator
+            // simply never instantiated — the mapping registers at
+            // instantiation, instantiation needs adoption, and adoption
+            // needs the mapping to see the cert's digests. A joiner
+            // consuming the cert lands in exactly that cycle: treating its
+            // key as "not pinned" either adopts parameters the committee
+            // never agreed to (initial-DKG branch) or wedges forever on a
+            // phantom digest mismatch (reconfigured branch). When the cert
+            // references any key, break the cycle: derive this key's
+            // NetworkKeyId from the locally-held blobs on the rayon pool
+            // (an expensive class-groups computation) and defer adoption
+            // until the background derivation registers the mapping.
             let network_key_id = crate::network_key_id_mapping::network_key_id_for(key_id);
+            if network_key_id.is_none()
+                && (!dkg_digests.is_empty() || !reconfiguration_digests.is_empty())
+            {
+                if self.network_key_id_derivations_spawned.insert(*key_id) {
+                    info!(
+                        ?key_id,
+                        "handoff cert references network keys but this key's ObjectID has \
+                         no NetworkKeyId mapping (not seeded, never instantiated here) — \
+                         deriving it from the locally-held key data in the background"
+                    );
+                    spawn_network_key_id_registration(
+                        *key_id,
+                        data.network_dkg_public_output.clone(),
+                        data.current_reconfiguration_public_output.clone(),
+                    );
+                }
+                deferred_unmapped_cert_key = true;
+                continue;
+            }
             let cert_dkg_digest = network_key_id.as_ref().and_then(|id| dkg_digests.get(id));
             let cert_reconfig_digest = network_key_id
                 .as_ref()
@@ -1217,6 +1257,15 @@ impl DWalletMPCManager {
                 }
             }
             self.adopted_network_key_data.insert(*key_id, data.clone());
+        }
+        // A deferred unmapped key resolves via the background NetworkKeyId
+        // derivation, which changes nothing the memo below can see (the
+        // overlay bytes stay identical; only the process-global mapping
+        // gains an entry) — memoizing would make the deferral permanent.
+        // Skip the memo so the pass re-runs every tick until the mapping
+        // resolves.
+        if deferred_unmapped_cert_key {
+            return;
         }
         self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
     }

@@ -347,3 +347,113 @@ async fn already_adopted_key_survives_dkg_output_migration() {
          mismatching overlay"
     );
 }
+
+/// A cert-referenced key whose `ObjectID` has no `NetworkKeyId` mapping
+/// (a joiner that never instantiated the key — the mapping registers at
+/// instantiation, which needs adoption first) must NOT be treated as
+/// "not pinned by the cert": pre-fix, the reconfigured branch saw
+/// `cert_dkg_digest=None`, warned a phantom mismatch, and wedged the key
+/// uninstantiated forever (the v118_churn joiner deadlock). Adoption
+/// must defer, spawn the background `NetworkKeyId` derivation exactly
+/// once, skip the pass memoization so re-evaluation happens with
+/// unchanged inputs, and proceed once the registration lands.
+#[tokio::test]
+async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+    let prior_epoch = epoch_id - 1;
+
+    // Deliberately NOT registered: the cert speaks NetworkKeyId, this
+    // validator only knows the ObjectID.
+    let key_id = ObjectID::random();
+    let network_key_id = NetworkKeyId([0x51; 32]);
+    let dkg_output = b"joiner network dkg public output".to_vec();
+    let reconfiguration_output = b"joiner network reconfiguration public output".to_vec();
+
+    // The prior epoch's cert pins both digests for the key (items sorted
+    // by `HandoffItemKey`: DKG < reconfiguration).
+    let attestation = HandoffAttestation {
+        epoch: prior_epoch,
+        next_committee_pubkey_set_hash: [0u8; 32],
+        items: vec![
+            (
+                HandoffItemKey::NetworkDkgOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&dkg_output),
+            ),
+            (
+                HandoffItemKey::NetworkReconfigurationOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&reconfiguration_output),
+            ),
+        ],
+    };
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(
+            prior_epoch,
+            CertifiedHandoffAttestation {
+                attestation,
+                signatures: vec![],
+            },
+        );
+
+    let overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            dkg_output.clone(),
+            reconfiguration_output.clone(),
+        ),
+    )]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&overlay);
+    assert!(
+        !manager.adopted_network_key_data.contains_key(&key_id),
+        "an unmapped cert-referenced key must be deferred, not adopted"
+    );
+    assert!(
+        manager.network_key_id_derivations_spawned.contains(&key_id),
+        "the background NetworkKeyId derivation must be spawned for the unmapped key"
+    );
+
+    // Same overlay again: the deferral must have skipped the memoization
+    // (so the pass re-evaluates) and must not respawn the derivation.
+    manager.adopt_cert_verified_keys(&overlay);
+    assert_eq!(
+        manager.network_key_id_derivations_spawned.len(),
+        1,
+        "the derivation must be spawned at most once per key"
+    );
+
+    // Simulate the background derivation completing: registration alone —
+    // with the overlay bytes unchanged — must unwedge adoption on the
+    // next pass.
+    crate::network_key_id_mapping::register(key_id, network_key_id);
+    manager.adopt_cert_verified_keys(&overlay);
+    let adopted = manager
+        .adopted_network_key_data
+        .get(&key_id)
+        .expect("registration must unwedge cert-gated adoption with no overlay change");
+    assert_eq!(
+        adopted.current_reconfiguration_public_output, reconfiguration_output,
+        "the adopted data must carry the cert-pinned reconfiguration bytes"
+    );
+}
