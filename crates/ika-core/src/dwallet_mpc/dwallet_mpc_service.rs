@@ -539,6 +539,16 @@ impl DWalletMPCService {
         self.submit_rejections_covered_by_lock_target(rejected_sessions)
             .await;
 
+        // Observability refresh runs once per tick, at iteration end, so every
+        // gauge summarizes the same post-processing state. The per-tick
+        // end_of_publish touch (not just the flip site) makes the series exist
+        // at 0 before the flip, so dashboards can tell "not yet" from
+        // "not scraped".
+        self.dwallet_mpc_metrics
+            .service_end_of_publish_local
+            .set(self.end_of_publish as i64);
+        self.dwallet_mpc_manager.refresh_observability_metrics();
+
         newly_instantiated_network_key_ids
     }
 
@@ -830,6 +840,8 @@ impl DWalletMPCService {
                             .complete_computation_mpc_session_and_create_if_not_exists(
                                 &session_identifier,
                                 SessionComputationType::from(&request.protocol_data),
+                                request.session_sequence_number,
+                                request.session_type,
                             );
 
                         debug!(
@@ -1462,6 +1474,7 @@ impl DWalletMPCService {
                     .is_some_and(|msg| matches!(msg, DWalletCheckpointMessageKind::EndOfPublish));
                 if final_round {
                     self.end_of_publish = true;
+                    self.dwallet_mpc_metrics.service_end_of_publish_local.set(1);
 
                     info!(
                         authority=?self.name,
@@ -1877,15 +1890,23 @@ impl DWalletMPCService {
         party_id: u16,
         error: DwalletMPCError,
     ) {
+        let protocol_metric_data = DWalletSessionRequestMetricData::from(&request.protocol_data);
         error!(
             ?session_identifier,
             validator=?validator_name,
             party_id,
             session_type=?request.session_type,
-            protocol_data=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+            session_sequence_number=?request.session_sequence_number,
+            protocol_data=?protocol_metric_data.to_string(),
             error=?error,
+            error_kind=error.kind(),
             "rejecting session."
         );
+
+        self.dwallet_mpc_metrics
+            .sessions_rejected_total
+            .with_label_values(&[protocol_metric_data.name(), error.kind()])
+            .inc();
 
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
         let rejected = true;

@@ -42,6 +42,7 @@ use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use crate::sui_connector::verified_reader::{OcsVerifiedReader, VerifiedObject};
@@ -53,6 +54,10 @@ pub struct BagEventPump {
     new_requests_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     uncompleted_requests_sender: watch::Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     metrics: Arc<OcsMetrics>,
+    /// Connector-level metrics: the pump feeds the same
+    /// `uncompleted_events_backlog` gauge the legacy (v≤3) syncer poller
+    /// feeds, so the series name is path-independent.
+    connector_metrics: Arc<SuiConnectorMetrics>,
     poll_interval: Duration,
     seen: HashSet<ObjectID>,
     /// Police `Bag.size`-vs-listed-children omission. Only meaningful when
@@ -137,6 +142,7 @@ impl BagEventPump {
         new_requests_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
         uncompleted_requests_sender: watch::Sender<(Vec<DWalletSessionRequest>, EpochId)>,
         metrics: Arc<OcsMetrics>,
+        connector_metrics: Arc<SuiConnectorMetrics>,
         poll_interval: Duration,
     ) -> Self {
         let detect_omission = reader.relay_source_is_untrusted();
@@ -147,6 +153,7 @@ impl BagEventPump {
             new_requests_sender,
             uncompleted_requests_sender,
             metrics,
+            connector_metrics,
             poll_interval,
             seen: HashSet::new(),
             detect_omission,
@@ -260,6 +267,11 @@ impl BagEventPump {
             );
             let _ = self.new_requests_sender.send(delta_requests);
         }
+        // Same backlog gauge the legacy (v≤3) poller feeds: "chain has N
+        // uncompleted sessions from this validator's perspective".
+        self.connector_metrics
+            .uncompleted_events_backlog
+            .set(snapshot_requests.len() as i64);
         if let Err(e) = self
             .uncompleted_requests_sender
             .send((snapshot_requests, epoch))

@@ -146,6 +146,22 @@ struct EpochSwitchState {
     calculated_protocol_pricing: bool,
 }
 
+/// Label values for `SuiConnectorMetrics::epoch_switch_step_done`. The set is closed and shared
+/// with dashboards/alerts — adding a step here means updating the dashboard too.
+const EPOCH_SWITCH_STEP_MID_EPOCH: &str = "mid_epoch";
+const EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG: &str =
+    "network_encryption_key_mid_epoch_reconfiguration";
+const EPOCH_SWITCH_STEP_CALC_PRICING: &str = "calculate_protocols_pricing";
+const EPOCH_SWITCH_STEP_LOCK_LAST_SESSION: &str = "lock_last_session";
+const EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH: &str = "request_advance_epoch";
+const EPOCH_SWITCH_STEPS: &[&str] = &[
+    EPOCH_SWITCH_STEP_MID_EPOCH,
+    EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG,
+    EPOCH_SWITCH_STEP_CALC_PRICING,
+    EPOCH_SWITCH_STEP_LOCK_LAST_SESSION,
+    EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH,
+];
+
 impl<C> SuiExecutor<C>
 where
     C: SuiClientInner + 'static,
@@ -326,6 +342,10 @@ where
             }
             info!("Successfully processed mid-epoch");
             epoch_switch_state.ran_mid_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_MID_EPOCH])
+                .set(1);
         }
         let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
             self.try_get_dwallet_coordinator_inner().await
@@ -379,6 +399,10 @@ where
                 info!("Successfully network encryption key mid-epoch reconfiguration");
             }
             epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG])
+                .set(1);
         }
 
         if clock.timestamp_ms > mid_epoch_time
@@ -434,6 +458,10 @@ where
             }
             info!("Successfully calculated protocols pricing");
             epoch_switch_state.calculated_protocol_pricing = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_CALC_PRICING])
+                .set(1);
         }
 
         let SystemInner::V1(system_inner_v1) = &ika_system_state_inner;
@@ -470,6 +498,10 @@ where
                 );
             }
             epoch_switch_state.ran_lock_last_session = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_LOCK_LAST_SESSION])
+                .set(1);
             info!("Successfully locked last session in current epoch");
         }
         // Mirror the on-chain `all_current_epoch_sessions_completed` assertion in
@@ -511,6 +543,10 @@ where
             }
             info!("Successfully requested advance epoch");
             epoch_switch_state.ran_request_advance_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH])
+                .set(1);
         } else if advance_gate_open {
             // End-of-publish is in, but sessions are still draining. Hold this
             // tick (do NOT submit a doomed `advance_epoch`); re-check next tick.
@@ -567,6 +603,14 @@ where
             network_encryption_key_mid_epoch_reconfiguration: false,
             calculated_protocol_pricing: false,
         };
+        // Zero every step at the start of the epoch so a stale `1` from the previous epoch's run
+        // can't mislead an operator into thinking we already advanced for this epoch.
+        for step in EPOCH_SWITCH_STEPS {
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[step])
+                .set(0);
+        }
 
         loop {
             interval.tick().await;
