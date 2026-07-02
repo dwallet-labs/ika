@@ -59,6 +59,12 @@ pub struct ValidatorConfigBuilder {
     /// genesis-bootstraps the OCS committee chain from it (preferred over the
     /// unsafe-genesis-committee path).
     sui_genesis: Option<PathBuf>,
+    /// Emit an old-style (1.1.8-shape) Sui connector config: `sui-rpc-url`
+    /// only, no `sui-data-source` — the shape every mainnet node runs on
+    /// rollout day, which selects the deprecated JSON-RPC transport. Do not
+    /// combine with a trust anchor or a data-source override (the node
+    /// fails closed at boot on those mixed shapes).
+    legacy_sui_rpc_only: bool,
 }
 
 impl ValidatorConfigBuilder {
@@ -126,6 +132,11 @@ impl ValidatorConfigBuilder {
         self
     }
 
+    pub fn with_legacy_sui_rpc_only(mut self) -> Self {
+        self.legacy_sui_rpc_only = true;
+        self
+    }
+
     pub fn build(
         self,
         validator: &ValidatorInitializationConfig,
@@ -185,13 +196,15 @@ impl ValidatorConfigBuilder {
                 validator.consensus_key_pair.copy(),
             )),
             sui_connector_config: SuiConnectorConfig {
-                sui_rpc_url: None,
-                sui_data_source: Some(self.sui_data_source_override.clone().unwrap_or_else(|| {
-                    SuiDataSource::SuiStateDirect {
-                        url: sui_rpc_url.to_string(),
-                        serve_mirror: true,
-                    }
-                })),
+                sui_rpc_url: self.legacy_sui_rpc_only.then(|| sui_rpc_url.clone()),
+                sui_data_source: (!self.legacy_sui_rpc_only).then(|| {
+                    self.sui_data_source_override.clone().unwrap_or_else(|| {
+                        SuiDataSource::SuiStateDirect {
+                            url: sui_rpc_url.to_string(),
+                            serve_mirror: true,
+                        }
+                    })
+                }),
                 sui_state_mirror_peers: self
                     .sui_state_mirror_peers_override
                     .clone()
@@ -287,6 +300,11 @@ pub struct FullnodeConfigBuilder {
     network_key_pair: Option<KeyPairWithPath>,
     run_with_range: Option<RunWithRange>,
     disable_pruning: bool,
+    /// Emit an old-style (1.1.8-shape) Sui connector config: `sui-rpc-url`
+    /// only, no `sui-data-source` — selects the deprecated JSON-RPC
+    /// transport, the shape every mainnet notifier/fullnode runs on rollout
+    /// day.
+    legacy_sui_rpc_only: bool,
 }
 
 impl FullnodeConfigBuilder {
@@ -306,6 +324,11 @@ impl FullnodeConfigBuilder {
 
     pub fn with_disable_pruning(mut self, disable_pruning: bool) -> Self {
         self.disable_pruning = disable_pruning;
+        self
+    }
+
+    pub fn with_legacy_sui_rpc_only(mut self) -> Self {
+        self.legacy_sui_rpc_only = true;
         self
     }
 
@@ -432,12 +455,14 @@ impl FullnodeConfigBuilder {
                 .network_address
                 .unwrap_or(validator_config.network_address),
             sui_connector_config: SuiConnectorConfig {
-                sui_rpc_url: None,
+                sui_rpc_url: self.legacy_sui_rpc_only.then(|| sui_rpc_url.clone()),
                 // Fullnodes don't run the OCS verifier: direct gRPC, no
                 // mirror service, no trusted anchor.
-                sui_data_source: Some(SuiDataSource::SuiStateDirect {
-                    url: sui_rpc_url.to_string(),
-                    serve_mirror: false,
+                sui_data_source: (!self.legacy_sui_rpc_only).then(|| {
+                    SuiDataSource::SuiStateDirect {
+                        url: sui_rpc_url.to_string(),
+                        serve_mirror: false,
+                    }
                 }),
                 sui_state_mirror_peers: Vec::new(),
                 sui_unsafe_genesis_committee: None,
