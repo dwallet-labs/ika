@@ -127,6 +127,11 @@ pub struct ClusterBuilder {
     /// pre-upgrade need `Empty` (the mainnet-v1.1.8 state) and apply the full
     /// config post-upgrade via [`ClusterOfProcesses::set_global_presign_config`].
     genesis_global_presign_config: GenesisGlobalPresignConfig,
+    /// Boot every validator AND the notifier from an old-style (1.1.8-shape)
+    /// config: `sui-rpc-url` only, no `sui-data-source`, no trust anchor —
+    /// the deprecated JSON-RPC transport every mainnet node runs on rollout
+    /// day. Rehearses the legacy path end-to-end on the new binary.
+    legacy_sui_config: bool,
 }
 
 impl ClusterBuilder {
@@ -141,6 +146,7 @@ impl ClusterBuilder {
             sui_binary,
             base_dir: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
+            legacy_sui_config: false,
         }
     }
 
@@ -182,6 +188,13 @@ impl ClusterBuilder {
         config: GenesisGlobalPresignConfig,
     ) -> Self {
         self.genesis_global_presign_config = config;
+        self
+    }
+
+    /// Boot the whole cluster (validators + notifier) from old-style
+    /// (1.1.8-shape) configs — `sui-rpc-url` only, the legacy JSON-RPC path.
+    pub fn with_legacy_sui_config(mut self) -> Self {
+        self.legacy_sui_config = true;
         self
     }
 
@@ -289,10 +302,20 @@ impl ClusterBuilder {
         // set refuses to boot without a Sui trust anchor. Seed every validator
         // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
         // anchor (the private-net path), mirroring IkaTestClusterBuilder. Harmless
-        // pre-v4 (the field is unused on the JSON-RPC path).
-        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
-            .await
-            .map_err(|e| anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}"))?;
+        // pre-v4 (the field is unused on the JSON-RPC path). A legacy-config
+        // cluster gets NO anchor at all — an old-style config with an anchor is
+        // one of the mixed shapes the node rejects at boot.
+        let genesis_committee = if self.legacy_sui_config {
+            None
+        } else {
+            Some(
+                ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}")
+                    })?,
+            )
+        };
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
         // Bound every co-located node's crypto rayon pool to a fair share of the
@@ -311,9 +334,11 @@ impl ClusterBuilder {
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
-            let mut builder = ValidatorConfigBuilder::new()
-                .with_config_directory(data_dir.clone())
-                .with_unsafe_genesis_committee(genesis_committee.clone());
+            let mut builder = ValidatorConfigBuilder::new().with_config_directory(data_dir.clone());
+            builder = match &genesis_committee {
+                Some(committee) => builder.with_unsafe_genesis_committee(committee.clone()),
+                None => builder.with_legacy_sui_rpc_only(),
+            };
             if let Some(cores) = max_mpc_computation_cores {
                 builder = builder.with_max_mpc_computation_cores(cores);
             }
@@ -344,20 +369,23 @@ impl ClusterBuilder {
         let notifier_dir = base.join("notifier");
         std::fs::create_dir_all(&notifier_dir)?;
         let mut notifier_rng = OsRng;
-        let notifier_config = FullnodeConfigBuilder::new()
-            .with_config_directory(notifier_dir.clone())
-            .build(
-                &mut notifier_rng,
-                &validator_init_configs,
-                rpc_url.clone(),
-                ika_package_id,
-                ika_common_package_id,
-                ika_dwallet_2pc_mpc_package_id,
-                ika_system_package_id,
-                ika_system_object_id,
-                ika_dwallet_coordinator_object_id,
-                Some(publisher_keypair.copy()),
-            );
+        let mut notifier_builder =
+            FullnodeConfigBuilder::new().with_config_directory(notifier_dir.clone());
+        if self.legacy_sui_config {
+            notifier_builder = notifier_builder.with_legacy_sui_rpc_only();
+        }
+        let notifier_config = notifier_builder.build(
+            &mut notifier_rng,
+            &validator_init_configs,
+            rpc_url.clone(),
+            ika_package_id,
+            ika_common_package_id,
+            ika_dwallet_2pc_mpc_package_id,
+            ika_system_package_id,
+            ika_system_object_id,
+            ika_dwallet_coordinator_object_id,
+            Some(publisher_keypair.copy()),
+        );
         let notifier = spawn_node(
             usize::MAX,
             self.notifier_binary.clone(),
