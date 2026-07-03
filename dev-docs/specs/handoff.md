@@ -130,9 +130,9 @@ next epoch inherits.
    their digests match the prior epoch's certificate
    (`adopt_cert_verified_keys`): a reconfigured key must match BOTH its
    DKG digest and its epoch-specific reconfiguration digest. The DKG
-   digest migrates once (V2->V3, above): at that single boundary an
+   digest migrates once (V1|V2 -> V3, above): at that single boundary an
    ALREADY-ADOPTED key whose overlay DKG digest has moved past the prior
-   epoch's (V2) certificate is the expected defer — it keeps its adopted
+   epoch's (pre-V3) certificate is the expected defer — it keeps its adopted
    value rather than being dropped, exactly as a moved reconfiguration
    output is tolerated; only an UNADOPTED key contradicting the
    certificate is the security-relevant anomaly (the output-quorum

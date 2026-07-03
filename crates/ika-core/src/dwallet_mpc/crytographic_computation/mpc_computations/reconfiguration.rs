@@ -147,19 +147,58 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         }
 
         match network_dkg_public_output {
-            // Deployed keys still carry a V1 anchor on chain. The main (v4)
-            // reconfiguration party does not yet reconstruct its input from a
-            // V1 anchor — that support (and the V2->V3 anchor migration for
-            // these keys) is a tracked follow-up gated behind v4 activation.
-            // Fail the session with a clear error instead of aborting the
-            // process; v4 is not active on any deployed network, so this arm
-            // is unreachable in production until that follow-up lands.
-            VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-                "The main (v4) reconfiguration path does not yet support a V1 network \
-                 DKG anchor (deployed mainnet/testnet keys); this must be implemented \
-                 before protocol v4 activates on those networks."
-                    .to_string(),
-            )),
+            // The deployed mainnet/testnet keys carry a V1 anchor: the raw
+            // `class_groups::dkg::PublicOutput`, written once by the original
+            // (pre-1.1.8) DKG and never rewritten. Under the main party the
+            // anchor stays V1 until the one-time canonical-anchor migration
+            // flips it to V3 (`reconstruct_full_network_dkg_output` + the
+            // canonical mirror at instantiation), so the first main
+            // reconfiguration of a deployed key runs from (V1 anchor, V2 prior
+            // output) and, during the flip epoch, (V1 anchor, V3 prior output).
+            // The V1 bytes decode directly to the `class_groups::dkg::PublicOutput`
+            // the constructor takes — the same value the V2/V3 arm reaches via
+            // `dkg_public_output_core.into()`.
+            VersionedNetworkDkgOutput::V1(network_dkg_public_output_bytes) => {
+                match latest_reconfiguration_public_output {
+                    // A V1 anchor with no prior reconfiguration output cannot
+                    // bootstrap: `new_from_dkg_output` needs the multi-curve
+                    // `PublicOutputCore`, which a V1 anchor does not carry. No
+                    // deployed key is in this state (they have all
+                    // reconfigured).
+                    None => Err(DwalletMPCError::InternalError(
+                        "Main Reconfig with a V1 network DKG anchor requires a prior V2 or \
+                         V3 reconfiguration output; a V1 anchor with no reconfiguration \
+                         output is unsupported."
+                            .to_string(),
+                    )),
+                    Some(prior) => {
+                        let prior_reconfig_core = decode_prior_reconfiguration_output_core(&prior)?;
+
+                        debug_variable_chunks(
+                            "Instantiating public input for reconfiguration v3 [prior_reconfig_core]",
+                            "prior_reconfig_core",
+                            &bcs::to_bytes(&prior_reconfig_core)?,
+                        );
+
+                        let public_input: <ReconfigurationParty as Party>::PublicInput =
+                            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
+                                &current_access_structure,
+                                upcoming_access_structure,
+                                current_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
+                                current_tangible_party_id_to_upcoming,
+                                bcs::from_bytes(&network_dkg_public_output_bytes)?,
+                                prior_reconfig_core,
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
+                            )
+                                .map_err(DwalletMPCError::from)?;
+
+                        Ok(public_input)
+                    }
+                }
+            }
             // V2 and V3 DKG outputs differ only in whether the trailing Protocol-0.1
             // `threshold_encryption_to_sharing_output` is present. Decode either shape to a
             // `dkg::PublicOutputCore` and feed it into the same main constructor — covers
@@ -201,20 +240,8 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
 
                         Ok(public_input)
                     }
-                    Some(prior @ (VersionedDecryptionKeyReconfigurationOutput::V2(_)
-                    | VersionedDecryptionKeyReconfigurationOutput::V3(_))) => {
-                        let prior_reconfig_core: twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore =
-                            match &prior {
-                                VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => {
-                                    bcs::from_bytes(bytes)?
-                                }
-                                VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => {
-                                    let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
-                                        bcs::from_bytes(bytes)?;
-                                    full.core
-                                }
-                                VersionedDecryptionKeyReconfigurationOutput::V1(_) => unreachable!(),
-                            };
+                    Some(prior) => {
+                        let prior_reconfig_core = decode_prior_reconfiguration_output_core(&prior)?;
 
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v3 [prior_reconfig_core]",
@@ -239,15 +266,31 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
 
                         Ok(public_input)
                     }
-                    Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => Err(
-                        DwalletMPCError::InternalError(
-                            "Main Reconfig expects V2 or V3 prior reconfig output; V1 is unsupported."
-                                .to_string(),
-                        ),
-                    ),
                 }
             }
         }
+    }
+}
+
+/// Decodes a prior (V2 or V3) reconfiguration output to its
+/// `reconfiguration::PublicOutputCore` for the main reconfiguration
+/// constructors. V2 bytes are the core itself; V3 bytes are the full output,
+/// whose trailing threshold-encryption-to-sharing field the constructor
+/// re-derives. V1 outputs predate the core shape and are unsupported.
+fn decode_prior_reconfiguration_output_core(
+    prior: &VersionedDecryptionKeyReconfigurationOutput,
+) -> DwalletMPCResult<twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore> {
+    match prior {
+        VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => Ok(bcs::from_bytes(bytes)?),
+        VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => {
+            let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+                bcs::from_bytes(bytes)?;
+            Ok(full.core)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V1(_) => Err(DwalletMPCError::InternalError(
+            "Main Reconfig expects a V2 or V3 prior reconfig output; V1 is unsupported."
+                .to_string(),
+        )),
     }
 }
 

@@ -1044,24 +1044,27 @@ mod network_key_id_derivation_tool {
     }
 }
 
-/// Reconstructs the full-shape (V3) network DKG output in memory from a V2
-/// (backward-compatible) DKG output and a full V3 reconfiguration output.
+/// Reconstructs the full-shape (V3) network DKG output in memory from a V1 or
+/// V2 (backward-compatible) DKG output and a full V3 reconfiguration output.
 ///
-/// The V2 DKG output is a `decentralized_party::dkg::PublicOutputCore` and
-/// lacks the trailing `threshold_encryption_to_sharing_output` that the full V3
+/// Neither pre-V3 anchor carries the trailing
+/// `threshold_encryption_to_sharing_output` that the full V3
 /// `decentralized_party::dkg::PublicOutput` carries; that field is produced
 /// only by the threshold-encryption-to-sharing sub-protocol, which the
 /// backward-compatible reconfiguration predates. Once a full V3 reconfiguration
 /// output is available it supplies that field, and the full V3 DKG output is
-/// reconstructed by combining the V2 output's reconfiguration-invariant
-/// class-group DKG output (`PublicOutputCore::class_group_dkg_output`) with the
-/// V3 reconfiguration output (`PublicOutput::new_from_reconfiguration_output`,
-/// the inverse of `class_group_dkg_output`).
+/// reconstructed by combining the anchor's reconfiguration-invariant
+/// class-group DKG output with the V3 reconfiguration output
+/// (`PublicOutput::new_from_reconfiguration_output`). A V2 anchor is a
+/// `decentralized_party::dkg::PublicOutputCore`, whose class-group DKG output
+/// `PublicOutputCore::class_group_dkg_output` projects out; a V1 anchor (the
+/// deployed mainnet/testnet shape, written by a pre-1.1.8 binary) IS the raw
+/// `class_groups::dkg::PublicOutput` and decodes directly.
 ///
-/// Returns `Some(V3)` only when `network_dkg_output` is V2 AND a V3
+/// Returns `Some(V3)` only when `network_dkg_output` is V1 or V2 AND a V3
 /// reconfiguration output is available; `None` otherwise. The reconstruction is
 /// a pure (RNG-free) function of its inputs, so every validator holding the same
-/// V2 DKG output and the same quorum-agreed V3 reconfiguration output derives
+/// anchor and the same quorum-agreed V3 reconfiguration output derives
 /// byte-identical V3 bytes.
 fn reconstruct_full_network_dkg_output(
     network_dkg_output: &VersionedNetworkDkgOutput,
@@ -1069,20 +1072,23 @@ fn reconstruct_full_network_dkg_output(
         &VersionedDecryptionKeyReconfigurationOutput,
     >,
 ) -> DwalletMPCResult<Option<VersionedNetworkDkgOutput>> {
-    let (
-        VersionedNetworkDkgOutput::V2(dkg_public_output_core_bytes),
-        Some(VersionedDecryptionKeyReconfigurationOutput::V3(reconfiguration_output_bytes)),
-    ) = (
-        network_dkg_output,
-        latest_network_reconfiguration_public_output,
-    )
+    let Some(VersionedDecryptionKeyReconfigurationOutput::V3(reconfiguration_output_bytes)) =
+        latest_network_reconfiguration_public_output
     else {
         return Ok(None);
     };
 
-    let dkg_public_output_core: dkg::PublicOutputCore =
-        bcs::from_bytes(dkg_public_output_core_bytes)?;
-    let class_group_dkg_output = dkg_public_output_core.class_group_dkg_output();
+    let class_group_dkg_output = match network_dkg_output {
+        VersionedNetworkDkgOutput::V1(class_group_dkg_output_bytes) => {
+            bcs::from_bytes(class_group_dkg_output_bytes)?
+        }
+        VersionedNetworkDkgOutput::V2(dkg_public_output_core_bytes) => {
+            let dkg_public_output_core: dkg::PublicOutputCore =
+                bcs::from_bytes(dkg_public_output_core_bytes)?;
+            dkg_public_output_core.class_group_dkg_output()
+        }
+        VersionedNetworkDkgOutput::V3(_) => return Ok(None),
+    };
 
     let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
         bcs::from_bytes(reconfiguration_output_bytes)?;
@@ -1306,11 +1312,13 @@ mod tests {
         VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
     };
 
-    /// The reconstruction must fire ONLY for a V2 DKG output paired with a full
-    /// V3 reconfiguration output. Every other combination returns `None` without
-    /// touching the crypto decoders (so dummy bytes are fine here). The `Some`
-    /// path needs a real V2 DKG output + V3 reconfiguration output and is
-    /// exercised end-to-end by the v4 reconfiguration integration path.
+    /// The reconstruction must fire ONLY for a V1 or V2 DKG anchor paired with
+    /// a full V3 reconfiguration output. Every other combination returns `None`
+    /// without touching the crypto decoders (so dummy bytes are fine there).
+    /// The `Some` paths need real anchor + V3 reconfiguration bytes and are
+    /// exercised end-to-end by the v4 reconfiguration integration tests
+    /// (`test_v2_to_v3_reconfiguration_migration`,
+    /// `test_v1_anchor_main_reconfiguration_and_anchor_migration`).
     #[test]
     fn reconstruct_full_network_dkg_output_gating() {
         use VersionedDecryptionKeyReconfigurationOutput as Reconfiguration;
@@ -1345,14 +1353,28 @@ mod tests {
             .is_none()
         );
 
-        // V1 is never produced anymore.
+        // V1 anchor (the deployed shape) with only a V2 reconfiguration
+        // output: no threshold-encryption-to-sharing field yet, no
+        // reconstruction.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V1(vec![]),
+                Some(&Reconfiguration::V2(vec![])),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        // V1 anchor + V3 reconfiguration output DOES engage the
+        // reconstruction — with garbage bytes it must fail decoding rather
+        // than return `None` (a `None` here would silently skip the deployed
+        // keys' one-time anchor migration).
         assert!(
             reconstruct_full_network_dkg_output(
                 &Dkg::V1(vec![]),
                 Some(&Reconfiguration::V3(vec![])),
             )
-            .unwrap()
-            .is_none()
+            .is_err()
         );
     }
 }
