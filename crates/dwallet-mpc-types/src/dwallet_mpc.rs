@@ -473,11 +473,13 @@ pub enum VersionedSignOutput {
 
 /// Wire-tagged network-DKG public output.
 ///
-/// - `V1` — previously-deployed shape; the raw
-///   `class_groups::dkg::PublicOutput` (no decentralized-party wrapper). Never
-///   produced anymore — mainnet has been migrated past this version — but the
-///   variant is retained so BCS variant indices of `V2` and `V3` stay stable
-///   for already-stored outputs.
+/// - `V1` — the raw `class_groups::dkg::PublicOutput` (no decentralized-party
+///   wrapper), written by a pre-1.1.8 binary. No longer PRODUCED, but the
+///   deployed mainnet/testnet anchors are still V1-tagged on chain (the anchor
+///   is written once at DKG and never rewritten — reconfiguration writes a
+///   separate field), so this variant is still READ on every reconfiguration.
+///   The variant order is also load-bearing for BCS: it keeps the `V2`/`V3`
+///   variant indices stable for already-stored outputs.
 /// - `V2` — bytes from
 ///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`,
 ///   which after the upstream `PublicOutputCore` extraction is a re-export of

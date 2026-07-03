@@ -996,9 +996,10 @@ pub fn network_key_version_inner(
         bcs::from_bytes(&network_dkg_public_output)?;
 
     match &network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => {
-            unreachable!("V1 network DKG outputs are no longer produced")
-        }
+        // A V1 anchor is genuinely version 1: the deployed mainnet/testnet
+        // keys still carry it on chain, and this is a WASM export the SDK
+        // calls with real chain bytes.
+        VersionedNetworkDkgOutput::V1(_) => Ok(1),
         VersionedNetworkDkgOutput::V2(_) => Ok(2),
         VersionedNetworkDkgOutput::V3(_) => Ok(3),
     }
@@ -1155,9 +1156,9 @@ fn protocol_public_parameters(
         bcs::from_bytes(&network_dkg_public_output)?;
 
     match &network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => {
-            unreachable!("V1 network DKG outputs are no longer produced")
-        }
+        VersionedNetworkDkgOutput::V1(_) => Err(anyhow::anyhow!(
+            "deriving protocol public parameters directly from a V1 network DKG anchor              is not supported; derive from the reconfiguration output instead"
+        )),
         VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
             // bwd-compat (mainnet-v1.1.8) DKG output shape.
             let network_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
@@ -1214,7 +1215,9 @@ fn protocol_public_parameters_from_reconfiguration_output(
 
     match &reconfiguration_dkg_public_output {
         VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            unreachable!("V1 reconfiguration outputs are no longer produced")
+            return Err(anyhow::anyhow!(
+                "V1 reconfiguration outputs are no longer supported"
+            ));
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             // bwd-compat reconfig output shape.
