@@ -181,8 +181,12 @@ impl DWalletMPCService {
         let decryption_key_reconfiguration_third_round_delay =
             protocol_config.decryption_key_reconfiguration_third_round_delay();
 
-        let schnorr_presign_second_round_delay =
-            protocol_config.schnorr_presign_second_round_delay();
+        // None below protocol v4 — external Schnorr presigns at v3 must
+        // advance exactly like 1.1.8 (no delay); 0 entries are omitted from
+        // the delay map entirely.
+        let schnorr_presign_second_round_delay = protocol_config
+            .schnorr_presign_second_round_delay_as_option()
+            .unwrap_or(0);
 
         let max_mpc_computation_cores = node_config.max_mpc_computation_cores;
         let root_seed = match node_config.root_seed_key_pair {
@@ -653,7 +657,16 @@ impl DWalletMPCService {
 
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
-        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
+        // Wire gate for the rolling-upgrade window: `IdleStatusUpdate` is a
+        // consensus transaction kind introduced with internal presign
+        // sessions. A 1.1.8 peer cannot decode it — its `verify_batch`
+        // rejects the WHOLE block containing one, and its replay path panics
+        // on an undecodable sequenced transaction — so it must never reach
+        // the wire while the network runs a protocol version whose peers may
+        // predate the kind. Same flag that gates the DB write and read
+        // streams for these updates.
+        let idle_status_changed = self.protocol_config.internal_presign_sessions_enabled()
+            && self.last_sent_idle_status != Some(is_idle);
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
 

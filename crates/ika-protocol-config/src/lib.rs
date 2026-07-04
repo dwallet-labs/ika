@@ -640,8 +640,13 @@ impl ProtocolConfig {
             consensus_gc_depth: Some(60),
             // The delay is measured in consensus rounds.
             decryption_key_reconfiguration_third_round_delay: Some(10),
-            schnorr_presign_second_round_delay: Some(8),
-            schnorr_presign_third_round_delay: Some(8),
+            // None below v4: external Schnorr-family presigns are servable at
+            // v3, where 1.1.8 applies no round delay — a base-config value
+            // would make upgraded validators advance round 2 later than 1.1.8
+            // peers on the SAME session during the rolling window, splitting
+            // the output quorum. The delays activate with the v4 arm below.
+            schnorr_presign_second_round_delay: None,
+            schnorr_presign_third_round_delay: None,
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
@@ -732,6 +737,9 @@ impl ProtocolConfig {
                     cfg.feature_flags.fast_schnorr_supported = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
+                    // The delay is measured in consensus rounds.
+                    cfg.schnorr_presign_second_round_delay = Some(8);
+                    cfg.schnorr_presign_third_round_delay = Some(8);
                 }
                 // 5 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
@@ -1107,6 +1115,10 @@ impl ProtocolConfig {
 
     pub fn set_enforce_checkpoint_timestamp_monotonicity_for_testing(&mut self, val: bool) {
         self.feature_flags.enforce_checkpoint_timestamp_monotonicity = val;
+    }
+
+    pub fn set_internal_presign_sessions_for_testing(&mut self, val: bool) {
+        self.feature_flags.internal_presign_sessions = val;
     }
 }
 
