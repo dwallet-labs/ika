@@ -66,7 +66,8 @@ grep "end-of-publish gate not yet satisfied" $L | tail -1  # same per-condition 
 The gate prints every advance condition as a bool; the `false` one is
 the wedge. (The warn fires only *after* the session lock — pre-lock the
 gate is legitimately unsatisfied for most of the epoch, so it isn't
-counted.) The three roots seen for #1736, keyed by which field is false:
+counted.) The roots seen for #1736, keyed by which field is false
+(first three fixed, the last still open):
 
 - **`next_epoch_committee_exists=false` — stale System committee anchor.**
   The notifier writes `next_epoch_committee` on-chain mid-epoch, but each
@@ -98,6 +99,26 @@ counted.) The three roots seen for #1736, keyed by which field is false:
   at 3-of-4 quorum). TWO at one boundary = quorum death for internal
   presigns = pool starvation = the wedge. Check whether sessions created
   during a validator's key gap ever compute afterwards.
+- **`all_epoch_sessions_finished=false` — a locked user session that is
+  never re-pulled (the still-OPEN core of #1736).** All other gate
+  conditions read true; the epoch locked its last user session and simply
+  waits for a session that never computes. A session held at the lock
+  boundary logs a "holding … re-pulled next epoch otherwise" line with
+  its `session_sequence_number`, then never reappears — the promised
+  next-epoch re-pull does not fire.
+  ```bash
+  grep -E "holding .*re-pulled next epoch" $L | tail -3   # the held session + its seq
+  # then confirm that seq never returns (no completion, no re-pull):
+  grep "session_sequence_number=<SEQ>" $L
+  ```
+  A second, correlated signature at every epoch entry: a burst of
+  `FailedToAdvanceMPC(InvalidParameters)` in `compute_presign` round 1
+  with `should_never_happen=true`, VSS algorithms only, never retried to
+  quorum — the internal-presign refill sessions created inside the
+  epoch-entry key gap. Unlike the three roots above (all fixed), this one
+  has no fix yet; the healthy-vs-wedged discriminator and the standing
+  evidence are on issue #1736. Diagnosis needs a FAILING instrumented run
+  (most runs are healthy) — the captured one is CI run 28577745311.
 
 ## 4. Chain counters — the over/undershoot discriminator
 
