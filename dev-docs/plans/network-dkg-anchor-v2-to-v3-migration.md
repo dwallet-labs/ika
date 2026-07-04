@@ -3,8 +3,9 @@
 Status: active — implementation complete and validated end-to-end (2026-06-28),
 PR #1758 (into `dev`, ready for review); flip to `landed` on merge.
 Consensus-critical. Builds on the in-memory V3 reconstruction (`013cb1b75f`).
-The durable behavioral contract — the `NetworkDkgOutput` item's one-time V2->V3
-migration and the adoption tolerance — now lives in
+The durable behavioral contract — the `NetworkDkgOutput` item's one-time
+pre-V3 -> V3 migration (from a V2 anchor, or from the deployed keys' V1 anchor)
+and the adoption tolerance — now lives in
 `dev-docs/specs/handoff.md`; this plan is the intent/sequencing record.
 
 ## What this is
@@ -18,13 +19,15 @@ Each network encryption key carries a `VersionedNetworkDkgOutput` (the
   `class_groups::dkg::PublicOutput`, written by a pre-1.1.8 binary and never
   rewritten — reconfiguration writes a separate field). Their reconfiguration
   outputs are V2. The v3 reconfiguration input builder reads (V1 anchor,
-  V2 reconfiguration output) every epoch.
+  V2 reconfiguration output) every epoch, and the main (v4) builder accepts the
+  same shape for the deployed keys' first v4 reconfigurations (a V1 arm that
+  decodes the anchor directly as the raw class-groups DKG output).
 - **V3** — the full `decentralized_party::dkg::PublicOutput` = the V2 core plus a
   trailing `threshold_encryption_to_sharing_output`, produced only by the
   threshold-encryption-to-sharing sub-protocol that backward-compatible
   reconfiguration predates.
 
-A pure, RNG-free helper reconstructs V3 from (V2 DKG output, a full V3
+A pure, RNG-free helper reconstructs V3 from (V1 or V2 DKG output, a full V3
 reconfiguration output): `reconstruct_full_network_dkg_output`
 (`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_dkg.rs:721`),
 already called in `build_network_encryption_key_public_data` and stored in the
@@ -81,8 +84,8 @@ Three coordinated pieces, all under `off_chain_validator_metadata_enabled()`:
 ### 1. Flip the persisted mirror at instantiation (epoch entry)
 
 When a key is instantiated with off-chain on and the result carries a
-`reconstructed_full_network_dkg_output = Some(V3)` (i.e. stored DKG output is V2
-and the cert-pinned reconfiguration output is V3), persist that V3 once via the
+`reconstructed_full_network_dkg_output = Some(V3)` (i.e. stored DKG output is V1
+or V2 and the cert-pinned reconfiguration output is V3), persist that V3 once via the
 existing `cache_network_dkg_output(key_id, v3_bytes)` write path. That single
 call:
 
