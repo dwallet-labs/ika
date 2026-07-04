@@ -19,8 +19,9 @@ next epoch inherits.
   - `NetworkDkgOutput { key_id }` — the canonical network DKG output.
     Stable across epochs WITHIN a representation, with exactly one
     consensus-deterministic transition over the key's lifetime: a
-    mainnet-v1.1.8-origin key's DKG output is a V2 (backward-compatible)
-    `PublicOutputCore` and migrates ONCE to the full V3
+    mainnet-v1.1.8-origin key's on-chain DKG anchor is V1 (the raw
+    `class_groups::dkg::PublicOutput`) and its reconfiguration outputs are
+    V2; the canonical DKG output migrates ONCE to the full V3
     `decentralized_party::dkg::PublicOutput` at the first v4 reshare
     (when the cert-pinned reconfiguration output first becomes V3, every
     validator reconstructs the full V3 output and flips its perpetual

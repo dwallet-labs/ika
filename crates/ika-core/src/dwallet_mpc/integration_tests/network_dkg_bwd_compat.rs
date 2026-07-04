@@ -22,6 +22,7 @@ use crate::dwallet_mpc::integration_tests::network_dkg::{
 };
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
+use dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
@@ -374,4 +375,271 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         "v2→v3 migration reconfiguration should succeed under main Party"
     );
     info!("v2→v3 migration reconfiguration completed");
+}
+
+/// Reconfiguration of a key that carries the DEPLOYED mainnet/testnet anchor
+/// shape: a **V1-tagged network DKG anchor** (a raw `class_groups::dkg::PublicOutput`)
+/// plus a **V2-tagged reconfiguration output**.
+///
+/// Regression test for the panic-abort that used to wedge every deployed
+/// network at its first reconfiguration: `reconfiguration_bwd_compat_public_input`
+/// had `VersionedNetworkDkgOutput::V1(_) => unreachable!()`, so every validator
+/// aborted the moment it read a deployed key's on-chain anchor. The fix adds a
+/// functional V1 arm that decodes the V1 inner bytes directly as the class-groups
+/// DKG output and feeds it, alongside the prior V2 reconfiguration output, to
+/// `bwd_compat_reconfig::PublicInput::new_from_reconfiguration_output`.
+///
+/// Pinned at v2 (= deployed protocol v3, `reconfiguration_message_version == 2`)
+/// for the WHOLE test, so both reconfigurations route through the bwd-compat
+/// builder.
+///
+/// Assertion level: FULL — drives the V1-anchor builder path end to end and
+/// asserts the resulting `RespondDWalletMPCNetworkReconfigurationOutput` is
+/// `!rejected` (not merely that the input builder returns `Ok`).
+#[tokio::test]
+#[cfg(test)]
+async fn test_v1_anchor_bwd_compat_reconfiguration() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let epoch_id = 1;
+
+    // Pin at v2 for the whole test — the deployed-shape path. The guard must
+    // outlive every `create_dwallet_mpc_services_*` call (each snapshots the
+    // `ProtocolConfig` onto its `DWalletMPCManager`), so keep it in scope.
+    let _override = pin_protocol_to_v2_overrides();
+
+    // Share committee + per-validator seeds + off-chain bundles across both
+    // phases so the phase-2 validators hold the same class-groups decryption
+    // keys as phase 1 — they must recover their Shamir shares from phase 1's
+    // reconfiguration output, which was dealt to these exact keys.
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
+
+    // ── Phase 1: network DKG (→ V2 anchor), then ONE reconfiguration to the
+    //    SAME committee (epoch+1, same identities/keys) to obtain a V2-tagged
+    //    reconfiguration output that stays usable by those identities. ───────
+    let (
+        p1_dwallet_mpc_services,
+        p1_sui_data_senders,
+        p1_sent_consensus_messages_collectors,
+        p1_epoch_stores,
+        p1_notify_services,
+        p1_noa_sign_request_senders,
+        p1_noa_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+        bundles.clone(),
+    );
+    let mut p1_state = IntegrationTestState {
+        dwallet_mpc_services: p1_dwallet_mpc_services,
+        sent_consensus_messages_collectors: p1_sent_consensus_messages_collectors,
+        epoch_stores: p1_epoch_stores,
+        notify_services: p1_notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee: committee.clone(),
+        sui_data_senders: p1_sui_data_senders,
+        network_owned_address_sign_request_senders: p1_noa_sign_request_senders,
+        network_owned_address_sign_output_receivers: p1_noa_sign_output_receivers,
+    };
+
+    let (consensus_round, v2_network_key_bytes, key_id) =
+        create_network_key_test(&mut p1_state).await;
+    info!(
+        ?key_id,
+        bytes_len = v2_network_key_bytes.len(),
+        "Phase 1: V2-tagged network DKG anchor captured"
+    );
+
+    // Reconfigure to the SAME committee at the next epoch. At v2 the bwd-compat
+    // builder reads the (current + upcoming) class-groups keys off the committee,
+    // so only the committee is delivered (the off-chain next-epoch key channel is
+    // a v3-only input).
+    let mut p1_next_committee = (*p1_state.dwallet_mpc_services[0].committee).clone();
+    p1_next_committee.epoch = epoch_id + 1;
+    for sui_data_sender in &p1_state.sui_data_senders {
+        let _ = sui_data_sender
+            .next_epoch_committee_sender
+            .send(p1_next_committee.clone());
+    }
+    send_start_network_key_reconfiguration_event(
+        epoch_id,
+        &mut p1_state.sui_data_senders,
+        [7u8; 32],
+        7,
+        key_id,
+    );
+    let (_, p1_reconfiguration_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut p1_state, consensus_round).await;
+    let mut v2_reconfiguration_output_bytes = vec![];
+    for message in p1_reconfiguration_checkpoint.messages() {
+        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
+            message
+        else {
+            continue;
+        };
+        assert!(
+            !message.rejected,
+            "phase-1 reconfiguration (to seed the prior V2 output) should not be rejected"
+        );
+        // At v2 these bytes are `bcs(VersionedDecryptionKeyReconfigurationOutput::V2(..))`
+        // — the exact shape a deployed key stores in `current_reconfiguration_public_output`.
+        v2_reconfiguration_output_bytes.extend(message.public_output.clone());
+    }
+    assert!(
+        !v2_reconfiguration_output_bytes.is_empty(),
+        "phase-1 reconfiguration output must be non-empty"
+    );
+    info!(
+        bytes_len = v2_reconfiguration_output_bytes.len(),
+        "Phase 1: V2-tagged reconfiguration output captured"
+    );
+
+    // ── Project the captured V2 anchor into the deployed V1-tagged shape ─────
+    //
+    // The deployed keys carry a V1 anchor: a raw `class_groups::dkg::PublicOutput`
+    // written once at the original (pre-1.1.8) DKG and never rewritten. We
+    // synthesize that exact shape from the V2 anchor produced above. The
+    // projection is FAITHFUL, not a hand-rolled stand-in: the V2 arm of
+    // `reconfiguration_bwd_compat_public_input` feeds the constructor
+    // `bwd_compat_dkg_public_output.into()` — the very same
+    // `From<PublicOutputCore> for class_groups::dkg::PublicOutput` conversion
+    // applied here. The fixed V1 arm decodes the V1 inner bytes straight back
+    // with `bcs::from_bytes`, so it recovers a value byte-identical to what the
+    // V2 arm hands the constructor. Both arms therefore run identical crypto ⇒
+    // the reconfiguration must not be rejected. (The class-groups DKG output's
+    // BCS layout is also stable across the crypto bump, matching the on-chain
+    // deployed bytes.)
+    let VersionedNetworkDkgOutput::V2(v2_dkg_inner) = bcs::from_bytes(&v2_network_key_bytes)
+        .expect("decode the captured versioned network anchor")
+    else {
+        panic!("phase-1 network DKG at v2 must produce a V2-tagged anchor");
+    };
+    let bwd_compat_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
+        bcs::from_bytes(&v2_dkg_inner).expect("decode the bwd-compat DKG PublicOutput");
+    let class_groups_dkg_output: class_groups::dkg::PublicOutput<
+        { twopc_mpc::secp256k1::SCALAR_LIMBS },
+        { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+        { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    > = bwd_compat_dkg_public_output.into();
+    let v1_dkg_inner = bcs::to_bytes(&class_groups_dkg_output)
+        .expect("re-encode the projected class-groups DKG output");
+    let v1_anchor_bytes = bcs::to_bytes(&VersionedNetworkDkgOutput::V1(v1_dkg_inner))
+        .expect("encode the V1-tagged anchor");
+
+    // ── Phase 2: fresh services (same committee + seeds), still v2-pinned.
+    //    Inject the deployed-shape key (V1 anchor + V2 reconfig output) and
+    //    reconfigure again — this drives the fixed V1-anchor builder path. ────
+    let (
+        p2_dwallet_mpc_services,
+        p2_sui_data_senders,
+        p2_sent_consensus_messages_collectors,
+        p2_epoch_stores,
+        p2_notify_services,
+        p2_noa_sign_request_senders,
+        p2_noa_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+        bundles.clone(),
+    );
+    let mut p2_state = IntegrationTestState {
+        dwallet_mpc_services: p2_dwallet_mpc_services,
+        sent_consensus_messages_collectors: p2_sent_consensus_messages_collectors,
+        epoch_stores: p2_epoch_stores,
+        notify_services: p2_notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee: committee.clone(),
+        sui_data_senders: p2_sui_data_senders,
+        network_owned_address_sign_request_senders: p2_noa_sign_request_senders,
+        network_owned_address_sign_output_receivers: p2_noa_sign_output_receivers,
+    };
+
+    // Inject the deployed-shape key. A non-empty `current_reconfiguration_public_output`
+    // routes instantiation through the reconfiguration-output path
+    // (`spawn_network_encryption_key_public_data_instantiation`), which reads the
+    // V1 anchor verbatim — so a successful install already proves instantiation
+    // tolerates the V1 anchor.
+    p2_state
+        .sui_data_senders
+        .iter()
+        .for_each(|sui_data_sender| {
+            let _ = sui_data_sender
+                .network_keys_sender
+                .send(Arc::new(HashMap::from([(
+                    key_id,
+                    DWalletNetworkEncryptionKeyData {
+                        id: key_id,
+                        current_epoch: 1,
+                        dkg_at_epoch: 1,
+                        current_reconfiguration_public_output: v2_reconfiguration_output_bytes
+                            .clone(),
+                        network_dkg_public_output: v1_anchor_bytes.clone(),
+                        state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+                    },
+                )])));
+        });
+    for service in p2_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    // Fresh phase-2 services start with `last_read_consensus_round = Some(0)`, so
+    // distribute the status updates from the loop above at round 1 to keep
+    // `round_to_messages` contiguous; the reconfig flow below continues at round 2.
+    utils::send_advance_results_between_parties(
+        &p2_state.committee,
+        &mut p2_state.sent_consensus_messages_collectors,
+        &mut p2_state.epoch_stores,
+        1,
+    );
+    for service in p2_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::run_service_loops_until_network_key_installed(
+        &mut p2_state.dwallet_mpc_services,
+        key_id,
+    )
+    .await;
+    for (i, service) in p2_state.dwallet_mpc_services.iter().enumerate() {
+        assert!(
+            service
+                .dwallet_mpc_manager()
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id)
+                .is_ok(),
+            "phase-2 validator {i} should have installed the V1-anchor deployed-shape key"
+        );
+    }
+
+    // Reconfigure the deployed-shape key. At v2 only the committee is delivered.
+    let (mut p2_next_committee, _p2_next_seeds, _p2_next_bundles) =
+        utils::build_committee_with_random_seeds(4);
+    p2_next_committee.epoch = epoch_id + 1;
+    for sui_data_sender in &p2_state.sui_data_senders {
+        let _ = sui_data_sender
+            .next_epoch_committee_sender
+            .send(p2_next_committee.clone());
+    }
+    send_start_network_key_reconfiguration_event(
+        epoch_id,
+        &mut p2_state.sui_data_senders,
+        [8u8; 32],
+        8,
+        key_id,
+    );
+    let (_, p2_reconfiguration_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut p2_state, 2).await;
+    let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
+        p2_reconfiguration_checkpoint
+            .messages()
+            .first()
+            .expect("Expected a reconfiguration message")
+    else {
+        error!("Expected a RespondDWalletMPCNetworkReconfigurationOutput message");
+        panic!("Test failed due to unexpected message type");
+    };
+    assert!(
+        !message.rejected,
+        "V1-anchor bwd-compat reconfiguration should not be rejected"
+    );
+    info!("V1-anchor bwd-compat reconfiguration completed");
 }
