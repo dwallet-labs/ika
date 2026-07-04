@@ -147,9 +147,19 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         }
 
         match network_dkg_public_output {
-            VersionedNetworkDkgOutput::V1(_) => {
-                unreachable!("V1 network DKG outputs are no longer produced")
-            }
+            // Deployed keys still carry a V1 anchor on chain. The main (v4)
+            // reconfiguration party does not yet reconstruct its input from a
+            // V1 anchor — that support (and the V2->V3 anchor migration for
+            // these keys) is a tracked follow-up gated behind v4 activation.
+            // Fail the session with a clear error instead of aborting the
+            // process; v4 is not active on any deployed network, so this arm
+            // is unreachable in production until that follow-up lands.
+            VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
+                "The main (v4) reconfiguration path does not yet support a V1 network \
+                 DKG anchor (deployed mainnet/testnet keys); this must be implemented \
+                 before protocol v4 activates on those networks."
+                    .to_string(),
+            )),
             // V2 and V3 DKG outputs differ only in whether the trailing Protocol-0.1
             // `threshold_encryption_to_sharing_output` is present. Decode either shape to a
             // `dkg::PublicOutputCore` and feed it into the same main constructor — covers
@@ -271,8 +281,60 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
         current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
 
     match network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => {
-            unreachable!("V1 network DKG outputs are no longer produced")
+        // The deployed mainnet/testnet network keys were DKG'd by a pre-1.1.8
+        // binary, which wrote a V1-tagged anchor: the raw
+        // `class_groups::dkg::PublicOutput` (no decentralized-party wrapper).
+        // Reconfiguration never rewrites the anchor, so it is still V1 on chain
+        // and is read on every reconfiguration. 1.1.8 handled this shape here;
+        // the anchor's class-groups DKG output feeds straight into
+        // `new_from_reconfiguration_output` (its bcs layout is unchanged across
+        // the crypto bump), alongside the prior V2 reconfiguration output.
+        VersionedNetworkDkgOutput::V1(network_dkg_public_output_bytes) => {
+            match latest_reconfiguration_public_output {
+                // A V1 anchor with no prior reconfiguration output is the pre-
+                // reconfiguration genesis state of a pre-1.1.8 key — which no
+                // deployed key is in (they have all reconfigured), and which
+                // this backward-compatible path cannot bootstrap (the DKG-only
+                // constructor needs the multi-curve output shape a V1 anchor
+                // does not carry). 1.1.8 also errored here.
+                None => Err(DwalletMPCError::InternalError(
+                    "Bwd-compat reconfig with a V1 anchor requires a prior V2 \
+                     reconfiguration output; a V1 anchor with no reconfiguration \
+                     output is unsupported."
+                        .to_string(),
+                )),
+                Some(VersionedDecryptionKeyReconfigurationOutput::V2(
+                    latest_reconfiguration_public_output_bytes,
+                )) => {
+                    let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =
+                        bcs::from_bytes(&latest_reconfiguration_public_output_bytes)?;
+                    bwd_compat_reconfig::PublicInput::new_from_reconfiguration_output(
+                        &current_access_structure,
+                        upcoming_access_structure,
+                        current_encryption_keys_per_crt_prime_and_proofs,
+                        upcoming_encryption_keys_per_crt_prime_and_proofs,
+                        current_tangible_party_id_to_upcoming,
+                        // The V1 anchor IS the class-groups DKG output the
+                        // constructor wants — decode it directly (no wrapper to
+                        // project through, unlike the V2 arm's `.into()`).
+                        bcs::from_bytes(&network_dkg_public_output_bytes)?,
+                        public_output,
+                    )
+                    .map_err(DwalletMPCError::from)
+                }
+                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
+                    Err(DwalletMPCError::InternalError(
+                        "V1 reconfiguration outputs are no longer supported.".to_string(),
+                    ))
+                }
+                Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
+                    Err(DwalletMPCError::InternalError(
+                        "Bwd-compat reconfig requires a prior V2-tagged reconfiguration \
+                         output; got V3."
+                            .to_string(),
+                    ))
+                }
+            }
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output_bytes) => {
             let bwd_compat_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
@@ -305,7 +367,9 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
                     .map_err(DwalletMPCError::from)
                 }
                 Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
-                    unreachable!("V1 reconfiguration outputs are no longer produced")
+                    Err(DwalletMPCError::InternalError(
+                        "V1 reconfiguration outputs are no longer supported.".to_string(),
+                    ))
                 }
                 Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => Err(
                     DwalletMPCError::InternalError(
@@ -517,7 +581,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
 
     match &mpc_public_output {
         VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            unreachable!("V1 reconfiguration outputs are no longer produced")
+            return Err(DwalletMPCError::InternalError(
+                "V1 network keys are no longer supported for instantiation.".to_string(),
+            ));
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             // bwd-compat reconfig PublicOutput shape.

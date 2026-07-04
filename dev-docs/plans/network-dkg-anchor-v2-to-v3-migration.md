@@ -14,7 +14,11 @@ Each network encryption key carries a `VersionedNetworkDkgOutput` (the
 `crates/dwallet-mpc-types/src/dwallet_mpc.rs:111`):
 
 - **V2** — the backward-compatible `decentralized_party::dkg::PublicOutputCore`.
-  The deployed mainnet/testnet key has a V2 anchor.
+- The deployed mainnet/testnet keys carry a **V1** anchor on chain (raw
+  `class_groups::dkg::PublicOutput`, written by a pre-1.1.8 binary and never
+  rewritten — reconfiguration writes a separate field). Their reconfiguration
+  outputs are V2. The v3 reconfiguration input builder reads (V1 anchor,
+  V2 reconfiguration output) every epoch.
 - **V3** — the full `decentralized_party::dkg::PublicOutput` = the V2 core plus a
   trailing `threshold_encryption_to_sharing_output`, produced only by the
   threshold-encryption-to-sharing sub-protocol that backward-compatible
