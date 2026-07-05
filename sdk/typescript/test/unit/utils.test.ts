@@ -13,57 +13,54 @@ import {
 
 describe('Utils', () => {
 	describe('objResToBcs', () => {
-		it('should extract BCS bytes from valid Sui object response', () => {
+		it('should extract BCS bytes from an object with content', () => {
+			const mockObject = {
+				objectId: 'test-object-id',
+				version: '1',
+				digest: 'test-digest',
+				type: 'SomeType',
+				content: new Uint8Array([1, 2, 3, 4]),
+			} as any;
+
+			const result = objResToBcs(mockObject);
+
+			expect(result).toBeInstanceOf(Uint8Array);
+			expect(Array.from(result)).toEqual([1, 2, 3, 4]);
+		});
+
+		it('should unwrap a GetObjectResponse and extract BCS bytes', () => {
 			const mockResponse = {
-				data: {
-					digest: 'test-digest',
+				object: {
 					objectId: 'test-object-id',
 					version: '1',
-					bcs: {
-						dataType: 'moveObject' as const,
-						bcsBytes: 'test-bcs-bytes',
-					},
+					digest: 'test-digest',
+					type: 'SomeType',
+					content: new Uint8Array([5, 6, 7]),
 				},
 			} as any;
 
 			const result = objResToBcs(mockResponse);
-			expect(result).toBe('test-bcs-bytes');
+
+			expect(result).toBeInstanceOf(Uint8Array);
+			expect(Array.from(result)).toEqual([5, 6, 7]);
 		});
 
-		it('should throw InvalidObjectError when bcs data is missing', () => {
-			const mockResponse = {
-				data: {
-					digest: 'test-digest',
-					objectId: 'test-object-id',
-					version: '1',
-					type: 'SomeType',
-				},
+		it('should throw InvalidObjectError when content is missing', () => {
+			const mockObject = {
+				objectId: 'test-object-id',
+				version: '1',
+				digest: 'test-digest',
+				type: 'SomeType',
 			} as any;
 
-			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
-			expect(() => objResToBcs(mockResponse)).toThrow('Response bcs missing');
+			expect(() => objResToBcs(mockObject)).toThrow(InvalidObjectError);
+			expect(() => objResToBcs(mockObject)).toThrow('Response bcs missing');
 		});
 
-		it('should throw InvalidObjectError when dataType is not moveObject', () => {
-			const mockResponse = {
-				data: {
-					digest: 'test-digest',
-					objectId: 'test-object-id',
-					version: '1',
-					bcs: {
-						dataType: 'package' as const,
-						bcsBytes: 'test-bcs-bytes',
-					},
-				},
-			} as any;
+		it('should rethrow an Error response as-is', () => {
+			const error = new Error('object fetch failed');
 
-			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
-		});
-
-		it('should throw InvalidObjectError when data is missing', () => {
-			const mockResponse = {} as any;
-
-			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
+			expect(() => objResToBcs(error)).toThrow(error);
 		});
 	});
 
