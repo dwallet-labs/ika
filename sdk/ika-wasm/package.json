@@ -35,7 +35,7 @@
 		}
 	},
 	"devDependencies": {
-		"cross-env": "^7.0.3"
+		"cross-env": "^10.1.0"
 	},
 	"bugs": {
 		"url": "https://github.com/dwallet-labs/ika/issues/new"

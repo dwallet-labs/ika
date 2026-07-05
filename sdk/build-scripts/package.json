@@ -1,6 +1,7 @@
 {
 	"name": "@ika.xyz/build-scripts",
 	"private": true,
+	"type": "module",
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
 	"description": "Build scripts for @ika.xyz packages",
 	"version": "0.0.0",
@@ -21,11 +22,11 @@
 		"build": "tsc --build"
 	},
 	"devDependencies": {
-		"esbuild": "^0.25.8",
-		"find-up": "^7.0.0",
-		"typescript": "^5.8.3"
+		"esbuild": "^0.28.1",
+		"find-up": "^8.0.0",
+		"typescript": "^6.0.3"
 	},
 	"dependencies": {
-		"@types/node": "^22.15.29"
+		"@types/node": "^26.1.0"
 	}
 }
