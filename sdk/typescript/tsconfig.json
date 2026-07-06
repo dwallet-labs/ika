@@ -3,6 +3,8 @@
 	"compilerOptions": {
 		"target": "ES2022",
 		"lib": ["dom", "esnext"],
+		// TypeScript 6 no longer auto-includes @types packages; process usage needs node globals
+		"types": ["node"],
 		// output .d.ts declaration files for consumers
 		"declaration": true,
 		"emitDeclarationOnly": true,

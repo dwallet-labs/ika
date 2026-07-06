@@ -155,7 +155,8 @@ for TEST_FILE in "${TEST_FILES[@]}"; do
     # --testTimeout: vitest kills individual test cases that exceed this (in ms).
     # --reporter=verbose: prints each test case result as it completes/fails/times out.
     # --sequence.concurrent=false: run test cases sequentially within each file.
-    # --pool=forks --poolOptions.forks.singleFork: single process, no parallelism.
+    # --pool=forks --maxWorkers=1 --no-file-parallelism: single process, no
+    # parallelism (vitest 4 removed poolOptions.forks.singleFork).
     set +e
     (
         cd "$PROJECT_DIR" && \
@@ -166,7 +167,8 @@ for TEST_FILE in "${TEST_FILES[@]}"; do
             --hookTimeout="$TIMEOUT_MS" \
             --sequence.concurrent=false \
             --pool=forks \
-            --poolOptions.forks.singleFork \
+            --maxWorkers=1 \
+            --no-file-parallelism \
             2>&1
     )
     EXIT_CODE=$?
