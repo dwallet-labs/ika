@@ -24,7 +24,7 @@ RUN mkdir -p ~/.ssh && \
     printf "%s" "${GH_DEPLOY_KEY}" > ~/.ssh/id_ed25519 && \
     chmod 600 ~/.ssh/id_ed25519 && \
     ssh-keyscan github.com >> ~/.ssh/known_hosts && \
-    git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+    git config --global url."git@github.com:dwallet-labs/inkrypto".insteadOf "https://github.com/dwallet-labs/inkrypto"
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y cmake clang pkg-config libssl-dev

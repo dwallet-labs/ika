@@ -204,7 +204,7 @@ trivial/mechanical tests where vacuous-pass isn't a risk.
 
 - 2PC-MPC: Two-party computation where one party is emulated by n-party MPC
 - Uses class groups for threshold cryptography
-- External crypto dependencies from `dwallet-labs/cryptography-private`
+- External crypto dependencies from `dwallet-labs/inkrypto`
 - Curves: secp256k1 (k256), P-256 (p256), ed25519
 
 ## When to Stop and Ask

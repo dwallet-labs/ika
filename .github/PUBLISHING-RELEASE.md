@@ -8,7 +8,7 @@ Builds binaries (5 platforms), Docker images (4 images), uploads to GCP, creates
 
 | Secret | Purpose |
 |--------|---------|
-| `GH_DEPLOY_KEY` | SSH key for cloning `dwallet-labs/cryptography-private` (private dependency) |
+| `GH_DEPLOY_KEY` | SSH key for cloning `dwallet-labs/inkrypto` (private dependency) |
 | `GAR_KEY` | Google Cloud service account JSON for Artifact Registry |
 | `GITHUB_TOKEN` | Automatic — creates draft releases |
 | `HOMEBREW_TAP_DEPLOY_KEY` | SSH deploy key with write access to `ika-xyz/homebrew-tap` |
