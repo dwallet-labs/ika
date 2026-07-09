@@ -1221,8 +1221,8 @@ fn make_key_files(
     Ok(())
 }
 
-/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE
-/// + VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
+/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE +
+/// VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
 /// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
 /// (published in the on-chain validator record).
 fn read_or_generate_root_seed(

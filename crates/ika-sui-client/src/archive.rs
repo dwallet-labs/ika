@@ -137,7 +137,7 @@ impl CheckpointArchive for SuiCheckpointArchive {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     // A unique temp dir for this test process (no external tempfile dep).
     fn temp_store_dir(tag: &str) -> PathBuf {
@@ -147,7 +147,7 @@ mod tests {
         dir
     }
 
-    fn file_url(dir: &PathBuf) -> String {
+    fn file_url(dir: &Path) -> String {
         format!("file://{}", dir.display())
     }
 

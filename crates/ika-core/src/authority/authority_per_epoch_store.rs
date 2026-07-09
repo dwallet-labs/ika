@@ -973,6 +973,10 @@ pub enum ReconfigCertStatus {
 /// together with the session identifier it uniquely identifies a single presign.
 type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>;
 
+/// An uncommitted presign pop: the pending write batch plus the popped
+/// presign's session identifier, blending index, and serialized value.
+type PreparedPresignPop = (DBBatch, SessionIdentifier, u16, Vec<u8>);
+
 /// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
 #[derive(DBMapUtils)]
 #[allow(clippy::type_complexity)]
@@ -1454,7 +1458,7 @@ impl AuthorityEpochTables {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(DBBatch, SessionIdentifier, u16, Vec<u8>)>> {
+    ) -> IkaResult<Option<PreparedPresignPop>> {
         let table = self.presign_pool_table(signature_algorithm);
 
         // Get the first entry for this network encryption key ID.
@@ -2446,16 +2450,15 @@ impl AuthorityPerEpochStore {
             self.metrics
                 .dwallet_handoff_cert_epoch
                 .set(cert.attestation.epoch as i64);
-            if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-                if let Err(e) =
+            if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full()
+                && let Err(e) =
                     perpetual.insert_certified_handoff_attestation(cert.attestation.epoch, cert)
-                {
-                    warn!(
-                        error = ?e,
-                        epoch = cert.attestation.epoch,
-                        "failed to persist replay-minted handoff cert — cert remains in-memory only"
-                    );
-                }
+            {
+                warn!(
+                    error = ?e,
+                    epoch = cert.attestation.epoch,
+                    "failed to persist replay-minted handoff cert — cert remains in-memory only"
+                );
             }
         }
         // Drain peer V2 signatures that arrived before this

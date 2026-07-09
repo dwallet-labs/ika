@@ -126,14 +126,14 @@ fn verify_genesis(
 
     // Verify the blob against the binary's compiled-in 32-byte root for the
     // public chains. A swapped/forged summary is caught here.
-    if let Some(expected) = compiled_in_chain_identifier(chain) {
-        if chain_identifier != expected {
-            return Err(GenesisError::ChainMismatch {
-                chain,
-                got: chain_identifier.base58_encode(),
-                expected: expected.base58_encode(),
-            });
-        }
+    if let Some(expected) = compiled_in_chain_identifier(chain)
+        && chain_identifier != expected
+    {
+        return Err(GenesisError::ChainMismatch {
+            chain,
+            got: chain_identifier.base58_encode(),
+            expected: expected.base58_encode(),
+        });
     }
 
     // Bind committee[0] to that verified digest. The check above only pins the

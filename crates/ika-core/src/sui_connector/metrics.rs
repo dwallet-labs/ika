@@ -89,7 +89,7 @@ pub struct SuiConnectorMetrics {
 
     /// `clock.timestamp_ms - (epoch_start + epoch_duration)`, clamped to >=0.
     /// > 0 means the epoch should already have advanced; sustained values
-    /// indicate a deadlock.
+    /// > indicate a deadlock.
     pub(crate) chain_epoch_overdue_seconds: IntGauge,
 
     /// Gauge (0/1) per gating condition in `sync_dwallet_end_of_publish`.

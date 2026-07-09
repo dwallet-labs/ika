@@ -435,8 +435,7 @@ mod tests {
     fn panic_in_compute_becomes_a_failed_result() {
         let id = test_computation_id();
         let err = compute_catching_panic(id, || panic!("boom inside advance()"))
-            .err()
-            .expect("a panic must surface as a failed result, not Ok");
+            .expect_err("a panic must surface as a failed result, not Ok");
         match err {
             DwalletMPCError::MPCSessionError {
                 error,
@@ -467,8 +466,7 @@ mod tests {
                 error: "ordinary failure".to_string(),
             })
         })
-        .err()
-        .expect("the closure returned Err");
+        .expect_err("the closure returned Err");
         match err {
             DwalletMPCError::MPCSessionError { error, .. } => {
                 assert_eq!(error, "ordinary failure");

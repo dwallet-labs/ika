@@ -411,8 +411,8 @@ impl DWalletMPCManager {
             };
         let validator_pvss_publics_for_vss =
             crate::dwallet_mpc::network_dkg::ValidatorPvssEncryptionKeysForVss {
-                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
-                ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
+                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0,
+                ristretto_encryption_key: validator_publics.ristretto_pvss.0,
             };
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {

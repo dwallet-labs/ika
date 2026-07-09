@@ -241,15 +241,14 @@ impl OcsVerifyingClient {
         // log and fall through to the transport ratchet. Runs only on the first
         // ratchet; later ratchets rely on the transport + per-seq archive
         // fallback for the live tail.
-        if let Some(archive) = self.archive.clone() {
-            if !self.backfill_attempted.swap(true, Ordering::Relaxed) {
-                if let Err(e) = self.backfill_committee_chain_from_archive(&archive).await {
-                    warn!(
-                        error = %e,
-                        "archive cold-bootstrap incomplete; continuing with the transport ratchet"
-                    );
-                }
-            }
+        if let Some(archive) = self.archive.clone()
+            && !self.backfill_attempted.swap(true, Ordering::Relaxed)
+            && let Err(e) = self.backfill_committee_chain_from_archive(&archive).await
+        {
+            warn!(
+                error = %e,
+                "archive cold-bootstrap incomplete; continuing with the transport ratchet"
+            );
         }
         // `get_current_epoch` is a relay-claimed, unverified passthrough, but
         // it only sets the loop's *target* — it can't forge progress. Every

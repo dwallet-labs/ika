@@ -67,7 +67,7 @@ pub async fn refresh_trusted_peers_loop(
                 // Keep the last good set (the watch channel still holds it, so
                 // known_peers is unaffected) and retry. Throttle the warn so an
                 // RPC outage doesn't repeat the same line every tick.
-                if consecutive_failures % 20 == 0 {
+                if consecutive_failures.is_multiple_of(20) {
                     warn!(error = %e, consecutive_failures, "trusted-peer refresh failed; keeping last set");
                 } else {
                     debug!(error = %e, "trusted-peer refresh failed");

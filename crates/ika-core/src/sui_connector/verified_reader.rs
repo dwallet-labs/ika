@@ -307,14 +307,14 @@ impl OcsVerifiedReader {
         // mirror path's safety bound: a stalled changeset stream that freezes
         // `currency` at `Current` still gets a forced verified re-read every
         // interval, so it can never serve a stale anchor indefinitely.
-        if !self.anchor_refresh_due(id) {
-            if let Some((hit, label)) = self.anchor_cache_hit(id) {
-                self.metrics
-                    .cache_read_total
-                    .with_label_values(&[label])
-                    .inc();
-                return Ok(hit);
-            }
+        if !self.anchor_refresh_due(id)
+            && let Some((hit, label)) = self.anchor_cache_hit(id)
+        {
+            self.metrics
+                .cache_read_total
+                .with_label_values(&[label])
+                .inc();
+            return Ok(hit);
         }
         // Refresh due, cache miss, or mirror node: take the verified network path
         // DIRECTLY (not `verified_object`, whose `try_cache_hit` would just

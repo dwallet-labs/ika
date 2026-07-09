@@ -39,6 +39,12 @@ type TestPresignPool = Arc<
     Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, u16, Vec<u8>)>>>,
 >;
 
+/// Fast Schnorr (VSS) presign private outputs, keyed by (presign session id, blending index).
+type PresignPrivateOutputs = Arc<Mutex<HashMap<(commitment::CommitmentSizedNumber, u16), Vec<u8>>>>;
+/// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
+type AssignedPresigns =
+    Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>;
+
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
 pub(crate) struct TestingAuthorityPerEpochStore {
@@ -70,11 +76,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// within the blended vector produced by a presign session.
     pub(crate) used_presigns: Arc<Mutex<HashMap<(SessionIdentifier, u16), ()>>>,
     /// Fast Schnorr (VSS) presign private outputs, keyed by (presign session id, blending index).
-    pub(crate) presign_private_outputs:
-        Arc<Mutex<HashMap<(commitment::CommitmentSizedNumber, u16), Vec<u8>>>>,
+    pub(crate) presign_private_outputs: PresignPrivateOutputs,
     /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
-    pub(crate) assigned_presigns:
-        Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>,
+    pub(crate) assigned_presigns: AssignedPresigns,
     /// Configurable certified handoff attestations, keyed by epoch.
     /// Empty by default (the cert-gated adoption path then behaves as
     /// "cert absent"); tests for the cert-digest gate insert one here.
@@ -599,9 +603,10 @@ impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
 
 #[cfg(test)]
 #[allow(clippy::type_complexity)]
-pub fn create_dwallet_mpc_services(
-    size: usize,
-) -> (
+/// The per-authority services + channel handles a test harness spins up:
+/// one entry per committee member across services, senders, stores, notifies,
+/// and the NOA sign request/output channel ends.
+type DwalletMpcServiceHarness = (
     Vec<DWalletMPCService>,
     Vec<SuiDataSenders>,
     Vec<Arc<TestingSubmitToConsensus>>,
@@ -609,7 +614,9 @@ pub fn create_dwallet_mpc_services(
     Vec<Arc<TestingDWalletCheckpointNotify>>,
     Vec<Sender<NetworkOwnedAddressSignRequest>>,
     Vec<Receiver<NetworkOwnedAddressSignOutput>>,
-) {
+);
+
+pub fn create_dwallet_mpc_services(size: usize) -> DwalletMpcServiceHarness {
     let (committee, seeds, bundles) = build_committee_with_random_seeds(size);
     create_dwallet_mpc_services_with_committee_and_seeds(committee, seeds, bundles)
 }
@@ -675,15 +682,7 @@ pub fn create_dwallet_mpc_services_with_committee_and_seeds(
     committee: Committee,
     seeds: HashMap<AuthorityName, RootSeed>,
     bundles: crate::validator_metadata::OffChainCommitteeBundles,
-) -> (
-    Vec<DWalletMPCService>,
-    Vec<SuiDataSenders>,
-    Vec<Arc<TestingSubmitToConsensus>>,
-    Vec<Arc<TestingAuthorityPerEpochStore>>,
-    Vec<Arc<TestingDWalletCheckpointNotify>>,
-    Vec<Sender<NetworkOwnedAddressSignRequest>>,
-    Vec<Receiver<NetworkOwnedAddressSignOutput>>,
-) {
+) -> DwalletMpcServiceHarness {
     let dwallet_mpc_services = committee
         .names()
         .map(|authority_name| {
@@ -1146,9 +1145,8 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             // outer loop distributes them to all parties (regardless of running computations).
             // This check must happen BEFORE clearing so the messages are not lost.
             let check_status_update_with_data = |store: &Arc<Mutex<Vec<ConsensusTransaction>>>| {
-                store.lock().unwrap().iter().any(|msg| match &msg.kind {
-                    ConsensusTransactionKind::GlobalPresignRequest(_) => true,
-                    _ => false,
+                store.lock().unwrap().iter().any(|msg| {
+                    matches!(&msg.kind, ConsensusTransactionKind::GlobalPresignRequest(_))
                 })
             };
 
