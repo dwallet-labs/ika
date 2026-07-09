@@ -1214,11 +1214,9 @@ fn protocol_public_parameters_from_reconfiguration_output(
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
     match &reconfiguration_dkg_public_output {
-        VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            return Err(anyhow::anyhow!(
-                "V1 reconfiguration outputs are no longer supported"
-            ));
-        }
+        VersionedDecryptionKeyReconfigurationOutput::V1(_) => Err(anyhow::anyhow!(
+            "V1 reconfiguration outputs are no longer supported"
+        )),
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             // bwd-compat reconfig output shape.
             let public_output: <twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party as mpc::Party>::PublicOutput =

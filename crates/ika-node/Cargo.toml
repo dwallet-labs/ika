@@ -32,7 +32,6 @@ path = "src/bin/ika-notifier.rs"
 [dependencies]
 anemo.workspace = true
 dwallet-mpc-types.workspace = true
-tikv-jemallocator = { workspace = true, optional = true }
 anemo-tower.workspace = true
 arc-swap.workspace = true
 axum.workspace = true
@@ -67,6 +66,9 @@ sui-types.workspace = true
 sui-storage.workspace = true
 ika-sui-client.workspace = true
 sui-metrics-push-client.workspace = true
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
 
 [target.'cfg(msim)'.dependencies]
 sui-simulator.workspace = true

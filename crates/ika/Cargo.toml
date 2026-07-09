@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 bin-version.workspace = true
-tikv-jemallocator = { workspace = true, optional = true }
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 clap.workspace = true
@@ -55,6 +54,7 @@ reqwest.workspace = true
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemalloc-ctl.workspace = true
+tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
