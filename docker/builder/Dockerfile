@@ -18,6 +18,10 @@ ARG BINS="ika ika-validator ika-fullnode ika-notifier ika-proxy"
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
+# Make cargo fetch private git deps via the git CLI (which honors the on-disk
+# deploy key + the insteadOf rewrite below). Without this, cargo uses libgit2,
+# which only tries ssh-agent — absent in the build container — and auth fails.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Setup SSH for private git dependencies
 RUN mkdir -p ~/.ssh && \
