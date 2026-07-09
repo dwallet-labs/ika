@@ -304,10 +304,10 @@ impl VerifiedStateCache {
     /// unlike the per-object cache). `None` when pruning is disabled.
     fn eop_retention_floor(&self) -> Option<CheckpointSequenceNumber> {
         let mut floor = self.prune_floor()?;
-        if let Some(perpetual) = &self.perpetual {
-            if let Ok(Some(oldest)) = perpetual.oldest_sui_committee_summary() {
-                floor = floor.min(*oldest.sequence_number());
-            }
+        if let Some(perpetual) = &self.perpetual
+            && let Ok(Some(oldest)) = perpetual.oldest_sui_committee_summary()
+        {
+            floor = floor.min(*oldest.sequence_number());
         }
         Some(floor)
     }
@@ -338,10 +338,10 @@ impl VerifiedStateCache {
         // their committee ratchet, so they're kept back to the bootstrap anchor
         // — a deeper floor than the object cache (see `eop_retention_floor`) —
         // pruned on the same amortized schedule.
-        if let (Some(perpetual), Some(eop_floor)) = (&self.perpetual, self.eop_retention_floor()) {
-            if let Err(e) = perpetual.retain_sui_end_of_epoch_checkpoints(eop_floor) {
-                warn!(error = ?e, "failed to prune retained end-of-epoch checkpoints");
-            }
+        if let (Some(perpetual), Some(eop_floor)) = (&self.perpetual, self.eop_retention_floor())
+            && let Err(e) = perpetual.retain_sui_end_of_epoch_checkpoints(eop_floor)
+        {
+            warn!(error = ?e, "failed to prune retained end-of-epoch checkpoints");
         }
         let removed: Vec<(ObjectID, Option<ObjectID>)> = {
             let mut objects = self.objects.write();
@@ -362,12 +362,12 @@ impl VerifiedStateCache {
         {
             let mut children = self.children.write();
             for (id, parent) in &removed {
-                if let Some(parent) = parent {
-                    if let Some(set) = children.get_mut(parent) {
-                        set.remove(id);
-                        if set.is_empty() {
-                            children.remove(parent);
-                        }
+                if let Some(parent) = parent
+                    && let Some(set) = children.get_mut(parent)
+                {
+                    set.remove(id);
+                    if set.is_empty() {
+                        children.remove(parent);
                     }
                 }
             }
@@ -463,10 +463,10 @@ impl VerifiedStateCache {
         // If this object moved owners since we last cached it, evict from the
         // old parent's set.
         if prior_parent != new_parent {
-            if let Some(prev) = prior_parent {
-                if let Some(set) = self.children.write().get_mut(&prev) {
-                    set.remove(&id);
-                }
+            if let Some(prev) = prior_parent
+                && let Some(set) = self.children.write().get_mut(&prev)
+            {
+                set.remove(&id);
             }
             if let Some(p) = new_parent {
                 self.children.write().entry(p).or_default().insert(id);

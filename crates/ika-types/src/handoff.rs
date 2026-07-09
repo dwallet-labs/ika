@@ -117,7 +117,7 @@ mod tests {
         let key_id_a = NetworkKeyId([1u8; 32]);
         let key_id_b = NetworkKeyId([2u8; 32]);
         let auth = make_authority(0);
-        let mut keys = vec![
+        let mut keys = [
             HandoffItemKey::ValidatorMpcData { validator: auth },
             HandoffItemKey::NetworkReconfigurationOutput { key_id: key_id_a },
             HandoffItemKey::NetworkDkgOutput { key_id: key_id_b },

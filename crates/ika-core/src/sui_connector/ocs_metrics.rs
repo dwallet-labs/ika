@@ -41,8 +41,8 @@ pub struct OcsMetrics {
     pub pusher_skipped_irrelevant_total: IntCounter,
     pub pusher_fetch_failures_total: IntCounter,
     /// Latency of the pre-fold committee verification the pusher runs before
-    /// folding a checkpoint into the local cache (committee BLS on the summary
-    /// + artifacts-digest binding). `_count` is the number of checkpoints
+    /// folding a checkpoint into the local cache (committee BLS on the summary +
+    /// artifacts-digest binding). `_count` is the number of checkpoints
     /// committee-verified before folding, `_sum` the total CPU time spent on
     /// it — together they quantify the verify's cost on the fold path.
     pub pusher_fold_verify_seconds: Histogram,

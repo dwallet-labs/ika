@@ -353,18 +353,18 @@ fn derive_vss_shamir_cache_for_key(
     use twopc_mpc::decentralized_party::{dkg as dec_dkg, reconfiguration as dec_reconf};
 
     enum DeserializedSource {
-        Reconfiguration(<dec_reconf::Party as mpc::Party>::PublicOutput),
-        NetworkDkg(<dec_dkg::Party as mpc::Party>::PublicOutput),
+        Reconfiguration(Box<<dec_reconf::Party as mpc::Party>::PublicOutput>),
+        NetworkDkg(Box<<dec_dkg::Party as mpc::Party>::PublicOutput>),
     }
 
     let source: DeserializedSource = match key.latest_network_reconfiguration_public_output() {
         Some(VersionedDecryptionKeyReconfigurationOutput::V3(bytes)) => {
-            DeserializedSource::Reconfiguration(bcs::from_bytes(&bytes).ok()?)
+            DeserializedSource::Reconfiguration(Box::new(bcs::from_bytes(&bytes).ok()?))
         }
         // Pre-V3 reconfiguration (or none yet) → fall through to network DKG output.
         _ => match key.network_dkg_output() {
             VersionedNetworkDkgOutput::V3(bytes) => {
-                DeserializedSource::NetworkDkg(bcs::from_bytes(bytes).ok()?)
+                DeserializedSource::NetworkDkg(Box::new(bcs::from_bytes(bytes).ok()?))
             }
             _ => return None,
         },
@@ -376,7 +376,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.compute_secp256k1_shamir_shares_of_secret_key_share_parts(
                     party_id,
                     secrets.secp256k1_decryption_key,
-                    publics.secp256k1_encryption_key.clone(),
+                    publics.secp256k1_encryption_key,
                 ),
                 o.secp256k1_polynomial_commitments().0.clone(),
                 o.secp256k1_polynomial_commitments().1.clone(),
@@ -385,7 +385,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.derive_shamir_shares_of_secp256k1_secret_key_share_parts(
                     party_id,
                     secrets.secp256k1_decryption_key,
-                    publics.secp256k1_encryption_key.clone(),
+                    publics.secp256k1_encryption_key,
                 ),
                 o.secp256k1_polynomial_commitments().0.clone(),
                 o.secp256k1_polynomial_commitments().1.clone(),
@@ -397,7 +397,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.compute_curve25519_shamir_shares_of_secret_key_share_parts(
                     party_id,
                     secrets.ristretto_decryption_key,
-                    publics.ristretto_encryption_key.clone(),
+                    publics.ristretto_encryption_key,
                 ),
                 o.curve25519_polynomial_commitments().0.clone(),
                 o.curve25519_polynomial_commitments().1.clone(),
@@ -406,7 +406,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.derive_shamir_shares_of_curve25519_secret_key_share_parts(
                     party_id,
                     secrets.ristretto_decryption_key,
-                    publics.ristretto_encryption_key.clone(),
+                    publics.ristretto_encryption_key,
                 ),
                 o.curve25519_polynomial_commitments().0.clone(),
                 o.curve25519_polynomial_commitments().1.clone(),
@@ -418,7 +418,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.compute_ristretto_shamir_shares_of_secret_key_share_parts(
                     party_id,
                     secrets.ristretto_decryption_key,
-                    publics.ristretto_encryption_key.clone(),
+                    publics.ristretto_encryption_key,
                 ),
                 o.ristretto_polynomial_commitments().0.clone(),
                 o.ristretto_polynomial_commitments().1.clone(),
@@ -427,7 +427,7 @@ fn derive_vss_shamir_cache_for_key(
                 o.derive_shamir_shares_of_ristretto_secret_key_share_parts(
                     party_id,
                     secrets.ristretto_decryption_key,
-                    publics.ristretto_encryption_key.clone(),
+                    publics.ristretto_encryption_key,
                 ),
                 o.ristretto_polynomial_commitments().0.clone(),
                 o.ristretto_polynomial_commitments().1.clone(),
@@ -965,7 +965,17 @@ mod network_key_id_derivation_tool {
     #[tokio::test]
     async fn print_deployed_network_key_ids() {
         // (env, rpc, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml
-        let envs: &[(&str, &str, &str, &str, &str, &str, &str, &str)] = &[
+        type DeployedEnv<'a> = (
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a str,
+        );
+        let envs: &[DeployedEnv] = &[
             (
                 "testnet",
                 "https://fullnode.testnet.sui.io:443",

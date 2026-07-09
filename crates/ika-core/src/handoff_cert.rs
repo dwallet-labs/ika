@@ -140,8 +140,10 @@ impl StaticConsensusPubkeyProvider {
             keys: BTreeMap::new(),
         }
     }
+}
 
-    pub fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(items: I) -> Self {
+impl FromIterator<(AuthorityName, Ed25519PublicKey)> for StaticConsensusPubkeyProvider {
+    fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(items: I) -> Self {
         Self {
             keys: items.into_iter().collect(),
         }

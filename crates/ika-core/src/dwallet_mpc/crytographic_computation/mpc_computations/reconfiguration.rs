@@ -623,11 +623,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     }
 
     match &mpc_public_output {
-        VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            return Err(DwalletMPCError::InternalError(
-                "V1 network keys are no longer supported for instantiation.".to_string(),
-            ));
-        }
+        VersionedDecryptionKeyReconfigurationOutput::V1(_) => Err(DwalletMPCError::InternalError(
+            "V1 network keys are no longer supported for instantiation.".to_string(),
+        )),
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             // bwd-compat reconfig PublicOutput shape.
             let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =

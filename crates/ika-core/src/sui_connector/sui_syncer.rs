@@ -156,17 +156,17 @@ where
             ));
             // Legacy (v≤3) uncompleted-events poller. Under v4 the
             // BagEventPump emits the recovery snapshot instead.
-            if run_legacy_event_ingestion {
-                if let Some(uncompleted_requests_sender) = uncompleted_requests_sender {
-                    info!("Syncing uncompleted events");
-                    tokio::spawn(Self::sync_uncompleted_events(
-                        sui_client_clone,
-                        dwallet_coordinator_object_receiver.clone(),
-                        system_object_receiver.clone(),
-                        uncompleted_requests_sender,
-                        self.metrics.clone(),
-                    ));
-                }
+            if run_legacy_event_ingestion
+                && let Some(uncompleted_requests_sender) = uncompleted_requests_sender
+            {
+                info!("Syncing uncompleted events");
+                tokio::spawn(Self::sync_uncompleted_events(
+                    sui_client_clone,
+                    dwallet_coordinator_object_receiver.clone(),
+                    system_object_receiver.clone(),
+                    uncompleted_requests_sender,
+                    self.metrics.clone(),
+                ));
             }
         }
 
@@ -432,7 +432,7 @@ where
                 if let crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) =
                     source.try_assemble_mpc_data(&current_members)
                     && current_epoch_mpc_keys_sender
-                        .send(Some((current_epoch, bundles)))
+                        .send(Some((current_epoch, *bundles)))
                         .is_ok()
                 {
                     current_keys_sent_for_epoch = Some(current_epoch);
@@ -673,7 +673,7 @@ where
                         quorum_threshold,
                         validity_threshold,
                     );
-                    return Ok((committee, Some(bundles)));
+                    return Ok((committee, Some(*bundles)));
                 }
                 crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
                     if off_chain_on {

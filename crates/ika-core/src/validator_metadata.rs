@@ -123,10 +123,10 @@ impl StaticJoinerPubkeyProvider {
             members: BTreeMap::new(),
         }
     }
+}
 
-    pub fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(
-        members: I,
-    ) -> Self {
+impl FromIterator<(AuthorityName, Ed25519PublicKey)> for StaticJoinerPubkeyProvider {
+    fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(members: I) -> Self {
         Self {
             members: members.into_iter().collect(),
         }
@@ -958,7 +958,7 @@ pub struct OffChainCommitteeBundles {
 /// missing entry silently drops that validator's share.
 #[derive(Debug)]
 pub enum OffChainMpcDataAssembly {
-    Complete(OffChainCommitteeBundles),
+    Complete(Box<OffChainCommitteeBundles>),
     Incomplete {
         missing: Vec<AuthorityName>,
     },
@@ -1052,13 +1052,13 @@ where
         };
     }
     if missing.is_empty() {
-        OffChainMpcDataAssembly::Complete(OffChainCommitteeBundles {
+        OffChainMpcDataAssembly::Complete(Box::new(OffChainCommitteeBundles {
             class_groups,
             secp256k1_pvss,
             secp256r1_pvss,
             ristretto_pvss,
             vss_hpke,
-        })
+        }))
     } else {
         OffChainMpcDataAssembly::Incomplete { missing }
     }
@@ -1360,7 +1360,7 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             .as_ref()
             && *cached_pairs == pairs
         {
-            return OffChainMpcDataAssembly::Complete(cached_bundles.clone());
+            return OffChainMpcDataAssembly::Complete(Box::new(cached_bundles.clone()));
         }
         let perpetual = self.perpetual.clone();
         let assembly_pairs: Vec<_> = pairs.clone();
@@ -1371,7 +1371,8 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             *self
                 .assembled_cache
                 .lock()
-                .expect("assembled_cache lock poisoned") = Some((pairs.clone(), bundles.clone()));
+                .expect("assembled_cache lock poisoned") =
+                Some((pairs.clone(), (**bundles).clone()));
         }
         if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
             let blob_only_missing: Vec<_> = missing
@@ -1521,8 +1522,8 @@ mod tests {
 
         // Hard cap: oldest-first eviction once over `max`.
         let mut capped = Vec::new();
-        for i in 0..3 {
-            push_buffered_joiner_announcement(&mut capped, &signed[i], t0, ttl, 2);
+        for signed_entry in signed.iter().take(3) {
+            push_buffered_joiner_announcement(&mut capped, signed_entry, t0, ttl, 2);
         }
         assert_eq!(capped.len(), 2);
         let present: Vec<_> = capped
