@@ -21,7 +21,11 @@ on:
         description: "Test name filter passed to nextest"
         type: string
         required: false
-        default: "test_swarm_reaches_epoch_2"
+        # All #[sim_test] targets share the sim_ prefix; plain #[tokio::test]
+        # functions are ignored under the sim runner, so this default runs
+        # exactly the fault-simulation suite. For a seed sweep, raise
+        # test_num (MSIM_TEST_NUM iterates seeds starting from `seed`).
+        default: "sim_"
       seed:
         description: "MSIM_TEST_SEED"
         type: string
