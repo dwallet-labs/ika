@@ -106,4 +106,8 @@ jobs:
           MSIM_TEST_SEED: ${{ inputs.seed }}
           MSIM_TEST_NUM: ${{ inputs.test_num }}
         run: |
-          cargo simtest --package ${{ inputs.package }} -- ${{ inputs.test_filter }}
+          # --no-tests=pass is a nextest option, so it must come BEFORE the
+          # `--` separator: the workspace currently has zero #[sim_test]
+          # targets by convention, and without it nextest exits 4
+          # ("no tests to run") on every dispatch.
+          cargo simtest --package ${{ inputs.package }} --no-tests=pass -- ${{ inputs.test_filter }}
