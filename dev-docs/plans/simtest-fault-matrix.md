@@ -175,3 +175,16 @@ full-halt-recovery question (msim-only vs real — undetermined). The
 faithful Group B scenario will degrade the MPC computation path on two
 nodes via sui_macros fail points (hook to be added in the computation
 spawn path) while consensus keeps committing.
+
+
+## Finding: post-degradation recovery tail is minutes long (open follow-up)
+
+`sim_presign_traffic_with_degradation_window` (seed 1, CI): after the
+two-validator MPC-degradation window heals, the epoch hosting the
+backlog takes ~6 VIRTUAL MINUTES to complete its network-key
+reconfiguration and close (healthy epochs: seconds). The first gate
+run failed purely on budget — EndOfPublish markers appear at
+02:14:25/02:14:35 with the 420s budget expiring at 02:15:13. Budgets
+raised (test 900s, SUI_SIM_TEST_TIMEOUT_SECS 3600); WHY the skipped-
+computation retry backlog drains that slowly is worth its own
+investigation (retry cadence? per-round pacing of pending computations?).

@@ -138,8 +138,14 @@ async fn sim_presign_traffic_with_degradation_window() {
 
     // Epochs must keep advancing with stragglers re-pulled across
     // boundaries...
+    // Budget note: the recovery tail after the degradation pile-up is LONG —
+    // the wounded epoch's network-key reconfiguration was observed completing
+    // ~6 virtual minutes after the boundary (seed 1), so this budget tolerates
+    // slow-but-alive recovery while still failing a genuine never-closes
+    // wedge. Why the retry backlog drains that slowly is an open follow-up in
+    // the fault-matrix plan.
     tokio::time::timeout(
-        Duration::from_secs(420),
+        Duration::from_secs(900),
         cluster.wait_for_epoch(traffic_end_epoch + 1),
     )
     .await

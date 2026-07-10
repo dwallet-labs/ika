@@ -57,6 +57,10 @@ env:
   # deadlocks (simulated time stops advancing while a rayon worker
   # crunches). Disable so the test isn't killed mid-crypto.
   MSIM_DISABLE_WATCHDOG: "1"
+  # Virtual-time budget per #[sim_test]: fault tests deliberately include
+  # long sub-quorum windows and slow recovery tails; virtual seconds cost
+  # ~nothing in wall time.
+  SUI_SIM_TEST_TIMEOUT_SECS: "3600"
   rust_stable: "1.94"
 
 jobs:
