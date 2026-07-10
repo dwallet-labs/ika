@@ -1240,9 +1240,18 @@ where
                 coordinator.dwallet_network_encryption_keys.size
                     == coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
             let all_noa_checkpoints_finalized = noa_checkpoints_finalized();
+            // The lock flag belongs to the coordinator's OWN epoch. Right
+            // after an epoch advance the syncer can observe the system
+            // object's bumped epoch while this coordinator snapshot still
+            // predates the coordinator's advance — its lock flag is then the
+            // PREVIOUS epoch's close-lock, and counting it produced spurious
+            // "gate STUCK" warns for the first minutes of every epoch. Treat
+            // the gate as post-lock only when both objects agree on the
+            // epoch.
             let session_locked = coordinator
                 .sessions_manager
-                .locked_last_user_initiated_session_to_complete_in_current_epoch;
+                .locked_last_user_initiated_session_to_complete_in_current_epoch
+                && coordinator.current_epoch == system_inner_v1.epoch;
             let no_pricing_calculation_votes = coordinator
                 .pricing_and_fee_management
                 .calculation_votes

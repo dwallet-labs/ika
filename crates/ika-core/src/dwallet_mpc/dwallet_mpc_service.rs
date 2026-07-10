@@ -1381,7 +1381,17 @@ impl DWalletMPCService {
                         Ok(Some((_presign_session_id, _presign_blending_index, presign))) => {
                             match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
                                 Ok(presign) => {
-                                    debug!(
+                                    // Info on purpose: a pool-served presign
+                                    // session completes without ever running
+                                    // MPC, so this is the ONLY line tying its
+                                    // session identifier and sequence number
+                                    // to a completion — at debug, such
+                                    // sessions are untraceable in production
+                                    // logs (each held/served session's fate
+                                    // was invisible in the issue #1736
+                                    // forensics). Volume: once per served
+                                    // presign.
+                                    info!(
                                         request_session_id =? request.session_identifier,
                                         presign_id =? request.presign_id,
                                         session_sequence_number =? request.session_sequence_number,

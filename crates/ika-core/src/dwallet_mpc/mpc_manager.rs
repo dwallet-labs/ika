@@ -88,7 +88,9 @@ fn compute_chain_context<C: CounterpartyChain>(
     if let Some(context) =
         C::context_from_observations(&observations, current_context.as_ref(), access_structure)
     {
-        info!(
+        // The agreement recomputes every consensus round per chain; at info
+        // this line alone was ~9K lines/min (half the log) on a localnet.
+        debug!(
             consensus_round,
             chain = %C::KIND,
             "Chain context agreed upon"
