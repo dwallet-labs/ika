@@ -99,20 +99,14 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     //      class-groups decode-validate is a fixed crypto cost that does
     //      NOT compress with the epoch.
     //
-    // This is a deliberately time-compressed epoch (production epochs are
-    // hours, where these windows are minutes and a joiner never misses).
-    // At 120s the freeze window is only `epoch/4` = 30s, and under the
-    // Test Cluster suite's 4-way parallelism — four full Sui+ika swarms
-    // contending for CPU — the quorum decode-validate of the joiner's blob
-    // intermittently overran 30s, so the deadline froze the input set
-    // without the joiner and this assertion flaked. 240s doubles the
-    // freeze window to 60s (and keeps the registration window at a roomy
-    // 120s) — comfortable margin over the contended propagation floor,
-    // while staying well under the epoch length at which the network-key
-    // DKG starts to stall.
+    // Cluster tests always run with the `dwallet-mpc-unsafe-mock`
+    // keygen/protocol mocks, which removed the class-groups compute (and its
+    // CPU contention) that the historical 240s epoch absorbed. 10s epochs
+    // leave a 2.5s joiner freeze window (epoch/4) over the remaining
+    // bootstrap/propagation floor.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(240_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .build()
         .await
@@ -543,24 +537,17 @@ async fn test_user_sessions_across_multiple_epochs() {
 async fn test_real_network_churn_over_5_epochs() {
     telemetry_subscribers::init_for_testing();
 
-    // Epoch length is chosen to reflect production, not to stress an
-    // artificial clock. A joiner's window is the quarter-epoch between
-    // mid-epoch committee publication (epoch/2) and the freeze (3/4
-    // epoch); in it the joiner must (pre-)derive its mpc_data, bootstrap,
-    // fan out, relay, and be attested before the ready-signal quorum
-    // freezes the input set. The cost of that pipeline is *absolute*
-    // (keygen, P2P/consensus bootstrap, propagation) — fixed seconds that
-    // do NOT scale with epoch length. In production (24h epochs) the
-    // window is ~6h and that cost is rounding error; the race cannot
-    // occur. A tightly compressed test epoch instead collapses the window
-    // below the fixed cost and re-tests only that artifact. So we use 300s
-    // epochs — a ~75s window that comfortably absorbs the fixed cost — and
-    // five churn cycles, enough sustained turnover to prove reconfiguration
-    // converges. The transition is MPC-bound, so a longer epoch with fewer
-    // cycles costs no more wall time than many short ones.
+    // A joiner's window is the quarter-epoch between mid-epoch committee
+    // publication (epoch/2) and the freeze (3·epoch/4); in it the joiner
+    // must derive its mpc_data, bootstrap, fan out, relay, and be attested.
+    // Cluster tests always run with the `dwallet-mpc-unsafe-mock`
+    // keygen/protocol mocks, which removed the dominant class-groups cost
+    // from that pipeline; 10s epochs (2.5s window) budget only the
+    // remaining bootstrap/propagation floor. Five churn cycles remain
+    // enough sustained turnover to prove reconfiguration converges.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(300_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .build()
         .await

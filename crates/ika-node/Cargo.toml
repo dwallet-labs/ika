@@ -79,6 +79,9 @@ default = ["enforce-minimum-cpu", "jemalloc"]
 
 # Set this feature to enforce a minimum of 16 CPU cores for cryptographic computations.
 enforce-minimum-cpu = ["ika-core/enforce-minimum-cpu"]
+# INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks.
+# Never enable in production. See cryptography-private `unsafe_mock`.
+dwallet-mpc-unsafe-mock = ["ika-core/dwallet-mpc-unsafe-mock"]
 # Compiled-in jemalloc as the global allocator (mirrors sui-node) — better
 # fragmentation behavior than glibc malloc for long-running RocksDB-heavy
 # validators, and arch-independent (the Dockerfile previously attempted

@@ -513,6 +513,11 @@ async fn test_two_network_keys_same_epoch_dkg() {
         !k1_bytes.is_empty(),
         "K1 network DKG checkpoint should carry non-empty public output"
     );
+    // The insecure `unsafe_mock` protocol mocks return a single deterministic network-DKG
+    // output for every key, so two keys created in the same epoch have identical bytes (they
+    // are still distinct keys, tracked by their distinct ids). Per-key output uniqueness is a
+    // real-crypto property, so only assert it when not running under the mock.
+    #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
     assert_ne!(k1_bytes, k0_bytes, "K1 output should differ from K0");
 
     // Publish a snapshot of BOTH keys to the `network_keys` overlay

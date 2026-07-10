@@ -108,8 +108,16 @@ class_groups = { workspace = true, features = ["threshold", "parallel"] }
 twopc_mpc = { workspace = true, features = ["parallel"] }
 
 [features]
+# No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
+default = []
 test-utils = []
 enforce-minimum-cpu = []
+# INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks.
+# Never enable in production. See cryptography-private `unsafe_mock`.
+dwallet-mpc-unsafe-mock = [
+    "dwallet-mpc-types/dwallet-mpc-unsafe-mock",
+    "dwallet-classgroups-types/dwallet-mpc-unsafe-mock",
+]
 # TEST-ONLY: enables test-testing fault injection — code that deliberately
 # misbehaves so a test can prove it would catch the real failure (e.g. corrupts
 # this validator's outgoing reconfiguration message for the cross-binary

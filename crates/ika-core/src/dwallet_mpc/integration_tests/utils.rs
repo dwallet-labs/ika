@@ -1793,6 +1793,81 @@ pub(crate) async fn advance_mpc_flow_until_completion_for_parties(
     }
 }
 
+/// The honest magic `u64` every mock party sends each round
+/// (`MOCK_HONEST_MESSAGE` in the cryptography crate's `2pc-mpc/src/mock.rs`). Mirrored
+/// here because it is `pub(crate)` in that crate and not exported; the mock `advance`
+/// flags any sender whose message value differs from this as malicious.
+#[cfg(feature = "dwallet-mpc-unsafe-mock")]
+pub(crate) const HONEST_MOCK_MESSAGE: u64 = 0xDEAD_BEEF;
+
+/// The non-magic `u64` a mock-corrupted MPC message carries in place of
+/// [`HONEST_MOCK_MESSAGE`], so the mock `advance` flags its sender malicious.
+#[cfg(feature = "dwallet-mpc-unsafe-mock")]
+pub(crate) const MALICIOUS_MOCK_MESSAGE: u64 = 0xDEAD_DEAD;
+
+/// Corrupt `party`'s most recent [`ConsensusTransactionKind::DWalletMPCMessage`] into a
+/// detectably-malicious one: rewrite the inner mock `u64` round message from
+/// [`HONEST_MOCK_MESSAGE`] to [`MALICIOUS_MOCK_MESSAGE`].
+///
+/// The mock parties are never wire-visible directly — every outgoing message is the
+/// bcs serialization of the guaranteed-output-delivery wrapper
+/// (`mpc::party::guaranteed_output_delivery::Message::MessageWithMetadata`), whose
+/// inner `message: M` (here `M = u64`) is the struct's **last** field. bcs encodes a
+/// `u64` as 8 fixed little-endian bytes with no length prefix and appends it with
+/// nothing after, so the message's trailing 8 bytes are exactly that inner `u64`
+/// regardless of how large the preceding metadata (round number, ignored-sender map,
+/// malicious list) is. Overwriting those 8 bytes therefore sets the inner message and
+/// nothing else, and the blob still deserializes.
+///
+/// We do not assume that layout — we prove it: an honest serialized message must end
+/// in `bcs(HONEST_MOCK_MESSAGE)`, asserted before the overwrite. If the wrapper ever
+/// changes so the inner `u64` is no longer the trailing field, this assert fires
+/// instead of silently corrupting the wrong bytes. (This is why the alternative of
+/// hard-coding a captured serialized message was rejected: it would be
+/// protocol-specific and would rot silently; the assert-then-overwrite is generic
+/// across every mock protocol and self-validating.)
+///
+/// The corrupted message stays transport-valid: it deserializes, counts toward the
+/// advance threshold, and only then is flagged malicious by the mock `advance` —
+/// the same stage at which the real protocols detect an invalid contribution (proof
+/// verification), which is what keeps malicious-detection and threshold-not-reached
+/// choreography identical under the mock.
+#[cfg(feature = "dwallet-mpc-unsafe-mock")]
+pub(crate) fn corrupt_party_message(
+    party: usize,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
+) {
+    let mut submitted = sent_consensus_messages_collectors[party]
+        .submitted_messages
+        .lock()
+        .unwrap();
+    let index = submitted
+        .iter()
+        .rposition(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+        .expect("party should have a DWalletMPCMessage to corrupt");
+    let ConsensusTransactionKind::DWalletMPCMessage(ref mut message_content) =
+        submitted[index].kind
+    else {
+        unreachable!("index was verified to be a DWalletMPCMessage above");
+    };
+    let honest_message =
+        bcs::to_bytes(&HONEST_MOCK_MESSAGE).expect("serializing a u64 cannot fail");
+    let malicious_message =
+        bcs::to_bytes(&MALICIOUS_MOCK_MESSAGE).expect("serializing a u64 cannot fail");
+    let message_length = message_content.message.len();
+    let inner_message_tail = &message_content.message[message_length - honest_message.len()..];
+    assert_eq!(
+        inner_message_tail, honest_message,
+        "mock message tail is not the honest inner u64 — the guaranteed-output-delivery \
+         wrapper layout changed and corrupt_party_message would overwrite the wrong bytes"
+    );
+    message_content.message[message_length - malicious_message.len()..]
+        .copy_from_slice(&malicious_message);
+}
+
+/// Make `party_to_replace` emit `other_party`'s message re-stamped with its own
+/// authority — the copy attack the real protocols detect at proof verification.
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 pub(crate) fn replace_party_message_with_other_party_message(
     party_to_replace: usize,
     other_party: usize,
@@ -1832,4 +1907,23 @@ pub(crate) fn replace_party_message_with_other_party_message(
         .lock()
         .unwrap()
         .push(other_party_message)
+}
+
+/// Under the `unsafe_mock` protocols every honest party sends the same magic `u64`
+/// message, so a verbatim copy of another party's message is indistinguishable from an
+/// honest one and cannot be flagged. Corrupt the party's own message instead (see
+/// [`corrupt_party_message`]); detection still happens at the protocol's `advance`,
+/// exactly like the real copy detection this models.
+#[cfg(feature = "dwallet-mpc-unsafe-mock")]
+pub(crate) fn replace_party_message_with_other_party_message(
+    party_to_replace: usize,
+    _other_party: usize,
+    crypto_round: u64,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
+) {
+    info!(
+        "Corrupting party {} message for crypto round {}",
+        party_to_replace, crypto_round
+    );
+    corrupt_party_message(party_to_replace, sent_consensus_messages_collectors);
 }

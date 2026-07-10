@@ -13,6 +13,15 @@ serde.workspace = true
 ika-types.workspace = true
 twopc_mpc.workspace = true
 
+[features]
+# No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
+default = []
+# INSECURE test-only mock: replaces the expensive validator class-groups/PVSS
+# keygen (`from_seed`) with neutral keys + default proofs — consumed only by the
+# mocked protocol rounds. Never enable in production. See cryptography-private
+# `unsafe_mock`.
+dwallet-mpc-unsafe-mock = ["class_groups/unsafe_mock", "twopc_mpc/unsafe_mock"]
+
 # Production builds run crypto with rayon-backed parallelism. Under
 # `cargo simtest` (cfg msim), rayon worker threads have no msim node
 # context and panic at the first tracing/tokio call, so we drop the

@@ -6,6 +6,17 @@ license = "BSD-3-Clause-Clear"
 publish = false
 edition = "2024"
 
+[features]
+# No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
+default = []
+# INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks so
+# dwallet-mpc integration tests run without real class-group crypto. Never enable in production.
+# Run e.g. `cargo test -p ika-test-cluster --features dwallet-mpc-unsafe-mock`.
+dwallet-mpc-unsafe-mock = [
+    "ika-node/dwallet-mpc-unsafe-mock",
+    "dwallet-mpc-centralized-party/dwallet-mpc-unsafe-mock",
+]
+
 [lints]
 workspace = true
 
@@ -40,6 +51,11 @@ test-cluster.workspace = true
 sui-simulator.workspace = true
 
 [dev-dependencies]
+# Self-dependency so the cluster tests ALWAYS run with the insecure deterministic
+# protocol mocks — real class-group MPC makes these tests prohibitively slow.
+# Scoped to dev-dependencies: a plain `cargo build` of this crate or of ika-node
+# binaries never activates the mock.
+ika-test-cluster = { path = ".", features = ["dwallet-mpc-unsafe-mock"] }
 # Required by the `#[sim_test]` macro expansion (sui-proc-macros
 # init_static_initializers), which references these crates under the msim cfg.
 prometheus.workspace = true

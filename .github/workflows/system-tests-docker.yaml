@@ -11,6 +11,11 @@ on:
         description: 'Tag for the Docker image'
         required: false
         default: 'latest'
+      use_mocks:
+        description: 'Build the ika-node image with the INSECURE dwallet-mpc-unsafe-mock crypto (deterministic mocks; NOT real crypto). NOTE: any SDK tests run against this image must also use a wasm client built with IKA_WASM_UNSAFE_MOCK=1. Off by default.'
+        type: boolean
+        required: false
+        default: false
 
 env:
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
@@ -45,7 +50,11 @@ jobs:
 
       - name: Build and push Docker image
         working-directory: sdk/typescript/test/system-tests
+        env:
+          USE_MOCKS: ${{ github.event.inputs.use_mocks }}
         run: |
           touch .env
-          ./build.sh ${{ github.event.inputs.cargo_build_flags }}
+          FLAGS="${{ github.event.inputs.cargo_build_flags }}"
+          if [ "$USE_MOCKS" = "true" ]; then FLAGS="$FLAGS --features dwallet-mpc-unsafe-mock"; fi
+          ./build.sh $FLAGS
           docker push "$DOCKER_TAG"

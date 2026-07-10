@@ -234,14 +234,25 @@ async fn test_party_copies_other_party_message_dkg_round() {
         mpc_round,
     );
     mpc_round += 1;
+    // The corrupted party sends a message the mock flags as malicious, so it never completes.
+    // Advance and wait for the honest parties only (a quorum), exactly as
+    // `test_some_malicious_validators_flows_succeed` does.
+    let malicious_indices: Vec<usize> = copying_parties
+        .keys()
+        .map(|&party| party as usize)
+        .collect();
+    let honest_parties: Vec<usize> = (0..committee_size)
+        .filter(|party| !malicious_indices.contains(party))
+        .collect();
     info!("Starting malicious behavior test");
     loop {
-        if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
+        if let Some(pending_checkpoint) = utils::advance_some_parties_and_wait_for_completions(
             &committee,
             &mut dwallet_mpc_services,
             &mut sent_consensus_messages_collectors,
             &epoch_stores,
             &notify_services,
+            &honest_parties,
         )
         .await
         {
@@ -267,15 +278,22 @@ async fn test_party_copies_other_party_message_dkg_round() {
     for malicious_party_index in all_malicious_parties {
         let malicious_actor_name = dwallet_mpc_services[*malicious_party_index as usize].name;
         assert!(
-            dwallet_mpc_services.iter().all(|service| service
-                .dwallet_mpc_manager()
-                .is_malicious_actor(&malicious_actor_name)),
+            dwallet_mpc_services
+                .iter()
+                .enumerate()
+                .all(|(index, service)| malicious_indices.contains(&index)
+                    || service
+                        .dwallet_mpc_manager()
+                        .is_malicious_actor(&malicious_actor_name)),
             "All services should recognize the malicious actor: {}",
             malicious_actor_name
         );
     }
 }
 
+/// Make `party_to_replace` emit `other_party`'s message re-stamped with its own
+/// authority — the copy attack the real protocols detect at proof verification.
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 pub(crate) fn replace_party_message_with_other_party_message(
     party_to_replace: usize,
     other_party: usize,
@@ -322,4 +340,18 @@ pub(crate) fn replace_party_message_with_other_party_message(
         .lock()
         .unwrap()
         .push(other_party_message)
+}
+
+/// Under the `unsafe_mock` protocols every honest party sends the same magic `u64`
+/// message, so a verbatim copy of another party's message is indistinguishable from an
+/// honest one and cannot be flagged. Corrupt the party's own message instead (see
+/// [`utils::corrupt_party_message`]); detection still happens at the protocol's
+/// `advance`, exactly like the real copy detection this models.
+#[cfg(feature = "dwallet-mpc-unsafe-mock")]
+pub(crate) fn replace_party_message_with_other_party_message(
+    party_to_replace: usize,
+    _other_party: usize,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
+) {
+    utils::corrupt_party_message(party_to_replace, sent_consensus_messages_collectors);
 }

@@ -6,6 +6,14 @@ license = "BSD-3-Clause-Clear"
 publish = false
 edition = "2024"
 
+[features]
+# No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
+default = []
+# INSECURE test-only: forwards the deterministic MPC/class-group mocks down to
+# ika-node so a swarm (and the `ika` CLI binary that hosts it) can be built with
+# the mock crypto for fast integration/SDK tests. Never enable in production.
+dwallet-mpc-unsafe-mock = ["ika-node/dwallet-mpc-unsafe-mock"]
+
 [lints]
 workspace = true
 
