@@ -124,6 +124,14 @@ pub struct VssRistrettoShamirCache {
 /// `WaitingForNetworkKey`, same as the AHE wait path).
 #[derive(Clone, Debug)]
 pub struct VssShamirCachePerKey {
+    /// The epoch of the key data this cache was derived from. The cache map
+    /// is keyed by ObjectID only, so across an epoch switch a stale entry
+    /// (previous epoch's shares) sits under the current key id until this
+    /// validator's re-derivation lands; readers must treat an epoch mismatch
+    /// exactly like a missing entry (see `vss_shamir_cache`), or VSS
+    /// computations mix the new epoch's public parameters with the old
+    /// epoch's shares and fail round one with `InvalidParameters`.
+    pub derived_for_epoch: u64,
     pub secp256k1: VssSecp256k1ShamirCache,
     pub curve25519: VssCurve25519ShamirCache,
     pub ristretto: VssRistrettoShamirCache,
@@ -439,6 +447,7 @@ fn derive_vss_shamir_cache_for_key(
     let (ristretto_first, ristretto_second) = ristretto_shares.ok()?;
 
     Some(VssShamirCachePerKey {
+        derived_for_epoch: key.epoch(),
         secp256k1: VssSecp256k1ShamirCache {
             secret_key_share_first_part: secp256k1_first,
             secret_key_share_second_part: secp256k1_second,
@@ -513,10 +522,23 @@ impl DwalletMPCNetworkKeys {
         &self,
         key_id: &ObjectID,
     ) -> DwalletMPCResult<&VssShamirCachePerKey> {
-        self.validator_private_dec_key_data
+        let cache = self
+            .validator_private_dec_key_data
             .validator_vss_shamir_cache
             .get(key_id)
-            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
+        // A cache derived from a previous epoch's key data mixed with the
+        // current epoch's public parameters fails MPC round one with
+        // `InvalidParameters` (the per-validator epoch-entry failure window
+        // of issue #1736: the re-derivation is heavy class-groups work that
+        // lands seconds to minutes after the key update, per validator).
+        // Treat a stale entry exactly like a missing one — the computation
+        // parks and retries once this validator's re-derivation lands.
+        let current_key_epoch = self.get_network_encryption_key_public_data(key_id)?.epoch();
+        if cache.derived_for_epoch != current_key_epoch {
+            return Err(DwalletMPCError::WaitingForNetworkKey(*key_id));
+        }
+        Ok(cache)
     }
 
     pub fn key_public_data_exists(&self, key_id: &ObjectID) -> bool {

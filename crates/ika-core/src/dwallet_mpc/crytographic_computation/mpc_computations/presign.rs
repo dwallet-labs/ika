@@ -278,6 +278,23 @@ impl PresignPublicInputByProtocol {
         dwallet_dkg_output: Option<MPCPublicOutput>,
         validator_mpc_keys_by_party_id: &ValidatorMpcKeysByPartyId,
     ) -> DwalletMPCResult<Self> {
+        // The manager starts each epoch with EMPTY off-chain key maps; the
+        // epoch's consensus-agreed set arrives via `ingest_offchain_mpc_keys`
+        // shortly after entry. A VSS presign input built in that gap deals to
+        // an empty party set and fails MPC round one with
+        // `InvalidParameters` (the per-validator epoch-entry failure window
+        // of issue #1736). Fail the attempt as not-ready instead of building
+        // a structurally empty input: the session's fate is then a clean
+        // per-validator miss absorbed by quorum redundancy, and a fully-dead
+        // refill batch is retried by the internal-presign stale-batch expiry
+        // once the key set lands.
+        if protocol.is_vss()
+            && validator_mpc_keys_by_party_id
+                .vss_hpke_verified_party_encryption_key_values
+                .is_empty()
+        {
+            return Err(DwalletMPCError::NetworkDecryptionKeyNotReady);
+        }
         let input = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let protocol_public_parameters =

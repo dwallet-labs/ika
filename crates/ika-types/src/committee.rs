@@ -404,14 +404,39 @@ fn verify_vss_hpke_keys_by_party_id(
         })
         .collect();
     match parse_and_uc_verify_encryption_keys(&by_party_id) {
-        Ok(verified) => verified
-            .into_iter()
-            .map(|(pid, ek)| {
-                use group::GroupElement as _;
-                (pid, ek.value())
-            })
-            .collect(),
-        Err(_) => HashMap::new(),
+        Ok(verified) => {
+            if verified.len() < by_party_id.len() {
+                tracing::warn!(
+                    raw = raw.len(),
+                    mapped = by_party_id.len(),
+                    verified = verified.len(),
+                    "some validators' VSS HPKE keys failed UC verification and were dropped \
+                     from the epoch's verified set"
+                );
+            }
+            verified
+                .into_iter()
+                .map(|(pid, ek)| {
+                    use group::GroupElement as _;
+                    (pid, ek.value())
+                })
+                .collect()
+        }
+        Err(e) => {
+            // An empty verified set means EVERY VSS (Fast Schnorr) session
+            // this epoch is rejected as not-ready — an epoch-long VSS
+            // outage. This error was previously swallowed silently, leaving
+            // the outage with no attributable cause in the logs.
+            tracing::error!(
+                error = ?e,
+                raw = raw.len(),
+                mapped = by_party_id.len(),
+                "VSS HPKE UC verification failed for the whole bundle — the epoch's verified \
+                 VSS key set is EMPTY and every VSS session this epoch will be rejected as \
+                 not-ready"
+            );
+            HashMap::new()
+        }
     }
 }
 

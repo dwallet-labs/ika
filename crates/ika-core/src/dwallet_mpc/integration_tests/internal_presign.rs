@@ -3,11 +3,13 @@ use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+    IntegrationTestState, TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
     TEST_PRESIGN_CONSENSUS_ROUND_DELAY, TEST_PRESIGN_POOL_MAXIMUM_SIZE,
-    TEST_PRESIGN_POOL_MINIMUM_SIZE, build_test_state, create_test_protocol_config_guard,
+    TEST_PRESIGN_POOL_MINIMUM_SIZE, apply_test_presign_pool_overrides, build_test_state,
+    create_test_protocol_config_guard,
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
+use ika_protocol_config::ProtocolConfig;
 use tracing::info;
 
 /// All signature algorithms that have internal presign pools.
@@ -27,6 +29,205 @@ const ALL_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
     ),
     (DWalletCurve::Secp256k1, DWalletSignatureAlgorithm::Taproot),
 ];
+
+/// Consensus rounds after which an in-flight top-up batch is presumed dead in
+/// [`test_internal_presign_stale_batch_expiry`] — small so the test reaches
+/// the expiry within a handful of service-loop iterations.
+const TEST_STALE_BATCH_EXPIRY_ROUNDS: u64 = 12;
+
+/// Reads the (instantiated, completed) internal-presign counters of one
+/// service for one (curve, algorithm) pair.
+fn presign_batch_counters(
+    test_state: &IntegrationTestState,
+    service_index: usize,
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+) -> (u64, u64) {
+    let manager = test_state.dwallet_mpc_services[service_index].dwallet_mpc_manager();
+    (
+        manager
+            .instantiated_internal_presign_sessions
+            .get(&(curve, algorithm))
+            .copied()
+            .unwrap_or(0),
+        manager
+            .completed_internal_presign_sessions
+            .get(&(curve, algorithm))
+            .copied()
+            .unwrap_or(0),
+    )
+}
+
+/// Runs one consensus round across all services, first discarding every
+/// pending consensus message so nothing the validators produced is ever
+/// delivered — the round advances, but every in-flight MPC session is dead.
+/// Waits for rayon computations BEFORE discarding so a slow computation
+/// cannot deposit its message after the discard and leak into the next
+/// delivery.
+async fn run_one_round_discarding_all_messages(test_state: &mut IntegrationTestState) {
+    utils::wait_for_computations(test_state).await;
+    for collector in &test_state.sent_consensus_messages_collectors {
+        collector.submitted_messages.lock().unwrap().clear();
+    }
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as u64,
+    );
+    test_state.consensus_round += 1;
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+}
+
+/// Runs one consensus round across all services with normal message delivery.
+async fn run_one_round_delivering_messages(test_state: &mut IntegrationTestState) {
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as u64,
+    );
+    test_state.consensus_round += 1;
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::wait_for_computations(test_state).await;
+}
+
+/// Test the stale-batch expiry of the internal-presign top-up guard.
+///
+/// A top-up batch whose sessions die without ever reaching an output quorum
+/// (in production: internal-presign refill sessions failing their first
+/// computation round on every validator at epoch entry) never advances the
+/// completion counter, and the in-flight guard would block that pool's
+/// top-up for the rest of the epoch — the pool starves. The expiry presumes
+/// such a batch dead after `internal_presign_stale_batch_expiry_rounds`
+/// consensus rounds, reconciles the counters, and lets the pool top up again.
+///
+/// Simulates the dead batch by discarding ALL consensus messages once the
+/// first batch instantiates (rounds keep flowing; no MPC message or output
+/// is ever delivered), then asserts:
+/// - the guard stays closed (no new instantiation) before the expiry;
+/// - after the expiry the counters reconcile and a new batch fires;
+/// - with delivery restored, the retried batch completes and the starved
+///   pool actually fills;
+/// - all four validators agree on the counters throughout (the top-up
+///   decision derives the deterministic session identifiers every validator
+///   computes independently, so it must be committee-uniform).
+#[tokio::test]
+#[cfg(test)]
+async fn test_internal_presign_stale_batch_expiry() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    // One guard carrying the standard small pools PLUS the small expiry:
+    // `apply_overrides_for_testing` replaces the previous override closure,
+    // so the standard guard and an expiry-only guard would not compose.
+    let _guard = ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
+        apply_test_presign_pool_overrides(&mut config);
+        config.set_internal_presign_stale_batch_expiry_rounds_for_testing(
+            TEST_STALE_BATCH_EXPIRY_ROUNDS,
+        );
+        config
+    });
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // Track EdDSA: its presign protocol is single-round, so it is the batch
+    // most likely to complete by accident — proving IT stays dead under the
+    // discard covers the slower protocols a fortiori.
+    let (curve, algorithm) = (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+    let batch_size = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE;
+
+    // === Phase 1: discard from the start; run until the first batch fires ===
+    // Discarding from the very first round means the batch is dead from
+    // birth — its computations run, but their messages are never delivered.
+    let mut batch_seen = false;
+    for _ in 0..12 {
+        run_one_round_discarding_all_messages(&mut test_state).await;
+        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        if instantiated > 0 {
+            assert_eq!(instantiated, batch_size, "exactly one batch should fire");
+            assert_eq!(completed, 0, "the dead batch must never complete");
+            batch_seen = true;
+            break;
+        }
+    }
+    assert!(batch_seen, "the first top-up batch never instantiated");
+
+    // === Phase 2: the guard must hold while the batch is within the expiry ===
+    // The batch fired at most one round before detection; asserting over
+    // expiry-minus-three rounds keeps the window strictly inside the expiry
+    // regardless of that lag.
+    for round_offset in 0..(TEST_STALE_BATCH_EXPIRY_ROUNDS - 3) {
+        run_one_round_discarding_all_messages(&mut test_state).await;
+        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        assert_eq!(
+            (instantiated, completed),
+            (batch_size, 0),
+            "guard must block new top-ups while the dead batch is within the \
+             expiry window (round offset {round_offset})"
+        );
+    }
+
+    // === Phase 3: past the expiry, the counters reconcile and a new batch fires ===
+    let mut refired = false;
+    for _ in 0..(TEST_STALE_BATCH_EXPIRY_ROUNDS + 10) {
+        run_one_round_discarding_all_messages(&mut test_state).await;
+        let (instantiated, _) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        if instantiated > batch_size {
+            refired = true;
+            break;
+        }
+    }
+    assert!(
+        refired,
+        "the pool must top up again after the stale-batch expiry"
+    );
+    for service_index in 0..test_state.dwallet_mpc_services.len() {
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, service_index, curve, algorithm);
+        assert_eq!(
+            (instantiated, completed),
+            (batch_size * 2, batch_size),
+            "service {service_index}: expiry must reconcile the dead batch \
+             (completed := instantiated) before the new batch fires"
+        );
+    }
+
+    // === Phase 4: with delivery restored, the retried batch heals the pool ===
+    let mut pool_size = 0;
+    for _ in 0..30 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        pool_size = test_state.epoch_stores[0]
+            .presign_pool_size(algorithm, network_key_id)
+            .unwrap_or(0);
+        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        if pool_size > 0 && instantiated == completed {
+            break;
+        }
+    }
+    assert!(
+        pool_size > 0,
+        "the retried batch must complete and refill the starved pool"
+    );
+
+    // Final cross-service consistency: instantiation is consensus-driven, so
+    // every validator must hold identical counters.
+    let reference = presign_batch_counters(&test_state, 0, curve, algorithm);
+    for service_index in 1..test_state.dwallet_mpc_services.len() {
+        assert_eq!(
+            presign_batch_counters(&test_state, service_index, curve, algorithm),
+            reference,
+            "service {service_index}: counters diverged from service 0"
+        );
+    }
+
+    info!("Test completed: stale-batch expiry releases a starved pool and the retry heals it");
+}
 
 /// Test that internal presign sessions are instantiated at exactly the correct consensus
 /// rounds based on the production logic in `mpc_manager.rs:instantiate_internal_presign_sessions`.

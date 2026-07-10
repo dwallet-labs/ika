@@ -88,7 +88,9 @@ fn compute_chain_context<C: CounterpartyChain>(
     if let Some(context) =
         C::context_from_observations(&observations, current_context.as_ref(), access_structure)
     {
-        info!(
+        // The agreement recomputes every consensus round per chain; at info
+        // this line alone was ~9K lines/min (half the log) on a localnet.
+        debug!(
             consensus_round,
             chain = %C::KIND,
             "Chain context agreed upon"
@@ -298,6 +300,17 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) completed_internal_presign_sessions:
         HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
+    /// Consensus round at which the most recent internal-presign top-up batch
+    /// was instantiated, per (curve, signature_algorithm). Drives the
+    /// stale-batch expiry in `instantiate_internal_presign_sessions`: a batch
+    /// that never reaches an output quorum (e.g. every validator's
+    /// computation failed locally) would otherwise block its pool's top-up
+    /// for the rest of the epoch, starving the pool.
+    /// Consensus-safe: written only with consensus-agreed round numbers, so
+    /// all honest parties maintain identical values.
+    internal_presign_batch_instantiated_at_round:
+        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+
     /// The epoch store for persisting presign pools to disk.
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
@@ -490,6 +503,7 @@ impl DWalletMPCManager {
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
+            internal_presign_batch_instantiated_at_round: HashMap::new(),
             epoch_store,
             network_owned_address_sign_output_sender,
             sui_chain_observations_by_party: HashMap::new(),
@@ -1670,7 +1684,43 @@ impl DWalletMPCManager {
                     .copied()
                     .unwrap_or(0);
                 if instantiated != completed {
-                    continue;
+                    // A batch that dies without ever reaching an output quorum
+                    // (e.g. every validator's round-one computation failed
+                    // locally) never advances `completed`, so without an
+                    // expiry it blocks this pool's top-up for the rest of the
+                    // epoch and the pool starves. Presume such a batch dead
+                    // after a bounded number of consensus rounds and forgive
+                    // it by reconciling the counters; a presumed-dead batch
+                    // that completes late is absorbed by the saturating
+                    // increment in `record_internal_presign_output`.
+                    // Consensus-safe: the decision reads only consensus-agreed
+                    // inputs (round numbers and the shared counters), so every
+                    // validator expires the same batch at the same round.
+                    let Some(expiry_rounds) = self
+                        .protocol_config
+                        .internal_presign_stale_batch_expiry_rounds_as_option()
+                    else {
+                        continue;
+                    };
+                    let batch_round = self
+                        .internal_presign_batch_instantiated_at_round
+                        .get(&(curve, signature_algorithm))
+                        .copied()
+                        .unwrap_or(0);
+                    if consensus_round.saturating_sub(batch_round) < expiry_rounds {
+                        continue;
+                    }
+                    warn!(
+                        ?curve,
+                        ?signature_algorithm,
+                        instantiated,
+                        completed,
+                        batch_round,
+                        consensus_round,
+                        "internal presign top-up batch never completed; presuming it dead and releasing the pool for new top-ups"
+                    );
+                    self.completed_internal_presign_sessions
+                        .insert((curve, signature_algorithm), instantiated);
                 }
 
                 if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
@@ -1689,6 +1739,8 @@ impl DWalletMPCManager {
                             .entry((curve, signature_algorithm))
                             .or_insert(0) += 1;
                     }
+                    self.internal_presign_batch_instantiated_at_round
+                        .insert((curve, signature_algorithm), consensus_round);
                     pools_filled.push(format!(
                         "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
                     ));
@@ -2821,10 +2873,23 @@ impl DWalletMPCManager {
                         );
                     }
                 }
-                *self
+                // Saturating at `instantiated`: a batch presumed dead by the
+                // stale-batch expiry already had its slot reconciled, so a
+                // late completion must not push `completed` past
+                // `instantiated` — the top-up skip compares them for
+                // equality and would block the pool permanently.
+                let instantiated = self
+                    .instantiated_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let completed = self
                     .completed_internal_presign_sessions
                     .entry((curve, signature_algorithm))
-                    .or_insert(0) += 1;
+                    .or_insert(0);
+                if *completed < instantiated {
+                    *completed += 1;
+                }
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,

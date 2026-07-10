@@ -1319,8 +1319,20 @@ pub(crate) const TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
 #[cfg(test)]
 pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
     ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
-        config.set_idle_session_count_threshold_for_testing(TEST_IDLE_SESSION_COUNT_THRESHOLD);
+        apply_test_presign_pool_overrides(&mut config);
+        config
+    })
+}
 
+/// The shared override set behind [`create_test_protocol_config_guard`],
+/// callable from tests that need these small pools PLUS extra overrides in a
+/// single guard — `ProtocolConfig::apply_overrides_for_testing` replaces any
+/// previously installed override closure, so two guards do not compose.
+#[cfg(test)]
+pub(crate) fn apply_test_presign_pool_overrides(config: &mut ProtocolConfig) {
+    config.set_idle_session_count_threshold_for_testing(TEST_IDLE_SESSION_COUNT_THRESHOLD);
+
+    {
         // Per-algorithm presign pool settings
         config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(
             TEST_PRESIGN_POOL_MINIMUM_SIZE,
@@ -1456,9 +1468,7 @@ pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
         config.set_network_owned_address_taproot_presign_sessions_to_instantiate_for_testing(
             TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
-
-        config
-    })
+    }
 }
 
 /// Creates an `IntegrationTestState` from the output of `create_dwallet_mpc_services`.

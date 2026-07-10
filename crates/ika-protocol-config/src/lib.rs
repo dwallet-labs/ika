@@ -375,6 +375,17 @@ pub struct ProtocolConfig {
     internal_eddsa_presign_pool_maximum_size: Option<u64>,
     internal_schnorrkel_substrate_presign_pool_maximum_size: Option<u64>,
     internal_taproot_presign_pool_maximum_size: Option<u64>,
+
+    /// Consensus rounds after which an incomplete internal-presign top-up
+    /// batch is presumed dead and stops blocking its pool's top-up. A batch
+    /// that dies without ever reaching an output quorum (its completion
+    /// counter only advances on quorum) would otherwise block that pool's
+    /// top-up for the rest of the epoch and starve the pool. `None` disables
+    /// the expiry (the pre-existing block-forever behavior). Version-gated
+    /// because the top-up decision must be identical across the committee:
+    /// it derives the deterministic session identifiers every validator
+    /// computes independently.
+    internal_presign_stale_batch_expiry_rounds: Option<u64>,
 }
 
 // feature flags
@@ -707,6 +718,9 @@ impl ProtocolConfig {
             internal_eddsa_presign_pool_maximum_size: Some(30000),
             internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
             internal_taproot_presign_pool_maximum_size: Some(30000),
+
+            // Set at v4 (see the version match below).
+            internal_presign_stale_batch_expiry_rounds: None,
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -735,6 +749,12 @@ impl ProtocolConfig {
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.off_chain_validator_metadata = true;
                     cfg.feature_flags.fast_schnorr_supported = true;
+                    // ~2.5 minutes at the ~20 rounds/s observed under loaded
+                    // CI consensus — far beyond an honest batch's completion
+                    // time. Erring short merely risks a one-batch pool
+                    // overshoot; erring long only delays the refill of a
+                    // starved pool.
+                    cfg.internal_presign_stale_batch_expiry_rounds = Some(3000);
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                     // The delay is measured in consensus rounds.
