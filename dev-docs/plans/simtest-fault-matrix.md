@@ -128,8 +128,8 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
 ## Progress log
 
 - [x] Phase 0 calibration numbers (sim smoke passes: 205s, seed-deterministic)
-- [ ] Phase 1 primitives + flow drivers
-- [ ] Group B tests
+- [x] Phase 1 stop/start/handle/poll_until primitives (flow drivers pending)
+- [ ] Group B tests (1/6: laggard_entry_window PASSES, 285s)
 - [ ] Group A tests
 - [ ] Group C tests
 - [ ] CI wiring

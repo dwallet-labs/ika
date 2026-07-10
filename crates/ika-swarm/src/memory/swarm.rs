@@ -381,9 +381,14 @@ impl Swarm {
             .filter(|node| node.config().consensus_config.is_some())
     }
 
+    /// Handles of the currently RUNNING validator nodes. A stopped node has
+    /// no handle and is skipped — fault-injection tests routinely hold one
+    /// or more validators down, and every consumer of this accessor wants
+    /// "the live ones" (the previous unwrap panicked the simulation the
+    /// moment anything polled while a node was down).
     pub fn validator_node_handles(&self) -> Vec<IkaNodeHandle> {
         self.validator_nodes()
-            .map(|node| node.get_node_handle().unwrap())
+            .filter_map(|node| node.get_node_handle())
             .collect()
     }
 
