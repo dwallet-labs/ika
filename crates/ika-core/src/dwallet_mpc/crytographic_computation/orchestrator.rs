@@ -282,6 +282,24 @@ impl CryptographicComputationsOrchestrator {
             "Starting cryptographic computation",
         );
 
+        // Simulation hook: lets a sim test degrade THIS validator's MPC
+        // while its consensus stays alive (register_fail_point_if returning
+        // true skips the computation) — the "MPC-dead validator" fault shape
+        // that a whole-node stop cannot express without also halting
+        // consensus. No-op outside msim/fail-point builds.
+        let skip_computation = std::cell::Cell::new(false);
+        sui_macros::fail_point_if!("dwallet-mpc-computation", || {
+            skip_computation.set(true);
+        });
+        if skip_computation.get() {
+            debug!(
+                party_id,
+                session_identifier=?computation_id.session_identifier,
+                "fail point dwallet-mpc-computation active: skipping computation",
+            );
+            return false;
+        }
+
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
         let vss_hpke_secret_key = self.vss_hpke_secret_key;
