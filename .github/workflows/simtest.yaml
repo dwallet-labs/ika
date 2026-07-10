@@ -36,6 +36,11 @@ on:
         type: string
         required: false
         default: "1"
+      rust_log:
+        description: "RUST_LOG for the simulation (raise for failure forensics; error keeps logs small)"
+        type: string
+        required: false
+        default: "error"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -47,7 +52,7 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  RUST_LOG: error
+  RUST_LOG: ${{ inputs.rust_log }}
   # The simtest watchdog treats CPU-bound class-groups operations as
   # deadlocks (simulated time stops advancing while a rayon worker
   # crunches). Disable so the test isn't killed mid-crypto.
