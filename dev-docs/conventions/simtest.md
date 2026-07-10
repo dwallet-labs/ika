@@ -43,11 +43,16 @@ capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter it
 as the first line of the closure (acceptable only where the spawning node
 provably outlives the computation).
 
-Net effect: class-groups crypto runs sequentially under simtest. The
-single-OS-thread + no-parallelism combination makes the smoke test slow
-enough that simtest is more useful on-demand (the manual GitHub workflow)
-than per-PR. That's the trade-off, not a bug — for tests where the
-slowness would dominate, `#[tokio::test]` is the right tool.
+Net effect: class-groups crypto runs sequentially under simtest — which
+made real-crypto sim tests prohibitively slow. The `dwallet-mpc-unsafe-mock`
+feature removed that cost, and `ika-test-cluster`'s dev-dependency
+self-reference builds the crate's tests with the mock unconditionally: a
+full 4-validator cluster boots and crosses epoch boundaries in ~3 minutes
+under msim, and the fault-simulation suite (`tests/sim_fault_*.rs`, plan:
+`../plans/simtest-fault-matrix.md`) is built on exactly that. Plain
+`#[tokio::test]` functions are listed but IGNORED under the sim runner —
+`#[sim_test]` is the only runnable form there. For real-crypto coverage,
+`#[tokio::test]` remains the right tool.
 
 ## Running it
 
@@ -55,9 +60,16 @@ slowness would dominate, `#[tokio::test]` is the right tool.
 # Locally (manual; slow by design)
 MSIM_DISABLE_WATCHDOG=1 cargo simtest --package ika-test-cluster -- test_swarm_reaches_epoch_2
 
-# On CI
+# On CI (default test_filter runs the sim_ fault suite; test_num sweeps seeds)
 gh workflow run simtest.yaml --ref <branch>
 ```
+
+Fault-injection primitives for sim tests: `IkaTestCluster::{stop_validator,
+start_validator, validator_handle}` + `poll_until` (never hold an
+`IkaNodeHandle` across a stop/start — RocksDB store lock), and the
+`dwallet-mpc-computation` fail point in the computation orchestrator
+(scope with `register_fail_point_if` + the victims' sim-node ids) for
+MPC-degrading a validator while its consensus stays alive.
 
 Driver: `scripts/simtest/cargo-simtest`. Smoke entry point:
 `crates/ika-test-cluster/` (`IkaTestCluster` + `IkaTestClusterBuilder`).
