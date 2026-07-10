@@ -129,7 +129,7 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
 
 - [x] Phase 0 calibration numbers (sim smoke passes: 205s, seed-deterministic)
 - [x] Phase 1 stop/start/handle/poll_until primitives (flow drivers pending)
-- [ ] Group B tests (2/6 passing: laggard_entry_window 285s, two_mpc_degraded 313s; dual-node-stop kept as ignored reproducer)
+- [ ] Group B tests (3 passing: laggard_entry_window 285s, two_mpc_degraded 313s, dkg_inside_degradation 319s w/ vacuity guard; dual-node-stop kept as ignored reproducer)
 - [ ] Group A tests
 - [ ] Group C tests
 - [ ] CI wiring
