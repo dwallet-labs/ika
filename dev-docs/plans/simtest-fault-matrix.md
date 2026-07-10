@@ -165,3 +165,13 @@ staggered restarts (one rejoins fully before the second stops being
 needed) and a 3000s budget (slow-vs-never). Single-validator
 stop/restart across a boundary (sim_laggard_entry_window) PASSES —
 the stall is specific to the dual outage.
+
+Update: staggered restart + 3000-virtual-second budget ALSO never
+recovers — "never", not "slow". Scenario reclassified: stopping 2 of 4
+halts CONSENSUS itself (sub-quorum for Mysticeti), which is NOT the
+historical two-laggards shape (consensus alive, laggards MPC-degraded).
+Node-stop test kept as an #[ignore]d reproducer of the open
+full-halt-recovery question (msim-only vs real — undetermined). The
+faithful Group B scenario will degrade the MPC computation path on two
+nodes via sui_macros fail points (hook to be added in the computation
+spawn path) while consensus keeps committing.
