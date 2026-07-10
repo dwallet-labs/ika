@@ -151,3 +151,17 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
   (22 skipped) — `#[sim_test]` is the only runnable form; sui-macros is
   already a cfg(msim) dep of ika-test-cluster with the static-init
   wiring in place.
+
+## Finding: simultaneous dual validator restart stalls the cluster (under investigation)
+
+`sim_two_laggards_one_epoch` (stop 2 of 4 mid-epoch, restart both 5s
+later) NEVER leaves epoch 1 within the 1000-virtual-second sim_test
+budget (SUI_SIM_TEST_TIMEOUT_SECS default). Ruled out: RocksDB
+lock-across-restart, node panics. Observed: no consensus rounds in the
+log tail — consensus does not resume after the simultaneous dual
+restart (2-of-4 halts Mysticeti as expected; the question is why the
+two returners never re-form a quorum). Discriminators queued:
+staggered restarts (one rejoins fully before the second stops being
+needed) and a 3000s budget (slow-vs-never). Single-validator
+stop/restart across a boundary (sim_laggard_entry_window) PASSES —
+the stall is specific to the dual outage.
