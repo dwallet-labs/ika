@@ -44,6 +44,16 @@ tests. Simtest covers coordination, timing, and liveness only.
 - Pick sim-test epoch-duration constants from the measurement.
 - Record numbers in this doc.
 
+Calibration result (2026-07-10, M-series laptop, seed 1):
+`sim_swarm_reaches_epoch_2` (4 validators, 10s ika epochs) PASSES under
+msim in ~205s wall — boot (genesis + publish + network DKG under mock)
+dominates; epoch crossings themselves are cheap. The historical
+OCS-state-sync-under-madsim failure did not manifest. Budget
+implication: ~3.5 min per boot-fresh sim test; nextest runs test
+binaries in parallel, so a ~15-test suite fits the ~25-minute target
+with per-file parallelism; prefer several scenarios per booted cluster
+where independence allows.
+
 ## Phase 1 — Harness fault toolkit (`ika-test-cluster`)
 
 Primitives on `IkaTestCluster`, `cfg(msim)`-gated where msim-specific:
@@ -117,7 +127,7 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
 
 ## Progress log
 
-- [ ] Phase 0 calibration numbers
+- [x] Phase 0 calibration numbers (sim smoke passes: 205s, seed-deterministic)
 - [ ] Phase 1 primitives + flow drivers
 - [ ] Group B tests
 - [ ] Group A tests
