@@ -73,6 +73,15 @@ fn node_handle(cluster: &IkaTestCluster, name: &AuthorityName) -> IkaNodeHandle 
 }
 
 /// All persisted handoff attestation certs, keyed by epoch, as bcs bytes.
+// Returns the per-epoch handoff ATTESTATION bytes (not the whole certificate).
+// The attestation is the no-fork payload — epoch, next-committee hash, and the
+// item digests that pin the epoch-keyed reconfiguration output and the frozen
+// mpc_data set. The certificate additionally carries the aggregated signature
+// set, which keeps growing past quorum toward the full committee (see
+// `insert_verified`); different validators legitimately hold different signature
+// subsets at any instant, and a validator restarted mid-grace can seal at bare
+// quorum before the last signer's message reaches it. Comparing whole-cert bytes
+// would flag that benign quorum-timing race as a fork, so compare attestations.
 fn handoff_certs(handle: &IkaNodeHandle) -> BTreeMap<u64, Vec<u8>> {
     handle.with(|node| {
         node.state()
@@ -82,7 +91,7 @@ fn handoff_certs(handle: &IkaNodeHandle) -> BTreeMap<u64, Vec<u8>> {
             .map(|(epoch, cert)| {
                 (
                     epoch,
-                    bcs::to_bytes(&cert).expect("handoff cert serializes"),
+                    bcs::to_bytes(&cert.attestation).expect("handoff attestation serializes"),
                 )
             })
             .collect()
@@ -265,7 +274,9 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // attestation and fail this equality. Handoff certs are perpetual
     // (never pruned), so this is robust to the network advancing while we
     // poll — unlike a checkpoint comparison, which races checkpoint pruning.
-    let reference_cert = poll_until(
+    // `handoff_certs` yields the attestation bytes (the no-fork payload); see its
+    // doc for why the signature set is deliberately excluded.
+    let reference_attestation = poll_until(
         Duration::from_secs(300),
         "a never-restarted validator to persist the struck epoch's handoff cert",
         || {
@@ -276,7 +287,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     )
     .await;
     for (index, name) in names.iter().enumerate() {
-        let cert = poll_until(
+        let attestation = poll_until(
             Duration::from_secs(300),
             "validator to persist the struck epoch's handoff cert",
             || {
@@ -287,10 +298,10 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
         )
         .await;
         assert_eq!(
-            cert, reference_cert,
-            "validator[{index}]'s handoff cert for epoch {STRUCK_EPOCH} diverges \
-             from the never-restarted validator's — the epoch close forked \
-             across the restarts",
+            attestation, reference_attestation,
+            "validator[{index}]'s handoff attestation for epoch {STRUCK_EPOCH} \
+             diverges from the never-restarted validator's — the epoch close \
+             forked across the restarts",
         );
     }
 

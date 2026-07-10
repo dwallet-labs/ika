@@ -9,9 +9,9 @@
 	"scripts": {
 		"build": "npm run build:node && npm run build:web && npm run build:bundler",
 		"note": "wasm-pack uses release profile by default",
-		"build:bundler": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target bundler --out-dir dist/bundler --${PROFILE} && rm dist/bundler/.gitignore",
-		"build:node": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target nodejs --out-dir dist/node --${PROFILE} && rm dist/node/.gitignore",
-		"build:web": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target web --out-dir dist/web --${PROFILE} && rm dist/web/.gitignore",
+		"build:bundler": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target bundler --out-dir dist/bundler --${PROFILE} ${IKA_WASM_UNSAFE_MOCK:+-- --features dwallet-mpc-unsafe-mock} && rm dist/bundler/.gitignore",
+		"build:node": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target nodejs --out-dir dist/node --${PROFILE} ${IKA_WASM_UNSAFE_MOCK:+-- --features dwallet-mpc-unsafe-mock} && rm dist/node/.gitignore",
+		"build:web": "npx cross-env RUSTFLAGS='--cfg getrandom_backend=\"wasm_js\"' wasm-pack build --target web --out-dir dist/web --${PROFILE} ${IKA_WASM_UNSAFE_MOCK:+-- --features dwallet-mpc-unsafe-mock} && rm dist/web/.gitignore",
 		"prepare": "npm run build"
 	},
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",

@@ -30,6 +30,11 @@ on:
         type: string
         required: false
         default: "error"
+      use_mocks:
+        description: "Run with the INSECURE dwallet-mpc-unsafe-mock crypto (fast, deterministic; NOT real-crypto coverage). Off = real crypto (default)."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -110,15 +115,20 @@ jobs:
       - name: Build tests
         env:
           SCOPE: ${{ inputs.scope }}
+          USE_MOCKS: ${{ inputs.use_mocks }}
         run: |
           # Compilation in its own step: the Downloaded/Compiling stream
           # dominates the log volume, a separate step collapses in the UI
           # when green, and `time` in the run step covers test execution,
           # not rustc.
+          # `use_mocks` layers the INSECURE deterministic mock on top of
+          # test-utils; default (off) is real crypto, byte-identical to before.
+          FEATURES="test-utils"
+          if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            cargo test --release --workspace --features test-utils --color=always --no-run
+            cargo test --release --workspace --features "$FEATURES" --color=always --no-run
           else
-            cargo test -p ika-core --lib --release --features test-utils --color=always --no-run
+            cargo test -p ika-core --lib --release --features "$FEATURES" --color=always --no-run
           fi
 
       - name: Run tests
@@ -127,14 +137,17 @@ jobs:
           TEST_THREADS: ${{ inputs.test_threads }}
           TEST_FILTER: ${{ inputs.test_filter }}
           RUST_LOG: ${{ inputs.rust_log || 'error' }}
+          USE_MOCKS: ${{ inputs.use_mocks }}
         run: |
           set -o pipefail
           THREADS=""
           if [ -n "$TEST_THREADS" ]; then
             THREADS="--test-threads=$TEST_THREADS"
           fi
+          FEATURES="test-utils"
+          if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            time cargo test --release --workspace --features test-utils --color=always -- \
+            time cargo test --release --workspace --features "$FEATURES" --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
             FILTER="dwallet_mpc::integration_tests"
@@ -142,7 +155,7 @@ jobs:
               FILTER="dwallet_mpc::integration_tests::$TEST_FILTER"
             fi
             time cargo test -p ika-core --lib "$FILTER" --release \
-              --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
+              --features "$FEATURES" --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
           fi
 
       - name: Summarize results

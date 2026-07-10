@@ -90,13 +90,14 @@ async fn ocs_verifier_v4_drives_user_dkg_and_epoch_advance() {
     // 4 direct validators (default `SuiStateDirect { serve_mirror: true }`),
     // protocol v4, OCS anchored on the localnet genesis committee.
     //
-    // 45s epoch (vs a tighter 30s) so the per-epoch off-chain class-groups
-    // blob propagation has headroom: on a loaded machine a shorter epoch can
-    // lapse before all four validators' bundles propagate, leaving the
-    // network-key reconfiguration at 3/4 and stalling the user DKG.
+    // 10s epoch: the per-epoch off-chain blob propagation must complete
+    // within the epoch or the network-key reconfiguration stalls at 3/4.
+    // Cluster tests always run with the `dwallet-mpc-unsafe-mock`
+    // keygen/protocol mocks, so blob generation is instant and the machine
+    // isn't loaded by class-groups compute.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(45_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .build()
@@ -127,16 +128,14 @@ async fn ocs_verifier_v4_mirrored_relay_drives_user_dkg_and_epoch_advance() {
     // verified Sui state through the relay), protocol v4, OCS anchored on the
     // localnet genesis committee.
     //
-    // A longer epoch than the direct test: mirrored validators read through
-    // an extra relay hop, so the per-epoch off-chain class-groups blob
-    // propagation has more latency to absorb. On a loaded machine a shorter
-    // epoch can lapse before all four validators' bundles propagate, leaving
-    // the reconfiguration incomplete and stalling the user DKG. 60s (matching
-    // the peer-only test) gives that propagation headroom even under heavy
-    // load, without materially lengthening the test.
+    // Mirrored validators read through an extra relay hop, so the per-epoch
+    // off-chain blob propagation has more latency to absorb than the direct
+    // test. With the always-on `dwallet-mpc-unsafe-mock` mocks the blobs are
+    // instant to produce and the machine isn't loaded by class-groups
+    // compute; 10s must absorb the relay-hop propagation floor.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .with_sui_state_direct_count(2)
@@ -173,14 +172,14 @@ async fn ocs_verifier_v4_peer_only_validator_drives_user_dkg_and_epoch_advance()
 
     // 2 direct validators (serve the relay) + 2 peer-only validators
     // (`SuiStateMirrored`, no fallback URL — no direct uplink), protocol v4,
-    // OCS anchored on the localnet genesis committee. 60s epoch (vs the
-    // mirrored test's 45s): peer-only is the most latency-sensitive topology —
-    // every Sui read, including the per-epoch reconfiguration reads, crosses
-    // the relay — so the off-chain class-groups assembly needs the extra
-    // per-epoch headroom to win its propagation race on a loaded machine.
+    // OCS anchored on the localnet genesis committee. Peer-only is the most
+    // latency-sensitive topology — every Sui read, including the per-epoch
+    // reconfiguration reads, crosses the relay. With the always-on
+    // `dwallet-mpc-unsafe-mock` mocks the off-chain assembly is instant and
+    // the machine unloaded; 10s must cover the relay propagation floor.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .with_sui_state_direct_count(2)
@@ -207,15 +206,20 @@ async fn ocs_verifier_v4_peer_only_validator_drives_user_dkg_and_epoch_advance()
 /// must install every `committee[E+1]` over the relay without skipping, or its
 /// verified reads fail and reconfiguration stalls — and with only two direct
 /// validators (below the quorum of three) the cluster cannot advance unless at
-/// least one peer-only validator keeps its ratchet current. Slow (several 60s ika
+/// least one peer-only validator keeps its ratchet current. Slow (several 10s ika
 /// epochs) — a cluster-suite test, not the fast unit pass.
 #[tokio::test(flavor = "multi_thread")]
 async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() {
     telemetry_subscribers::init_for_testing();
 
+    // 20s ika epochs (vs 10s elsewhere): this is the peer-only relay topology
+    // AND it crosses the most boundaries, so the initial user DKG has to finish
+    // while the cluster churns reconfigurations. At 10s the DKG intermittently
+    // straddled a boundary and timed out; 20s gives it a full window without
+    // reverting to the slow 60s pacing.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
+        .with_epoch_duration_ms(20_000)
         .with_sui_epoch_duration_ms(30_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
@@ -268,7 +272,7 @@ async fn ocs_verifier_v4_direct_validator_restart_resumes_and_keeps_serving() {
 
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(45_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .build()
@@ -341,7 +345,7 @@ async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
     // 2 direct (relay servers) + 2 mirrored, as in the mirrored-relay test.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
+        .with_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .with_sui_state_direct_count(2)
@@ -418,14 +422,19 @@ async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
 async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
     telemetry_subscribers::init_for_testing();
 
-    // Short SUI epochs (15s) so Sui's validator committee actually rotates: the
+    // Short SUI epochs so Sui's validator committee actually rotates: the
     // OCS ratchet is over the SUI committee chain, so without this Sui sits at
     // epoch 0 forever and the joiner's genesis anchor is never stale — there is
-    // nothing to ratchet and the test passes vacuously. ika epochs stay at 60s.
+    // nothing to ratchet and the test passes vacuously. The test's wall clock
+    // is Sui-bound (real Sui reconfiguration, unmockable), so the ika epoch
+    // uses Sui's 10s epoch floor so reaching Sui epoch 3 (the stale-anchor
+    // setup) costs ~30s of real Sui reconfiguration rather than 90s. ika epochs
+    // are also short; the joiner must still ratchet across the elapsed Sui
+    // committees regardless of the cadence.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
-        .with_sui_epoch_duration_ms(30_000)
+        .with_epoch_duration_ms(10_000)
+        .with_sui_epoch_duration_ms(10_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .build()
@@ -441,7 +450,7 @@ async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
     // stale. Bounded so a missing `with_sui_epoch_duration_ms` fails loudly here
     // instead of letting the rest of the test pass vacuously.
     tokio::time::timeout(
-        std::time::Duration::from_secs(180),
+        std::time::Duration::from_secs(90),
         cluster.wait_for_sui_epoch(3),
     )
     .await
@@ -467,7 +476,7 @@ async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
     // node below the target rather than catching up.
     cluster.wait_for_epoch(2).await;
     tokio::time::timeout(
-        std::time::Duration::from_secs(180),
+        std::time::Duration::from_secs(90),
         wait_for_node_epoch(&joiner.node_handle, 2),
     )
     .await
@@ -480,7 +489,7 @@ async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
     // continues from a mid-stream join rather than only doing a one-shot catch-up.
     cluster.wait_for_epoch(3).await;
     tokio::time::timeout(
-        std::time::Duration::from_secs(180),
+        std::time::Duration::from_secs(90),
         wait_for_node_epoch(&joiner.node_handle, 3),
     )
     .await

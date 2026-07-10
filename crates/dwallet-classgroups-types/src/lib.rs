@@ -2,21 +2,13 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
-    CRT_DECRYPTION_KEY_WITNESS_LIMBS, CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
-    construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,
-    construct_setup_parameters_per_crt_prime, generate_keypairs_per_crt_prime,
-    generate_knowledge_of_decryption_key_proofs_per_crt_prime,
+    CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS, CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
+    generate_class_groups_keypair,
 };
-use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::generate_and_prove_encryption_keypair;
-use class_groups::setup::DeriveFromPlaintextPublicParameters;
+use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::generate_pvss_keypairs;
 use class_groups::{
-    CompactIbqf, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-    RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS, RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    RistrettoSetupParameters, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, Secp256k1SetupParameters,
-    Secp256r1SetupParameters,
+    CompactIbqf, RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 use crypto_bigint::Uint;
 use dwallet_rng::RootSeed;
@@ -70,26 +62,9 @@ impl ClassGroupsSecret {
     ///
     /// The seed must be cryptographically secure and kept confidential.
     pub fn from_seed(root_seed: &RootSeed) -> (Self, ClassGroupsEncryptionKeyAndProof) {
-        let setup_parameters_per_crt_prime =
-            construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER)
+        let (decryption_key, encryption_key_and_proof) =
+            generate_class_groups_keypair(&mut root_seed.class_groups_decryption_key_rng())
                 .unwrap();
-        let language_public_parameters_per_crt_prime =
-            construct_knowledge_of_decryption_key_public_parameters_per_crt_prime(
-                setup_parameters_per_crt_prime.each_ref(),
-            )
-            .unwrap();
-
-        let mut rng = root_seed.class_groups_decryption_key_rng();
-        let decryption_key =
-            generate_keypairs_per_crt_prime(setup_parameters_per_crt_prime.clone(), &mut rng)
-                .unwrap();
-
-        let encryption_key_and_proof = generate_knowledge_of_decryption_key_proofs_per_crt_prime(
-            language_public_parameters_per_crt_prime.clone(),
-            decryption_key,
-            &mut rng,
-        )
-        .unwrap();
 
         (
             ClassGroupsSecret { decryption_key },
@@ -145,10 +120,11 @@ impl ValidatorMPCSecrets {
     /// independent of each other and the same root seed always reproduces the
     /// same set of keys.
     ///
-    /// Per-curve setup parameters are derived from the curve's default scalar
-    /// `PublicParameters` plus [`DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER`] — pure
-    /// per-curve constants (no per-validator/per-network dependency), so
-    /// deterministic derivation from `RootSeed` is sound.
+    /// The class-groups and per-curve PVSS keygen (including the per-curve setup-
+    /// parameter derivation) lives in the `class_groups` crate behind the
+    /// `generate_class_groups_keypair` / `generate_pvss_keypairs`
+    /// entry points; this only supplies the domain-separated RNGs and assembles the
+    /// result into the committee types.
     ///
     /// The seed must be cryptographically secure and kept confidential.
     ///
@@ -160,62 +136,16 @@ impl ValidatorMPCSecrets {
         let (class_groups, class_groups_encryption_key_and_proof) =
             ClassGroupsSecret::from_seed(root_seed);
 
-        let secp256k1_setup =
-            Secp256k1SetupParameters::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
-                group::secp256k1::scalar::PublicParameters::default(),
-                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-            )
-            .unwrap();
-        let mut secp256k1_rng = root_seed.pvss_secp256k1_decryption_key_rng();
-        let (secp256k1_enc, secp256k1_proof, secp256k1_dec) =
-            generate_and_prove_encryption_keypair::<
-                { group::secp256k1::SCALAR_LIMBS },
-                { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U1024::LIMBS },
-                { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U4096::LIMBS },
-                { CRT_DECRYPTION_KEY_WITNESS_LIMBS },
-                group::secp256k1::GroupElement,
-            >(&secp256k1_setup, &mut secp256k1_rng)
-            .unwrap();
-
-        let secp256r1_setup =
-            Secp256r1SetupParameters::derive_from_plaintext_parameters::<group::secp256r1::Scalar>(
-                group::secp256r1::scalar::PublicParameters::default(),
-                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-            )
-            .unwrap();
-        let mut secp256r1_rng = root_seed.pvss_secp256r1_decryption_key_rng();
-        let (secp256r1_enc, secp256r1_proof, secp256r1_dec) =
-            generate_and_prove_encryption_keypair::<
-                { group::secp256r1::SCALAR_LIMBS },
-                { SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U1024::LIMBS },
-                { SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U4096::LIMBS },
-                { CRT_DECRYPTION_KEY_WITNESS_LIMBS },
-                group::secp256r1::GroupElement,
-            >(&secp256r1_setup, &mut secp256r1_rng)
-            .unwrap();
-
-        let ristretto_setup =
-            RistrettoSetupParameters::derive_from_plaintext_parameters::<group::ristretto::Scalar>(
-                group::ristretto::scalar::PublicParameters::default(),
-                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-            )
-            .unwrap();
-        let mut ristretto_rng = root_seed.pvss_ristretto_decryption_key_rng();
-        let (ristretto_enc, ristretto_proof, ristretto_dec) =
-            generate_and_prove_encryption_keypair::<
-                { group::ristretto::SCALAR_LIMBS },
-                { RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U1024::LIMBS },
-                { RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { crypto_bigint::U4096::LIMBS },
-                { CRT_DECRYPTION_KEY_WITNESS_LIMBS },
-                group::ristretto::GroupElement,
-            >(&ristretto_setup, &mut ristretto_rng)
-            .unwrap();
+        let (
+            (secp256k1_enc, secp256k1_proof, secp256k1_dec),
+            (secp256r1_enc, secp256r1_proof, secp256r1_dec),
+            (ristretto_enc, ristretto_proof, ristretto_dec),
+        ) = generate_pvss_keypairs(
+            &mut root_seed.pvss_secp256k1_decryption_key_rng(),
+            &mut root_seed.pvss_secp256r1_decryption_key_rng(),
+            &mut root_seed.pvss_ristretto_decryption_key_rng(),
+        )
+        .unwrap();
 
         // Fast Schnorr (VSS) HPKE keypair: a single curve25519 keypair (not
         // class groups, not per-curve) used as the known-order

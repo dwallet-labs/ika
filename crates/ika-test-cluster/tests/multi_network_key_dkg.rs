@@ -44,10 +44,11 @@ use std::time::Duration;
 async fn multi_network_keys_dkg_across_epochs() {
     telemetry_subscribers::init_for_testing();
 
-    // 6 min epochs: mid-epoch at 3 min. K1's network DKG takes
-    // ~2–3 min on this hardware, so the DKG comfortably finishes
-    // in the first half of epoch 2.
-    let epoch_duration_ms = 360_000;
+    // Mid-epoch is at epoch/2 and the DKG request must land (and the DKG
+    // finish) before it. Under the always-on `dwallet-mpc-unsafe-mock`
+    // protocol mocks the network DKG completes in consensus-round time
+    // (vs ~2–3 min real), so 10s epochs — mid-epoch at 5s — suffice.
+    let epoch_duration_ms = 10_000;
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(epoch_duration_ms)

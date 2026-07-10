@@ -94,6 +94,11 @@ on:
         type: boolean
         required: false
         default: false
+      use_mocks:
+        description: "Build binaries with the INSECURE dwallet-mpc-unsafe-mock crypto (deterministic mocks). CONSTRAINT: cross-binary scenarios also build the OLD binary mocked, so old_ref MUST carry the feature; and the mock changes MPC/network-key behavior, so upgrade assertions may differ. Off by default."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -274,8 +279,19 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
+          USE_MOCKS: ${{ inputs.use_mocks }}
         run: |
           set -euo pipefail
+          # `use_mocks` builds the NEW binaries with the INSECURE deterministic
+          # mocks. For cross-binary scenarios the OLD binary is built with the
+          # mock too (below), so its ref MUST carry the dwallet-mpc-unsafe-mock
+          # feature or that build fails — mixed mock/real crypto won't interoperate.
+          NODE_FEATURES="jemalloc"
+          IKA_FEATURES=""
+          if [ "$USE_MOCKS" = "true" ]; then
+            NODE_FEATURES="jemalloc,dwallet-mpc-unsafe-mock"
+            IKA_FEATURES="--features dwallet-mpc-unsafe-mock"
+          fi
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
           # green. `--no-default-features --features jemalloc` drops ika-node's
@@ -284,14 +300,21 @@ jobs:
           # ALSO dropped jemalloc — leaving CI on the glibc allocator, so the
           # jemalloc background_threads memory fix and heap profiling (the
           # `profiling` feature) never took effect. Prod uses jemalloc; so does CI now.
-          cargo build --release --no-default-features --features jemalloc -p ika-node --bin ika-validator --bin ika-notifier
-          cargo build --release -p ika --bin ika
+          cargo build --release --no-default-features --features "$NODE_FEATURES" -p ika-node --bin ika-validator --bin ika-notifier
+          cargo build --release -p ika --bin ika $IKA_FEATURES
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
         if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' }}
+        env:
+          USE_MOCKS: ${{ inputs.use_mocks }}
         run: |
           set -euo pipefail
+          # Under use_mocks the OLD binary must ALSO be mocked to interoperate with
+          # the (mocked) new binary — so OLD_REF must carry dwallet-mpc-unsafe-mock
+          # or this build fails loudly.
+          OLD_FEATURES=""
+          if [ "$USE_MOCKS" = "true" ]; then OLD_FEATURES="--features dwallet-mpc-unsafe-mock"; fi
           WT="$GITHUB_WORKSPACE/old-build"
           git worktree remove --force "$WT" 2>/dev/null || true
           rm -rf "$WT"
@@ -311,7 +334,7 @@ jobs:
           # Build at the OLD ref's own toolchain (rustup reads the worktree's
           # rust-toolchain.toml). A ref that won't build on its own toolchain
           # fails loudly here — cherry-pick or use a prebuilt path instead.
-          ( cd "$WT" && cargo build --release --no-default-features -p ika-node --bin "$OLD_BIN_NAME" )
+          ( cd "$WT" && cargo build --release --no-default-features $OLD_FEATURES -p ika-node --bin "$OLD_BIN_NAME" )
           OLD_BIN="$WT/target/release/$OLD_BIN_NAME"
           test -x "$OLD_BIN" || { echo "OLD binary missing: $OLD_BIN" >&2; exit 1; }
           echo "OLD_BIN=$OLD_BIN" >> "$GITHUB_ENV"

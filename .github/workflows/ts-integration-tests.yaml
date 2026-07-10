@@ -31,6 +31,11 @@ on:
         type: string
         required: false
         default: "900000"
+      use_mocks:
+        description: "Run against the INSECURE dwallet-mpc-unsafe-mock crypto (mocks BOTH the ika node binary and the WASM client so the 2PC halves agree; fast, deterministic; NOT real-crypto coverage). Off = real crypto (default)."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -127,10 +132,23 @@ jobs:
           cp ./sui "$HOME/.local/bin/sui"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # When use_mocks, BOTH halves of the 2PC must be mocked or they won't
+      # agree: the node binary here, and the WASM client below (built inside
+      # `pnpm install` via the ika-wasm `prepare` script, so the env var must be
+      # set on that step).
       - name: Build ika binary
-        run: cargo build --release --bin ika
+        env:
+          USE_MOCKS: ${{ inputs.use_mocks }}
+        run: |
+          FEATURES=""
+          if [ "$USE_MOCKS" = "true" ]; then FEATURES="--features dwallet-mpc-unsafe-mock"; fi
+          cargo build --release --bin ika $FEATURES
 
       - name: Install SDK dependencies
+        env:
+          # '1' -> ika-wasm build scripts append `-- --features dwallet-mpc-unsafe-mock`;
+          # '' (default) -> unmocked wasm, byte-identical to before.
+          IKA_WASM_UNSAFE_MOCK: ${{ inputs.use_mocks && '1' || '' }}
         run: pnpm install
         working-directory: ./sdk/typescript
 

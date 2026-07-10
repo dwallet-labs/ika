@@ -71,3 +71,7 @@ default = ["jemalloc"]
 # hosts whole localnet swarms, where allocator behavior matters most.
 jemalloc = ["tikv-jemallocator"]
 protocol-commands = ['ika-sui-client/protocol-commands']
+# INSECURE test-only: build the `ika` CLI binary with the deterministic MPC/
+# class-group mocks (forwards through ika-swarm -> ika-node). Used to stand up a
+# mocked localnet for fast SDK/integration tests. Never enable in production.
+dwallet-mpc-unsafe-mock = ["ika-swarm/dwallet-mpc-unsafe-mock"]
