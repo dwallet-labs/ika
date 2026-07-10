@@ -134,3 +134,20 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
 - [ ] Group C tests
 - [ ] CI wiring
 - [ ] Test-testing evidence + doc updates
+
+## Phase 1 implementation notes (living)
+
+- Restart primitive: promote restart_mid_grace's pattern — access via
+  `cluster.swarm.node(name)` → `stop()` / `start()`; state probes via
+  short-lived `get_node_handle()` (NEVER hold an `IkaNodeHandle` across
+  a stop/start: it is a strong Arc keeping RocksDB open, and the respawn
+  dies on the held store LOCK). `poll_until` (100ms tick, deadline) is
+  the event-predicate driver for kill-at-event forms.
+- Fail points: ika-core already compiles `sui_macros::fail_point_async`
+  into `sui_connector/sui_executor.rs` and `consensus_handler.rs`;
+  sim tests can `register_fail_point_async` to delay/abort at those
+  hooks — the surgical mechanism where network faults are too blunt.
+- Under the sim runner, plain `#[tokio::test]`s are listed but ignored
+  (22 skipped) — `#[sim_test]` is the only runnable form; sui-macros is
+  already a cfg(msim) dep of ika-test-cluster with the static-init
+  wiring in place.
