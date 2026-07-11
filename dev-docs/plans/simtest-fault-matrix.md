@@ -188,3 +188,15 @@ run failed purely on budget — EndOfPublish markers appear at
 raised (test 900s, SUI_SIM_TEST_TIMEOUT_SECS 3600); WHY the skipped-
 computation retry backlog drains that slowly is worth its own
 investigation (retry cadence? per-round pacing of pending computations?).
+
+Update: the slow tail is WORSE than first read — with a 900s budget and
+the 3600s virtual cap the wide-window variant still fails (two more CI
+runs), and the guard-scoping fix in the syncer (correct hardening,
+kept) did not change it. No stuck-gate warn fires, so the close is
+timer-paced through a backlog rather than pinned on one condition; the
+prime suspect is the NOA-checkpoint/session backlog accumulated while
+2-of-4 validators were MPC-dead, drained at full tick intervals per
+item in virtual time. The PASSING test now uses a one-submission
+window; the wide window is preserved as
+sim_presign_long_degradation_reproducer (#[ignore]) pending the
+backlog-drain investigation.
