@@ -93,6 +93,10 @@ them has a bug — determine which before changing either.
   log-level discipline: hot MPC paths are `debug!`, once-per-epoch
   lifecycle events are `info!`; why an `info!` on the per-computation
   path makes validator logs unreadable under load.
+- [`conventions/enforce-minimum-cpu.md`](conventions/enforce-minimum-cpu.md)
+  — the 16-core minimum's decision rule (feature compiled in + validator
+  mode + ika testnet/mainnet), which builds must KEEP the old
+  `--no-default-features` workaround, and the chain-override interaction.
 
 ### learnings/ — pitfalls that cost real debugging time
 - [`learnings/pitfalls.md`](learnings/pitfalls.md) — non-obvious failure

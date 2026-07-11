@@ -441,7 +441,7 @@ Start a localnet following the
 RUST_LOG="off,sui_node=info" sui start --with-faucet --force-regenesis --epoch-duration-ms 1000000000000000
 
 # Terminal 2 — Ika localnet
-cargo run --bin ika --release --no-default-features -- start
+cargo run --bin ika --release -- start
 ```
 
 Run SDK tests:
