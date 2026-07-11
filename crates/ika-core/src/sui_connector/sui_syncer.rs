@@ -1291,10 +1291,12 @@ where
                     .set(is_blocking as i64);
             }
             if !ready_to_end_publish {
-                // The breakdown each tick (debug) pinpoints a stuck
-                // reconfiguration — e.g. a restarted validator that left a
-                // system session started-but-not-completed.
-                debug!(
+                // The breakdown each tick pinpoints a stuck reconfiguration
+                // or session lag. Info on purpose: one line per 10s tick per
+                // validator only while unsatisfied, and every epoch-close
+                // stall investigation this month needed exactly this
+                // breakdown and did not have it at the default level.
+                info!(
                     epoch = system_inner_v1.epoch,
                     session_locked,
                     all_epoch_sessions_finished,
