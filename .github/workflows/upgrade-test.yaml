@@ -477,7 +477,7 @@ jobs:
 
       - name: Upload heap dumps
         if: ${{ always() && inputs.heap_profile }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jeprof-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test-data/jeprof.*.heap
@@ -486,7 +486,7 @@ jobs:
 
       - name: Upload resource sampler log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resource-sampler-${{ matrix.test }}-${{ github.run_attempt }}
           path: resource-sampler.log
@@ -496,7 +496,7 @@ jobs:
         # always: a timeout kill registers as 'cancelled', not 'failure', and
         # the partial log of a multi-epoch run must survive it.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: upgrade-test-log-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test.log
@@ -504,7 +504,7 @@ jobs:
 
       - name: Upload validator logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Logs only — the data dirs hold multi-GB RocksDB state.
           name: upgrade-test-node-logs-${{ matrix.test }}-${{ github.run_attempt }}
