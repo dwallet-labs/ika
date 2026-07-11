@@ -79,7 +79,8 @@ default = ["enforce-minimum-cpu", "jemalloc"]
 
 # Compile in the 16-core minimum for cryptographic computations. Even when
 # compiled in, it is enforced at runtime only for a node running as a
-# validator on testnet or mainnet (see ika-core's runtime.rs).
+# validator on the ika testnet or mainnet networks (identified by the deployed
+# ika system object, not the Sui settlement chain — see ika-core's runtime.rs).
 enforce-minimum-cpu = ["ika-core/enforce-minimum-cpu"]
 # INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks.
 # Never enable in production. See cryptography-private `unsafe_mock`.

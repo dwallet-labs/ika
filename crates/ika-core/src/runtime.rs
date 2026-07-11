@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use ika_config::NodeConfig;
-use ika_config::node::{NodeMode, SuiChainIdentifier};
+use ika_config::node::NodeMode;
+use ika_protocol_config::Chain;
+use ika_types::digests::ChainIdentifier;
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 use tracing::error;
@@ -24,28 +26,27 @@ static ENFORCE_MINIMUM_CPU: OnceLock<bool> = OnceLock::new();
 /// The minimum-CPU requirement applies only when ALL hold: the
 /// `enforce-minimum-cpu` feature is compiled in (dropped by test builds via
 /// `--no-default-features`), the node runs as a validator (fullnodes and
-/// notifiers don't do MPC computations), and the network is testnet or
-/// mainnet (localnets/devnets run on ordinary dev hosts).
+/// notifiers don't do MPC computations), and the IKA network is testnet or
+/// mainnet — derived from the deployed ika system object's `ChainIdentifier`
+/// (NOT the Sui settlement chain: an ika devnet/localnet deployed on Sui
+/// testnet must not enforce). Anything else maps to `Chain::Unknown` and runs
+/// on ordinary dev hosts.
 fn should_enforce_minimum_cpu(
     feature_enabled: bool,
     node_mode: NodeMode,
-    chain: SuiChainIdentifier,
+    ika_chain: Chain,
 ) -> bool {
     feature_enabled
         && node_mode.is_validator()
-        && matches!(
-            chain,
-            SuiChainIdentifier::Mainnet | SuiChainIdentifier::Testnet
-        )
+        && matches!(ika_chain, Chain::Mainnet | Chain::Testnet)
 }
 
 impl IkaRuntimes {
     pub fn new(config: &NodeConfig, node_mode: NodeMode) -> Self {
-        let enforce = should_enforce_minimum_cpu(
-            cfg!(feature = "enforce-minimum-cpu"),
-            node_mode,
-            config.sui_connector_config.sui_chain_identifier,
-        );
+        let ika_chain =
+            ChainIdentifier::from(config.sui_connector_config.ika_system_object_id).chain();
+        let enforce =
+            should_enforce_minimum_cpu(cfg!(feature = "enforce-minimum-cpu"), node_mode, ika_chain);
         let _ = ENFORCE_MINIMUM_CPU.set(enforce);
         let mut builder = rayon::ThreadPoolBuilder::new()
             .panic_handler(|err| error!("Rayon thread pool task panicked: {:?}", err))
@@ -100,13 +101,14 @@ pub const TOKIO_ALLOCATED_CORES: usize = 4;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui_types::base_types::ObjectID;
 
     #[test]
-    fn enforced_only_for_validator_on_testnet_or_mainnet() {
-        for chain in [SuiChainIdentifier::Mainnet, SuiChainIdentifier::Testnet] {
+    fn enforced_only_for_validator_on_ika_testnet_or_mainnet() {
+        for chain in [Chain::Mainnet, Chain::Testnet] {
             assert!(should_enforce_minimum_cpu(true, NodeMode::Validator, chain));
         }
-        for chain in [SuiChainIdentifier::Devnet, SuiChainIdentifier::Custom] {
+        for chain in [Chain::Devnet, Chain::Unknown] {
             assert!(!should_enforce_minimum_cpu(
                 true,
                 NodeMode::Validator,
@@ -114,11 +116,7 @@ mod tests {
             ));
         }
         for mode in [NodeMode::Fullnode, NodeMode::Notifier] {
-            assert!(!should_enforce_minimum_cpu(
-                true,
-                mode,
-                SuiChainIdentifier::Mainnet
-            ));
+            assert!(!should_enforce_minimum_cpu(true, mode, Chain::Mainnet));
         }
     }
 
@@ -127,7 +125,18 @@ mod tests {
         assert!(!should_enforce_minimum_cpu(
             false,
             NodeMode::Validator,
-            SuiChainIdentifier::Mainnet
+            Chain::Mainnet
         ));
+    }
+
+    /// The gate reads the IKA network from the deployed ika system object id,
+    /// not the Sui settlement chain: an unknown (e.g. localnet) system object
+    /// maps to `Chain::Unknown` and must not enforce.
+    #[test]
+    fn unknown_ika_system_object_maps_to_unknown_chain() {
+        assert_eq!(
+            ChainIdentifier::from(ObjectID::ZERO).chain(),
+            Chain::Unknown
+        );
     }
 }
