@@ -229,3 +229,15 @@ presign-traffic-across-boundaries (passes); the degradation variants
 are ignored reproducers. THIS IS THE TOP FOLLOW-UP: diagnose with the
 gate-breakdown info logging (now default) + a single-test dispatch at
 rust_log info on the reproducer.
+
+FINAL for this PR — the presign scenario is msim-reproducible WITHOUT
+any fault injection: pure traffic astride close-locks pins
+all_epoch_sessions_finished=false (100 presigns served, zero holds,
+one locked-set session never completes; 840+ stuck virtual seconds;
+seven schedule variants). The tokio twin passes on real timing — a
+narrow scheduling-sensitive race in the close/serve interplay, exactly
+the class simtest exists to surface. All three presign variants are
+now #[ignore]d reproducers with deterministic seeds; the enabled suite
+is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
+close race (this), (2) full-consensus-halt recovery (dual node stop),
+(3) expiry round-rate envelope documentation.

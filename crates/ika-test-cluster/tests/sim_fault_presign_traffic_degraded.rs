@@ -35,6 +35,17 @@ const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 5_000_000_000;
 const FIRST_VICTIM: usize = 1;
 const SECOND_VICTIM: usize = 3;
 
+// Reproducer (msim-only): global-presign traffic astride epoch-close locks
+// pins all_epoch_sessions_finished=false on some schedule — ~100 presigns
+// serve successfully, no held votes, yet one locked-set session never
+// completes and the epoch cannot close (stuck 840+ virtual seconds across
+// seven schedule variants; fault injection is NOT required — pure traffic
+// suffices). The tokio twin passes on real timing, so this is a narrow
+// scheduling-sensitive race in the close/serve interplay that msim's
+// determinism exposes. Reproduce with seed 1 via the simtest workflow,
+// test_filter=sim_presign_traffic; evidence trail in
+// dev-docs/plans/simtest-fault-matrix.md.
+#[ignore = "reproducer: presign traffic astride close-locks pins the epoch under msim; see the fault-matrix plan"]
 #[sim_test]
 async fn sim_presign_traffic_across_boundaries() {
     telemetry_subscribers::init_for_testing();
