@@ -206,11 +206,19 @@ pub(crate) async fn fetch_nested_event_field(
     None
 }
 
-/// Poll `object_id` until `state.variant` is `Completed` and return the
-/// bytes at `state.fields.<bytes_field>`; error on `NetworkRejected` or
-/// timeout. The timeout error reports what each poll actually observed
-/// (fetch failures vs. a state stuck pre-completion), so a failure is
-/// diagnosable from the message alone.
+/// Poll `object_id` until its session state carries `bytes_field` and
+/// return those bytes.
+///
+/// Completion is detected by FIELD PRESENCE, not by the state enum's
+/// variant name: the pinned Sui renders Move enum values as
+/// `{"type": ..., "fields": {...}}` WITHOUT a variant tag (the same quirk
+/// `wait_for_dwallet_dkg_complete` documents), so only the inhabited
+/// variant's fields are observable. `Completed` is the only variant
+/// carrying the output bytes, which makes the field decisive. Where a
+/// node DOES render a variant tag, `NetworkRejected` is surfaced as an
+/// error; without one, a rejected session is indistinguishable from a
+/// pending one and surfaces as this poll's timeout (whose message carries
+/// the last observed state for diagnosis).
 async fn poll_session_until_completed(
     sui_rpc_url: &str,
     object_id: ObjectID,
@@ -219,63 +227,44 @@ async fn poll_session_until_completed(
 ) -> Result<Vec<u8>> {
     let client = sdk_client(sui_rpc_url).await?;
     let start = tokio::time::Instant::now();
-    let mut fetch_error_count: u64 = 0;
-    let mut last_fetch_error = String::new();
-    let mut observed_count: u64 = 0;
-    let mut last_observed_variant = String::from("(none)");
+    let mut last_observed = String::from("(no fetch yet)");
     let mut poll_count: u64 = 0;
     loop {
         if start.elapsed() > timeout {
             anyhow::bail!(
-                "timeout ({timeout:?}) waiting for session {object_id} to reach Completed; \
-                 polls={poll_count} state_observations={observed_count} \
-                 last_observed_variant={last_observed_variant} \
-                 fetch_errors={fetch_error_count} last_fetch_error={last_fetch_error:?}"
+                "timeout ({timeout:?}) waiting for session {object_id} to complete; \
+                 polls={poll_count} last_observed={last_observed}"
             );
         }
         match fetch_object_fields(&client, object_id).await {
             Ok(fields) => {
-                let variant = fields
-                    .get("state")
+                let state = fields.get("state");
+                if let Some(bytes) = state
+                    .and_then(|state| state.get("fields"))
+                    .and_then(|f| f.get(bytes_field))
+                    .and_then(extract_bytes_from_json)
+                {
+                    return Ok(bytes);
+                }
+                if let Some("NetworkRejected") = state
                     .and_then(|state| state.get("variant"))
-                    .and_then(|v| v.as_str());
-                if let Some(variant) = variant {
-                    observed_count += 1;
-                    last_observed_variant = variant.to_string();
-                } else {
-                    fetch_error_count += 1;
-                    last_fetch_error = format!("unexpected object shape: {fields}");
+                    .and_then(|v| v.as_str())
+                {
+                    anyhow::bail!("session {object_id} was rejected by the network");
                 }
-                match variant.unwrap_or("") {
-                    "Completed" => {
-                        return fields
-                            .get("state")
-                            .and_then(|state| state.get("fields"))
-                            .and_then(|f| f.get(bytes_field))
-                            .and_then(extract_bytes_from_json)
-                            .ok_or_else(|| {
-                                anyhow!("Completed session {object_id} has no {bytes_field} bytes")
-                            });
-                    }
-                    "NetworkRejected" => {
-                        anyhow::bail!("session {object_id} was rejected by the network");
-                    }
-                    _ => {}
-                }
+                last_observed = state
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("no state field in {fields}"));
             }
-            Err(e) => {
-                fetch_error_count += 1;
-                last_fetch_error = e.to_string();
-            }
+            Err(e) => last_observed = format!("fetch error: {e}"),
         }
         poll_count += 1;
         if poll_count.is_multiple_of(40) {
             tracing::info!(
                 %object_id,
                 poll_count,
-                last_observed_variant,
-                fetch_error_count,
-                "still polling session for Completed"
+                last_observed,
+                "still polling session for completion"
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -498,58 +487,47 @@ impl IkaTestCluster {
         find_created_object_by_type(&self.sui_rpc_url, &response, "PartialUserSignatureCap").await
     }
 
-    /// Waits until the partial user signature behind `cap_id` passes
-    /// network verification — fulfilling before that aborts on-chain.
-    pub async fn wait_for_partial_signature_verified(
-        &self,
-        partial_user_signature_cap_id: ObjectID,
-        timeout: std::time::Duration,
-    ) -> Result<()> {
-        let client = sdk_client(&self.sui_rpc_url).await?;
-        let cap_fields = fetch_object_fields(&client, partial_user_signature_cap_id).await?;
-        let partial_signature_id: ObjectID = cap_fields
-            .get("partial_centralized_signed_message_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "partial-user-signature cap {partial_user_signature_cap_id} has no \
-                     partial_centralized_signed_message_id"
-                )
-            })?
-            .parse()?;
-        let start = tokio::time::Instant::now();
-        let mut last_observed = String::from("(none)");
+    /// Waits until every user-initiated session the coordinator has
+    /// started is completed on-chain (`user_sessions_keeper` started ==
+    /// completed), reading the coordinator via BCS (immune to the JSON
+    /// enum-rendering quirk). In a single-actor test this is both the
+    /// end-of-flow invariant (no session silently lost) and the barrier
+    /// for waits whose target state is a fieldless enum variant and thus
+    /// unobservable through object JSON — e.g. the future-sign partial
+    /// signature's `NetworkVerificationCompleted`.
+    pub async fn wait_for_user_sessions_drained(&self, timeout: std::time::Duration) -> Result<()> {
+        let sui_client = self.sui_connector_client().await?;
+        let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            if start.elapsed() > timeout {
+            let (_, inner) = sui_client.must_get_dwallet_coordinator_inner().await;
+            let ika_types::sui::DWalletCoordinatorInner::V1(inner) = inner;
+            let started = inner
+                .sessions_manager
+                .user_sessions_keeper
+                .started_sessions_count;
+            let completed = inner
+                .sessions_manager
+                .user_sessions_keeper
+                .completed_sessions_count;
+            if started == completed {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!(
-                    "timeout waiting for partial user signature {partial_signature_id} \
-                     verification; last observed: {last_observed}"
+                    "user sessions never drained within {timeout:?}: \
+                     started={started} completed={completed}"
                 );
             }
-            match fetch_object_fields(&client, partial_signature_id).await {
-                Ok(fields) => {
-                    let variant = fields
-                        .get("state")
-                        .and_then(|s| s.get("variant"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    last_observed = variant.to_string();
-                    match variant {
-                        "NetworkVerificationCompleted" => return Ok(()),
-                        "NetworkVerificationRejected" => {
-                            anyhow::bail!("partial user signature {partial_signature_id} rejected")
-                        }
-                        _ => {}
-                    }
-                }
-                Err(e) => last_observed = format!("fetch error: {e}"),
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
 
     /// Future-sign, step 2: fulfill the pre-committed signature for the
-    /// same message and wait for the network signature.
+    /// same message and wait for the network signature. The fulfill
+    /// transaction aborts on-chain while the partial signature is still
+    /// awaiting network verification (a fieldless state, unobservable
+    /// through object JSON), so pending verification is handled by
+    /// retrying the transaction until it lands.
     pub async fn future_sign_fulfill(
         &mut self,
         signer: &DwalletSigner<'_>,
@@ -559,23 +537,36 @@ impl IkaTestCluster {
         hash_scheme: u32,
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>> {
-        let session_identifier_bytes: [u8; 32] = rand::random();
-        let coins = self.payment_coins();
-        let response = request_future_sign_fulfill_tx(
-            self.test_cluster.wallet_mut(),
-            self.packages.ika_dwallet_2pc_mpc_package_id,
-            self.system.ika_dwallet_coordinator_object_id,
-            partial_user_signature_cap_id,
-            signer.dwallet_cap_id,
-            signature_algorithm,
-            hash_scheme,
-            message,
-            session_identifier_bytes.to_vec(),
-            coins,
-            DEFAULT_DWALLET_TX_GAS_BUDGET,
-        )
-        .await
-        .context("request_future_sign_fulfill_tx failed")?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let response = loop {
+            let session_identifier_bytes: [u8; 32] = rand::random();
+            let coins = self.payment_coins();
+            match request_future_sign_fulfill_tx(
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                partial_user_signature_cap_id,
+                signer.dwallet_cap_id,
+                signature_algorithm,
+                hash_scheme,
+                message.clone(),
+                session_identifier_bytes.to_vec(),
+                coins,
+                DEFAULT_DWALLET_TX_GAS_BUDGET,
+            )
+            .await
+            {
+                Ok(response) => break response,
+                Err(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(e).context(
+                            "request_future_sign_fulfill_tx kept failing until the deadline",
+                        );
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        };
         self.wait_for_sign_session(&response, timeout).await
     }
 
@@ -665,7 +656,7 @@ impl IkaTestCluster {
         self.wait_for_dwallet_dkg_complete(dwallet_id, timeout)
             .await
             .context("imported-key verification never completed")?;
-        self.accept_encrypted_share(dwallet_id, encrypted_share_id, user_key)
+        self.accept_encrypted_share(dwallet_id, encrypted_share_id, user_key, timeout)
             .await?;
 
         Ok(ImportedKeyHandle {
@@ -780,40 +771,11 @@ impl IkaTestCluster {
         .parse()?;
 
         // The network verifies the re-encrypted share asynchronously; the
-        // destination can accept once verification lands. Poll by
-        // attempting acceptance of the share state via its object state.
-        let client = sdk_client(&self.sui_rpc_url).await?;
-        let start = tokio::time::Instant::now();
-        let mut last_observed = String::from("(none)");
-        loop {
-            if start.elapsed() > timeout {
-                anyhow::bail!(
-                    "timeout waiting for re-encrypted share {new_share_id} verification; \
-                     last observed: {last_observed}"
-                );
-            }
-            match fetch_object_fields(&client, new_share_id).await {
-                Ok(fields) => {
-                    let variant = fields
-                        .get("state")
-                        .and_then(|s| s.get("variant"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    last_observed = variant.to_string();
-                    match variant {
-                        "NetworkVerificationCompleted" => break,
-                        "NetworkVerificationRejected" => {
-                            anyhow::bail!("re-encrypted share {new_share_id} rejected")
-                        }
-                        _ => {}
-                    }
-                }
-                Err(e) => last_observed = format!("fetch error: {e}"),
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-
-        self.accept_encrypted_share(dkg.dwallet_id, new_share_id, destination)
+        // verified state is a fieldless enum variant (unobservable through
+        // object JSON), so pending verification is handled inside
+        // `accept_encrypted_share`, which retries the acceptance
+        // transaction until it stops aborting.
+        self.accept_encrypted_share(dkg.dwallet_id, new_share_id, destination, timeout)
             .await?;
         Ok(new_share_id)
     }
@@ -829,34 +791,54 @@ impl IkaTestCluster {
         let share_id = dkg
             .encrypted_user_secret_key_share_id
             .ok_or_else(|| anyhow!("DKG handle carries no encrypted share id — cannot accept"))?;
-        self.accept_encrypted_share(dkg.dwallet_id, share_id, user_key)
-            .await
+        self.accept_encrypted_share(
+            dkg.dwallet_id,
+            share_id,
+            user_key,
+            std::time::Duration::from_secs(120),
+        )
+        .await
     }
 
     /// Signs the dwallet's on-chain public output with the key-holder's
     /// Ed25519 key and accepts the encrypted share (imported-key and
-    /// transfer-destination finalization).
+    /// transfer-destination finalization). Acceptance aborts on-chain
+    /// while the share still awaits network verification, so the
+    /// transaction is retried until it lands or the deadline passes.
     async fn accept_encrypted_share(
         &mut self,
         dwallet_id: ObjectID,
         encrypted_share_id: ObjectID,
         key_holder: &UserEncryptionKey,
+        timeout: std::time::Duration,
     ) -> Result<()> {
         let public_output = self.dwallet_public_output(dwallet_id).await?;
         let signature: fastcrypto::ed25519::Ed25519Signature =
             key_holder.signing_keypair.sign(&public_output);
-        ika_dwallet_transactions::accept_encrypted_user_share(
-            self.test_cluster.wallet_mut(),
-            self.packages.ika_dwallet_2pc_mpc_package_id,
-            self.system.ika_dwallet_coordinator_object_id,
-            dwallet_id,
-            encrypted_share_id,
-            signature.as_ref().to_vec(),
-            DEFAULT_DWALLET_TX_GAS_BUDGET,
-        )
-        .await
-        .context("accept_encrypted_user_share failed")?;
-        Ok(())
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            match ika_dwallet_transactions::accept_encrypted_user_share(
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                dwallet_id,
+                encrypted_share_id,
+                signature.as_ref().to_vec(),
+                DEFAULT_DWALLET_TX_GAS_BUDGET,
+            )
+            .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(e).context(
+                            "accept_encrypted_user_share kept failing until the deadline",
+                        );
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
     }
 
     /// Waits for the sign session created by `response` (any of the sign

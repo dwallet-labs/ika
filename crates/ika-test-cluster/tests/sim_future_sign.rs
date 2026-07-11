@@ -90,10 +90,14 @@ async fn sim_future_sign_across_boundary() {
         )
         .await
         .expect("future_sign failed");
+    // The partial signature's verified state is a fieldless enum variant
+    // (unobservable through object JSON) — barrier on the coordinator's
+    // user-session drain instead: in this single-actor test, all-drained
+    // implies the verification session completed in THIS epoch.
     cluster
-        .wait_for_partial_signature_verified(partial_signature_cap_id, FLOW_TIMEOUT)
+        .wait_for_user_sessions_drained(FLOW_TIMEOUT)
         .await
-        .expect("partial user signature never verified");
+        .expect("pre-boundary sessions (incl. partial-signature verification) never drained");
 
     // Boundary between the halves.
     let epoch = cluster.current_epoch_from_chain().await.unwrap();
@@ -114,26 +118,8 @@ async fn sim_future_sign_across_boundary() {
     assert!(!signature.is_empty(), "empty future-sign network signature");
 
     // Drain check: every session started by the flow completed on-chain.
-    let sui_client = cluster.sui_connector_client().await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
-    loop {
-        let (_, inner) = sui_client.must_get_dwallet_coordinator_inner().await;
-        let ika_types::sui::DWalletCoordinatorInner::V1(inner) = inner;
-        let started = inner
-            .sessions_manager
-            .user_sessions_keeper
-            .started_sessions_count;
-        let completed = inner
-            .sessions_manager
-            .user_sessions_keeper
-            .completed_sessions_count;
-        if started == completed {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "user sessions never drained: started={started} completed={completed}"
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+    cluster
+        .wait_for_user_sessions_drained(Duration::from_secs(300))
+        .await
+        .expect("sessions never drained after future-sign fulfill");
 }

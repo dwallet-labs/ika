@@ -213,26 +213,8 @@ async fn sim_user_flows_across_boundaries() {
     // catches a session silently lost anywhere above.
     let epoch = cluster.current_epoch_from_chain().await.unwrap();
     cluster.wait_for_epoch(epoch + 1).await;
-    let sui_client = cluster.sui_connector_client().await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
-    loop {
-        let (_, inner) = sui_client.must_get_dwallet_coordinator_inner().await;
-        let ika_types::sui::DWalletCoordinatorInner::V1(inner) = inner;
-        let started = inner
-            .sessions_manager
-            .user_sessions_keeper
-            .started_sessions_count;
-        let completed = inner
-            .sessions_manager
-            .user_sessions_keeper
-            .completed_sessions_count;
-        if started == completed {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "user sessions never drained: started={started} completed={completed}"
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+    cluster
+        .wait_for_user_sessions_drained(Duration::from_secs(300))
+        .await
+        .expect("sessions never drained at end of user flows");
 }
