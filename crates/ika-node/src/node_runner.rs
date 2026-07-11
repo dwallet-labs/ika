@@ -138,7 +138,7 @@ pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_nam
         }
     };
 
-    let runtimes = IkaRuntimes::new(&config);
+    let runtimes = IkaRuntimes::new(&config, node_mode);
     let metrics_rt = runtimes.metrics.enter();
     let registry_service = mysten_metrics::start_prometheus_server(config.metrics_address);
     let prometheus_registry = registry_service.default_registry();
