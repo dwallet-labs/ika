@@ -518,25 +518,31 @@ impl IkaTestCluster {
             })?
             .parse()?;
         let start = tokio::time::Instant::now();
+        let mut last_observed = String::from("(none)");
         loop {
             if start.elapsed() > timeout {
                 anyhow::bail!(
-                    "timeout waiting for partial user signature {partial_signature_id} verification"
+                    "timeout waiting for partial user signature {partial_signature_id} \
+                     verification; last observed: {last_observed}"
                 );
             }
-            if let Ok(fields) = fetch_object_fields(&client, partial_signature_id).await {
-                let variant = fields
-                    .get("state")
-                    .and_then(|s| s.get("variant"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                match variant {
-                    "NetworkVerificationCompleted" => return Ok(()),
-                    "NetworkVerificationRejected" => {
-                        anyhow::bail!("partial user signature {partial_signature_id} rejected")
+            match fetch_object_fields(&client, partial_signature_id).await {
+                Ok(fields) => {
+                    let variant = fields
+                        .get("state")
+                        .and_then(|s| s.get("variant"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    last_observed = variant.to_string();
+                    match variant {
+                        "NetworkVerificationCompleted" => return Ok(()),
+                        "NetworkVerificationRejected" => {
+                            anyhow::bail!("partial user signature {partial_signature_id} rejected")
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                Err(e) => last_observed = format!("fetch error: {e}"),
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -778,23 +784,31 @@ impl IkaTestCluster {
         // attempting acceptance of the share state via its object state.
         let client = sdk_client(&self.sui_rpc_url).await?;
         let start = tokio::time::Instant::now();
+        let mut last_observed = String::from("(none)");
         loop {
             if start.elapsed() > timeout {
-                anyhow::bail!("timeout waiting for re-encrypted share {new_share_id} verification");
+                anyhow::bail!(
+                    "timeout waiting for re-encrypted share {new_share_id} verification; \
+                     last observed: {last_observed}"
+                );
             }
-            if let Ok(fields) = fetch_object_fields(&client, new_share_id).await {
-                let variant = fields
-                    .get("state")
-                    .and_then(|s| s.get("variant"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                match variant {
-                    "NetworkVerificationCompleted" => break,
-                    "NetworkVerificationRejected" => {
-                        anyhow::bail!("re-encrypted share {new_share_id} rejected")
+            match fetch_object_fields(&client, new_share_id).await {
+                Ok(fields) => {
+                    let variant = fields
+                        .get("state")
+                        .and_then(|s| s.get("variant"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    last_observed = variant.to_string();
+                    match variant {
+                        "NetworkVerificationCompleted" => break,
+                        "NetworkVerificationRejected" => {
+                            anyhow::bail!("re-encrypted share {new_share_id} rejected")
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                Err(e) => last_observed = format!("fetch error: {e}"),
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
