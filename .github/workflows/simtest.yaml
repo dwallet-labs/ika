@@ -37,10 +37,14 @@ on:
         required: false
         default: "1"
       rust_log:
-        description: "RUST_LOG for the simulation (raise for failure forensics; error keeps logs small)"
+        description: "RUST_LOG for the simulation"
         type: string
         required: false
-        default: "error"
+        # Info by default: every close-stall investigation needs the
+        # per-condition gate breakdown and session lifecycle lines, and a
+        # failed gate run at error level cannot be diagnosed without a
+        # full re-run. CI log volume at info is acceptable for test runs.
+        default: "warn,ika=info,ika_node=info"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
