@@ -1,7 +1,8 @@
 # Simtest fault matrix — deterministic edge-case coverage under the crypto mock
 
-Status: active (2026-07-10). Branch `test/simtest-fault-matrix`
-(from `origin/main` at the internal-presign expiry fix).
+Status: landed (2026-07-11, PR #1808) — suite green in CI (Simtest run
+29145489698: 6/6 passing on the enabled suite; 3 seeded reproducers of
+open findings marked #[ignore], evidence below).
 
 ## Motivation
 
@@ -129,11 +130,11 @@ under the mock) and CLAUDE.md's simtest pointer when the suite lands.
 
 - [x] Phase 0 calibration numbers (sim smoke passes: 205s, seed-deterministic)
 - [x] Phase 1 stop/start/handle/poll_until primitives (flow drivers pending)
-- [ ] Group B tests (3 passing: laggard_entry_window 285s, two_mpc_degraded 313s, dkg_inside_degradation 319s w/ vacuity guard; dual-node-stop kept as ignored reproducer)
-- [ ] Group A tests
-- [ ] Group C tests
-- [ ] CI wiring
-- [ ] Test-testing evidence + doc updates
+- [x] Group B: laggard_entry_window, two_mpc_degraded, dkg_inside_degradation (vacuity-guarded), degradation_across_close
+- [x] Group A: dkg flow under fault; presign traffic (pure form is reproducer #3 — open close-race)
+- [x] Group C: restart_during_reconfiguration (further churn sweeps = follow-on work)
+- [x] CI wiring: sim_ default filter, seed sweep via test_num, rust_log input (info default), 3600s virtual cap
+- [x] Test-testing evidence: vacuity guards embedded in the fault-leg tests, plus seven recorded instances of the suite failing on real misbehavior during development (swarm unwrap, syncer-guard hazard, presign close race) — the tests demonstrably bite. Docs updated (simtest.md, this plan).
 
 ## Phase 1 implementation notes (living)
 
