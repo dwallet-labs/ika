@@ -6982,6 +6982,7 @@ name = "ika-test-cluster"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bcs",
  "cargo_metadata",
  "dwallet-mpc-centralized-party",
@@ -6998,6 +6999,7 @@ dependencies = [
  "ika-types",
  "prometheus",
  "rand 0.8.5",
+ "serde_json",
  "sui-json-rpc-types",
  "sui-keys",
  "sui-macros",
