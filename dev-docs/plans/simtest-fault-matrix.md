@@ -216,3 +216,16 @@ exercise the full expiry->refire->serve->close recovery path in-budget
 FOLLOW-UP (production consideration): the expiry constant's wall-clock
 meaning varies ~6x with consensus round rate across environments;
 consider documenting the intended envelope on the config field.
+
+REVISED — the presign-during-degradation stall is an OPEN BUG, the
+suite's strongest find: with the expiry overridden to 300 rounds (~75
+virtual seconds) the epoch STILL never closes (four schedule variants,
+900s budgets), all_epoch_sessions_finished=false alone. The
+expiry-scale explanation was necessary but not sufficient; a presign
+vote agreed during a sub-quorum window leaves a locked-set session
+that never completes after heal — same shape as the historical
+"held vote never re-pulled" core. Enabled suite carries pure
+presign-traffic-across-boundaries (passes); the degradation variants
+are ignored reproducers. THIS IS THE TOP FOLLOW-UP: diagnose with the
+gate-breakdown info logging (now default) + a single-test dispatch at
+rust_log info on the reproducer.
