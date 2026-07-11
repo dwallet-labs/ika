@@ -58,13 +58,14 @@ pub struct ValidatorProcess {
     /// Per-validator log file (child stdout+stderr).
     log_path: PathBuf,
     /// `RAYON_NUM_THREADS` for this child's crypto pool. The harness packs
-    /// several validator processes onto one host, each running the real node
-    /// binary built `--no-default-features` (so `enforce-minimum-cpu` is off and
-    /// the node's rayon pool would otherwise grab every core — see
-    /// `ika-core`'s `runtime.rs`). With the parallel crypto feature active, N
-    /// such processes oversubscribe the CPU N× and starve the async runtimes —
-    /// on CI hard enough to kill the runner agent. Bounded to a fair per-node
-    /// slice at construction.
+    /// several validator processes onto one host, and no node enforces the
+    /// minimum-CPU core reserve here (old binaries are built
+    /// `--no-default-features`; current ones runtime-gate it to the ika
+    /// testnet/mainnet networks — see `ika-core`'s `runtime.rs`), so each
+    /// node's rayon pool would otherwise grab every core. With the parallel
+    /// crypto feature active, N such processes oversubscribe the CPU N× and
+    /// starve the async runtimes — on CI hard enough to kill the runner
+    /// agent. Bounded to a fair per-node slice at construction.
     rayon_threads: usize,
     child: Option<Child>,
     http: reqwest::Client,

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       cargo_build_flags:
-        description: 'Build flags for cargo'
+        description: 'Extra build flags for cargo. Default features are kept: enforce-minimum-cpu is runtime-gated to validators on the ika testnet/mainnet networks, so it is inert in test deployments.'
         required: false
-        default: '--no-default-features'
+        default: ''
       imageTag:
         description: 'Tag for the Docker image'
         required: false
