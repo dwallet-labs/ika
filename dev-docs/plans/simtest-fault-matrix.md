@@ -200,3 +200,19 @@ item in virtual time. The PASSING test now uses a one-submission
 window; the wide window is preserved as
 sim_presign_long_degradation_reproducer (#[ignore]) pending the
 backlog-drain investigation.
+
+RESOLVED: the "slow post-degradation recovery" is the internal-presign
+stale-batch expiry doing its job at a DIFFERENT wall-time scale: the
+constant is 3000 consensus rounds (loaded-CI localnet ~20 rounds/s ->
+~2.5 min), but msim's virtual round rate is ~4/s -> ~12.5 virtual
+minutes of pool starvation before the expiry releases the dead refill
+batch — beyond every budget tried, with the gate correctly reporting
+all_epoch_sessions_finished=false (the in-window presign vote waiting
+for a servable pool; serving retries correctly each round). Everything
+self-heals; no liveness bug. Sim tests now override the expiry to 300
+rounds via the protocol-config test setter, which ALSO makes the suite
+exercise the full expiry->refire->serve->close recovery path in-budget
+(Group B's stale-batch scenario realized inside the presign test).
+FOLLOW-UP (production consideration): the expiry constant's wall-clock
+meaning varies ~6x with consensus round rate across environments;
+consider documenting the intended envelope on the config field.

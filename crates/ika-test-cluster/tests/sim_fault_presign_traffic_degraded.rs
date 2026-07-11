@@ -37,6 +37,17 @@ const SECOND_VICTIM: usize = 3;
 #[sim_test]
 async fn sim_presign_traffic_with_degradation_window() {
     telemetry_subscribers::init_for_testing();
+    // The internal-presign stale-batch expiry is calibrated in consensus
+    // rounds for loaded-CI round rates (~20/s -> ~2.5 min); msim's virtual
+    // round rate is ~4/s, which turns the same constant into ~12.5 virtual
+    // minutes of pool starvation after the degradation window kills a
+    // refill batch. Override it to sim scale so the recovery path (expiry ->
+    // refire -> serve -> close) is exercised within the test budget.
+    let _config_guard =
+        ika_protocol_config::ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
+            config.set_internal_presign_stale_batch_expiry_rounds_for_testing(300);
+            config
+        });
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(20_000)
