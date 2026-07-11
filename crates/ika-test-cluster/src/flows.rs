@@ -208,7 +208,9 @@ pub(crate) async fn fetch_nested_event_field(
 
 /// Poll `object_id` until `state.variant` is `Completed` and return the
 /// bytes at `state.fields.<bytes_field>`; error on `NetworkRejected` or
-/// timeout.
+/// timeout. The timeout error reports what each poll actually observed
+/// (fetch failures vs. a state stuck pre-completion), so a failure is
+/// diagnosable from the message alone.
 async fn poll_session_until_completed(
     sui_rpc_url: &str,
     object_id: ObjectID,
@@ -217,30 +219,64 @@ async fn poll_session_until_completed(
 ) -> Result<Vec<u8>> {
     let client = sdk_client(sui_rpc_url).await?;
     let start = tokio::time::Instant::now();
+    let mut fetch_error_count: u64 = 0;
+    let mut last_fetch_error = String::new();
+    let mut observed_count: u64 = 0;
+    let mut last_observed_variant = String::from("(none)");
+    let mut poll_count: u64 = 0;
     loop {
         if start.elapsed() > timeout {
             anyhow::bail!(
-                "timeout ({timeout:?}) waiting for session {object_id} to reach Completed"
+                "timeout ({timeout:?}) waiting for session {object_id} to reach Completed; \
+                 polls={poll_count} state_observations={observed_count} \
+                 last_observed_variant={last_observed_variant} \
+                 fetch_errors={fetch_error_count} last_fetch_error={last_fetch_error:?}"
             );
         }
-        if let Ok(fields) = fetch_object_fields(&client, object_id).await
-            && let Some(state) = fields.get("state")
-        {
-            match state.get("variant").and_then(|v| v.as_str()).unwrap_or("") {
-                "Completed" => {
-                    return state
-                        .get("fields")
-                        .and_then(|f| f.get(bytes_field))
-                        .and_then(extract_bytes_from_json)
-                        .ok_or_else(|| {
-                            anyhow!("Completed session {object_id} has no {bytes_field} bytes")
-                        });
+        match fetch_object_fields(&client, object_id).await {
+            Ok(fields) => {
+                let variant = fields
+                    .get("state")
+                    .and_then(|state| state.get("variant"))
+                    .and_then(|v| v.as_str());
+                if let Some(variant) = variant {
+                    observed_count += 1;
+                    last_observed_variant = variant.to_string();
+                } else {
+                    fetch_error_count += 1;
+                    last_fetch_error = format!("unexpected object shape: {fields}");
                 }
-                "NetworkRejected" => {
-                    anyhow::bail!("session {object_id} was rejected by the network");
+                match variant.unwrap_or("") {
+                    "Completed" => {
+                        return fields
+                            .get("state")
+                            .and_then(|state| state.get("fields"))
+                            .and_then(|f| f.get(bytes_field))
+                            .and_then(extract_bytes_from_json)
+                            .ok_or_else(|| {
+                                anyhow!("Completed session {object_id} has no {bytes_field} bytes")
+                            });
+                    }
+                    "NetworkRejected" => {
+                        anyhow::bail!("session {object_id} was rejected by the network");
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
+            Err(e) => {
+                fetch_error_count += 1;
+                last_fetch_error = e.to_string();
+            }
+        }
+        poll_count += 1;
+        if poll_count.is_multiple_of(40) {
+            tracing::info!(
+                %object_id,
+                poll_count,
+                last_observed_variant,
+                fetch_error_count,
+                "still polling session for Completed"
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
