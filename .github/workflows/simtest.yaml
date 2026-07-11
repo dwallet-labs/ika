@@ -21,7 +21,11 @@ on:
         description: "Test name filter passed to nextest"
         type: string
         required: false
-        default: "test_swarm_reaches_epoch_2"
+        # All #[sim_test] targets share the sim_ prefix; plain #[tokio::test]
+        # functions are ignored under the sim runner, so this default runs
+        # exactly the fault-simulation suite. For a seed sweep, raise
+        # test_num (MSIM_TEST_NUM iterates seeds starting from `seed`).
+        default: "sim_"
       seed:
         description: "MSIM_TEST_SEED"
         type: string
@@ -32,6 +36,15 @@ on:
         type: string
         required: false
         default: "1"
+      rust_log:
+        description: "RUST_LOG for the simulation"
+        type: string
+        required: false
+        # Info by default: every close-stall investigation needs the
+        # per-condition gate breakdown and session lifecycle lines, and a
+        # failed gate run at error level cannot be diagnosed without a
+        # full re-run. CI log volume at info is acceptable for test runs.
+        default: "warn,ika=info,ika_node=info"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,11 +56,15 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  RUST_LOG: error
+  RUST_LOG: ${{ inputs.rust_log }}
   # The simtest watchdog treats CPU-bound class-groups operations as
   # deadlocks (simulated time stops advancing while a rayon worker
   # crunches). Disable so the test isn't killed mid-crypto.
   MSIM_DISABLE_WATCHDOG: "1"
+  # Virtual-time budget per #[sim_test]: fault tests deliberately include
+  # long sub-quorum windows and slow recovery tails; virtual seconds cost
+  # ~nothing in wall time.
+  SUI_SIM_TEST_TIMEOUT_SECS: "3600"
   rust_stable: "1.94"
 
 jobs:

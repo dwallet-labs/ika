@@ -919,6 +919,74 @@ impl IkaTestCluster {
         node.start().await?;
         Ok(())
     }
+
+    /// Stops a validator's node (thread joined; stores stay on disk).
+    ///
+    /// Index is into `validator_names` (insertion order at build time).
+    /// Do NOT hold an `IkaNodeHandle` for this validator across a
+    /// stop/start pair: the handle is a strong `Arc<IkaNode>` keeping the
+    /// old instance's RocksDB open, and the respawn dies on the held
+    /// store LOCK.
+    pub fn stop_validator(&self, validator_index: usize) {
+        let name = *self
+            .validator_names
+            .get(validator_index)
+            .expect("validator_index out of range");
+        self.swarm
+            .node(&name)
+            .expect("validator node exists for the configured name")
+            .stop();
+    }
+
+    /// Restarts a validator previously stopped with [`Self::stop_validator`].
+    pub async fn start_validator(&self, validator_index: usize) -> Result<()> {
+        let name = *self
+            .validator_names
+            .get(validator_index)
+            .expect("validator_index out of range");
+        self.swarm
+            .node(&name)
+            .expect("validator node exists for the configured name")
+            .start()
+            .await?;
+        Ok(())
+    }
+
+    /// A short-lived node handle for state probes. Scope it to one
+    /// statement — see the RocksDB-lock caveat on [`Self::stop_validator`].
+    pub fn validator_handle(&self, validator_index: usize) -> IkaNodeHandle {
+        let name = *self
+            .validator_names
+            .get(validator_index)
+            .expect("validator_index out of range");
+        self.swarm
+            .node(&name)
+            .expect("validator node exists for the configured name")
+            .get_node_handle()
+            .expect("validator node is running")
+    }
+}
+
+/// Polls `probe` every 100ms until it returns `Some`, panicking with
+/// `what` after `deadline`. The event-predicate driver for
+/// kill/restart-at-event fault tests (poll real node/chain state — never
+/// sleep for a fixed duration and hope the event happened).
+pub async fn poll_until<T>(
+    deadline: std::time::Duration,
+    what: &str,
+    mut probe: impl FnMut() -> Option<T>,
+) -> T {
+    let started = tokio::time::Instant::now();
+    loop {
+        if let Some(value) = probe() {
+            return value;
+        }
+        assert!(
+            started.elapsed() < deadline,
+            "timed out after {deadline:?} waiting for: {what}",
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 
 /// User-side material produced by `register_user_encryption_key`. The
