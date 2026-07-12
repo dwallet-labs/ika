@@ -2357,6 +2357,15 @@ impl AuthorityPerEpochStore {
     /// (e.g. ones drained from RocksDB at restart) get folded in
     /// correctly. Re-installing with a different attestation
     /// discards the old aggregator state.
+    /// Whether the handoff aggregator has been built (an expected
+    /// attestation was installed at least once this epoch). Used by the
+    /// signature sender's steady-state early-out: once the own vote is
+    /// durably recorded AND this is true, the per-tick
+    /// hydrate+build+install pass has nothing left to do.
+    pub fn handoff_aggregator_installed(&self) -> bool {
+        self.handoff_aggregator.lock().is_some()
+    }
+
     pub fn install_expected_handoff_attestation(
         &self,
         attestation: ika_types::handoff::HandoffAttestation,
@@ -3133,15 +3142,23 @@ impl AuthorityPerEpochStore {
         Ok(stake >= committee.quorum_threshold())
     }
 
-    /// Deterministic, consensus-sequenced check that a stake quorum of valid
-    /// handoff signatures has been recorded this epoch — i.e. a certified
-    /// handoff attestation can be minted. Sums the `handoff_signatures` table
-    /// (written only for signatures that validated against the expected
-    /// attestation) the same way `local_blob_coverage_meets_quorum` sums blob
-    /// coverage, so every validator evaluates the same value at the same
-    /// commit. Gates the epoch close (#1736): closing before this holds lets
-    /// the epoch close while no validator can mint the cert the next epoch's
-    /// prepare-then-start barrier requires.
+    /// Checks that a stake quorum of valid handoff signatures has been
+    /// recorded this epoch — i.e. a certified handoff attestation can be
+    /// minted. Sums the `handoff_signatures` table (written only for
+    /// signatures that validated against the locally-installed expected
+    /// attestation). Gates the epoch close (#1736): closing before this holds
+    /// lets the epoch close while no validator can mint the cert the next
+    /// epoch's prepare-then-start barrier requires.
+    ///
+    /// NOT a pure consensus function, in either direction: rows land only
+    /// after the LOCAL expected attestation installs (wall-clock), and a
+    /// re-install of a DIFFERENT attestation DELETES rows endorsing the
+    /// superseded one — so the value can move down as well as up, at
+    /// wall-clock-determined commits that differ across validators. See the
+    /// call-site NOTE in `decide_v4_epoch_close` for why the close stays
+    /// safe anyway, and
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md for the
+    /// planned replacement by a sequence-pure tally.
     pub fn handoff_signatures_meet_quorum(&self) -> IkaResult<bool> {
         let committee = self.committee();
         let stake: u64 = self
@@ -4157,11 +4174,19 @@ impl AuthorityPerEpochStore {
                 // validator's `expected_handoff_attestation` install and its
                 // consensus-pubkey provider (a ~5s background Sui poll); until
                 // both are present, sequenced `EndOfPublishV2` bundles buffer and
-                // write no row. So close-determinism does NOT come from this gate
-                // being a deterministic function of the sequence; it comes from
+                // write no row. The gate can also move DOWN: re-installing a
+                // different expected attestation deletes rows endorsing the
+                // superseded one, so a validator that adopted the quorum's
+                // attestation and then rebuilt a divergent local one flips this
+                // gate true -> false and misses the quorum's close commit. So
+                // close-determinism does NOT come from this gate being a
+                // deterministic function of the sequence; it comes from
                 // buffered-quorum adoption (a lagging validator reaches quorum
                 // from peers' signatures at the same sequenced bundle index) plus
-                // the `grace*4` liveness backstop in `decide_v4_epoch_close`.
+                // the `grace*4` liveness backstop in `decide_v4_epoch_close`,
+                // which also covers the deletion-flipped validator (it closes
+                // late via the backstop; its cert recovery is the barrier
+                // peer-fetch).
                 let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
 
                 // The close decision (and the liveness backstop for a genuinely
@@ -5802,8 +5827,12 @@ mod tests {
         let attestation_a = build_handoff_attestation(epoch, [0xAAu8; 32], vec![]).unwrap();
         let attestation_b = build_handoff_attestation(epoch, [0xBBu8; 32], vec![]).unwrap();
 
-        // A sub-quorum (2 of 4) of A-endorsing rows land in the table.
-        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(2) {
+        // A full QUORUM (3 of 4, threshold 3) of A-endorsing rows lands in
+        // the table — so the close gate reads TRUE before the re-install and
+        // the gate assertion below actually reacts to the fix (with a
+        // sub-quorum the final !gate assertion would pass even with the
+        // deletion reverted — a vacuous check).
+        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
             let message = sign_handoff_attestation(attestation_a.clone(), *name, keypair);
             epoch_store
                 .tables()
@@ -5822,12 +5851,17 @@ mod tests {
                 .handoff_signatures
                 .safe_iter()
                 .count(),
-            2,
-            "the two A-endorsing rows are present after installing A"
+            3,
+            "the three A-endorsing rows are present after installing A"
+        );
+        assert!(
+            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "the close gate must read true with a quorum of A-endorsing rows and A installed"
         );
 
         // Re-install B: the A-endorsing rows no longer verify and must be
-        // deleted from the table (and the gate must not count them).
+        // deleted from the table, flipping the gate true -> false (the gate
+        // must not count endorsements of a superseded attestation).
         epoch_store
             .install_expected_handoff_attestation(attestation_b)
             .unwrap();
