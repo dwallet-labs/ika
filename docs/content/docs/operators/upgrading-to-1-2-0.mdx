@@ -8,10 +8,14 @@ sidebar_label: Upgrading to 1.2.0
 
 # Upgrading from 1.1.8 to 1.2.0
 
-1.2.0 is a rolling binary upgrade: replace the binary/image and restart. No
-data migration, no config rewrite, and no protocol change at rollout — the
-network stays on protocol version 3; protocol version 4 activates later by
-validator vote and requires no operator action.
+1.2.0 is a binary swap: replace the binary/image and restart. No data
+migration and no config rewrite. **Protocol version 4 activates
+automatically, roughly one epoch after enough stake runs 1.2.0** — the
+binary advertises support for protocol versions 3–4, validators tally those
+capabilities at every epoch close, and the network moves to version 4 once a
+quorum (plus a buffer margin) of stake advertises it. There is no separate
+vote and no operator action to trigger it; completing this rollout is itself
+what schedules the activation. Plan the fleet upgrade with that in mind.
 
 Several operational surfaces did change. Read this before upgrading.
 
@@ -42,9 +46,10 @@ JSON-RPC for every role, exactly as on 1.1.8.
 
 - A YAML with **no** `sui-rpc-url` at all no longer silently defaults to
   `http://127.0.0.1:9000` — the node refuses to boot. Make the URL explicit.
-- If you migrate a notifier or fullnode to the new `sui_data_source` config
-  shape, its endpoint must serve Sui **gRPC**. Do not change the config shape
-  as part of this upgrade; upgrade in place first.
+- If you migrate a notifier or fullnode to the new `sui-data-source` config
+  shape (keys are kebab-case in the YAML), its endpoint must serve Sui
+  **gRPC**. Do not change the config shape as part of this upgrade; upgrade
+  in place first.
 
 ## 3. Every Prometheus metric was renamed — dashboards and alerts will go dark
 
@@ -83,10 +88,15 @@ release tarballs, Homebrew, and Docker images carry correct permissions.
 Mainnet and testnet **validators** still enforce the 16-core minimum at boot.
 The check no longer fires for fullnodes, notifiers, or dev/local networks.
 
-## 7. During the rolling window
+## 7. Upgrade as a coordinated swap, not a leisurely rollout
 
-Consensus is compatible between 1.1.8 and 1.2.0 peers, but MPC signing
-sessions do not make progress across mixed-version committees — expect
-signing to pause until enough stake has upgraded. Coordinate the fleet
-upgrade so the mixed window stays short (minutes, not hours), and upgrade
-promptly when the rollout is announced.
+1.1.8 and 1.2.0 link different cryptography libraries, so their **MPC wire
+formats are not interchangeable**: a mixed 1.1.8/1.2.0 committee keeps
+consensus running but cannot exchange MPC messages, so signing sessions
+make no progress until enough stake is on the same side. This is why the
+project's own mainnet upgrade rehearsal swaps all validators **at once**
+(an atomic, coordinated restart), not one at a time. Treat the upgrade the
+same way: coordinate the fleet to restart onto 1.2.0 near-simultaneously in
+one announced window, keep the mixed-version window as close to zero as you
+can, and avoid scheduling it near an epoch boundary (an MPC session that
+can never complete on the running mix can hold up the epoch).
