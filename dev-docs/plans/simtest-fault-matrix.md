@@ -243,6 +243,42 @@ is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
 close race (this), (2) full-consensus-halt recovery (dual node stop),
 (3) expiry round-rate envelope documentation.
 
+## RESOLVED: all reproducers pass — no ignored simtests remain (run 29208084278, 11/11)
+
+The close-lock wedge had THREE stacked legs, each fixed in product code
+(all in the flow-coverage PR):
+
+1. **Pusher poll cadence vs the pruning watermark** — the fullnode's
+   lowest-available watermark trails its executed head by roughly the
+   pusher's old 2s poll, so every pruner tick (~10s) permanently
+   vaporized the 2-3 newest checkpoints before the pusher fetched them.
+   Fixed: 250ms poll; plus fetch failures now become retried "pending
+   gaps" folded late (version-safe) instead of being skipped forever —
+   and instead of stalling the scan, which a first fix attempt tried
+   and which froze the whole cache behind one unfetchable checkpoint.
+2. **Dynamic-fields walk dropped pruned-defining-tx children forever** —
+   the proof-provider skipped live-listed bag children it could not
+   build proofs for as "transient", every tick, permanently. A
+   session_events entry created astride an epoch boundary was invisible
+   to the next epoch's manager. Fixed: the provider reports skipped
+   ids; the verified reader resolves them via `verified_object`'s
+   committee-verified cache fallback (trusted listings only).
+3. **Output quorum split across the epoch boundary** — outputs
+   sequenced in the dying epoch die with its tally; adapter retries
+   carry the rest into the new epoch (2+2 of 4, quorum 3 never
+   reached), and the durable computation-completed flag suppresses
+   recomputation on re-pull. Fixed: the validator's own output
+   consensus transaction is persisted at submission and re-submitted
+   once per epoch when a computation-completed session is re-pulled.
+
+The "full consensus halt never recovers" finding was an artifact of the
+two-laggards test's own injection point: nodes boot AT epoch 1, so its
+`wait_for_epoch(1)` "healthy boundary" was a no-op and it decapitated
+the cluster ~0.3s after genesis, mid network DKG. Injected into a warm
+cluster (post-boundary, network key established), the dual outage
+recovers and the test passes. The quiet-epoch close-target starvation
+observed earlier was the stale-cache face of legs 1-2.
+
 ## ROOT CAUSE FOUND + FIXED: the close-lock wedge was the checkpoint pusher skipping unfetchable checkpoints
 
 Cornered via the `sim_user_flows` reproducer with full sui_connector
