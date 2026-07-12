@@ -64,6 +64,11 @@ jobs:
       - name: Dispatch ${{ matrix.suite }} against ${{ matrix.branch }}
         env:
           GH_TOKEN: ${{ github.token }}
+          # There is no checkout step, so `gh` cannot infer the repository
+          # from a git remote ("fatal: not a git repository") — every nightly
+          # dispatch failed this way since the workflow landed. GH_REPO gives
+          # gh its target explicitly.
+          GH_REPO: ${{ github.repository }}
           BRANCH: ${{ matrix.branch }}
           SUITE: ${{ matrix.suite }}
         run: |
