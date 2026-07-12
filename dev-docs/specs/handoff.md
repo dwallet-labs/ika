@@ -174,7 +174,14 @@ next epoch inherits.
    sign byte-identical attestations.
 4. Fail closed on contradiction (`Rejected`, persisted-cert
    re-verification failure); fail open with retry on absence
-   (`Unavailable`, read errors).
+   (`Unavailable`, read errors). The freeze is a cert CONSUMER too:
+   `prior_epoch_mpc_data_digests` (carry-forward source) reads the prior
+   cert's `ValidatorMpcData` items, and a READ ERROR there PROPAGATES —
+   the commit fails and replays on restart — rather than degrading to an
+   empty (shrunken) carry-forward map that would diverge this validator's
+   frozen set from its peers'. An empty map is returned only for the
+   chain-true no-cert epochs (genesis, a v3 prior epoch, the first v4
+   epoch), which are uniform across the committee.
 5. The barrier guarantee: no validator participates in epoch E+1
    sessions without locally holding the verified epoch-E handoff
    artifacts.

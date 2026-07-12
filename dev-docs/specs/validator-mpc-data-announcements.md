@@ -104,7 +104,15 @@ which bytes* deterministic in consensus order.
   barrier) held by every validator before it processes this epoch's
   consensus. A fresh announcement that diverged (landing a member in
   `excluded`) is overridden by the known-good prior digest, since the
-  true blob cannot legitimately change between epochs.
+  true blob cannot legitimately change between epochs. A cert READ
+  ERROR at the freeze (`prior_epoch_mpc_data_digests`) fails the commit
+  rather than degrading to announce-only: a transient read failure that
+  silently dropped the carry-forward map would freeze a shrunken set on
+  that one validator while peers freeze the full set — a divergent
+  frozen set. The commit errors, the consensus handler panics, and the
+  commit replays on restart until the read succeeds (`Ok(empty)` is
+  reserved for the chain-true no-cert epochs: genesis, a v3 prior epoch,
+  the first v4 epoch).
 - The certificate cannot backfill an announcement for a validator with
   no prior frozen blob (a first-time joiner). For joiners the only
   mechanism is announcement propagation reaching a stake quorum BEFORE

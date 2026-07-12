@@ -3355,35 +3355,49 @@ impl AuthorityPerEpochStore {
     /// The prior epoch's handoff-certificate `validator -> mpc_data
     /// digest` map, used to carry forward stable mpc_data for committee
     /// members that did not freshly announce this epoch (see
-    /// `carry_forward_stable_mpc_data`). Empty when there is no prior
-    /// certificate (genesis epoch, v3, or a read error) — carry-forward
-    /// then degrades to announce-only. The certificate is perpetual and
-    /// stake-quorum-signed, and the prepare-then-start barrier guarantees
-    /// every validator holds the prior-epoch certificate before
-    /// processing this epoch's consensus, so the returned map is
-    /// identical across honest validators — a precondition for the freeze
-    /// staying deterministic.
-    fn prior_epoch_mpc_data_digests(&self) -> HashMap<AuthorityName, [u8; 32]> {
+    /// `carry_forward_stable_mpc_data`). Empty (`Ok(HashMap::new())`) only
+    /// for the chain-true no-cert epochs — genesis, a v3 prior epoch, or the
+    /// first v4 epoch — where carry-forward legitimately degrades to
+    /// announce-only uniformly across the committee. The certificate is
+    /// perpetual and stake-quorum-signed, and the prepare-then-start barrier
+    /// guarantees every validator holds the prior-epoch certificate before
+    /// processing this epoch's consensus, so the returned map is identical
+    /// across honest validators — a precondition for the freeze staying
+    /// deterministic.
+    ///
+    /// A cert READ ERROR is PROPAGATED, not degraded to empty: silently
+    /// returning an empty map on a transient read failure would shrink THIS
+    /// validator's frozen set (dropping every carry-forward member) while
+    /// peers that read the cert fine keep them — a divergent frozen set is a
+    /// consensus fork. Propagating makes the freeze fail-stop: the commit
+    /// errors, the consensus handler's `.expect` panics the node, and the
+    /// commit replays on restart until the read succeeds. This is the
+    /// freeze-path realization of handoff.md invariant 4 ("fail open with
+    /// retry on read errors"), and it mirrors the ready-signals read in
+    /// `freeze_mpc_data_if_first`, which already `?`-propagates.
+    fn prior_epoch_mpc_data_digests(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
         let Some(prior_epoch) = self.epoch().checked_sub(1) else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
         let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
         let cert = match perpetual.get_certified_handoff_attestation(prior_epoch) {
             Ok(Some(cert)) => cert,
-            Ok(None) => return HashMap::new(),
+            Ok(None) => return Ok(HashMap::new()),
             Err(e) => {
-                warn!(
+                error!(
                     error = ?e,
                     prior_epoch,
                     "failed to read prior-epoch handoff cert for mpc_data carry-forward; \
-                     degrading to announce-only",
+                     failing the freeze so the commit replays rather than freezing a \
+                     divergent (shrunken) mpc_data set",
                 );
-                return HashMap::new();
+                return Err(e);
             }
         };
-        cert.attestation
+        Ok(cert
+            .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
@@ -3392,7 +3406,7 @@ impl AuthorityPerEpochStore {
                 }
                 _ => None,
             })
-            .collect()
+            .collect())
     }
 
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
@@ -3437,7 +3451,7 @@ impl AuthorityPerEpochStore {
             .iter()
             .map(|(name, _)| *name)
             .collect();
-        let prior_mpc_data = self.prior_epoch_mpc_data_digests();
+        let prior_mpc_data = self.prior_epoch_mpc_data_digests()?;
         let partition = crate::validator_metadata::carry_forward_stable_mpc_data(
             attested,
             &committee_members,
