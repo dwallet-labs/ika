@@ -7,10 +7,22 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_POOL_MINIMUM_SIZE, apply_test_presign_pool_overrides, build_test_state,
     create_test_protocol_config_guard,
 };
+use crate::dwallet_mpc::mpc_manager::ParkedInternalPresignRequest;
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignRequest, ValidatorMpcKeysByPartyId};
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
+use crate::network_key_id_mapping;
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkKeyId,
+};
 use ika_protocol_config::ProtocolConfig;
+use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::messages_dwallet_mpc::{
+    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, SessionIdentifier,
+    SessionType,
+};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+use sui_types::base_types::ObjectID;
 use tracing::info;
 
 /// The Fast Schnorr (VSS) signature algorithms — their internal presign pools
@@ -1106,5 +1118,402 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
     info!(
         "Test completed: VSS internal presign batches park through the off-chain-key ingest \
          window and complete once it closes"
+    );
+}
+
+/// Per-validator map of every internal-presign session whose request is bound
+/// (sequence number known): `session_identifier → sequence number`. Excludes
+/// message/output stubs still in `WaitingForSessionRequest` with no request —
+/// a stub proves a peer derived the identifier, not that THIS validator did.
+/// Equality of these maps across validators is the invariant the shared
+/// sequence counter must preserve: a validator that skips a top-up other
+/// validators perform would bind different sequence numbers to different
+/// identifiers from that point on.
+fn bound_internal_presign_sessions(
+    test_state: &IntegrationTestState,
+    service_index: usize,
+) -> HashMap<SessionIdentifier, u64> {
+    test_state.dwallet_mpc_services[service_index]
+        .dwallet_mpc_manager()
+        .sessions
+        .iter()
+        .filter(|(_, session)| session.session_type == Some(SessionType::InternalPresign))
+        .filter_map(|(session_identifier, session)| {
+            session
+                .session_sequence_number
+                .map(|sequence_number| (*session_identifier, sequence_number))
+        })
+        .collect()
+}
+
+/// Test that a validator whose network-key INSTALLATION lags behind its peers
+/// in a multi-key epoch parks the affected internal presign batches with the
+/// sequence numbers consumed — instead of skipping them — so session
+/// identifier derivation stays committee-uniform.
+///
+/// The internal presign sequence counter is a single counter shared across
+/// all pools and keys, and the top-up loop iterates every ADOPTED key while
+/// installation into `network_keys` completes asynchronously per validator.
+/// Before the fix, a validator in the adopted-but-not-installed window
+/// early-returned without consuming the sequence number (while the caller
+/// still advanced the instantiated counter) — permanently desynchronizing
+/// every subsequent internal presign identifier from its peers'.
+///
+/// Flow:
+/// 1. K0 bootstraps normally; K1 is a second same-epoch DKG (both adopted +
+///    installed everywhere). K1's id is forced above K0's so the NOA-key
+///    tie-break deterministically keeps K0 as the NOA signing key.
+/// 2. Remove K1's INSTALLED data on validator 0 only (its adoption stays) —
+///    exactly the adopted-but-not-installed window. The manager re-spawns the
+///    installation in the background, which later heals the window naturally.
+/// 3. Run rounds: K1's first pool batches fire committee-wide. Validator 0
+///    must PARK them (identity from the pre-instantiation mapping, input
+///    construction not-ready) while peers activate them.
+/// 4. Run until the re-install heals validator 0: parked entries activate,
+///    and the bound identifier→sequence maps converge to equality across all
+///    validators, with no terminally-Failed session anywhere.
+/// 5. Coda: a fabricated key that is adopted but has NO installed data and NO
+///    `ObjectID → NetworkKeyId` mapping anywhere exercises the
+///    `AwaitingKeyIdentity` parking (sequence reserved, request not yet
+///    buildable), then a registered mapping transitions those entries to
+///    fully-built parked requests with identical identifiers on every
+///    validator.
+#[tokio::test]
+#[cfg(test)]
+async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (next_round_after_k0, _k0_bytes, k0_id) = create_network_key_test(&mut test_state).await;
+    let k0_data = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .adopted_network_key_data
+        .get(&k0_id)
+        .expect("K0 must be adopted after create_network_key_test")
+        .clone();
+
+    // === Phase 1: K1 — a second network DKG in the same epoch ===
+    let epoch_id = test_state
+        .dwallet_mpc_services
+        .first()
+        .expect("at least one service should exist")
+        .epoch;
+    // Force k1_id > k0_id: with equal `dkg_at_epoch` the NOA-key selection
+    // tie-breaks by key id, so K0 stays the NOA signing key on every
+    // validator regardless of which keys are installed at decision time.
+    let k1_id = loop {
+        let candidate = ObjectID::random();
+        if candidate > k0_id {
+            break candidate;
+        }
+    };
+    let all_parties: Vec<usize> = (0..test_state.sui_data_senders.len()).collect();
+    utils::send_configurable_start_network_dkg_event(
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [2u8; 32],
+        2,
+        &all_parties,
+        k1_id,
+    );
+    let (round_after_k1, k1_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, next_round_after_k0).await;
+    let mut k1_bytes = Vec::new();
+    for message in k1_checkpoint.messages() {
+        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) = message
+        else {
+            continue;
+        };
+        k1_bytes.extend(message.public_output.clone());
+    }
+    assert!(
+        !k1_bytes.is_empty(),
+        "K1 network DKG checkpoint should carry non-empty public output"
+    );
+
+    // Publish BOTH keys to the overlay so every validator adopts + installs K1.
+    let both_keys = Arc::new(HashMap::from([
+        (k0_id, k0_data),
+        (
+            k1_id,
+            DWalletNetworkEncryptionKeyData {
+                id: k1_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: epoch_id,
+                current_reconfiguration_public_output: vec![],
+                network_dkg_public_output: k1_bytes.clone(),
+                state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+            },
+        ),
+    ]));
+    test_state.sui_data_senders.iter().for_each(|sender| {
+        let _ = sender.network_keys_sender.send(both_keys.clone());
+    });
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        round_after_k1 + 1,
+    );
+    test_state.consensus_round = (round_after_k1 + 2) as usize;
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::run_service_loops_until_network_key_installed(
+        &mut test_state.dwallet_mpc_services,
+        k1_id,
+    )
+    .await;
+
+    // No K1 pool batch has fired yet: top-ups only run while processing a
+    // consensus round after installation, and the install-wait loop above
+    // distributes no new rounds. Verified so the window below provably opens
+    // before K1's first batch.
+    let lagging_validator = 0usize;
+    let k1_active_sessions = test_state.dwallet_mpc_services[lagging_validator]
+        .dwallet_mpc_manager()
+        .sessions
+        .values()
+        .filter(|session| {
+            matches!(&session.status, SessionStatus::Active { request, .. }
+                if request.protocol_data.network_encryption_key_id() == Some(k1_id))
+        })
+        .count();
+    assert_eq!(
+        k1_active_sessions, 0,
+        "no K1 presign session should exist before the first post-install round"
+    );
+
+    // === Phase 2: open the install-lag window on validator 0 ===
+    // Remove K1's INSTALLED data (adoption stays — the top-up loop keeps
+    // iterating K1). `instantiate_adopted_network_keys` re-spawns the
+    // installation on the next service iteration, and that async re-install
+    // is exactly what heals the window later — the production shape.
+    test_state.dwallet_mpc_services[lagging_validator]
+        .dwallet_mpc_manager_mut()
+        .network_keys
+        .network_encryption_keys
+        .remove(&k1_id)
+        .expect("K1 must be installed on validator 0 before the window opens");
+
+    // === Phase 3: K1's first batches fire; validator 0 must park them ===
+    let mut saw_parked_on_lagging_validator = false;
+    let mut healed = false;
+    for _ in 0..60 {
+        run_one_round_delivering_messages(&mut test_state).await;
+
+        let parked: usize = test_state.dwallet_mpc_services[lagging_validator]
+            .dwallet_mpc_manager()
+            .internal_presign_requests_pending_for_network_key_data
+            .len();
+        if parked > 0 {
+            saw_parked_on_lagging_validator = true;
+        }
+
+        // No validator may ever fail a session terminally in this flow.
+        for service_index in 0..test_state.dwallet_mpc_services.len() {
+            assert_eq!(
+                failed_session_count(&test_state, service_index),
+                0,
+                "validator {service_index}: install lag must never terminally fail a session"
+            );
+        }
+
+        // THE invariant: the shared sequence counter reads identically on
+        // every validator after every processed round — parking consumes the
+        // number, so even the validator missing K1's data stays in step.
+        let reference_next_sequence_number = test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .next_internal_presign_sequence_number;
+        for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+            assert_eq!(
+                service
+                    .dwallet_mpc_manager()
+                    .next_internal_presign_sequence_number,
+                reference_next_sequence_number,
+                "validator {service_index}: internal presign sequence counter diverged during \
+                 the install-lag window"
+            );
+        }
+
+        // Healed: the window saw parking and the re-install drained it (a
+        // parked entry whose session a peer quorum completed meanwhile is
+        // legitimately dropped unbound — bound maps are compared as
+        // subset-consistency below, not equality).
+        let parked_everywhere_empty = test_state.dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .is_empty()
+        });
+        if saw_parked_on_lagging_validator && parked_everywhere_empty {
+            healed = true;
+            break;
+        }
+    }
+    assert!(
+        saw_parked_on_lagging_validator,
+        "validator 0 should have parked K1's presign batches while K1 was not installed locally"
+    );
+    assert!(
+        healed,
+        "the re-install must drain validator 0's parked K1 batches with the shared sequence \
+         counter identical across all validators"
+    );
+
+    // Bound identifier→sequence consistency: every session the lagging
+    // validator bound must be bound to the SAME sequence number on every
+    // peer (peers never parked, so they bound every batch). A pre-fix skip
+    // shifts the lagging validator's counter and binds later batches to
+    // identifiers no peer derives.
+    let lagging_bound = bound_internal_presign_sessions(&test_state, lagging_validator);
+    assert!(
+        !lagging_bound.is_empty(),
+        "validator 0 should have bound internal presign sessions after healing"
+    );
+    for peer_index in 1..test_state.dwallet_mpc_services.len() {
+        let peer_bound = bound_internal_presign_sessions(&test_state, peer_index);
+        for (session_identifier, sequence_number) in &lagging_bound {
+            assert_eq!(
+                peer_bound.get(session_identifier),
+                Some(sequence_number),
+                "validator {peer_index}: session {session_identifier:?} bound to a different \
+                 sequence number than on validator 0 — identifier derivation diverged"
+            );
+        }
+    }
+
+    // === Phase 4: coda — a key with NO derivable identity anywhere ===
+    // Adopted on every validator, junk DKG bytes (its installation fails, so
+    // it never registers an `ObjectID → NetworkKeyId` mapping): top-ups for
+    // its pools must park `AwaitingKeyIdentity` with the sequence number
+    // reserved, uniformly across validators.
+    let k2_id = ObjectID::random();
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service
+            .dwallet_mpc_manager_mut()
+            .adopted_network_key_data
+            .insert(
+                k2_id,
+                DWalletNetworkEncryptionKeyData {
+                    id: k2_id,
+                    current_epoch: epoch_id,
+                    dkg_at_epoch: epoch_id,
+                    current_reconfiguration_public_output: vec![],
+                    network_dkg_public_output: vec![7u8; 64],
+                    state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+                },
+            );
+    }
+
+    // (sequence number, curve, algorithm) of the K2 batches awaiting identity,
+    // per validator — reservation uniformity is the property under test.
+    let awaiting_identity_reservations =
+        |test_state: &IntegrationTestState,
+         service_index: usize|
+         -> BTreeSet<(u64, DWalletCurve, DWalletSignatureAlgorithm)> {
+            test_state.dwallet_mpc_services[service_index]
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .iter()
+                .filter_map(|parked| match parked {
+                    ParkedInternalPresignRequest::AwaitingKeyIdentity {
+                        session_sequence_number,
+                        dwallet_network_encryption_key_id,
+                        curve,
+                        signature_algorithm,
+                    } if *dwallet_network_encryption_key_id == k2_id => {
+                        Some((*session_sequence_number, *curve, *signature_algorithm))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+
+    let mut identity_parking_uniform = false;
+    for _ in 0..30 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let reference_next_sequence_number = test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .next_internal_presign_sequence_number;
+        for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+            assert_eq!(
+                service
+                    .dwallet_mpc_manager()
+                    .next_internal_presign_sequence_number,
+                reference_next_sequence_number,
+                "validator {service_index}: sequence counter diverged for the identity-less key"
+            );
+            assert_eq!(
+                failed_session_count(&test_state, service_index),
+                0,
+                "validator {service_index}: an underivable key identity must park, not fail"
+            );
+        }
+        let reference = awaiting_identity_reservations(&test_state, 0);
+        let uniform = !reference.is_empty()
+            && (1..test_state.dwallet_mpc_services.len()).all(|service_index| {
+                awaiting_identity_reservations(&test_state, service_index) == reference
+            });
+        if uniform {
+            identity_parking_uniform = true;
+            break;
+        }
+    }
+    assert!(
+        identity_parking_uniform,
+        "every validator must reserve identical (sequence, curve, algorithm) for the \
+         identity-less key's parked batches"
+    );
+
+    // Register a mapping for K2: the parked reservations must transition to
+    // fully-built requests — derived from the RESERVED sequence numbers —
+    // with byte-identical session identifiers on every validator (they stay
+    // parked as requests: the key still has no installed data).
+    network_key_id_mapping::register(k2_id, NetworkKeyId([0xAB; 32]));
+    for _ in 0..3 {
+        run_one_round_delivering_messages(&mut test_state).await;
+    }
+    let k2_request_identifiers =
+        |test_state: &IntegrationTestState, service_index: usize| -> BTreeSet<SessionIdentifier> {
+            test_state.dwallet_mpc_services[service_index]
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .iter()
+                .filter_map(|parked| match parked {
+                    ParkedInternalPresignRequest::Request(request)
+                        if request.protocol_data.network_encryption_key_id() == Some(k2_id) =>
+                    {
+                        Some(request.session_identifier)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+    let reference_identifiers = k2_request_identifiers(&test_state, 0);
+    assert!(
+        !reference_identifiers.is_empty(),
+        "the registered mapping must let the reserved batches build their requests"
+    );
+    for service_index in 0..test_state.dwallet_mpc_services.len() {
+        assert!(
+            awaiting_identity_reservations(&test_state, service_index).is_empty(),
+            "validator {service_index}: no reservation may remain once the identity is derivable"
+        );
+        assert_eq!(
+            k2_request_identifiers(&test_state, service_index),
+            reference_identifiers,
+            "validator {service_index}: deferred-built requests must derive identical \
+             session identifiers from the reserved sequence numbers"
+        );
+    }
+
+    info!(
+        "Test completed: multi-key install lag parks internal presign batches with sequence \
+         numbers consumed, keeping identifier derivation committee-uniform"
     );
 }
