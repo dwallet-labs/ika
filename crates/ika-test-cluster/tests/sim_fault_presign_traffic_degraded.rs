@@ -45,7 +45,6 @@ const SECOND_VICTIM: usize = 3;
 // determinism exposes. Reproduce with seed 1 via the simtest workflow,
 // test_filter=sim_presign_traffic; evidence trail in
 // dev-docs/plans/simtest-fault-matrix.md.
-#[ignore = "reproducer: presign traffic astride close-locks pins the epoch under msim; see the fault-matrix plan"]
 #[sim_test]
 async fn sim_presign_traffic_across_boundaries() {
     telemetry_subscribers::init_for_testing();
@@ -174,7 +173,6 @@ async fn sim_presign_traffic_across_boundaries() {
 /// close is timer-paced through the backlog rather than wedged on a single
 /// condition (no stuck-gate warns fire). Root cause of the slow drain is an
 /// open follow-up in `dev-docs/plans/simtest-fault-matrix.md`.
-#[ignore = "reproducer: post-degradation close stretches to minutes-or-worse under a wide backlog; see the fault-matrix plan"]
 #[sim_test]
 async fn sim_presign_long_degradation_reproducer() {
     telemetry_subscribers::init_for_testing();

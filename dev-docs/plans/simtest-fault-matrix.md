@@ -243,7 +243,37 @@ is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
 close race (this), (2) full-consensus-halt recovery (dual node stop),
 (3) expiry round-rate envelope documentation.
 
-## Finding: the close-lock wedge is reachable from a single user request (flow-coverage PR)
+## ROOT CAUSE FOUND + FIXED: the close-lock wedge was the checkpoint pusher skipping unfetchable checkpoints
+
+Cornered via the `sim_user_flows` reproducer with full sui_connector
+debug logging (deterministic seed): the OCS checkpoint pusher
+(`push_worker.rs`) polled the certified head every tick and, on a
+full-checkpoint fetch failure, **advanced its cursor past the
+checkpoint forever** ("fetch failed; advancing past"). The newest 2–3
+checkpoints of every poll window routinely 404 (contents materialize
+after the summary certifies — msim's virtual-time cadence makes this
+constant; the skips repeat every ~10s poll, in identical bursts on all
+four validators). Every skip left a PERMANENT gap in the verified state
+cache the bag event pump reads: a `session_events` bag entry whose
+creating checkpoint was skipped never entered any validator's cache, so
+the pump never delivered the request to the fresh epoch's manager, the
+session never ran, and `all_epoch_sessions_finished=false` pinned the
+epoch forever. The 4,443 "served the committee-verified cached snapshot
+(pusher behind)" fallback warns during the wedge were the same rot from
+the read side, and the stale coordinator reads explain the "quiet-epoch
+close-target starvation" latency shape too (the manager's synced close
+target came from a stale cached coordinator).
+
+FIX: the pusher now STOPS the scan at a failed fetch and retries the
+same checkpoint next tick (in-order folding preserved; contract unit
+tests rewritten to assert retry-and-recover, including the recovery of
+an end-of-epoch checkpoint on a previously failed seq). The
+FAR_BEHIND_THRESHOLD fast-forward remains the explicit escape valve for
+genuinely pruned history; STALL_THRESHOLD warns cover the stretch in
+between. All four `#[ignore]`d reproducers are re-enabled to guard the
+fix end-to-end.
+
+## Finding (superseded by the root cause above): the close-lock wedge is reachable from a single user request (flow-coverage PR)
 
 The happy-path flow suite (PR #1809, `sim_user_flows.rs` /
 `sim_future_sign.rs`) hit the same close/serve wedge WITHOUT presign

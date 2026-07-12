@@ -39,7 +39,6 @@ const SECOND_VICTIM: usize = 3;
 // liveness question; the faithful "two MPC-degraded laggards, consensus
 // alive" scenario needs fail-point-based degradation instead of node
 // stops and supersedes this as the Group B test.
-#[ignore = "reproducer: cluster does not recover from a full 2-of-4 consensus halt; see dev-docs/plans/simtest-fault-matrix.md"]
 #[sim_test]
 async fn sim_two_laggards_one_epoch() {
     telemetry_subscribers::init_for_testing();

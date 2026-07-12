@@ -18,23 +18,18 @@
 //! dedicated-presign-only — so the two dwallets between them cover both
 //! presign paths.
 //!
-//! OPEN BUG, preserved as an ignored reproducer: this flow runs ~ten
-//! user sessions against 20-second epochs, so on most msim schedules one
-//! of them lands astride an epoch close — and a user MPC session locked
-//! into the close target astride the close can leave the next epoch
-//! permanently unable to advance (`all_epoch_sessions_finished=false`
-//! with `session_locked=true`, observed pinned for 9.5+ virtual minutes;
-//! the imported-key verification and the dedicated presign have each
-//! been the visible victim on different schedules). This is the same
-//! close/serve interplay documented by the ignored presign-traffic
-//! reproducer in `sim_fault_presign_traffic_degraded.rs` — this test
-//! adds a second, single-request route into it (no traffic stream
-//! needed). A milder variant also surfaced here and is worth fixing on
-//! its own: a session excluded from the close target (correctly, for
-//! arriving astride the lock) is starved for the ENTIRE next epoch when
-//! that epoch is quiet, because nothing recomputes the target between
-//! locks — roughly an epoch of added latency per unlucky request (24h on
-//! mainnet). Evidence trail in dev-docs/plans/simtest-fault-matrix.md.
+//! This flow runs ~ten user sessions against 20-second epochs, so on
+//! most msim schedules one of them lands astride an epoch close — which
+//! made this test the reproducer that cornered the checkpoint-pusher
+//! skip bug: a full-checkpoint fetch failing transiently (contents
+//! lagging the certified head) was skipped FOREVER, leaving a permanent
+//! gap in the verified state cache; a session_events bag entry riding
+//! the skipped checkpoint never reached the fresh epoch's manager, the
+//! session never ran, and the epoch-close gate pinned the epoch
+//! (`all_epoch_sessions_finished=false` with `session_locked=true`).
+//! Fixed in the pusher (stop-and-retry instead of advance-past); this
+//! test guards the fix end-to-end. Evidence trail in
+//! dev-docs/plans/simtest-fault-matrix.md.
 
 #![cfg(msim)]
 
@@ -59,7 +54,6 @@ const EPOCH_MS: u64 = 20_000;
 // itself is a real finding tracked on the PR.
 const FLOW_TIMEOUT: Duration = Duration::from_secs(600);
 
-#[ignore = "reproducer: a user session astride an epoch close can pin the epoch under msim; see the fault-matrix plan"]
 #[sim_test]
 async fn sim_user_flows_across_boundaries() {
     telemetry_subscribers::init_for_testing();
