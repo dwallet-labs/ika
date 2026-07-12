@@ -86,8 +86,13 @@ async fn sim_two_laggards_one_epoch() {
 
     // The wounded epoch must still close, and BOTH returners must cross
     // into the next epochs with the committee — the historical failure
-    // mode was precisely this boundary never arriving.
-    cluster.wait_for_epoch(3).await;
+    // mode was precisely this boundary never arriving. Bounded: recovery
+    // from the heal is a sub-minute affair when it works at all, and an
+    // unbounded wait on a halted cluster burns hours of wall clock under
+    // msim (dense retry timers) before the sim-level budget fires.
+    tokio::time::timeout(Duration::from_secs(600), cluster.wait_for_epoch(3))
+        .await
+        .expect("cluster never recovered from the dual outage: epoch 3 not reached within 600s of virtual time");
     for idx in [FIRST_VICTIM, SECOND_VICTIM] {
         poll_until(
             Duration::from_secs(120),
