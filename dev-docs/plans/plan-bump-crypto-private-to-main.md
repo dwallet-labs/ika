@@ -1,5 +1,7 @@
 # Plan: bump dev's cryptography-private from `babbb483` to `main` (= `9d35fa76`)
 
+Status: landed (2026-07) — executed across the crypto-source migration PRs (8d4c4d53e4, #1806).
+
 ## Scope (deliberately narrow)
 
 This is the **first step** of the broader crypto migration. The only goal
