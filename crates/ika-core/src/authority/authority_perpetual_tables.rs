@@ -36,6 +36,17 @@ pub struct AuthorityPerpetualTables {
     /// or in the unlikely case of a malicious full-node/Move contract/Sui network.
     pub(crate) dwallet_mpc_computation_completed_sessions: DBMap<SessionIdentifier, ()>,
 
+    /// The validator's own MPC output consensus transaction per session,
+    /// serialized (bcs), persisted when it is first submitted. Kept so a
+    /// session whose computation completed astride an epoch boundary can be
+    /// RE-SUBMITTED in the next epoch: an output sequenced in the dying
+    /// epoch's consensus dies with that epoch's tally, while the validator's
+    /// durable computation-completed flag suppresses recomputation on the
+    /// re-pull — without resubmission the output quorum splits across the
+    /// two epochs and the session never completes on-chain, pinning the
+    /// epoch close forever.
+    pub(crate) dwallet_mpc_own_output_transactions: DBMap<SessionIdentifier, Vec<u8>>,
+
     /// Content-addressed cache of MPC output blobs (validator mpc_data,
     /// and in later steps: network DKG outputs and reconfiguration
     /// outputs). Keyed by `Blake2b256(bytes)`. Survives restart so a
@@ -231,6 +242,29 @@ impl AuthorityPerpetualTables {
         )?;
         wb.write()?;
         Ok(())
+    }
+
+    /// Persist this validator's own serialized MPC output consensus
+    /// transaction for `session_identifier` (see the table doc for why).
+    pub fn insert_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+        serialized_transaction: Vec<u8>,
+    ) -> IkaResult {
+        self.dwallet_mpc_own_output_transactions
+            .insert(&session_identifier, &serialized_transaction)?;
+        Ok(())
+    }
+
+    /// The validator's own serialized MPC output consensus transaction for
+    /// `session_identifier`, if one was ever submitted.
+    pub fn get_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self
+            .dwallet_mpc_own_output_transactions
+            .get(&session_identifier)?)
     }
 
     /// Inserts an MPC artifact blob keyed by `digest = Blake2b256(bytes)`.

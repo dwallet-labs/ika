@@ -215,6 +215,22 @@ pub trait AuthorityStateTrait: Sync + Send + 'static {
         &self,
         session_identifiers: Vec<SessionIdentifier>,
     ) -> IkaResult<HashMap<SessionIdentifier, bool>>;
+
+    /// Persist this validator's own serialized MPC output consensus
+    /// transaction, so a computation completed astride an epoch boundary
+    /// can be re-submitted to the next epoch's consensus on re-pull.
+    fn insert_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+        serialized_transaction: Vec<u8>,
+    ) -> IkaResult;
+
+    /// The validator's own serialized MPC output consensus transaction for
+    /// `session_identifier`, if one was ever submitted.
+    fn get_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<Vec<u8>>>;
 }
 
 impl AuthorityStateTrait for AuthorityState {
@@ -232,6 +248,23 @@ impl AuthorityStateTrait for AuthorityState {
     ) -> IkaResult<HashMap<SessionIdentifier, bool>> {
         self.perpetual_tables
             .get_dwallet_mpc_sessions_completed_status(session_identifiers)
+    }
+
+    fn insert_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+        serialized_transaction: Vec<u8>,
+    ) -> IkaResult {
+        self.perpetual_tables
+            .insert_dwallet_mpc_own_output_transaction(session_identifier, serialized_transaction)
+    }
+
+    fn get_dwallet_mpc_own_output_transaction(
+        &self,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        self.perpetual_tables
+            .get_dwallet_mpc_own_output_transaction(session_identifier)
     }
 }
 
