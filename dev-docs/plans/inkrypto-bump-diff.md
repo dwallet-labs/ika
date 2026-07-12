@@ -1,5 +1,7 @@
 # cryptography-private @ babbb483 → main: surface diff for ika
 
+Status: landed — point-in-time API/wire-format catalog for the crypto-source migration; kept for reference.
+
 Scope: catalog every API/wire-format change that affects ika's current
 consumption of cryptography-private. Verified directly against
 `/mnt/nvme0n1p1/cryptography-private2` clone of

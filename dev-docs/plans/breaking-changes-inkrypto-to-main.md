@@ -1,3 +1,5 @@
+Status: landed — point-in-time compatibility analysis for the cryptography-private → inkrypto source migration (executed by 8d4c4d53e4 and #1806); kept for reference.
+
 ---
 ika repo: /mnt/nvme0n1p1/ika (branch: dev)
 ika pinned cryptography-private rev: babbb483 ("Remove redundant public key and nonce is neutral check")

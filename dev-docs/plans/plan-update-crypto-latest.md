@@ -1,5 +1,7 @@
 # Plan: Update inkrypto on `update-crypto-latest` branch
 
+Status: landed (2026-07) — executed; the dual-pin rolling-rollout caveat recorded below stays relevant for future crypto bumps.
+
 ## Context
 
 Mainnet-v1.1.8 ika depends on **`inkrypto @ 37bb549f`** ("Backward compatible
