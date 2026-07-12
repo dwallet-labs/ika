@@ -277,6 +277,18 @@ non-wedging:
   pool-served path — the serve vote is held all of the following quiet
   epoch and pops only at the next close's lock recomputation.
 
+Ruled out (2026-07-12, deterministic A/B on the `sim_user_flows`
+reproducer, single-test dispatches, default log config): the wedge is
+NOT closed by main up to 496bc2fc55, nor by the internal-presign
+entry-window fixes #1818 (park on not-ready instead of terminal
+failure) + #1819 (sequence-counter uniformity under install lag) — with
+both merged in, the run still pins the epoch (`session_locked=true`,
+`all_epoch_sessions_finished=false`; the victim session shifted from
+the imported-key verification to the dedicated presign, the usual
+schedule sensitivity). Those PRs fix a different family (system-session
+entry-window races); the user-session close-lock wedge and the
+quiet-epoch close-target starvation remain open.
+
 The flow suite also produced harness knowledge worth keeping: the
 pinned Sui renders Move enum values in object JSON WITHOUT a variant
 tag ({type, fields} only), so fieldless variants are unobservable —
