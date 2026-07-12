@@ -497,6 +497,13 @@ impl DWalletMPCService {
             error!(error = ?e, "failed to ingest off-chain validator MPC keys");
         }
 
+        // Retry internal presign requests parked on missing network key data —
+        // per ITERATION, not per consensus round, because what they wait on
+        // (the ingest above / an asynchronous key install) completes on
+        // wall-clock time, and no new consensus round is guaranteed to follow.
+        self.dwallet_mpc_manager
+            .retry_internal_presign_requests_pending_for_network_key_data();
+
         self.sync_last_session_to_complete_in_current_epoch().await;
 
         // Process any pending network-owned-address sign requests.

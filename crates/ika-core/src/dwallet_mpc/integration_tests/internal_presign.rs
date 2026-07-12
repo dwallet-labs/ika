@@ -1,5 +1,4 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
-use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
@@ -8,9 +7,30 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_POOL_MINIMUM_SIZE, apply_test_presign_pool_overrides, build_test_state,
     create_test_protocol_config_guard,
 };
+use crate::dwallet_mpc::mpc_session::SessionStatus;
+use crate::dwallet_mpc::{NetworkOwnedAddressSignRequest, ValidatorMpcKeysByPartyId};
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use ika_protocol_config::ProtocolConfig;
 use tracing::info;
+
+/// The Fast Schnorr (VSS) signature algorithms — their internal presign pools
+/// are driven alongside [`ALL_ALGORITHMS`] when `fast_schnorr_supported` is on,
+/// and their presign inputs additionally require the epoch's off-chain VSS
+/// validator key set to have been ingested.
+const VSS_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
+    (
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::TaprootVSS,
+    ),
+    (
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSAVSS,
+    ),
+    (
+        DWalletCurve::Ristretto,
+        DWalletSignatureAlgorithm::SchnorrkelVSS,
+    ),
+];
 
 /// All signature algorithms that have internal presign pools.
 const ALL_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
@@ -859,4 +879,232 @@ async fn test_internal_presign_continues_when_idle() {
     }
 
     info!("Test completed: internal presigns continue when idle");
+}
+
+/// Counts terminally-Failed sessions across one service's session map.
+fn failed_session_count(test_state: &IntegrationTestState, service_index: usize) -> usize {
+    test_state.dwallet_mpc_services[service_index]
+        .dwallet_mpc_manager()
+        .sessions
+        .values()
+        .filter(|session| matches!(session.status, SessionStatus::Failed))
+        .count()
+}
+
+/// Test that VSS internal presign batches instantiated before the epoch's
+/// off-chain validator key set is ingested PARK (and later complete) instead
+/// of failing terminally.
+///
+/// At epoch entry the manager starts with an empty off-chain validator key
+/// set: the network key itself is adopted quickly from the handoff data, but
+/// the consensus-frozen key set is ingested later (its assembly and the
+/// network key's VSS derivation run asynchronously). Internal presign top-ups
+/// fire as soon as the network key is installed, so the VSS pools' input
+/// construction fails with the not-ready error class in that window. Mapping
+/// that failure to `SessionStatus::Failed` starved the EdDSA/Schnorrkel/
+/// Taproot VSS pools after every epoch transition (the batch died on every
+/// validator, blocking top-ups until the stale-batch expiry).
+///
+/// Flow:
+/// 1. Create the network key normally, then re-open the epoch-entry window on
+///    every validator: forget the ingested key set and empty the delivery
+///    channel (exactly the state a fresh manager is in before
+///    `ingest_offchain_mpc_keys` first succeeds).
+/// 2. Run rounds until the first VSS top-up batches fire; assert every
+///    validator PARKS them — no terminally-Failed session anywhere — and that
+///    parked batches are counted exactly once (no duplicate parking, no
+///    re-instantiation while parked).
+/// 3. Close the window (restore the ingested key set — the exact effect of
+///    `ingest_offchain_mpc_keys`); assert the parked batches activate,
+///    complete, and fill the previously starved pools, with counters uniform
+///    across validators.
+#[tokio::test]
+#[cfg(test)]
+async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // No internal presign top-up has fired yet: batches only instantiate
+    // while processing a consensus round AFTER the network key is installed,
+    // and `create_network_key_test` returns without distributing such a
+    // round. Verified here so the window below provably opens before the
+    // first VSS batch.
+    for (curve, algorithm) in VSS_ALGORITHMS {
+        let (instantiated, _) = presign_batch_counters(&test_state, 0, *curve, *algorithm);
+        assert_eq!(
+            instantiated, 0,
+            "{curve:?}/{algorithm:?}: no VSS batch should have fired before the first post-install round"
+        );
+    }
+
+    // Expected first-batch sizes: the single test key IS the NOA signing key,
+    // so all pools use the NOA presign config.
+    let batch_size = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE;
+    let expected_parked = batch_size as usize * VSS_ALGORITHMS.len();
+
+    // === Phase 1: re-open the epoch-entry window on every validator ===
+    let saved_keys: Vec<ValidatorMpcKeysByPartyId> = test_state
+        .dwallet_mpc_services
+        .iter_mut()
+        .zip(&test_state.sui_data_senders)
+        .map(|(service, senders)| {
+            // Empty the delivery channel first so the next
+            // `ingest_offchain_mpc_keys` finds nothing to ingest.
+            let _ = senders.current_epoch_mpc_keys_sender.send(None);
+            let manager = service.dwallet_mpc_manager_mut();
+            let saved = manager.validator_mpc_keys_by_party_id.clone();
+            manager.validator_mpc_keys_by_party_id = ValidatorMpcKeysByPartyId::empty();
+            manager.current_epoch_keys_ingested = false;
+            saved
+        })
+        .collect();
+
+    // === Phase 2: first VSS top-up batches fire into the open window ===
+    let mut all_parked = false;
+    for _ in 0..12 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        all_parked = test_state.dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .len()
+                == expected_parked
+        });
+        if all_parked {
+            break;
+        }
+    }
+    assert!(
+        all_parked,
+        "every validator should park exactly {expected_parked} VSS internal presign requests \
+         while the off-chain key set is not ingested"
+    );
+
+    for service_index in 0..test_state.dwallet_mpc_services.len() {
+        assert_eq!(
+            failed_session_count(&test_state, service_index),
+            0,
+            "validator {service_index}: VSS batches hitting the not-ready window must park, \
+             not create terminally-Failed sessions"
+        );
+        for (curve, algorithm) in VSS_ALGORITHMS {
+            assert_eq!(
+                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                (batch_size, 0),
+                "validator {service_index}: {curve:?}/{algorithm:?} batch must be counted \
+                 instantiated exactly once while parked"
+            );
+        }
+    }
+
+    // Parked batches must be invisible to the top-up decision: more rounds
+    // with the window still open must not re-instantiate, duplicate-park, or
+    // fill the pool.
+    for _ in 0..4 {
+        run_one_round_delivering_messages(&mut test_state).await;
+    }
+    for service_index in 0..test_state.dwallet_mpc_services.len() {
+        assert_eq!(
+            test_state.dwallet_mpc_services[service_index]
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .len(),
+            expected_parked,
+            "validator {service_index}: parked requests must not duplicate while the window is open"
+        );
+        for (curve, algorithm) in VSS_ALGORITHMS {
+            assert_eq!(
+                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                (batch_size, 0),
+                "validator {service_index}: {curve:?}/{algorithm:?} guard must hold while parked"
+            );
+        }
+    }
+    for (_, algorithm) in VSS_ALGORITHMS {
+        assert_eq!(
+            test_state.epoch_stores[0]
+                .presign_pool_size(*algorithm, network_key_id)
+                .unwrap_or(0),
+            0,
+            "{algorithm:?}: pool must stay empty while its only batch is parked"
+        );
+    }
+
+    // === Phase 3: close the window — the exact effect of `ingest_offchain_mpc_keys` ===
+    for (service, keys) in test_state
+        .dwallet_mpc_services
+        .iter_mut()
+        .zip(saved_keys.into_iter())
+    {
+        let manager = service.dwallet_mpc_manager_mut();
+        manager.validator_mpc_keys_by_party_id = keys;
+        manager.current_epoch_keys_ingested = true;
+    }
+
+    // The parked batches activate on the next service iteration and then run
+    // the full multi-round VSS presign protocol to completion.
+    let mut healed = false;
+    for _ in 0..80 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let parked_drained = test_state.dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .internal_presign_requests_pending_for_network_key_data
+                .is_empty()
+        });
+        let first_batches_completed = VSS_ALGORITHMS.iter().all(|(curve, algorithm)| {
+            (0..test_state.dwallet_mpc_services.len()).all(|service_index| {
+                let (_, completed) =
+                    presign_batch_counters(&test_state, service_index, *curve, *algorithm);
+                completed >= batch_size
+            })
+        });
+        let pools_filled = VSS_ALGORITHMS.iter().all(|(_, algorithm)| {
+            test_state.epoch_stores[0]
+                .presign_pool_size(*algorithm, network_key_id)
+                .unwrap_or(0)
+                > 0
+        });
+        if parked_drained && first_batches_completed && pools_filled {
+            healed = true;
+            break;
+        }
+    }
+    assert!(
+        healed,
+        "once the off-chain key set lands, the parked VSS batches must activate, complete, \
+         and fill the previously starved pools"
+    );
+
+    // The not-ready window must never have produced a terminal failure.
+    for service_index in 0..test_state.dwallet_mpc_services.len() {
+        assert_eq!(
+            failed_session_count(&test_state, service_index),
+            0,
+            "validator {service_index}: no session may end terminally Failed in this flow"
+        );
+    }
+
+    // Cross-service counter consistency (identifier derivation is
+    // committee-uniform, so the counters must be too).
+    for (curve, algorithm) in VSS_ALGORITHMS {
+        let reference = presign_batch_counters(&test_state, 0, *curve, *algorithm);
+        for service_index in 1..test_state.dwallet_mpc_services.len() {
+            assert_eq!(
+                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                reference,
+                "validator {service_index}: {curve:?}/{algorithm:?} counters diverged from validator 0"
+            );
+        }
+    }
+
+    info!(
+        "Test completed: VSS internal presign batches park through the off-chain-key ingest \
+         window and complete once it closes"
+    );
 }
