@@ -87,7 +87,23 @@ serialization/schema change, MUST preserve all of the following.
    vN−1 binary MUST reopen under vN. A validator stopped on vN−1 and
    restarted on vN against the *same* RocksDB data dir must resume and
    catch up — verified by a positive read-back (it reaches the live
-   epoch), not merely by "did not panic".
+   epoch), not merely by "did not panic". This extends to ANY durable
+   local table whose value schema changes across a version bump: a binary
+   reads its OWN store written by its previous version, so the reader must
+   tolerate the prior layout (a fallback decode or a versioned envelope),
+   not just the current one. **Known instance:** `Committee` gained a
+   mid-struct `consensus_keys` field at v4, so a `committee_map` record
+   written by mainnet-v1.1.8 does not decode under the v4 `Committee`
+   (bcs is positional). `CommitteeStore::get_committee` reads such records
+   via a `LegacyCommittee` fallback (empty `consensus_keys`), consulted
+   only after the primary decode fails.
+   **Rollback caveat (reverse direction, unfixable from the v4 side):** a
+   `committee_map` record written by a v4 binary is NOT readable by
+   mainnet-v1.1.8 (same positional-bcs reason; 1.1.8 has no fallback).
+   Rolling a validator back to 1.1.8 after it has written any new-layout
+   committee record requires clearing the `committee_map` column family;
+   it is safely rebuildable from chain (`init_genesis_committee` +
+   `insert_new_committee` repopulate from `EpochStartConfiguration`).
 
 ## Genesis must start at v3 and upgrade into v4
 

@@ -2310,13 +2310,28 @@ impl IkaNode {
                 let current_epoch = cur_epoch_store.epoch();
                 let prior_epoch = current_epoch - 1;
                 let self_name = cur_epoch_store.name;
-                let prior_committee = match self
+                // Distinguish a genuine local decode failure from a true-joiner
+                // absence: both fall through to the chain read, but a decode
+                // error means the designed local trust-anchor path was
+                // forfeited (it should not happen now that legacy 1.1.8
+                // committee records decode via the fallback) and must be
+                // visible, not silently identical to "never persisted".
+                let local_prior_committee = match self
                     .state
                     .committee_store()
                     .get_committee(&prior_epoch)
-                    .ok()
-                    .flatten()
                 {
+                    Ok(committee) => committee,
+                    Err(error) => {
+                        warn!(
+                            ?error,
+                            prior_epoch,
+                            "prior committee failed to decode locally; falling back to chain read"
+                        );
+                        None
+                    }
+                };
+                let prior_committee = match local_prior_committee {
                     Some(committee) => Some(committee),
                     // A true joiner that never observed/persisted the prior
                     // epoch has no local committee for it, so the cross-epoch

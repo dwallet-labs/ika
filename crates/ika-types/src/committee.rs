@@ -106,6 +106,50 @@ pub struct Committee {
     index_map: HashMap<AuthorityName, usize>,
 }
 
+/// The `Committee` layout as written by mainnet-v1.1.8, i.e. before the
+/// mid-struct `consensus_keys` field was added at protocol v4. `Committee`
+/// derives `Serialize`/`Deserialize` with no field skips, so its bcs layout is
+/// positional; a 1.1.8 record has no `consensus_keys` bytes and cannot be
+/// decoded by the current `Committee`. This mirror decodes those records so a
+/// v4 binary can read a `committee_map` entry its own prior (1.1.8) version
+/// persisted. Fields mirror the 1.1.8 declaration order EXACTLY — do not
+/// reorder. Only used as a fallback after a primary `Committee` decode fails
+/// (see `CommitteeStore::get_committee`).
+///
+/// `Serialize` is derived only to satisfy the `DBMap` value bound; the legacy
+/// view is read-only (all writes go through the primary `Committee` schema).
+#[derive(Serialize, Deserialize)]
+pub struct LegacyCommittee {
+    epoch: EpochId,
+    voting_rights: Vec<(AuthorityName, StakeUnit)>,
+    class_groups_public_keys_and_proofs: HashMap<AuthorityName, ClassGroupsEncryptionKeyAndProof>,
+    quorum_threshold: u64,
+    validity_threshold: u64,
+    // Present in the 1.1.8 serialized bytes but rebuilt from voting_rights by
+    // `Committee::new`, so the decoded values are discarded. Underscore-named
+    // so they still deserialize positionally (bcs is positional; the names are
+    // not in the wire format) without tripping the dead-code lint.
+    _expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
+    _index_map: HashMap<AuthorityName, usize>,
+}
+
+impl From<LegacyCommittee> for Committee {
+    fn from(legacy: LegacyCommittee) -> Self {
+        // consensus_keys defaults to empty: a 1.1.8-written committee is only
+        // read at the v3→v4 boundary, where the prior epoch ran v3 and emitted
+        // no consensus-key-signed messages, so there is nothing to verify with
+        // it. `expanded_keys`/`index_map` are rebuilt from voting_rights.
+        Committee::new(
+            legacy.epoch,
+            legacy.voting_rights,
+            legacy.class_groups_public_keys_and_proofs,
+            HashMap::new(),
+            legacy.quorum_threshold,
+            legacy.validity_threshold,
+        )
+    }
+}
+
 impl Committee {
     pub fn new(
         epoch: EpochId,
@@ -691,4 +735,62 @@ pub struct ValidatorEncryptionKeysAndProofs {
     /// only validators whose proof verifies are admitted to subsequent VSS
     /// presign / sign sessions.
     pub vss_hpke_public_key_and_proof: VssHpkeEncryptionKeyAndProof,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `LegacyCommittee` built to mirror a given `Committee`'s
+    /// mainnet-v1.1.8 on-wire layout (no `consensus_keys`).
+    fn legacy_mirror_of(committee: &Committee) -> LegacyCommittee {
+        let (expanded_keys, index_map) = Committee::load_inner(&committee.voting_rights);
+        LegacyCommittee {
+            epoch: committee.epoch,
+            voting_rights: committee.voting_rights.clone(),
+            class_groups_public_keys_and_proofs: committee
+                .class_groups_public_keys_and_proofs
+                .clone(),
+            quorum_threshold: committee.quorum_threshold,
+            validity_threshold: committee.validity_threshold,
+            _expanded_keys: expanded_keys,
+            _index_map: index_map,
+        }
+    }
+
+    #[test]
+    fn legacy_committee_record_decodes_via_fallback() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let legacy_bytes = bcs::to_bytes(&legacy_mirror_of(&committee)).unwrap();
+
+        // A 1.1.8-layout record does NOT decode as the current `Committee`
+        // (the mid-struct `consensus_keys` field shifts every following byte),
+        // which is exactly why `get_committee` needs the fallback.
+        assert!(
+            bcs::from_bytes::<Committee>(&legacy_bytes).is_err(),
+            "legacy record must not silently decode as the current Committee"
+        );
+
+        // The fallback decodes it and fills empty consensus_keys, preserving
+        // membership / voting power / thresholds.
+        let decoded: LegacyCommittee = bcs::from_bytes(&legacy_bytes).unwrap();
+        let recovered = Committee::from(decoded);
+        assert_eq!(recovered.epoch, committee.epoch);
+        assert_eq!(recovered.voting_rights, committee.voting_rights);
+        assert_eq!(recovered.quorum_threshold, committee.quorum_threshold);
+        assert!(recovered.consensus_keys.is_empty());
+    }
+
+    #[test]
+    fn current_committee_record_is_not_misread_as_legacy() {
+        // The safety property behind "try legacy only after the primary decode
+        // fails": a current-layout record must not decode cleanly under the
+        // legacy schema (bcs trailing-byte strictness catches the shift).
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let current_bytes = bcs::to_bytes(&committee).unwrap();
+        assert!(
+            bcs::from_bytes::<LegacyCommittee>(&current_bytes).is_err(),
+            "current record must not decode under the legacy schema"
+        );
+    }
 }
