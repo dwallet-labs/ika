@@ -8,4 +8,6 @@ RUN apt-get update && \
 
 WORKDIR /opt/ika
 
-COPY ika-proxy /opt/ika/bin/ika-proxy
+# --chmod: the binary arrives via actions/download-artifact, which strips
+# the executable bit (GitHub artifacts are zip-based and drop unix modes).
+COPY --chmod=0755 ika-proxy /opt/ika/bin/ika-proxy

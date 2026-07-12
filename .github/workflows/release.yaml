@@ -302,8 +302,14 @@ jobs:
         run: gcloud auth configure-docker us-docker.pkg.dev
 
       - name: Build and push Docker image
+        env:
+          DOCKER_BUILDKIT: "1" # required by COPY --chmod in the runtime Dockerfiles
         run: |
           set -e
+
+          # download-artifact strips unix modes (all files land 644); restore
+          # the executable bit before the binary is copied into the image.
+          chmod +x binaries/*
 
           DOCKER_TAG="${{ matrix.registry }}/${{ matrix.image }}:${{ needs.version.outputs.network }}-v${{ needs.version.outputs.docker_tag }}"
           GIT_REVISION="$(git describe --always --abbrev=12 --dirty --exclude '*')"
@@ -423,6 +429,9 @@ jobs:
           VERSION="v${{ needs.version.outputs.version }}"
           for dir in artifacts/*/; do
             platform="$(basename "$dir")"
+            # download-artifact strips unix modes; restore the executable bit
+            # so the tarballs (and the Homebrew install) carry runnable binaries.
+            chmod +x "$dir"*
             tar -czvf "ika-${VERSION}-${platform}.tar.gz" -C "$dir" .
           done
 
@@ -431,9 +440,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
-          gh release create "$VERSION" \
+          # Mainnet keeps the bare v-tag: the Homebrew formula's download URL
+          # interpolates it. Other networks get a qualified tag so pushing
+          # release/mainnet-X and release/testnet-X for the same version does
+          # not collide on one release name (as happened for 1.1.8).
+          NETWORK="${{ needs.version.outputs.network }}"
+          if [ "$NETWORK" = "mainnet" ]; then
+            RELEASE_TAG="$VERSION"
+          else
+            RELEASE_TAG="${NETWORK}-${VERSION}"
+          fi
+          gh release create "$RELEASE_TAG" \
             --draft \
-            --title "$VERSION" \
+            --title "$RELEASE_TAG" \
             --generate-notes \
             ika-${VERSION}-*.tar.gz
 

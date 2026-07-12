@@ -19,8 +19,10 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 
 WORKDIR /opt/ika
 
-COPY ${BIN} /opt/ika/bin/${BIN}
-COPY ${BIN} /usr/local/bin/${BIN}
+# --chmod: the binary arrives via actions/download-artifact, which strips
+# the executable bit (GitHub artifacts are zip-based and drop unix modes).
+COPY --chmod=0755 ${BIN} /opt/ika/bin/${BIN}
+COPY --chmod=0755 ${BIN} /usr/local/bin/${BIN}
 
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
