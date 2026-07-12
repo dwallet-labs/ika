@@ -113,6 +113,23 @@ against the active committee directly.
   instantiated/completed batch counters stay committee-uniform — parking is
   local participation deferral, invisible to the top-up guard and the
   stale-batch expiry. Any other input-construction error stays terminal.
+- **Deferred instantiation for a not-yet-installed key (multi-key epochs).**
+  The top-up loop iterates every ADOPTED key, but installation into
+  `network_keys` completes asynchronously per validator, and the session
+  identifier binds the key's content-derived `NetworkKeyId`. A validator whose
+  key is adopted but not installed derives the identity from the
+  pre-instantiation `ObjectID → NetworkKeyId` mapping and parks the built
+  request on the input's not-ready error; when even the mapping has no entry
+  (a fresh key with no handoff-cert pin), it parks an `AwaitingKeyIdentity`
+  record carrying the RESERVED sequence number and builds the request at
+  retry time. In every case the sequence number is consumed — skipping a
+  top-up that peers perform would desynchronize the single sequence counter
+  shared across all pools and keys, and with it every subsequent internal
+  presign identifier (sessions could then never reach quorum). Relatedly, the
+  NOA-signing-key choice (oldest installed key by `dkg_at_epoch`) tie-breaks
+  by key id: `min_by` alone would resolve same-epoch ties by `HashMap`
+  iteration order — per-process-random, giving validators different pool
+  configs and thus divergent batch sizes.
 
 ## Invariants
 

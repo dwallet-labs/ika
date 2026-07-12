@@ -26,6 +26,7 @@ use crate::dwallet_mpc::{
     get_validator_mpc_keys_by_party_id, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
+use crate::network_key_id_mapping::network_key_id_for;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, MPCPrivateInput,
@@ -98,6 +99,34 @@ fn compute_chain_context<C: CounterpartyChain>(
         );
         *current_context = Some(context);
     }
+}
+
+/// An internal presign session deferred because its network key's data is not
+/// locally available yet. In BOTH shapes the session sequence number was
+/// already consumed at instantiation, so identifier derivation and the batch
+/// counters stay committee-uniform; parking defers only this validator's
+/// participation. Entries retry once per service iteration.
+#[derive(Debug, Clone)]
+pub(crate) enum ParkedInternalPresignRequest {
+    /// The request is fully built, but its MPC input construction failed with
+    /// the not-ready error class — typically a VSS pool at epoch entry,
+    /// before the consensus-frozen off-chain validator key set is ingested,
+    /// or a key adopted but not yet locally installed. Boxed: the request
+    /// dwarfs the other variant.
+    Request(Box<DWalletSessionRequest>),
+    /// The request could not even be BUILT: the key's content-derived
+    /// identity (its `NetworkKeyId`, bound into the session identifier) is
+    /// not derivable locally yet — the key is adopted but its installation
+    /// hasn't completed and the `ObjectID → NetworkKeyId` mapping has no
+    /// entry (a fresh key with no handoff-cert pin). The reserved sequence
+    /// number is carried here; the request is built at retry time, once the
+    /// identity becomes derivable.
+    AwaitingKeyIdentity {
+        session_sequence_number: u64,
+        dwallet_network_encryption_key_id: ObjectID,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    },
 }
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -173,18 +202,17 @@ pub(crate) struct DWalletMPCManager {
     /// pass the gate and run normally.
     pub(crate) requests_pending_for_frozen_mpc_data: Vec<DWalletSessionRequest>,
 
-    /// Internal presign requests whose session input could not be built yet
-    /// because the target network key's data is not locally available — at
-    /// epoch entry the VSS (Fast Schnorr) pools instantiate before the
-    /// consensus-frozen off-chain validator key set has been ingested, so
-    /// their input construction fails with the not-ready error class. The
-    /// session identifier (and its sequence number) was already consumed at
-    /// instantiation — identifier derivation stays committee-uniform — and
-    /// only this validator's participation is deferred: the request is
-    /// retried once per service iteration and activated when the key data
-    /// lands. Genuinely-fatal input errors never land here (they fail the
-    /// session terminally at instantiation).
-    pub(crate) internal_presign_requests_pending_for_network_key_data: Vec<DWalletSessionRequest>,
+    /// Internal presign requests deferred because the target network key's
+    /// data is not locally available yet (see
+    /// [`ParkedInternalPresignRequest`] for the two deferral shapes). The
+    /// session sequence number was already consumed at instantiation —
+    /// identifier derivation stays committee-uniform — and only this
+    /// validator's participation is deferred: entries are retried once per
+    /// service iteration and activated when the key data lands.
+    /// Genuinely-fatal input errors never land here (they fail the session
+    /// terminally at instantiation).
+    pub(crate) internal_presign_requests_pending_for_network_key_data:
+        Vec<ParkedInternalPresignRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
@@ -294,7 +322,7 @@ pub(crate) struct DWalletMPCManager {
     // Different epochs will see repeating values of this variable,
     // but that is safe as they are synced within an epoch and
     // the session identifier is derived from the epoch as well.
-    next_internal_presign_sequence_number: u64,
+    pub(crate) next_internal_presign_sequence_number: u64,
 
     /// Monotonically increasing count of instantiated internal presign sessions
     /// per (curve, signature_algorithm). Incremented when a session is created.
@@ -1606,11 +1634,17 @@ impl DWalletMPCManager {
 
     /// Returns the network encryption key ID used for network-owned-address signing (the oldest by DKG epoch).
     /// Used by internal presign session instantiation to determine internal-signing-specific pool params.
+    ///
+    /// Ties on `dkg_at_epoch` (two keys DKG'd in the same epoch) break by key
+    /// id: without the tie-break, `min_by` keeps the LAST minimum in `HashMap`
+    /// iteration order — per-process-random, so validators could disagree on
+    /// which key is the NOA key and apply different pool configs (different
+    /// batch sizes ⇒ divergent internal-presign sequence numbers).
     fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
         self.network_keys
             .network_encryption_keys
             .iter()
-            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+            .min_by(|(a_id, a), (b_id, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a_id.cmp(b_id)))
             .map(|(id, _)| *id)
     }
 
@@ -1798,6 +1832,37 @@ impl DWalletMPCManager {
     }
 
     /// Instantiates an internal presign sessions.
+    /// The network key identity bytes bound into internal presign session
+    /// identifiers: the key's flip-invariant, content-derived `NetworkKeyId`.
+    /// Read from the installed key data when available; before installation,
+    /// fall back to the pre-instantiation `ObjectID → NetworkKeyId` mapping
+    /// (seeded deployed keys, handoff-cert background derivation,
+    /// registrations from an earlier install). `None` when neither source has
+    /// it yet — a fresh key adopted but not yet installed, with no cert pin.
+    /// Callers must then DEFER without skipping: skipping a top-up other
+    /// validators perform desynchronizes the shared sequence counter and with
+    /// it every subsequent internal presign session identifier.
+    fn internal_presign_network_key_identity_bytes(
+        &self,
+        dwallet_network_encryption_key_id: &ObjectID,
+    ) -> Option<Vec<u8>> {
+        match self
+            .network_keys
+            .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)
+        {
+            // Fall back to the network DKG output bytes only for a malformed
+            // key with no derivable id (deterministic, so still
+            // committee-uniform).
+            Ok(key_data) => Some(
+                key_data
+                    .network_key_id()
+                    .map(|id| id.0.to_vec())
+                    .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
+            ),
+            Err(_) => network_key_id_for(dwallet_network_encryption_key_id).map(|id| id.0.to_vec()),
+        }
+    }
+
     fn instantiate_internal_presign_session(
         &mut self,
         consensus_round: u64,
@@ -1805,30 +1870,43 @@ impl DWalletMPCManager {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) {
-        let network_key_identity_bytes = match self
-            .network_keys
-            .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
-        {
-            // Use the key's flip-invariant NetworkKeyId as the session-identifier
-            // basis; fall back to the network DKG output bytes only for a
-            // malformed key with no derivable id (deterministic, so still
-            // committee-uniform).
-            Ok(key_data) => key_data
-                .network_key_id()
-                .map(|id| id.0.to_vec())
-                .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
-            Err(e) => {
-                error!(
-                    ?dwallet_network_encryption_key_id,
-                    error = ?e,
-                    "Failed to get network encryption key data for internal presign session"
-                );
-                return;
-            }
+        // Consume the sequence number FIRST, unconditionally: the caller's
+        // top-up decision is committee-uniform, so every validator MUST
+        // account this session — whether it can run it right now or not —
+        // or identifier derivation (a single counter shared across all
+        // pools and keys) permanently diverges across the committee.
+        let session_sequence_number = self.next_internal_presign_sequence_number;
+        self.next_internal_presign_sequence_number += 1;
+
+        let Some(network_key_identity_bytes) =
+            self.internal_presign_network_key_identity_bytes(&dwallet_network_encryption_key_id)
+        else {
+            // The key is adopted (the caller iterates the adopted set) but
+            // not installed yet, and no mapping entry exists to derive the
+            // identifier from. Park a deferred-instantiation record carrying
+            // the reserved sequence number; the request is built at retry
+            // time (the installation spawned by
+            // `instantiate_adopted_network_keys` registers the mapping when
+            // it completes).
+            info!(
+                consensus_round,
+                ?dwallet_network_encryption_key_id,
+                ?curve,
+                ?signature_algorithm,
+                ?session_sequence_number,
+                "network key identity not derivable yet for internal presign session; parking it for retry",
+            );
+            self.internal_presign_requests_pending_for_network_key_data
+                .push(ParkedInternalPresignRequest::AwaitingKeyIdentity {
+                    session_sequence_number,
+                    dwallet_network_encryption_key_id,
+                    curve,
+                    signature_algorithm,
+                });
+            return;
         };
 
-        let session_sequence_number = self.next_internal_presign_sequence_number;
-        // `consensus_round` is logged below for traceability but is
+        // `consensus_round` is logged for traceability but is
         // deliberately NOT part of the request/session identifier:
         // validators reach this point at different rounds (the network
         // key installs asynchronously), and the identifier must come out
@@ -1842,9 +1920,53 @@ impl DWalletMPCManager {
             &network_key_identity_bytes,
         );
 
+        if let Err(request) = self.try_activate_internal_presign_request(consensus_round, request) {
+            // The key's data isn't locally available yet (typically the VSS
+            // pools at epoch entry, before the frozen off-chain validator
+            // key set has been ingested; or a key installed on peers but not
+            // here). Park the request and retry once per service iteration;
+            // peers that already have the data run the session meanwhile,
+            // and any of their messages buffer in a
+            // `WaitingForSessionRequest` entry until activation.
+            info!(
+                consensus_round,
+                ?curve,
+                ?signature_algorithm,
+                ?session_sequence_number,
+                session_identifier=?request.session_identifier,
+                "network key data not ready for internal presign session; parking it for retry",
+            );
+            self.internal_presign_requests_pending_for_network_key_data
+                .push(ParkedInternalPresignRequest::Request(request));
+        }
+    }
+
+    /// Applies a built internal presign request to the session map: activates
+    /// it when its MPC input is constructible, upgrading a
+    /// `WaitingForSessionRequest` entry in place (peers that built the input
+    /// earlier may already have sent messages, which buffer there and must
+    /// survive). Returns `Err(request)` when input construction hit the
+    /// not-ready class — the caller decides how to park it. Fatal input
+    /// errors fail the session terminally (`Ok`).
+    fn try_activate_internal_presign_request(
+        &mut self,
+        consensus_round: u64,
+        request: DWalletSessionRequest,
+    ) -> Result<(), Box<DWalletSessionRequest>> {
         let session_identifier = request.session_identifier;
+
+        if let Some(session) = self.sessions.get(&session_identifier)
+            && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
+        {
+            // Already resolved without us (e.g. completed by a quorum of
+            // peers before this validator could build the input).
+            return Ok(());
+        }
+
         match self.session_input(&request) {
             Ok((public_input, private_input)) => {
+                let session_sequence_number = request.session_sequence_number;
+                let session_type = request.session_type;
                 let status = SessionStatus::Active {
                     public_input,
                     private_input,
@@ -1853,44 +1975,26 @@ impl DWalletMPCManager {
                 debug!(
                     status=?status,
                     consensus_round,
-                    ?curve,
-                    ?signature_algorithm,
                     ?session_sequence_number,
                     ?session_identifier,
                     "instantiating new internal presign session",
                 );
-                self.new_session(
-                    &session_identifier,
-                    status,
-                    None,
-                    SessionComputationType::MPC {
-                        messages_by_consensus_round: HashMap::new(),
-                    },
-                );
+                if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                    session.status = status;
+                    session.set_request_metadata(session_sequence_number, session_type);
+                } else {
+                    self.new_session(
+                        &session_identifier,
+                        status,
+                        None,
+                        SessionComputationType::MPC {
+                            messages_by_consensus_round: HashMap::new(),
+                        },
+                    );
+                }
+                Ok(())
             }
-            Err(e) if e.is_network_key_data_not_ready() => {
-                // The key's data isn't locally available yet (typically the VSS
-                // pools at epoch entry, before the frozen off-chain validator
-                // key set has been ingested). Park the request and retry once
-                // per service iteration; peers that already have the data run
-                // the session meanwhile, and any of their messages buffer in a
-                // `WaitingForSessionRequest` entry until activation. The
-                // sequence number is still consumed below — the batch counters
-                // and identifier derivation must stay committee-uniform, so
-                // parking is invisible to the top-up and stale-batch-expiry
-                // decisions.
-                info!(
-                    error=?e,
-                    consensus_round,
-                    ?curve,
-                    ?signature_algorithm,
-                    ?session_sequence_number,
-                    ?session_identifier,
-                    "network key data not ready for internal presign session; parking it for retry",
-                );
-                self.internal_presign_requests_pending_for_network_key_data
-                    .push(request);
-            }
+            Err(e) if e.is_network_key_data_not_ready() => Err(Box::new(request)),
             Err(e) => {
                 error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
                 self.new_session(
@@ -1901,13 +2005,12 @@ impl DWalletMPCManager {
                         messages_by_consensus_round: HashMap::new(),
                     },
                 );
+                Ok(())
             }
         }
-
-        self.next_internal_presign_sequence_number += 1;
     }
 
-    /// Retries internal presign requests parked because their network key's
+    /// Retries internal presign sessions parked because their network key's
     /// data wasn't locally available at instantiation time (see
     /// `internal_presign_requests_pending_for_network_key_data`). Called once
     /// per service iteration — the inputs it waits on (network-key install,
@@ -1922,63 +2025,72 @@ impl DWalletMPCManager {
         }
 
         let parked = mem::take(&mut self.internal_presign_requests_pending_for_network_key_data);
-        for request in parked {
-            let session_identifier = request.session_identifier;
-
-            if let Some(session) = self.sessions.get(&session_identifier)
-                && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
-            {
-                // Already resolved without us (e.g. completed by a quorum of
-                // peers while we were parked) — drop the parked request.
-                continue;
-            }
-
-            match self.session_input(&request) {
-                Ok((public_input, private_input)) => {
-                    info!(
-                        session_identifier=?session_identifier,
-                        session_sequence_number=?request.session_sequence_number,
-                        "network key data arrived; activating parked internal presign session",
-                    );
-                    let session_sequence_number = request.session_sequence_number;
-                    let session_type = request.session_type;
-                    let status = SessionStatus::Active {
-                        public_input,
-                        private_input,
-                        request,
+        for parked_request in parked {
+            let request = match parked_request {
+                ParkedInternalPresignRequest::Request(request) => *request,
+                ParkedInternalPresignRequest::AwaitingKeyIdentity {
+                    session_sequence_number,
+                    dwallet_network_encryption_key_id,
+                    curve,
+                    signature_algorithm,
+                } => {
+                    let Some(network_key_identity_bytes) = self
+                        .internal_presign_network_key_identity_bytes(
+                            &dwallet_network_encryption_key_id,
+                        )
+                    else {
+                        // Identity still not derivable — keep it parked.
+                        self.internal_presign_requests_pending_for_network_key_data
+                            .push(ParkedInternalPresignRequest::AwaitingKeyIdentity {
+                                session_sequence_number,
+                                dwallet_network_encryption_key_id,
+                                curve,
+                                signature_algorithm,
+                            });
+                        continue;
                     };
-                    if let Some(session) = self.sessions.get_mut(&session_identifier) {
-                        // Peer messages arrived while parked and created the
-                        // session entry; upgrade it in place so the buffered
-                        // messages survive.
-                        session.status = status;
-                        session.set_request_metadata(session_sequence_number, session_type);
-                    } else {
-                        self.new_session(
-                            &session_identifier,
-                            status,
-                            None,
-                            SessionComputationType::MPC {
-                                messages_by_consensus_round: HashMap::new(),
-                            },
+                    // Build the request with the sequence number reserved at
+                    // instantiation time — the identifier comes out identical
+                    // to the one peers derived when they instantiated.
+                    DWalletSessionRequest::new_internal_presign(
+                        self.epoch_id,
+                        session_sequence_number,
+                        curve,
+                        signature_algorithm,
+                        dwallet_network_encryption_key_id,
+                        &network_key_identity_bytes,
+                    )
+                }
+            };
+
+            let session_identifier = request.session_identifier;
+            let session_sequence_number = request.session_sequence_number;
+            // Retry has no consensus-round context; 0 marks "activated on a
+            // service tick" in the debug log.
+            match self.try_activate_internal_presign_request(0, request) {
+                Ok(()) => {
+                    // Log only a real parked→active transition (not the
+                    // already-resolved drop or a terminal failure) — the
+                    // stall playbook pairs this line with the park line.
+                    if self
+                        .sessions
+                        .get(&session_identifier)
+                        .is_some_and(|session| {
+                            matches!(session.status, SessionStatus::Active { .. })
+                        })
+                    {
+                        info!(
+                            session_identifier=?session_identifier,
+                            ?session_sequence_number,
+                            "network key data arrived; activating parked internal presign session",
                         );
                     }
                 }
-                Err(e) if e.is_network_key_data_not_ready() => {
-                    // Still not ready — keep it parked.
+                Err(request) => {
+                    // Input still not constructible — keep it parked (silently:
+                    // this runs every service iteration).
                     self.internal_presign_requests_pending_for_network_key_data
-                        .push(request);
-                }
-                Err(e) => {
-                    error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
-                    self.new_session(
-                        &session_identifier,
-                        SessionStatus::Failed,
-                        None,
-                        SessionComputationType::MPC {
-                            messages_by_consensus_round: HashMap::new(),
-                        },
-                    );
+                        .push(ParkedInternalPresignRequest::Request(request));
                 }
             }
         }
