@@ -987,10 +987,12 @@ mod network_key_id_derivation_tool {
     use sui_types::base_types::ObjectID;
     use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
 
-    // (env, rpc, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml
+    // (env, rpcs, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml.
+    // rpcs: canonical Mysten endpoint first, public fallback second — these
+    // are read-only tools and either endpoint can be temporarily down.
     type DeployedEnv<'a> = (
         &'a str,
-        &'a str,
+        &'a [&'a str],
         &'a str,
         &'a str,
         &'a str,
@@ -1002,7 +1004,10 @@ mod network_key_id_derivation_tool {
     const DEPLOYED_ENVS: &[DeployedEnv<'static>] = &[
         (
             "testnet",
-            "https://fullnode.testnet.sui.io:443",
+            &[
+                "https://fullnode.testnet.sui.io:443",
+                "https://sui-testnet-rpc.publicnode.com",
+            ],
             "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a",
             "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0",
             "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
@@ -1012,7 +1017,10 @@ mod network_key_id_derivation_tool {
         ),
         (
             "mainnet",
-            "https://fullnode.mainnet.sui.io:443",
+            &[
+                "https://fullnode.mainnet.sui.io:443",
+                "https://sui-rpc.publicnode.com",
+            ],
             "0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa",
             "0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175",
             "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
@@ -1036,15 +1044,38 @@ mod network_key_id_derivation_tool {
         )
     }
 
+    /// Tries each of the env's RPC endpoints in order; `None` (with a printed
+    /// reason) when none is reachable, so one downed endpoint doesn't sink
+    /// the other env's run.
+    async fn connect(env: &DeployedEnv<'_>) -> Option<SuiConnectorClient> {
+        let (name, rpcs, ..) = env;
+        for rpc in rpcs.iter().copied() {
+            match SuiConnectorClient::new(
+                rpc,
+                SuiClientMetrics::new_for_testing(),
+                ika_network_config(env),
+            )
+            .await
+            {
+                Ok(client) => {
+                    println!("CONNECT {name}: using {rpc}");
+                    return Some(client);
+                }
+                Err(e) => println!("CONNECT {name}: {rpc} failed: {e}"),
+            }
+        }
+        println!("SKIP {name}: no RPC endpoint reachable");
+        None
+    }
+
     #[ignore = "real-network tool; run manually to derive deployed NetworkKeyIds"]
     #[tokio::test]
     async fn print_deployed_network_key_ids() {
         for env in DEPLOYED_ENVS {
-            let (name, rpc, ..) = env;
-            let config = ika_network_config(env);
-            let client = SuiConnectorClient::new(rpc, SuiClientMetrics::new_for_testing(), config)
-                .await
-                .unwrap();
+            let (name, ..) = env;
+            let Some(client) = connect(env).await else {
+                continue;
+            };
             let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
             let DWalletCoordinatorInner::V1(inner) = &coordinator_inner;
             let epoch = inner.current_epoch;
@@ -1099,11 +1130,10 @@ mod network_key_id_derivation_tool {
     #[tokio::test]
     async fn decode_deployed_network_key_bytes() {
         for env in DEPLOYED_ENVS {
-            let (name, rpc, ..) = env;
-            let config = ika_network_config(env);
-            let client = SuiConnectorClient::new(rpc, SuiClientMetrics::new_for_testing(), config)
-                .await
-                .unwrap();
+            let (name, ..) = env;
+            let Some(client) = connect(env).await else {
+                continue;
+            };
             let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
             let DWalletCoordinatorInner::V1(inner) = &coordinator_inner;
             let epoch = inner.current_epoch;
