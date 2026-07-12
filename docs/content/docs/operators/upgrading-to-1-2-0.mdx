@@ -1,0 +1,92 @@
+---
+id: upgrading-to-1-2-0
+title: Upgrading to 1.2.0
+description: Operator notes for upgrading an ika node from 1.1.8 to 1.2.0
+sidebar_position: 2
+sidebar_label: Upgrading to 1.2.0
+---
+
+# Upgrading from 1.1.8 to 1.2.0
+
+1.2.0 is a rolling binary upgrade: replace the binary/image and restart. No
+data migration, no config rewrite, and no protocol change at rollout — the
+network stays on protocol version 3; protocol version 4 activates later by
+validator vote and requires no operator action.
+
+Several operational surfaces did change. Read this before upgrading.
+
+## 1. The `ika-node` binary and image are gone — pick your role's binary
+
+`ika-node` was split into one binary (and one Docker image) per role:
+
+| Role      | Binary          | Image                                                                            |
+| --------- | --------------- | -------------------------------------------------------------------------------- |
+| Validator | `ika-validator` | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-validator`      |
+| Fullnode  | `ika-fullnode`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-fullnode`       |
+| Notifier  | `ika-notifier`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier`       |
+
+Image tags follow `{network}-v{version}`, e.g. `mainnet-v1.2.0`. Update every
+systemd unit, container spec, and pull reference — the `ika-node` name is no
+longer published.
+
+Each binary validates that your YAML matches its role and refuses to boot
+otherwise, with an error naming the mismatch. In particular, a **validator**
+config that still carries `notifier_client_key_pair` (from a combined
+1.1.8-era setup) will not start `ika-validator` — remove the key from the
+validator YAML and run the notifier as its own `ika-notifier` process.
+
+## 2. Config files keep working — with two sharp edges
+
+Old-style configs (a plain `sui-rpc-url`) are fully supported and keep using
+JSON-RPC for every role, exactly as on 1.1.8.
+
+- A YAML with **no** `sui-rpc-url` at all no longer silently defaults to
+  `http://127.0.0.1:9000` — the node refuses to boot. Make the URL explicit.
+- If you migrate a notifier or fullnode to the new `sui_data_source` config
+  shape, its endpoint must serve Sui **gRPC**. Do not change the config shape
+  as part of this upgrade; upgrade in place first.
+
+## 3. Every Prometheus metric was renamed — dashboards and alerts will go dark
+
+All metrics now carry the `ika_` prefix. Any dashboard, alert rule, or
+recording rule keyed on an old name stops matching the moment the new binary
+starts.
+
+- General rule: `NAME` → `ika_NAME` (e.g. `dwallet_mpc_session_state_count` →
+  `ika_dwallet_mpc_session_state_count`).
+- Consensus internals (the forked Mysticeti layer) are now namespaced
+  `ika_consensus_*`.
+- Roughly 85 dead metrics that never reported real values were deleted
+  outright — if an alert was keyed on one of them, it was never doing
+  anything.
+
+The complete old→new mapping is the rename commit itself:
+[`c34f9a3d07`](https://github.com/dwallet-labs/ika/commit/c34f9a3d07).
+Update your dashboards in the same maintenance window as the binary swap, or
+you will be blind while the fleet restarts.
+
+## 4. Memory allocator changed to jemalloc
+
+Node binaries are now built with jemalloc as the global allocator. Expect a
+different RSS profile after the upgrade (typically flatter, with background
+purging). Remove any `LD_PRELOAD` jemalloc workarounds from your unit files —
+they are no longer needed.
+
+## 5. Downloading raw binaries? `chmod +x`
+
+Binaries fetched individually from the GCP artifact registry are plain files
+and arrive without the executable bit — `chmod +x` after download. The
+release tarballs, Homebrew, and Docker images carry correct permissions.
+
+## 6. Validator hardware check unchanged where it matters
+
+Mainnet and testnet **validators** still enforce the 16-core minimum at boot.
+The check no longer fires for fullnodes, notifiers, or dev/local networks.
+
+## 7. During the rolling window
+
+Consensus is compatible between 1.1.8 and 1.2.0 peers, but MPC signing
+sessions do not make progress across mixed-version committees — expect
+signing to pause until enough stake has upgraded. Coordinate the fleet
+upgrade so the mixed window stays short (minutes, not hours), and upgrade
+promptly when the rollout is announced.
