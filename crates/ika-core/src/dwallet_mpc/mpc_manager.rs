@@ -320,9 +320,13 @@ pub(crate) struct DWalletMPCManager {
     /// cert-gated and not round-uniform) would shift every other pool's
     /// sequence numbers, so the session identifiers — bound to the sequence
     /// number — diverge and never reach quorum. Per-pool counters make each
-    /// pool's stream a pure function of that pool's own consensus-agreed
-    /// inputs: a late-adopted key simply starts fresh at 1 whenever it
-    /// starts, identically on every validator.
+    /// pool's ordinal stream start-time-invariant: a late-adopted key simply
+    /// starts fresh at 1 whenever it starts, identically on every validator —
+    /// PROVIDED the start skew stays under one batch lifecycle. A validator
+    /// entering a pool only after a full batch quorum-completed elsewhere
+    /// (mid-epoch restart, very late install) is permanently ordinal-offset
+    /// for that pool; see the top-up loop comment for the scope and the
+    /// tracked fast-forward heal.
     pub(crate) next_internal_presign_sequence_number:
         HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
@@ -1060,7 +1064,7 @@ impl DWalletMPCManager {
             }
         }
         let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
-        let mut deferred_unmapped_cert_key = false;
+        let mut deferred_unmapped_key = false;
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
@@ -1101,31 +1105,37 @@ impl DWalletMPCManager {
                 }
             }
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
-            // The cert is keyed by the content-derived NetworkKeyId; translate
-            // this overlay key's ObjectID via the temporary map. An unmapped
-            // key is ambiguous: a brand-new key the prior epoch's cert never
-            // references (genuinely not-pinned), or a key this validator
-            // simply never instantiated — the mapping registers at
-            // instantiation, instantiation needs adoption, and adoption
-            // needs the mapping to see the cert's digests. A joiner
-            // consuming the cert lands in exactly that cycle: treating its
-            // key as "not pinned" either adopts parameters the committee
-            // never agreed to (initial-DKG branch) or wedges forever on a
-            // phantom digest mismatch (reconfigured branch). When the cert
-            // references any key, break the cycle: derive this key's
-            // NetworkKeyId from the locally-held blobs on the rayon pool
-            // (an expensive class-groups computation) and defer adoption
-            // until the background derivation registers the mapping.
+            // Adoption is what upholds the invariant the rest of the manager
+            // builds on: EVERY adopted key has a resolvable content-derived
+            // `NetworkKeyId` (the cert digests, the internal-presign per-pool
+            // counters, and the session identifiers all key by it). An
+            // unmapped key therefore defers on EVERY adoption branch — not
+            // only when the cert references keys. The cert-referenced case is
+            // additionally a correctness cycle: the mapping registers at
+            // instantiation, instantiation needs adoption, and adoption needs
+            // the mapping to see the cert's digests — a joiner consuming the
+            // cert lands exactly there, and treating its key as "not pinned"
+            // either adopts parameters the committee never agreed to
+            // (initial-DKG branch) or wedges forever on a phantom digest
+            // mismatch (reconfigured branch). The cert-less case (v3, the
+            // v3→v4 boundary, a fresh key before any cert pins it) would
+            // otherwise adopt an unresolvable key and make the top-up loop's
+            // should-never-happen skip fire routinely on fresh networks.
+            // Break the cycle the same way in both cases: derive this key's
+            // NetworkKeyId from the locally-held blobs on the rayon pool (an
+            // expensive class-groups computation) and defer adoption until
+            // the background derivation registers the mapping. (Deployed
+            // mainnet/testnet keys are seeded into the mapping as constants
+            // and never defer; a fresh DKG registers at output processing on
+            // every validator, so this defer is rare and short.)
             let network_key_id = crate::network_key_id_mapping::network_key_id_for(key_id);
-            if network_key_id.is_none()
-                && (!dkg_digests.is_empty() || !reconfiguration_digests.is_empty())
-            {
+            if network_key_id.is_none() {
                 if self.network_key_id_derivations_spawned.insert(*key_id) {
                     info!(
                         ?key_id,
-                        "handoff cert references network keys but this key's ObjectID has \
-                         no NetworkKeyId mapping (not seeded, never instantiated here) — \
-                         deriving it from the locally-held key data in the background"
+                        "adopting a network key whose ObjectID has no NetworkKeyId mapping \
+                         (not seeded, never instantiated here) — deferring adoption and \
+                         deriving the id from the locally-held key data in the background"
                     );
                     spawn_network_key_id_registration(
                         *key_id,
@@ -1133,7 +1143,7 @@ impl DWalletMPCManager {
                         data.current_reconfiguration_public_output.clone(),
                     );
                 }
-                deferred_unmapped_cert_key = true;
+                deferred_unmapped_key = true;
                 continue;
             }
             let cert_dkg_digest = network_key_id.as_ref().and_then(|id| dkg_digests.get(id));
@@ -1377,7 +1387,7 @@ impl DWalletMPCManager {
         // gains an entry) — memoizing would make the deferral permanent.
         // Skip the memo so the pass re-runs every tick until the mapping
         // resolves.
-        if deferred_unmapped_cert_key {
+        if deferred_unmapped_key {
             return;
         }
         self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
@@ -1687,9 +1697,19 @@ impl DWalletMPCManager {
         // counters are now PER (key, curve, algorithm) pool (not a single shared
         // counter consumed in iteration order), so a pool's sequence stream no
         // longer depends on when other keys are adopted or the iteration order.
-        // Each pool's stream is a pure function of that pool's own consensus-
-        // agreed inputs, so a key adopted at a different round on different
-        // validators still derives identical session identifiers for its pool.
+        // Per-pool ordinals are START-TIME-INVARIANT: a key adopted at a
+        // different round on different validators still derives identical
+        // session identifiers for its pool, as long as the skew stays under
+        // one batch lifecycle. A validator whose first top-up of a pool lags
+        // past a full batch's quorum completion (mid-epoch restart replaying
+        // rounds before adoption lands, a very late install) starts its
+        // ordinal stream offset from its peers' and never converges — it sits
+        // out that pool's live sessions for the rest of the epoch (peers'
+        // quorum keeps the pool serving; the loss is this validator's
+        // redundancy). The heal — fast-forwarding the pool counter from the
+        // completed sequence numbers observed in consensus outputs — is
+        // tracked as follow-up work; the same exposure existed with the old
+        // shared counter, with cross-pool blast radius on top.
         let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
@@ -1873,13 +1893,17 @@ impl DWalletMPCManager {
         &self,
         dwallet_network_encryption_key_id: &ObjectID,
     ) -> Option<NetworkKeyId> {
-        match self
-            .network_keys
+        // Installed data first; on either "not installed" OR a (deterministic,
+        // committee-uniform) derivation failure from the installed data, fall
+        // through to the mapping — the doc contract is "installed data when
+        // available, ELSE the mapping", and the mapping entry (seeded,
+        // registered at DKG output processing, or background-derived) is the
+        // same identity the installed data would derive.
+        self.network_keys
             .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)
-        {
-            Ok(key_data) => key_data.network_key_id().ok(),
-            Err(_) => network_key_id_for(dwallet_network_encryption_key_id),
-        }
+            .ok()
+            .and_then(|key_data| key_data.network_key_id().ok())
+            .or_else(|| network_key_id_for(dwallet_network_encryption_key_id))
     }
 
     fn instantiate_internal_presign_session(

@@ -464,15 +464,17 @@ async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
 /// sequence/guard counters and the session identifier both key by the
 /// content-derived `NetworkKeyId`, and the top-up loop treats an adopted
 /// key that does not resolve as a should-never-happen skip — so adoption
-/// (`adopt_cert_verified_keys`) must never admit an unmapped key while a
-/// prior-epoch cert references keys: it defers until the background
-/// derivation registers the `ObjectID → NetworkKeyId` mapping.
+/// (`adopt_cert_verified_keys`) must never admit an unmapped key on ANY
+/// adoption branch (cert-anchored or cert-less): it defers until the
+/// background derivation registers the `ObjectID → NetworkKeyId` mapping.
 ///
-/// Drives the REAL adoption path with a cert pinning two keys — one
-/// mapped, one not — and asserts the invariant over the whole adopted set
-/// after every pass. (The cert-less v3→v4-boundary adoption path is
-/// outside this gate by design: the keys crossing that boundary are the
-/// deployed ones, seeded into the mapping as constants.)
+/// Drives the REAL adoption path in two phases and asserts the invariant
+/// over the whole adopted set after every pass:
+/// 1. cert-anchored — a cert pins two keys, one mapped, one not;
+/// 2. cert-less (the v3/v3→v4-boundary path) — no cert at all, a fresh
+///    unmapped key must STILL defer (pre-fix it was blindly adopted, so on
+///    any fresh network's first v4 epoch the top-up loop's
+///    should-never-happen skip fired routinely).
 #[tokio::test]
 async fn adopted_keys_always_resolve_a_network_key_id() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
@@ -614,4 +616,56 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
         "registration must let the deferred key be adopted on the next pass"
     );
     assert_all_adopted_resolve(manager, "after the registration pass");
+
+    // === Phase 2: the CERT-LESS adoption branch (v3 / v3→v4 boundary) ===
+    // Remove the cert entirely: a fresh unmapped key arriving through the
+    // cert-less path must be deferred exactly like the cert-anchored case —
+    // pre-fix this branch blindly adopted it, violating the invariant on any
+    // fresh network's first v4 epoch.
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .remove(&prior_epoch);
+    let certless_key_id = ObjectID::random();
+    let certless_network_key_id = NetworkKeyId([0x63; 32]);
+    let certless_dkg_output = b"certless key network dkg public output".to_vec();
+    let certless_reconfiguration_output = b"certless key reconfiguration public output".to_vec();
+    let certless_overlay = Arc::new(HashMap::from([(
+        certless_key_id,
+        network_key_data(
+            certless_key_id,
+            epoch_id,
+            certless_dkg_output.clone(),
+            certless_reconfiguration_output.clone(),
+        ),
+    )]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&certless_overlay);
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&certless_key_id),
+        "an unmapped key must be deferred on the CERT-LESS adoption branch too"
+    );
+    assert!(
+        manager
+            .network_key_id_derivations_spawned
+            .contains(&certless_key_id),
+        "the background NetworkKeyId derivation must be spawned for the cert-less unmapped key"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less deferral pass");
+
+    // Registration unwedges the cert-less branch the same way.
+    crate::network_key_id_mapping::register(certless_key_id, certless_network_key_id);
+    manager.adopt_cert_verified_keys(&certless_overlay);
+    assert!(
+        manager
+            .adopted_network_key_data
+            .contains_key(&certless_key_id),
+        "registration must let the cert-less deferred key be adopted on the next pass"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less registration pass");
 }
