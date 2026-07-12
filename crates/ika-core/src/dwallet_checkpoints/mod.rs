@@ -431,6 +431,12 @@ impl DWalletCheckpointBuilder {
         max_dwallet_checkpoint_size_bytes: usize,
         previous_epoch_last_checkpoint_sequence_number: u64,
     ) -> Self {
+        // The per-session-seq gauge lives in the process-global registry, and
+        // nothing removes label values once set — one series per user session
+        // for the process lifetime. The builder is constructed once per
+        // epoch, so resetting here bounds the label set to the current
+        // epoch's sessions.
+        metrics.user_session_written_at_seq.reset();
         Self {
             tables,
             epoch_store,

@@ -328,6 +328,16 @@ pub(crate) struct DWalletMPCManager {
     /// sessions that have left `self.sessions` so dashboards don't read a
     /// stale "this session is still in state X" forever.
     previously_emitted_user_session_seqs: HashSet<u64>,
+    /// User-session sequence numbers whose terminal (Completed/Failed) state
+    /// has already been emitted to the per-seq gauges. Terminal sessions stay
+    /// in `self.sessions` until epoch end; without this set every refresh
+    /// would re-emit the epoch's whole cumulative session history instead of
+    /// only in-flight sessions.
+    finalized_emitted_user_session_seqs: HashSet<u64>,
+    /// When the observability gauges were last refreshed; refreshes are
+    /// rate-limited because the service loop ticks every ~20ms and the
+    /// refresh iterates every tracked session.
+    last_observability_refresh: Option<Instant>,
 
     /// NOA finalization observation votes: tx_ref → set of party IDs that observed finalization.
     noa_finalization_observations: HashMap<NOACheckpointTxRef, HashSet<PartyID>>,
@@ -509,6 +519,8 @@ impl DWalletMPCManager {
             sui_chain_observations_by_party: HashMap::new(),
             agreed_sui_chain_context: None,
             previously_emitted_user_session_seqs: HashSet::new(),
+            finalized_emitted_user_session_seqs: HashSet::new(),
+            last_observability_refresh: None,
             noa_finalization_observations: HashMap::new(),
             noa_failure_observations: HashMap::new(),
             finalized_tx_refs: HashSet::new(),
@@ -3140,14 +3152,26 @@ impl DWalletMPCManager {
     /// for empty buckets/states) is what clears stale values when sessions
     /// move between buckets or leave the map.
     pub(crate) fn refresh_observability_metrics(&mut self) {
-        let metrics = &self.dwallet_mpc_metrics;
         let now = Instant::now();
+        // The service loop calls this every iteration (~20ms); gauges don't
+        // need that cadence, and the refresh scans every session tracked this
+        // epoch — rate-limit it off the hot path.
+        if self
+            .last_observability_refresh
+            .is_some_and(|last| now.duration_since(last) < OBSERVABILITY_REFRESH_INTERVAL)
+        {
+            return;
+        }
+        self.last_observability_refresh = Some(now);
+
+        let metrics = &self.dwallet_mpc_metrics;
 
         // ----- session-state counts + Active-session age buckets -----
         // Only Active sessions get an age: Completed/Failed entries stay in
         // the map until epoch end and don't represent in-flight work.
         let mut state_counts: HashMap<&str, i64> = HashMap::new();
         let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
+        let mut sessions_with_self_output_no_quorum = 0i64;
         for session in self.sessions.values() {
             *state_counts
                 .entry(session_state_label(&session.status))
@@ -3161,6 +3185,15 @@ impl DWalletMPCManager {
                 *age_bucket_counts
                     .entry((session_type_label(request.session_type), age_bucket))
                     .or_default() += 1;
+            }
+            // "We did our part, the network didn't" — the single most useful
+            // gauge for "are we stuck waiting on quorum from peers".
+            if session.session_sequence_number.is_some()
+                && matches!(session.session_type, Some(SessionType::User))
+                && session.self_output_consensus_round.is_some()
+                && session.quorum_consensus_round.is_none()
+            {
+                sessions_with_self_output_no_quorum += 1;
             }
         }
         for state in ALL_SESSION_STATES.iter().copied() {
@@ -3213,10 +3246,12 @@ impl DWalletMPCManager {
         }
 
         // ----- per-user-session series, labeled by sequence number -----
-        // Cardinality bound: max_active_sessions_buffer sessions × 5 states
-        // (plus × committee size for the output-received-from matrix).
+        // Registry cardinality grows with the epoch's user-session count (the
+        // sessions map is only dropped at epoch end), but per-refresh WORK is
+        // bounded by in-flight sessions: a terminal (Completed/Failed)
+        // session gets one final emission recording its terminal state and is
+        // skipped afterwards, its series frozen at those values.
         let mut current_seqs = HashSet::new();
-        let mut sessions_with_self_output_no_quorum = 0i64;
         for session in self.sessions.values() {
             let (Some(session_sequence_number), Some(SessionType::User)) =
                 (session.session_sequence_number, session.session_type)
@@ -3226,6 +3261,28 @@ impl DWalletMPCManager {
                 // exposed once the request arrives).
                 continue;
             };
+
+            let terminal = matches!(
+                session.status,
+                SessionStatus::Completed | SessionStatus::Failed
+            );
+            if terminal {
+                if !self
+                    .finalized_emitted_user_session_seqs
+                    .insert(session_sequence_number)
+                {
+                    // Final values already emitted. Keep the seq in
+                    // current_seqs so the stale-zeroing block below doesn't
+                    // wipe the terminal record while the session is tracked.
+                    current_seqs.insert(session_sequence_number);
+                    continue;
+                }
+            } else {
+                // A session observed non-terminal must be re-armed for a
+                // final emission if it ever terminates.
+                self.finalized_emitted_user_session_seqs
+                    .remove(&session_sequence_number);
+            }
 
             let seq_label = session_sequence_number.to_string();
             let current_state = session_state_label(&session.status);
@@ -3287,14 +3344,6 @@ impl DWalletMPCManager {
                     .set(received as i64);
             }
 
-            // "We did our part, the network didn't" — the single most useful
-            // gauge for "are we stuck waiting on quorum from peers".
-            if session.self_output_consensus_round.is_some()
-                && session.quorum_consensus_round.is_none()
-            {
-                sessions_with_self_output_no_quorum += 1;
-            }
-
             current_seqs.insert(session_sequence_number);
         }
         metrics
@@ -3350,6 +3399,10 @@ impl DWalletMPCManager {
         self.previously_emitted_user_session_seqs = current_seqs;
     }
 }
+
+/// Minimum interval between observability-gauge refreshes; the caller (the
+/// dwallet MPC service loop) ticks every ~20ms, far faster than gauges need.
+const OBSERVABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 fn session_state_label(status: &SessionStatus) -> &'static str {
     match status {

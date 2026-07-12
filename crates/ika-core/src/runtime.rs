@@ -41,10 +41,32 @@ fn should_enforce_minimum_cpu(
         && matches!(ika_chain, Chain::Mainnet | Chain::Testnet)
 }
 
+/// A binary compiled with the INSECURE `dwallet-mpc-unsafe-mock` feature
+/// (deterministic mock crypto for fast tests) must never join a real
+/// network, regardless of role: mocked MPC neither interoperates with real
+/// validators nor produces real signatures. Derived from the deployed ika
+/// system object's `ChainIdentifier`, same as the minimum-CPU gate above.
+fn mock_crypto_forbidden_on(ika_chain: Chain) -> bool {
+    matches!(ika_chain, Chain::Mainnet | Chain::Testnet)
+}
+
 impl IkaRuntimes {
     pub fn new(config: &NodeConfig, node_mode: NodeMode) -> Self {
         let ika_chain =
             ChainIdentifier::from(config.sui_connector_config.ika_system_object_id).chain();
+        if cfg!(feature = "dwallet-mpc-unsafe-mock") {
+            assert!(
+                !mock_crypto_forbidden_on(ika_chain),
+                "this binary was built with dwallet-mpc-unsafe-mock (INSECURE deterministic \
+                 mock crypto for tests) and refuses to run against the ika {ika_chain:?} network"
+            );
+            // Loud, grep-able marker so a mocked binary can never be mistaken
+            // for a real-crypto one in logs or test evidence.
+            error!(
+                insecure_mock_crypto = true,
+                "running with dwallet-mpc-unsafe-mock: all dwallet MPC crypto is MOCKED and INSECURE — test builds only"
+            );
+        }
         let enforce =
             should_enforce_minimum_cpu(cfg!(feature = "enforce-minimum-cpu"), node_mode, ika_chain);
         let _ = ENFORCE_MINIMUM_CPU.set(enforce);
@@ -138,5 +160,15 @@ mod tests {
             ChainIdentifier::from(ObjectID::ZERO).chain(),
             Chain::Unknown
         );
+    }
+
+    #[test]
+    fn mock_crypto_forbidden_exactly_on_real_networks() {
+        for chain in [Chain::Mainnet, Chain::Testnet] {
+            assert!(mock_crypto_forbidden_on(chain));
+        }
+        for chain in [Chain::Devnet, Chain::Unknown] {
+            assert!(!mock_crypto_forbidden_on(chain));
+        }
     }
 }

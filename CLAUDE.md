@@ -148,8 +148,13 @@ here. The rules below are the ones lints can't check:
 
 ```bash
 # Rust tests - MUST use release mode for crypto
+# WARNING: workspace scope (no -p) runs MOCKED crypto — ika-test-cluster's
+# self-dev-dependency enables dwallet-mpc-unsafe-mock and cargo feature
+# unification spreads it to ika-core's own tests in the same invocation
+# (verify: cargo tree -f "{p} {f}" -p dwallet-mpc-types --workspace).
+# Real-crypto evidence requires package scope, e.g. -p ika-core.
 cargo test --release
-cargo test --release -p ika-core           # Single crate
+cargo test --release -p ika-core           # Single crate (real crypto)
 cargo test --release -- --test-threads=1   # Sequential execution
 
 # Integration tests — CPU-bound (real class-groups MPC). Heavy MPC tests
