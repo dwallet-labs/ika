@@ -115,33 +115,41 @@ against the active committee directly.
   stale-batch expiry. Any other input-construction error stays terminal.
 - **Per-pool sequence counters (multi-key epochs).** The internal-presign
   session sequence number, the instantiated/completed guard counters, and the
-  stale-batch-instantiated round are keyed per `(network_key, curve,
+  stale-batch-instantiated round are keyed per `(NetworkKeyId, curve,
   signature_algorithm)` POOL — not a single counter shared across all keys.
-  A single shared counter would couple every pool's stream: because key
-  ADOPTION completes at a different consensus round on different validators
-  (adoption is cert-gated, not round-uniform), a key adopted earlier on one
-  validator would shift every other pool's sequence numbers, diverging the
-  session identifiers (which bind the sequence number). Per-pool counters make
-  each pool's stream a pure function of that pool's own consensus-agreed
+  The key axis is the key's content-derived `NetworkKeyId` (its flip-invariant
+  curve25519 NOA public key), which is the SAME identity bound into the session
+  identifier, so the counter and the identifier can never diverge onto
+  different key axes. A single shared counter would couple every pool's stream:
+  because key ADOPTION completes at a different consensus round on different
+  validators (adoption is cert-gated, not round-uniform), a key adopted earlier
+  on one validator would shift every other pool's sequence numbers, diverging
+  the session identifiers (which bind the sequence number). Per-pool counters
+  make each pool's stream a pure function of that pool's own consensus-agreed
   inputs: a late-adopted key simply starts its own pool's stream fresh at 1
   whenever it starts, identically on every validator, without perturbing any
   other pool.
 - **Deferred instantiation for a not-yet-installed key.** The top-up loop
   iterates every ADOPTED key, but installation into `network_keys` completes
-  asynchronously per validator, and the session identifier binds the key's
-  content-derived `NetworkKeyId`. A validator whose key is adopted but not
-  installed derives the identity from the pre-instantiation
-  `ObjectID → NetworkKeyId` mapping and parks the built request on the input's
-  not-ready error; when even the mapping has no entry (a fresh key with no
-  handoff-cert pin), it parks an `AwaitingKeyIdentity` record carrying the
-  RESERVED sequence number and builds the request at retry time. In every case
-  the sequence number is consumed FROM THAT POOL'S counter — skipping a top-up
-  that peers perform would desynchronize that pool's counter and, with it,
-  every subsequent identifier in that pool. Relatedly, the NOA-signing-key
-  choice (oldest key by `dkg_at_epoch`) is made over the ADOPTED set (not the
-  wall-clock-installed set) and tie-breaks equal `dkg_at_epoch` by key id, so
-  every validator picks the same NOA key and applies the same pool configs
-  regardless of install timing.
+  asynchronously per validator. Because the counters and the session identifier
+  both key by the `NetworkKeyId`, the loop resolves it ONCE per key before
+  touching either — from the installed key data when present, else from the
+  pre-instantiation `ObjectID → NetworkKeyId` mapping (seeded deployed keys,
+  handoff-cert background derivation, an earlier install's registration). An
+  adopted key ALWAYS resolves: adoption (`adopt_cert_verified_keys`) defers a
+  key that has no mapping, so a `None` here is a should-never-happen and the
+  loop SKIPS that key for the iteration rather than falling back to a divergent
+  identity axis — it does not park or fail it. A validator whose key is adopted
+  and resolvable but not yet installed builds the request normally (identity
+  from the mapping), consumes the sequence number from that pool's counter, and
+  parks the BUILT request on the input's not-ready error; the sequence number
+  is consumed regardless, since skipping a top-up that peers perform would
+  desynchronize that pool's counter and, with it, every subsequent identifier
+  in that pool. Relatedly, the NOA-signing-key choice (oldest key by
+  `dkg_at_epoch`) is made over the ADOPTED set (not the wall-clock-installed
+  set) and tie-breaks equal `dkg_at_epoch` by key id, so every validator picks
+  the same NOA key and applies the same pool configs regardless of install
+  timing.
 
 ## Invariants
 
