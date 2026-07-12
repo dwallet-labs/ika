@@ -229,8 +229,15 @@ pub trait SystemInnerTrait {
     /// whose `protocol_pubkey` bytes don't parse into an `AuthorityName`.
     /// For the PRIOR-committee bootstrap anchor only, where a departed member
     /// may carry a stale/unreadable on-chain record and one bad member must
-    /// not abort the whole read. Active/next-committee reads use the strict
-    /// [`read_bls_committee`], where an unparseable member is a chain fault.
+    /// not crash-loop the reading node. NOTE the consequence of a skip: the
+    /// member is absent from the built committee's `voting_rights`, and
+    /// handoff-cert verification HARD-REJECTS any certificate carrying a
+    /// weight-0 signer's signature — certs that include the skipped member's
+    /// signature fail verification outright (surfacing as `Rejected`); they
+    /// do not gracefully lose one member's stake. Callers must log the skip
+    /// so that outcome is attributable. Active/next-committee reads use the
+    /// strict [`read_bls_committee`], where an unparseable member is a chain
+    /// fault.
     fn read_bls_committee_lossy(
         &self,
         committee: &BlsCommittee,
