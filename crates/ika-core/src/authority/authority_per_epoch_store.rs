@@ -2390,6 +2390,12 @@ impl AuthorityPerEpochStore {
         let committee = self.committee();
         let tables = self.tables()?;
         let mut replayed_signatures: usize = 0;
+        // Rows that endorse a superseded attestation are dropped from the
+        // aggregator AND deleted from the table below. The close-gate quorum
+        // sum (`handoff_signatures_meet_quorum`) reads the TABLE, not the
+        // aggregator, so leaving stale rows behind would let a re-install
+        // that changed the attestation still count the old endorsements.
+        let mut stale_signers: Vec<AuthorityName> = Vec::new();
         for entry in tables.handoff_signatures.safe_iter() {
             let (signer, signature) = entry?;
             let msg = ika_types::handoff::HandoffSignatureMessage {
@@ -2406,10 +2412,27 @@ impl AuthorityPerEpochStore {
                     "persisted handoff signature no longer verifies against the \
                      installed attestation — dropping on replay"
                 );
+                stale_signers.push(signer);
                 continue;
             }
             aggregator.insert_verified(signer, signature);
             replayed_signatures += 1;
+        }
+        // Atomically delete the superseded rows so the table matches the
+        // installed attestation (single write batch — no half-deleted state).
+        // Done after the aggregator is fully built, so a delete failure
+        // surfaces as an error without having touched the correct in-memory
+        // aggregator. Idempotent: a crash before the write leaves the rows to
+        // be re-identified and re-deleted on the next install.
+        if !stale_signers.is_empty() {
+            let mut batch = tables.handoff_signatures.batch();
+            batch.delete_batch(&tables.handoff_signatures, stale_signers.iter())?;
+            batch.write()?;
+            info!(
+                epoch = attestation.epoch,
+                dropped = stale_signers.len(),
+                "deleted superseded handoff signature rows on attestation re-install"
+            );
         }
         let aggregator_signer_count = aggregator.signer_count();
         let aggregator_stake = aggregator.accumulated_stake();
@@ -5725,6 +5748,102 @@ mod tests {
                 .is_some(),
             "#1736: install_expected_handoff_attestation must persist the cert it \
              mints during signature replay (pre-fix it stayed in memory only)"
+        );
+    }
+
+    /// V9b: re-installing a DIFFERENT attestation must delete the signature
+    /// rows that endorsed the superseded one from the TABLE — not only from
+    /// the in-memory aggregator — because the deferred-close quorum gate
+    /// (`handoff_signatures_meet_quorum`) sums the table. Pre-fix the stale
+    /// rows survived and the gate could count old endorsements.
+    #[tokio::test]
+    async fn install_reinstall_drops_stale_rows_from_table_and_gate() {
+        let (base_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let names: Vec<AuthorityName> = base_committee.names().copied().collect();
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let consensus_keys: HashMap<_, _> = names
+            .iter()
+            .copied()
+            .zip(consensus_keypairs.iter().map(|kp| kp.public().clone()))
+            .collect();
+        let committee = Arc::new(Committee::new(
+            base_committee.epoch,
+            base_committee.voting_rights.clone(),
+            HashMap::new(),
+            consensus_keys,
+            base_committee.quorum_threshold,
+            base_committee.validity_threshold,
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        let epoch = 0u64;
+        // Attestation A and a DIFFERENT attestation B (distinct next-committee
+        // hash), so signatures over A do not verify against B.
+        let attestation_a = build_handoff_attestation(epoch, [0xAAu8; 32], vec![]).unwrap();
+        let attestation_b = build_handoff_attestation(epoch, [0xBBu8; 32], vec![]).unwrap();
+
+        // A sub-quorum (2 of 4) of A-endorsing rows land in the table.
+        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(2) {
+            let message = sign_handoff_attestation(attestation_a.clone(), *name, keypair);
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &message.signature)
+                .unwrap();
+        }
+        epoch_store
+            .install_expected_handoff_attestation(attestation_a)
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            2,
+            "the two A-endorsing rows are present after installing A"
+        );
+
+        // Re-install B: the A-endorsing rows no longer verify and must be
+        // deleted from the table (and the gate must not count them).
+        epoch_store
+            .install_expected_handoff_attestation(attestation_b)
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            0,
+            "stale A-endorsing rows must be deleted from the table on re-install to B"
+        );
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "the close gate must not count the superseded rows"
         );
     }
 
