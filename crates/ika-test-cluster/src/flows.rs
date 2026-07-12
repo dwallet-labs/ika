@@ -17,6 +17,7 @@ use anyhow::{Context, Result, anyhow};
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, create_imported_dwallet_centralized_step_inner_v2,
     encrypt_secret_key_share_and_prove_v2, network_dkg_public_output_to_protocol_pp_inner,
+    sample_dwallet_keypair_inner,
 };
 use fastcrypto::traits::Signer as _;
 use ika_sui_client::ika_dwallet_transactions::{
@@ -570,22 +571,30 @@ impl IkaTestCluster {
         self.wait_for_sign_session(&response, timeout).await
     }
 
-    /// Creates an imported-key dwallet from `secret_key` material,
-    /// waits for network verification, and accepts the encrypted share
-    /// (signing the on-chain public output with the user's Ed25519 key) —
-    /// after which the dwallet is Active and signable.
+    /// Creates an imported-key dwallet from a freshly sampled secp256k1
+    /// keypair, waits for network verification, and accepts the encrypted
+    /// share (signing the on-chain public output with the user's Ed25519
+    /// key) — after which the dwallet is Active and signable. The secret
+    /// is sampled internally because the centralized step consumes a
+    /// BCS-encoded curve scalar, and `sample_dwallet_keypair_inner` is the
+    /// only sampler with that encoding (secp256k1-only, hence the guard).
     pub async fn import_key_dwallet(
         &mut self,
         network_key_id: ObjectID,
         network_dkg_public_output: Vec<u8>,
         user_key: &UserEncryptionKey,
-        secret_key: &[u8],
         timeout: std::time::Duration,
     ) -> Result<ImportedKeyHandle> {
         let curve = user_key.curve;
+        anyhow::ensure!(
+            curve == 0,
+            "import_key_dwallet samples secp256k1 keys only (curve 0), got curve {curve}"
+        );
         let protocol_pp =
             network_dkg_public_output_to_protocol_pp_inner(curve, network_dkg_public_output)
                 .map_err(|e| anyhow!("network_dkg_public_output_to_protocol_pp_inner: {e}"))?;
+        let (secret_key, _public_key) = sample_dwallet_keypair_inner(protocol_pp.clone())
+            .map_err(|e| anyhow!("sample_dwallet_keypair_inner: {e}"))?;
 
         let session_id_random_bytes: [u8; 32] = rand::random();
         let sender = self.publisher_address;
@@ -597,7 +606,7 @@ impl IkaTestCluster {
                 curve,
                 &protocol_pp,
                 &session_id,
-                secret_key,
+                &secret_key,
             )
             .map_err(|e| anyhow!("create_imported_dwallet_centralized_step_inner_v2: {e}"))?;
         let encrypted_secret_share = encrypt_secret_key_share_and_prove_v2(

@@ -114,7 +114,6 @@ async fn sim_user_flows_across_boundaries() {
             network_key_id,
             network_dkg_public_output.clone(),
             &owner_key,
-            &[0x33; 32],
             FLOW_TIMEOUT,
         )
         .await
