@@ -493,7 +493,7 @@ static POISON_VERSION_METHODS: AtomicBool = AtomicBool::new(false);
 // Use a thread local in sim tests for test isolation.
 #[cfg(msim)]
 thread_local! {
-    static POISON_VERSION_METHODS: AtomicBool = AtomicBool::new(false);
+    static POISON_VERSION_METHODS: AtomicBool = const { AtomicBool::new(false) };
 }
 
 /// Process-global switch, set by the local in-memory swarm / `ika start`, to

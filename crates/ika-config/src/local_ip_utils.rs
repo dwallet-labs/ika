@@ -15,6 +15,13 @@ pub struct SimAddressManager {
 }
 
 #[cfg(msim)]
+impl Default for SimAddressManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(msim)]
 impl SimAddressManager {
     pub fn new() -> Self {
         Self {

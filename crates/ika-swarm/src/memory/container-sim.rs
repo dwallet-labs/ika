@@ -29,7 +29,9 @@ impl Drop for Container {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             tracing::info!("shutting down {}", handle.node_id);
-            sui_simulator::runtime::Handle::try_current().map(|h| h.delete_node(handle.node_id));
+            if let Some(runtime) = sui_simulator::runtime::Handle::try_current() {
+                runtime.delete_node(handle.node_id);
+            }
         }
     }
 }
@@ -52,7 +54,7 @@ impl Container {
         let startup_sender = Arc::new(startup_sender);
         let node = builder
             .ip(ip)
-            .name(&format!("{:?}", config.protocol_public_key().concise()))
+            .name(format!("{:?}", config.protocol_public_key().concise()))
             .init(move || {
                 info!("Node restarted");
                 let config = config.clone();

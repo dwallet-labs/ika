@@ -96,8 +96,10 @@ jobs:
         # see dev-docs/conventions/sui-version-bump.md.
         run: ./scripts/check-sui-version-consistency.sh
 
+  # Runs on PRs AND pushes: clippy used to be push-to-main-only, which let a
+  # workspace-wide lint backlog accumulate invisibly (PRs merged unlinted and
+  # only the FIRST failing crate ever surfaced on main).
   clippy:
-    if: github.event_name == 'push'
     name: Clippy
     runs-on: ubuntu-latest
     steps:
@@ -117,6 +119,41 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # The msim compilation universe (`--cfg msim` + msim-patched tokio and the
+  # `[target.'cfg(msim)']` deps) is invisible to the regular clippy job above;
+  # without this pass, simtest-only code only fails at the next (manual or
+  # nightly) simtest run. `cargo simtest clippy` is the shim's clippy mode.
+  clippy-simtest:
+    name: Clippy (msim / simtest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # msim artifacts don't overlap with the normal CI cache (same
+          # prefix as the simtest workflow, which shares the dep graph).
+          prefix-key: "simtest"
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Install cargo-simtest shim
+        run: ./scripts/simtest/install.sh
+      - name: Run Clippy under msim
+        run: cargo simtest clippy --all-targets --all-features -- -D warnings
 
   cargo-check:
     name: Cargo Test Check
