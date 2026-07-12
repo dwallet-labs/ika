@@ -3282,23 +3282,52 @@ impl AuthorityPerEpochStore {
                 return Ok(());
             }
         }
-        // Surface byzantine-padding attempts. Placed AFTER the
-        // strict-superset gate so a byzantine signer re-submitting
-        // the same padded payload every consensus round doesn't
-        // log-flood: the gate drops the repeat above, so only the
-        // first padded payload (or a strictly-grown padded payload)
-        // makes it here. Honest emitters dedup + committee-filter
-        // before broadcast, so reaching this branch is a strong
-        // byzantine signal worth a `warn!` for operators.
-        if !diagnostics.non_committee_kept.is_empty() || diagnostics.duplicates_collapsed != 0 {
+        // Surface anomalies. Placed AFTER the strict-superset gate so a
+        // byzantine signer re-submitting the same payload every consensus
+        // round doesn't log-flood: the gate drops the repeat above, so only
+        // the first anomalous payload (or a strictly-grown one) makes it
+        // here. Two distinct signals, judged separately:
+        // - DUPLICATES are a genuine byzantine tell — honest emitters dedup
+        //   before broadcast — so they warn.
+        // - Non-committee names are NOT: honest emitters deliberately
+        //   include announced next-epoch JOINERS (zero current-epoch
+        //   weight), so a non-empty `non_committee_kept` is the expected
+        //   shape of every honest signal in a churn epoch. Only an
+        //   implausibly large kept set (more kept zero-weight names than
+        //   committee seats — no honest joiner population looks like that)
+        //   warns; the routine case logs at debug. Kept names are inert for
+        //   assembly unless a stake-quorum of signers attest them, but they
+        //   DO land in `epoch_excluded_validators` and the excluded gauge,
+        //   and each one holds the full-coverage fast path open (the freeze
+        //   then fires via the grace path) — bounded, deterministic, and
+        //   the price of keeping canonicalization a pure function of the
+        //   sequenced bytes.
+        if diagnostics.duplicates_collapsed != 0 {
             warn!(
                 signer = ?signal.authority,
                 duplicates_collapsed = diagnostics.duplicates_collapsed,
-                non_committee_kept = ?diagnostics.non_committee_kept,
-                "EpochMpcDataReadySignal padded with duplicates / non-committee \
-                 authorities — likely byzantine signer (non-committee peers are \
-                 kept but inert unless a stake-quorum of signers attest them)"
+                "EpochMpcDataReadySignal padded with duplicate names — likely \
+                 byzantine signer (honest emitters dedup before broadcast)"
             );
+        }
+        if !diagnostics.non_committee_kept.is_empty() {
+            if diagnostics.non_committee_kept.len() > committee.num_members() {
+                warn!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal carries more zero-weight names than \
+                     committee seats — likely byzantine padding (kept names are \
+                     inert for assembly but hold the full-coverage fast path open \
+                     until the freeze grace)"
+                );
+            } else {
+                debug!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal attests zero-weight names (expected \
+                     for announced next-epoch joiners)"
+                );
+            }
         }
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,

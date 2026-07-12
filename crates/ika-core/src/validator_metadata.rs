@@ -3322,6 +3322,86 @@ mod tests {
         );
     }
 
+    /// Full pipeline under the KEEP-zero-weight canonicalization:
+    /// canonicalize each inbound signal → tally the freeze partition →
+    /// carry forward stable mpc_data — with a joiner, a garbage name,
+    /// and a silent carried member all in play at once. This is the
+    /// population the determinism claim is about; the pure-helper tests
+    /// above each cover one stage in isolation.
+    ///
+    /// Committee: a, b, c, d (stake 1 each, quorum 3). d is silent this
+    /// epoch (restarting) but present in the prior cert. j is an
+    /// announced next-epoch joiner (zero current weight) attested by
+    /// all three live signers. g is a garbage name padded by ONE signer
+    /// only. Expected: a, b, c frozen at fresh hashes; j frozen at its
+    /// announced hash (quorum of signers attest it despite zero
+    /// weight); d frozen at its prior-cert digest via carry-forward;
+    /// g excluded (kept by canonicalization, never reaches quorum).
+    #[test]
+    fn canonicalize_tally_carry_forward_chain_keeps_joiner_and_carried_member() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let joiner = auth(0x1E);
+        let garbage = auth(0x6B);
+        let weight_of =
+            |peer: &AuthorityName| -> u64 { if [a, b, c, d].contains(peer) { 1 } else { 0 } };
+        let quorum = 3u64;
+        let cap = 16usize;
+
+        let honest_view = vec![
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (joiner, [0x77; 32]),
+        ];
+        let mut padded_view = honest_view.clone();
+        padded_view.push((garbage, [0x66; 32]));
+
+        // Canonicalize each signal exactly like the record path does.
+        let mut signals: BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> = BTreeMap::new();
+        for (signer, view) in [(a, &honest_view), (b, &honest_view), (c, &padded_view)] {
+            let (outcome, diagnostics) =
+                canonicalize_ready_signal_peers(view, weight_of, quorum, cap);
+            let CanonicalizeReadySignalOutcome::Accept { validated_peers } = outcome else {
+                panic!("honest signal with quorum coverage must canonicalize to Accept");
+            };
+            // Zero-weight names (joiner and, for c, the garbage pad) are
+            // KEPT in the canonical set.
+            assert!(
+                validated_peers.iter().any(|(peer, _)| *peer == joiner),
+                "the joiner must survive canonicalization"
+            );
+            assert!(!diagnostics.non_committee_kept.is_empty());
+            signals.insert(signer, validated_peers);
+        }
+
+        let attested = compute_freeze_partition(&signals, weight_of, quorum);
+        // Prior cert carries d (the silent continuing member) — and a for
+        // good measure, whose fresh attestation must win.
+        let prior: HashMap<_, _> = [(a, [0x99; 32]), (d, [0x44; 32])].into_iter().collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        let frozen_map: HashMap<AuthorityName, [u8; 32]> = partition.frozen.into_iter().collect();
+        assert_eq!(frozen_map.get(&a), Some(&[0x11; 32]), "fresh hash wins");
+        assert_eq!(frozen_map.get(&b), Some(&[0x22; 32]));
+        assert_eq!(frozen_map.get(&c), Some(&[0x33; 32]));
+        assert_eq!(
+            frozen_map.get(&joiner),
+            Some(&[0x77; 32]),
+            "a quorum-attested zero-weight joiner freezes at its announced hash"
+        );
+        assert_eq!(
+            frozen_map.get(&d),
+            Some(&[0x44; 32]),
+            "the silent continuing member freezes at its prior-cert digest"
+        );
+        assert_eq!(
+            partition.excluded,
+            vec![garbage],
+            "the kept-but-never-quorum garbage name is excluded, nothing else"
+        );
+    }
+
     /// Byzantine scenario: validator D serves bytes but they're
     /// malicious (don't decode to valid mpc_data). Honest validators
     /// drop D from their attestation, but byzantine D vouches for
