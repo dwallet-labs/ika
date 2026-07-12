@@ -95,6 +95,12 @@ CARGO_COMMAND=(nextest run --cargo-profile simulator)
 if [ "$1" = "build" ]; then
   shift
   CARGO_COMMAND=(build --profile simulator)
+elif [ "$1" = "clippy" ]; then
+  # Lint the msim compilation universe (`--cfg msim` + the msim-patched
+  # deps), which regular `cargo clippy` never sees. CI runs
+  # `cargo simtest clippy --all-targets --all-features -- -D warnings`.
+  shift
+  CARGO_COMMAND=(clippy --profile simulator)
 fi
 
 # Must supply a new temp dir - the test is deterministic and can't choose one randomly itself.

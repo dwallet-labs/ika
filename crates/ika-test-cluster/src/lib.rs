@@ -17,7 +17,9 @@ use ika_config::initiation::InitiationParameters;
 use ika_config::local_ip_utils;
 use ika_config::node::SuiDataSource;
 use ika_node::IkaNodeHandle;
-use ika_protocol_config::{Chain, ProtocolVersion};
+#[cfg(not(msim))]
+use ika_protocol_config::Chain;
+use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::ika_dwallet_transactions::{
     PaymentCoinArgs, register_encryption_key, request_dwallet_dkg,

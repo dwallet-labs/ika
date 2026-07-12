@@ -129,7 +129,9 @@ impl Drop for IkaNodeHandle {
     fn drop(&mut self) {
         if self.shutdown_on_drop {
             let node_id = self.inner().sim_state.sim_node.id();
-            sui_simulator::runtime::Handle::try_current().map(|h| h.delete_node(node_id));
+            if let Some(handle) = sui_simulator::runtime::Handle::try_current() {
+                handle.delete_node(node_id);
+            }
         }
     }
 }

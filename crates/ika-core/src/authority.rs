@@ -51,8 +51,6 @@ use crate::stake_aggregator::StakeAggregator;
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
-#[cfg(msim)]
-use sui_types::committee::CommitteeTrait;
 
 pub mod authority_per_epoch_store;
 

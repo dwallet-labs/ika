@@ -128,7 +128,6 @@ pub struct P2pComponents {
 mod simulator {
     use std::sync::atomic::AtomicBool;
 
-    use super::*;
     pub(super) struct SimState {
         pub sim_node: sui_simulator::runtime::NodeHandle,
         pub sim_safe_mode_expected: AtomicBool,

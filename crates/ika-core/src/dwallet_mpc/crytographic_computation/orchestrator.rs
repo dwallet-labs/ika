@@ -403,7 +403,9 @@ impl CryptographicComputationsOrchestrator {
 /// `panic = "abort"` the abort stands (a fail-loud crash-restart, not a silent
 /// wedge), which is this guard's deliberate boundary. The msim path runs
 /// `compute()` inline and is intentionally left to die with its node (see the
-/// caller), so it does not route through here.
+/// caller), so it does not route through here — hence dead outside tests in
+/// the msim build.
+#[cfg(any(not(msim), test))]
 fn compute_catching_panic(
     computation_id: ComputationId,
     compute: impl FnOnce() -> DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,

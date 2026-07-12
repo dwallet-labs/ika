@@ -74,6 +74,13 @@ MPC-degrading a validator while its consensus stays alive.
 Driver: `scripts/simtest/cargo-simtest`. Smoke entry point:
 `crates/ika-test-cluster/` (`IkaTestCluster` + `IkaTestClusterBuilder`).
 
+Besides running tests, the driver has `build` and `clippy` modes.
+`cargo simtest clippy --all-targets --all-features -- -D warnings` lints
+the msim compilation universe (`--cfg msim` + the msim-patched deps),
+which regular `cargo clippy` never compiles — CI runs it as the
+`Clippy (msim / simtest)` job on every PR and push, so msim-gated code
+can't rot between (manual/nightly) simtest runs.
+
 ## Short Sui epochs in cluster tests
 
 `ika-test-cluster` runs TWO epoch clocks, and they are independent:
