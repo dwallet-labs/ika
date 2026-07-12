@@ -727,6 +727,36 @@ impl OcsVerifiedReader {
             });
         }
 
+        // Resolve children the provider LISTED but could not build proofs
+        // for — their defining checkpoint was pruned upstream, which is
+        // permanent, so without this they would silently vanish from every
+        // page forever (observed: a session_events bag entry re-pulled
+        // across an epoch boundary never reached the MPC manager and the
+        // epoch-close gate pinned the epoch). `verified_object` carries its
+        // own proof verification, currency check, and the committee-verified
+        // cache fallback that serves exactly these pruned-defining-tx reads.
+        // Trusted-listing only: on a mirrored node the relay's skipped ids
+        // are untrusted (no membership binding is possible without a proof),
+        // so they stay omitted there and the existing size-vs-listed
+        // omission policing covers them.
+        if self.cache_first {
+            for id in &resp.skipped_entry_ids {
+                match Box::pin(self.verified_object(*id)).await {
+                    Ok(resolved) => {
+                        verified.push(resolved);
+                    }
+                    Err(e) => {
+                        warn!(
+                            ?id,
+                            error=?e,
+                            "listed dynamic-field child with a pruned defining checkpoint \
+                             could not be resolved from the verified cache either"
+                        );
+                    }
+                }
+            }
+        }
+
         self.observe_verify_latency("dynamic_fields_page", started);
         Ok(VerifiedDynamicFieldsPage {
             entries: verified,
@@ -2252,6 +2282,7 @@ mod tests {
             entries: vec![entry],
             next_page_token: None,
             claimed_latest_checkpoint_seq: seq,
+            skipped_entry_ids: Vec::new(),
         }
     }
 
@@ -2397,6 +2428,7 @@ mod tests {
             ],
             next_page_token: None,
             claimed_latest_checkpoint_seq: 100,
+            skipped_entry_ids: Vec::new(),
         };
         let (_dir, reader, metrics) = reader_with(StagedProvider::bag(resp), committee, None);
 
