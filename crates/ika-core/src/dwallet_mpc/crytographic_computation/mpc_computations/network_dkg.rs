@@ -118,10 +118,7 @@ pub struct VssRistrettoShamirCache {
 /// reconfiguration output and without redoing the Shamir derivation.
 ///
 /// All three curves are populated atomically — they all derive from the same
-/// (V3) DKG / reconfiguration output. If that output is unavailable or any
-/// per-curve derivation fails, no `VssShamirCachePerKey` is inserted into the
-/// per-key map for that network key (and VSS sign sites then `?`-propagate
-/// `WaitingForNetworkKey`, same as the AHE wait path).
+/// (V3) DKG / reconfiguration output.
 #[derive(Clone, Debug)]
 pub struct VssShamirCachePerKey {
     /// The epoch of the key data this cache was derived from. The cache map
@@ -135,6 +132,23 @@ pub struct VssShamirCachePerKey {
     pub secp256k1: VssSecp256k1ShamirCache,
     pub curve25519: VssCurve25519ShamirCache,
     pub ristretto: VssRistrettoShamirCache,
+}
+
+/// The stored outcome of a VSS Shamir-cache derivation for one network key.
+/// Storing the outcome (not only successes) lets the VSS sign path tell
+/// "still coming" (park and retry) from "will never come" (fail, traceably)
+/// instead of collapsing all three to a bare missing entry.
+#[derive(Clone, Debug)]
+pub enum VssCacheEntry {
+    /// The three-curve cache derived successfully. Boxed: it dwarfs the two
+    /// unit variants, so an unboxed enum would carry that size everywhere.
+    Derived(Box<VssShamirCachePerKey>),
+    /// The key has no V3 DKG / reconfiguration output, so VSS material does
+    /// not exist for it (a pre-V3 key). Terminal, not a transient wait.
+    NotApplicable,
+    /// A real deserialization / derivation failure (logged once at insertion).
+    /// Terminal; the operator has an `error!` line to act on.
+    Failed,
 }
 
 /// Holds the private decryption key data for a validator node.
@@ -171,10 +185,14 @@ pub struct ValidatorPrivateDecryptionKeyData {
         HashMap<ObjectID, HashMap<PartyID, SecretKeyShareSizedInteger>>,
 
     /// Per-network-key Fast Schnorr (VSS) Shamir-share + polynomial-commitments
-    /// cache, populated alongside `validator_decryption_key_shares` from the
-    /// same network DKG / reconfiguration output. Read verbatim by VSS sign
-    /// (no per-sign re-derivation).
-    pub validator_vss_shamir_cache: HashMap<ObjectID, VssShamirCachePerKey>,
+    /// cache outcome, populated alongside `validator_decryption_key_shares`
+    /// from the same network DKG / reconfiguration output. Stores the
+    /// derivation OUTCOME per key (`Derived`/`NotApplicable`/`Failed`), not
+    /// only successes, so the VSS sign path distinguishes a still-running
+    /// derivation (absent entry → park) from a completed-but-unusable one
+    /// (`NotApplicable`/`Failed` → terminal). Read verbatim by VSS sign (no
+    /// per-sign re-derivation).
+    pub validator_vss_shamir_cache: HashMap<ObjectID, VssCacheEntry>,
 }
 
 async fn get_decryption_key_shares_from_public_output(
@@ -335,29 +353,55 @@ impl ValidatorPrivateDecryptionKeyData {
             let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
 
             let vss_cache = derive_vss_shamir_cache_for_key(&key, party_id, &secrets, &publics);
-            if let Err(err) = vss_sender.send(vss_cache) {
-                error!(error=?err, "failed to send VSS shamir cache");
+            if vss_sender.send(vss_cache).is_err() {
+                error!("failed to send VSS shamir cache");
             }
         });
-        if let Some(vss_cache) = vss_receiver.await.map_err(|_| DwalletMPCError::TokioRecv)? {
-            self.validator_vss_shamir_cache.insert(key_id, vss_cache);
-        }
+        // Always record the outcome (overwriting any prior epoch's entry — this
+        // runs on every network-key update, so a Failed/NotApplicable entry is
+        // re-derived and overwritten on the next update). Storing NotApplicable
+        // and Failed — not only successes — is what lets the VSS sign path fail
+        // fast (traceably) instead of parking forever on a completed-but-unusable
+        // derivation.
+        let entry = match vss_receiver.await.map_err(|_| DwalletMPCError::TokioRecv)? {
+            VssCacheDerivation::Derived(cache) => VssCacheEntry::Derived(cache),
+            VssCacheDerivation::NotApplicable => VssCacheEntry::NotApplicable,
+            VssCacheDerivation::Failed(reason) => {
+                error!(
+                    ?key_id,
+                    reason, "VSS Shamir cache derivation failed for network key"
+                );
+                VssCacheEntry::Failed
+            }
+        };
+        self.validator_vss_shamir_cache.insert(key_id, entry);
 
         Ok(())
     }
 }
 
+/// The outcome of deriving the VSS Shamir cache for one key: distinguishes a
+/// genuinely-inapplicable key (pre-V3) from a real derivation failure, so the
+/// caller can log the latter and the sign path can fail rather than park
+/// forever on either.
+enum VssCacheDerivation {
+    Derived(Box<VssShamirCachePerKey>),
+    NotApplicable,
+    Failed(String),
+}
+
 /// Pre-derive the Fast Schnorr (VSS) Shamir shares + secret-key polynomial
 /// commitments for all three VSS curves from a single network DKG /
 /// reconfiguration output. The output is deserialized at most once. Returns
-/// `None` if the network key has no V3 output (pre-V3) or any per-curve
-/// derivation fails — the three curves are always populated together.
+/// `NotApplicable` if the network key has no V3 output (pre-V3), or `Failed`
+/// if deserialization / any per-curve derivation fails — the three curves are
+/// always populated together.
 fn derive_vss_shamir_cache_for_key(
     key: &NetworkEncryptionKeyPublicData,
     party_id: PartyID,
     secrets: &ValidatorPvssSecretsForVss,
     publics: &ValidatorPvssEncryptionKeysForVss,
-) -> Option<VssShamirCachePerKey> {
+) -> VssCacheDerivation {
     use twopc_mpc::decentralized_party::{dkg as dec_dkg, reconfiguration as dec_reconf};
 
     enum DeserializedSource {
@@ -367,14 +411,26 @@ fn derive_vss_shamir_cache_for_key(
 
     let source: DeserializedSource = match key.latest_network_reconfiguration_public_output() {
         Some(VersionedDecryptionKeyReconfigurationOutput::V3(bytes)) => {
-            DeserializedSource::Reconfiguration(Box::new(bcs::from_bytes(&bytes).ok()?))
+            match bcs::from_bytes(&bytes) {
+                Ok(output) => DeserializedSource::Reconfiguration(Box::new(output)),
+                Err(e) => {
+                    return VssCacheDerivation::Failed(format!(
+                        "decoding the V3 reconfiguration output: {e}"
+                    ));
+                }
+            }
         }
         // Pre-V3 reconfiguration (or none yet) → fall through to network DKG output.
         _ => match key.network_dkg_output() {
-            VersionedNetworkDkgOutput::V3(bytes) => {
-                DeserializedSource::NetworkDkg(Box::new(bcs::from_bytes(bytes).ok()?))
-            }
-            _ => return None,
+            VersionedNetworkDkgOutput::V3(bytes) => match bcs::from_bytes(bytes) {
+                Ok(output) => DeserializedSource::NetworkDkg(Box::new(output)),
+                Err(e) => {
+                    return VssCacheDerivation::Failed(format!(
+                        "decoding the V3 network DKG output: {e}"
+                    ));
+                }
+            },
+            _ => return VssCacheDerivation::NotApplicable,
         },
     };
 
@@ -442,11 +498,28 @@ fn derive_vss_shamir_cache_for_key(
             ),
         };
 
-    let (secp256k1_first, secp256k1_second) = secp256k1_shares.ok()?;
-    let (curve25519_first, curve25519_second) = curve25519_shares.ok()?;
-    let (ristretto_first, ristretto_second) = ristretto_shares.ok()?;
+    let (secp256k1_first, secp256k1_second) = match secp256k1_shares {
+        Ok(shares) => shares,
+        Err(e) => {
+            return VssCacheDerivation::Failed(format!("secp256k1 Shamir-share derivation: {e:?}"));
+        }
+    };
+    let (curve25519_first, curve25519_second) = match curve25519_shares {
+        Ok(shares) => shares,
+        Err(e) => {
+            return VssCacheDerivation::Failed(format!(
+                "curve25519 Shamir-share derivation: {e:?}"
+            ));
+        }
+    };
+    let (ristretto_first, ristretto_second) = match ristretto_shares {
+        Ok(shares) => shares,
+        Err(e) => {
+            return VssCacheDerivation::Failed(format!("ristretto Shamir-share derivation: {e:?}"));
+        }
+    };
 
-    Some(VssShamirCachePerKey {
+    VssCacheDerivation::Derived(Box::new(VssShamirCachePerKey {
         derived_for_epoch: key.epoch(),
         secp256k1: VssSecp256k1ShamirCache {
             secret_key_share_first_part: secp256k1_first,
@@ -466,7 +539,7 @@ fn derive_vss_shamir_cache_for_key(
             first_secret_key_polynomial_commitments: ristretto_first_commitments,
             second_secret_key_polynomial_commitments: ristretto_second_commitments,
         },
-    })
+    }))
 }
 
 impl DwalletMPCNetworkKeys {
@@ -522,11 +595,23 @@ impl DwalletMPCNetworkKeys {
         &self,
         key_id: &ObjectID,
     ) -> DwalletMPCResult<&VssShamirCachePerKey> {
-        let cache = self
+        // Absent entry: derivation hasn't completed yet (still running on
+        // rayon) — park and retry, same as the AHE wait path.
+        let cache = match self
             .validator_private_dec_key_data
             .validator_vss_shamir_cache
             .get(key_id)
-            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?;
+            .ok_or(DwalletMPCError::WaitingForNetworkKey(*key_id))?
+        {
+            VssCacheEntry::Derived(cache) => cache.as_ref(),
+            // Completed but unusable: a pre-V3 key (NotApplicable) or a real
+            // derivation failure (Failed, already logged once). This is NOT
+            // the not-ready class, so the VSS sign session fails terminally
+            // with a named, traceable error instead of parking forever.
+            VssCacheEntry::NotApplicable | VssCacheEntry::Failed => {
+                return Err(DwalletMPCError::VssShamirCacheUnavailable(*key_id));
+            }
+        };
         // A cache derived from a previous epoch's key data mixed with the
         // current epoch's public parameters fails MPC round one with
         // `InvalidParameters` (the per-validator epoch-entry failure window
