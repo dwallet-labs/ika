@@ -242,3 +242,45 @@ now #[ignore]d reproducers with deterministic seeds; the enabled suite
 is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
 close race (this), (2) full-consensus-halt recovery (dual node stop),
 (3) expiry round-rate envelope documentation.
+
+## Finding: the close-lock wedge is reachable from a single user request (flow-coverage PR)
+
+The happy-path flow suite (PR #1809, `sim_user_flows.rs` /
+`sim_future_sign.rs`) hit the same close/serve wedge WITHOUT presign
+traffic: the flow runs ~ten sequential user sessions against 20-second
+epochs, so on most msim schedules one of them lands astride an epoch
+close — and a user MPC session locked into the close target astride
+the close left the next epoch permanently unable to advance
+(`session_locked=true`, `all_epoch_sessions_finished=false`, pinned
+9.5+ virtual minutes to test end). The visible victim varies by
+schedule (the imported-key verification on one run, the imported-key
+dwallet's dedicated presign on another — msim schedules shift with the
+log configuration). `sim_user_flows_across_boundaries` is preserved as
+an `#[ignore]`d reproducer of this — a much cheaper route into the bug
+than the traffic reproducer (one request, no stream).
+
+Two adjacent latency findings from the same investigation, real but
+non-wedging:
+
+- **Quiet-epoch close-target starvation**: a session excluded from the
+  close target (correctly, for arriving astride the lock) is starved
+  for the ENTIRE next epoch when that epoch is quiet — on-chain,
+  `update_last_user_initiated_session_to_complete_in_current_epoch`
+  only runs on session initiate/complete, so nothing recomputes the
+  target between locks in an idle epoch. Off-chain the manager mirrors
+  the stale value and holds votes/sessions against it. Cost: roughly a
+  full epoch of latency per unlucky request (24h on mainnet).
+  Deterministically reproduced (seed 1): an imported-key verification
+  requested astride a close reached output quorum ~295 virtual seconds
+  (≈ one 20s-epoch cycle plus closes) after the request.
+- **Global presign astride a close**: same shape observed for the
+  pool-served path — the serve vote is held all of the following quiet
+  epoch and pops only at the next close's lock recomputation.
+
+The flow suite also produced harness knowledge worth keeping: the
+pinned Sui renders Move enum values in object JSON WITHOUT a variant
+tag ({type, fields} only), so fieldless variants are unobservable —
+completion waits must match output-field presence, retry the follow-up
+transaction (abort = still pending), or read BCS state
+(`wait_for_user_sessions_drained`). See the drivers in
+`crates/ika-test-cluster/src/flows.rs`.
