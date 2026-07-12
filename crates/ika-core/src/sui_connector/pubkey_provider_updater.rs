@@ -101,6 +101,22 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         .map(|m| m.validator_id)
         .collect();
     let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
+    // Both name-keyed maps on the returned `Committee` must use the SAME name
+    // space, and it must be the PRIOR-epoch snapshot's — that is the name each
+    // member signed its handoff attestation under. `voting_rights` already
+    // comes from the frozen `previous_committee` snapshot; the consensus-key
+    // map must too. Keying the consensus map by the member's CURRENT on-chain
+    // protocol_pubkey (from which `AuthorityName` is derived) would diverge
+    // for any validator that rotated its protocol key at the boundary — its
+    // handoff signatures, signed under the old name, would then fail to
+    // resolve a consensus key and drop, silently dropping its stake from the
+    // cert quorum. Resolve each fetched pool to its snapshot name by
+    // validator id (StakingPool.id == BlsCommitteeMember.validator_id).
+    let bls_members = system_inner.read_bls_committee(bls_committee);
+    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = bls_members
+        .iter()
+        .map(|(id, (name, _))| (*id, *name))
+        .collect();
     // Tolerate a member whose validator_info fails to decode: `verify()`
     // rejects on ANY malformed metadata field (addresses, next-epoch keys),
     // not just the consensus key needed here, and the member may have
@@ -123,11 +139,19 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
                 continue;
             }
         };
-        let name: AuthorityName = (&verified.protocol_pubkey).into();
+        // The consensus pubkey VALUE is fixed at registration, so reading the
+        // current one is correct; only the map KEY must be the snapshot name.
+        let Some(name) = snapshot_name_by_id.get(&pool.id).copied() else {
+            warn!(
+                validator_id = ?pool.id,
+                "prior-committee staking pool absent from the previous_committee \
+                 snapshot; skipping"
+            );
+            continue;
+        };
         consensus_keys.insert(name, verified.consensus_pubkey.clone());
     }
-    let voting_rights: Vec<(AuthorityName, StakeUnit)> = system_inner
-        .read_bls_committee(bls_committee)
+    let voting_rights: Vec<(AuthorityName, StakeUnit)> = bls_members
         .into_iter()
         .map(|(_, (name, stake))| (name, stake))
         .collect();
@@ -307,14 +331,45 @@ where
             .get_validators_info_by_ids(validator_ids)
             .await?;
 
+        // Tolerate a member whose validator_info fails to decode, exactly as
+        // `fetch_previous_committee` does: `verify()` rejects on ANY malformed
+        // metadata field, not just the consensus key needed here. Failing the
+        // whole refresh on one bad record would return Err every 5s forever
+        // and install NO provider — suppressing joiner-announcement relay for
+        // the entire epoch on a single deterministic error. Skipping costs
+        // only that member's relayed announcements (its own direct
+        // announcements still reach peers), and cert verification needs only a
+        // quorum of the members that DO verify.
         let mut consensus_keys_by_name: BTreeMap<AuthorityName, Ed25519PublicKey> = BTreeMap::new();
+        let mut skipped = 0usize;
         for pool in &staking_pools {
-            let verified = pool
-                .validator_info
-                .verify()
-                .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+            let verified = match pool.validator_info.verify() {
+                Ok(verified) => verified,
+                Err(code) => {
+                    skipped += 1;
+                    warn!(
+                        code,
+                        validator_id = ?pool.id,
+                        epoch = self.epoch_id,
+                        label = self.label,
+                        "committee member validator_info failed verify; skipping — \
+                         its relayed announcements won't be verifiable this epoch"
+                    );
+                    continue;
+                }
+            };
             let name: AuthorityName = (&verified.protocol_pubkey).into();
             consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
+        }
+        if skipped > 0 {
+            warn!(
+                epoch = self.epoch_id,
+                label = self.label,
+                skipped,
+                installed = consensus_keys_by_name.len(),
+                "installing pubkey provider with an incomplete member set; \
+                 relayed announcements from the skipped members will be dropped"
+            );
         }
 
         {
