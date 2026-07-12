@@ -113,6 +113,24 @@ against the active committee directly.
   instantiated/completed batch counters stay committee-uniform — parking is
   local participation deferral, invisible to the top-up guard and the
   stale-batch expiry. Any other input-construction error stays terminal.
+- **VSS Shamir-cache outcome tri-state (epoch-tagged).** The per-key cache
+  map stores the derivation OUTCOME, not only successes: `Derived` (the
+  three-curve cache), `NotApplicable` (the key data had no V3 output — a
+  pre-V3 key), or `Failed` (a real deserialization/derivation failure,
+  logged once at insertion). Every variant carries the epoch of the key data
+  it was derived from, and the accessor treats an epoch mismatch — terminal
+  variants INCLUDED — exactly like a missing entry (the not-ready class,
+  park and retry): an entry derived from a superseded key view is
+  "re-derivation in flight", not an answer about the current key data.
+  Without the epoch tag on the terminal variants, the boundary window where
+  the first ingest carries the pre-V3 key view would report terminal
+  `NotApplicable` for the whole multi-minute V3 re-derivation, dropping that
+  validator out of every VSS sign while its peers sign. A CURRENT-epoch
+  terminal entry surfaces as `VssShamirCacheUnavailable` — a named, terminal
+  error distinct from the not-ready class. It is by-design reachable during
+  the v3→v4 boundary epoch (every key is pre-V3 then), so the internal-
+  session failure log treats it as an expected error class, not a
+  should-never-happen page.
 - **Deferred instantiation for a not-yet-installed key (multi-key epochs).**
   The top-up loop iterates every ADOPTED key, but installation into
   `network_keys` completes asynchronously per validator, and the session
