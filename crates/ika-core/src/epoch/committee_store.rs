@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use ika_types::committee::{Committee, EpochId, LegacyCommittee};
-use ika_types::error::{IkaError, IkaResult};
+use ika_types::error::IkaResult;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tracing::info;
+use tracing::{info, warn};
 use typed_store::rocks::{DBMap, DBOptions, MetricConf, ReadWriteOptions, default_db_options};
 use typed_store::rocksdb::Options;
 
@@ -115,9 +115,22 @@ impl CommitteeStore {
                     );
                     Some(Committee::from(legacy))
                 }
-                // Absent under the legacy schema too, or a genuine corruption:
-                // surface the ORIGINAL error rather than the legacy miss.
-                Ok(None) | Err(_) => return Err(primary_err.into()),
+                // Absent under the legacy schema too: surface the ORIGINAL
+                // error rather than the legacy miss.
+                Ok(None) => return Err(primary_err.into()),
+                // Both decodes errored — genuine corruption. Log the legacy
+                // diagnostic before surfacing the primary error, or the
+                // second signal is lost exactly when an operator needs it.
+                Err(legacy_err) => {
+                    warn!(
+                        epoch = *epoch_id,
+                        ?legacy_err,
+                        "committee record failed BOTH the current and legacy decode — \
+                         genuinely corrupt record (legacy error logged here; primary \
+                         error propagated)"
+                    );
+                    return Err(primary_err.into());
+                }
             },
         };
         let committee = committee.map(Arc::new);
@@ -125,31 +138,6 @@ impl CommitteeStore {
             self.cache.write().insert(*epoch_id, committee.clone());
         }
         Ok(committee)
-    }
-
-    // todo - make use of cache or remove this method
-    pub fn get_latest_committee(&self) -> IkaResult<Committee> {
-        Ok(self
-            .tables
-            .committee_map
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            // unwrap safe because we guarantee there is at least a genesis epoch
-            // when initializing the store.
-            .unwrap()
-            .1)
-    }
-    /// Return the committee specified by `epoch`. If `epoch` is `None`, return the latest committee.
-    // todo - make use of cache or remove this method
-    pub fn get_or_latest_committee(&self, epoch: Option<EpochId>) -> IkaResult<Committee> {
-        Ok(match epoch {
-            Some(epoch) => self
-                .get_committee(&epoch)?
-                .ok_or(IkaError::MissingCommitteeAtEpoch(epoch))
-                .map(|c| Committee::clone(&*c))?,
-            None => self.get_latest_committee()?,
-        })
     }
 
     pub fn checkpoint_db(&self, path: &Path) -> IkaResult {

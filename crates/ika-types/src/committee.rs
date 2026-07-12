@@ -135,10 +135,19 @@ pub struct LegacyCommittee {
 
 impl From<LegacyCommittee> for Committee {
     fn from(legacy: LegacyCommittee) -> Self {
-        // consensus_keys defaults to empty: a 1.1.8-written committee is only
-        // read at the v3→v4 boundary, where the prior epoch ran v3 and emitted
-        // no consensus-key-signed messages, so there is nothing to verify with
-        // it. `expanded_keys`/`index_map` are rebuilt from voting_rights.
+        // consensus_keys defaults to empty. Sound because a 1.1.8-written
+        // record always DESCRIBES a ≤v3 epoch (it can be READ at any later
+        // epoch), and no handoff certificate can exist for a ≤v3 epoch (cert
+        // minting is v4-gated) — so these keys are never asked to verify
+        // anything. The "describes ≤v3" guarantee rests on: (1) 1.1.8 pins
+        // MAX_PROTOCOL_VERSION = 3; (2) 1.1.8's `reconfigure` checks the
+        // protocol version BEFORE `insert_new_committee`, so it cannot
+        // persist a record for a v4 epoch; (3) the state-sync
+        // `insert_committee` plumbing has no live callers. If any link
+        // breaks, a cert verified against this committee skips every
+        // unresolvable signer and fails quorum — an honest fail-closed
+        // outcome far from the cause (see cross-binary-upgrade.md).
+        // `expanded_keys`/`index_map` are rebuilt from voting_rights.
         Committee::new(
             legacy.epoch,
             legacy.voting_rights,
