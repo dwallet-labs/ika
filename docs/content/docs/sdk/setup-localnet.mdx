@@ -87,12 +87,13 @@ RUST_LOG="off,sui_node=info" sui start --with-faucet --force-regenesis --epoch-d
 Once the Sui localnet is running, you can start the Ika localnet in a separate terminal. This will launch the Ika node that connects to the Sui localnet.
 
 ```bash
-cargo run --bin ika --release --no-default-features -- start
+cargo run --bin ika --release -- start
 ```
 
 **Parameters explained:**
 
 - `--bin ika`: Specifies which binary to run from the workspace (the main Ika node executable)
 - `--release`: Builds and runs the binary with optimizations enabled for better performance
-- `--no-default-features`: Disables default Cargo features to run only the core functionality needed for localnet, for example removes min 16 cpu cores requirement
 - `start`: Command passed to the Ika binary to initialize and start the local node
+
+Localnets have no minimum-CPU requirement: the 16-core minimum applies only to validators on the Ika testnet and mainnet networks.

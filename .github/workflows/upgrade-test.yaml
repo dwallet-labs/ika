@@ -42,9 +42,12 @@ name: Upgrade Test
 #
 # The OLD binary for the upgrade scenarios is built here from `old_ref` in an
 # isolated `git worktree`, at that ref's OWN pinned toolchain (rustup honors
-# the worktree's rust-toolchain.toml). All `ika-node` binaries are built
-# `--no-default-features` to drop `enforce-minimum-cpu`, which panics on
-# cgroup-throttled / <16-core pods.
+# the worktree's rust-toolchain.toml). Only the OLD binary is built
+# `--no-default-features`: at historical refs `enforce-minimum-cpu` was
+# compile-time-only and panics on cgroup-throttled / <16-core pods. Current
+# binaries build with default features — enforcement is runtime-gated to
+# validators on the ika testnet/mainnet networks, so it is inert on the CI
+# localnet (its ika system object maps to Chain::Unknown).
 
 on:
   workflow_dispatch:
@@ -286,21 +289,18 @@ jobs:
           # mocks. For cross-binary scenarios the OLD binary is built with the
           # mock too (below), so its ref MUST carry the dwallet-mpc-unsafe-mock
           # feature or that build fails — mixed mock/real crypto won't interoperate.
-          NODE_FEATURES="jemalloc"
+          NODE_FEATURES=""
           IKA_FEATURES=""
           if [ "$USE_MOCKS" = "true" ]; then
-            NODE_FEATURES="jemalloc,dwallet-mpc-unsafe-mock"
+            NODE_FEATURES="--features dwallet-mpc-unsafe-mock"
             IKA_FEATURES="--features dwallet-mpc-unsafe-mock"
           fi
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
-          # green. `--no-default-features --features jemalloc` drops ika-node's
-          # enforce-minimum-cpu (panics on cgroup-throttled pods) but KEEPS
-          # jemalloc. Both are in `default`, so `--no-default-features` alone
-          # ALSO dropped jemalloc — leaving CI on the glibc allocator, so the
-          # jemalloc background_threads memory fix and heap profiling (the
-          # `profiling` feature) never took effect. Prod uses jemalloc; so does CI now.
-          cargo build --release --no-default-features --features "$NODE_FEATURES" -p ika-node --bin ika-validator --bin ika-notifier
+          # green. Default features (enforce-minimum-cpu + jemalloc) are kept:
+          # enforcement is runtime-gated to validators on the ika
+          # testnet/mainnet networks, so it never fires on this localnet.
+          cargo build --release $NODE_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika $IKA_FEATURES
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 

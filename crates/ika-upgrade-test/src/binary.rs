@@ -162,9 +162,13 @@ impl BinaryResolver {
         .with_context(|| format!("git worktree add for {sha}"))?;
 
         tracing::info!(sha = %short_sha(sha), "building ika-validator (cache miss)");
-        // `--no-default-features` drops `ika-node`'s only default feature,
-        // `enforce-minimum-cpu`, which otherwise panics the validator on hosts
-        // with < 16 cores. The harness must run on ordinary dev machines.
+        // This builds HISTORICAL refs, where `enforce-minimum-cpu` (an
+        // `ika-node` default feature) was compile-time-only and panics the
+        // validator on hosts with < 16 cores; `--no-default-features` drops it
+        // so the harness runs on ordinary dev machines. Current refs
+        // runtime-gate the enforcement (validator + ika testnet/mainnet — see
+        // ika-core's runtime.rs) and don't need this, but the flag stays
+        // because old refs do.
         let status = Command::new("cargo")
             .current_dir(&worktree)
             .args([

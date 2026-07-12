@@ -207,8 +207,9 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
         // `client error (Connect)` and missed chain events (e.g. a mid-epoch joiner
         // never read into the next committee's `class_groups_public_keys_and_proofs`).
         // A real validator runs one process per host and reserves cores for async
-        // (TOKIO_ALLOCATED_CORES, under `enforce-minimum-cpu`); the in-process build
-        // drops that feature, so reserve ~25% of the cores for the async runtime here.
+        // (TOKIO_ALLOCATED_CORES — runtime-gated to validators on the ika
+        // testnet/mainnet networks, see ika-core's runtime.rs); the in-process swarm
+        // never goes through IkaRuntimes, so reserve ~25% for the async runtime here.
         // Crypto keeps the majority; `parallel` stays on. Override with
         // `RAYON_NUM_THREADS` (cargo/rayon honor it when set before the pool is built).
         let rayon_threads = std::thread::available_parallelism()

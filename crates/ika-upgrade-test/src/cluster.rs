@@ -903,8 +903,10 @@ async fn spawn_node(
 
 /// `RAYON_NUM_THREADS` budget for each spawned node, given how many node
 /// processes will share this host. The harness co-locates every validator
-/// (plus the notifier) on one machine, each running the real node binary built
-/// `--no-default-features` — so each one's rayon pool otherwise defaults to ALL
+/// (plus the notifier) on one machine, and no node enforces the minimum-CPU
+/// core reserve here (old binaries are built `--no-default-features`; current
+/// ones runtime-gate it to the ika testnet/mainnet networks) — so each one's
+/// rayon pool otherwise defaults to ALL
 /// cores (`ika-core`'s `runtime.rs`). With the parallel crypto feature active
 /// that oversubscribes the CPU by the node count, starving the async runtimes
 /// (and, on CI, the runner agent itself → "runner lost communication"). Hand
