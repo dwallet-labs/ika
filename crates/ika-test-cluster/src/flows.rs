@@ -843,6 +843,11 @@ impl IkaTestCluster {
 
     /// Waits for the sign session created by `response` (any of the sign
     /// request forms) to complete, returning the network signature bytes.
+    ///
+    /// Polls the `SignSession` object behind the event's `sign_id` — NOT
+    /// the wrapper's `session_object_id`, which names the bookkeeping
+    /// `DWalletSession` object that Move deletes on completion (polling it
+    /// reads "object not found" precisely when the sign succeeds).
     async fn wait_for_sign_session(
         &self,
         response: &sui_json_rpc_types::SuiTransactionBlockResponse,
@@ -853,16 +858,11 @@ impl IkaTestCluster {
             .as_ref()
             .ok_or_else(|| anyhow!("sign tx has no effects"))?
             .transaction_digest();
-        let session_object_id: ObjectID = fetch_event_field(
-            &self.sui_rpc_url,
-            &digest,
-            "SignRequestEvent",
-            "session_object_id",
-        )
-        .await
-        .ok_or_else(|| anyhow!("SignRequestEvent missing session_object_id"))?
-        .parse()?;
-        poll_session_until_completed(&self.sui_rpc_url, session_object_id, "signature", timeout)
-            .await
+        let sign_id: ObjectID =
+            fetch_event_field(&self.sui_rpc_url, &digest, "SignRequestEvent", "sign_id")
+                .await
+                .ok_or_else(|| anyhow!("SignRequestEvent missing sign_id"))?
+                .parse()?;
+        poll_session_until_completed(&self.sui_rpc_url, sign_id, "signature", timeout).await
     }
 }
