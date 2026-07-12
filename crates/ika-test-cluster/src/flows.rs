@@ -58,6 +58,10 @@ pub struct DwalletSigner<'a> {
     pub dwallet_cap_id: ObjectID,
     pub user_secret_key_share: &'a [u8],
     pub curve: u32,
+    /// Imported-key dwallets carry an `ImportedKeyDWalletCap` and sign
+    /// through the imported-key Move entry points — passing their cap to
+    /// the DKG-dwallet entry points aborts with a PTB type mismatch.
+    pub is_imported_key: bool,
 }
 
 impl DwalletDkgHandle {
@@ -67,6 +71,7 @@ impl DwalletDkgHandle {
             dwallet_cap_id: self.dwallet_cap_id,
             user_secret_key_share: &self.user_secret_key_share,
             curve: self.curve,
+            is_imported_key: false,
         }
     }
 }
@@ -78,6 +83,7 @@ impl ImportedKeyHandle {
             dwallet_cap_id: self.dwallet_cap_id,
             user_secret_key_share: &self.user_secret_key_share,
             curve: self.curve,
+            is_imported_key: true,
         }
     }
 }
@@ -418,23 +424,43 @@ impl IkaTestCluster {
 
         let session_identifier_bytes: [u8; 32] = rand::random();
         let coins = self.payment_coins();
-        let response = request_sign_tx(
-            self.test_cluster.wallet_mut(),
-            self.packages.ika_dwallet_2pc_mpc_package_id,
-            self.system.ika_dwallet_coordinator_object_id,
-            signer.dwallet_cap_id,
-            signature_algorithm,
-            hash_scheme,
-            message,
-            message_centralized_signature,
-            presign.presign_cap_id,
-            session_identifier_bytes.to_vec(),
-            coins,
-            DEFAULT_DWALLET_TX_GAS_BUDGET,
-            true,
-        )
-        .await
-        .context("request_sign_tx failed")?;
+        let response = if signer.is_imported_key {
+            ika_dwallet_transactions::request_imported_key_sign_tx(
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                signer.dwallet_cap_id,
+                signature_algorithm,
+                hash_scheme,
+                message,
+                message_centralized_signature,
+                presign.presign_cap_id,
+                session_identifier_bytes.to_vec(),
+                coins,
+                DEFAULT_DWALLET_TX_GAS_BUDGET,
+                true,
+            )
+            .await
+            .context("request_imported_key_sign_tx failed")?
+        } else {
+            request_sign_tx(
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                signer.dwallet_cap_id,
+                signature_algorithm,
+                hash_scheme,
+                message,
+                message_centralized_signature,
+                presign.presign_cap_id,
+                session_identifier_bytes.to_vec(),
+                coins,
+                DEFAULT_DWALLET_TX_GAS_BUDGET,
+                true,
+            )
+            .await
+            .context("request_sign_tx failed")?
+        };
         self.wait_for_sign_session(&response, timeout).await
     }
 
