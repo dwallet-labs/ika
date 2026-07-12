@@ -31,14 +31,14 @@ use sui_macros::sim_test;
 const FIRST_VICTIM: usize = 2;
 const SECOND_VICTIM: usize = 3;
 
-// A FULL consensus halt (2-of-4 stopped simultaneously, sub-quorum for
-// Mysticeti itself) does not recover after both validators return — the
-// cluster never leaves the wounded epoch within 3000 virtual seconds,
-// staggered or simultaneous, though a SINGLE stop/restart recovers fine
-// (sim_laggard_entry_window). Kept as the reproducer for that open
-// liveness question; the faithful "two MPC-degraded laggards, consensus
-// alive" scenario needs fail-point-based degradation instead of node
-// stops and supersedes this as the Group B test.
+// NOTE on the earlier "full halt never recovers" finding: it was an
+// artifact of this test's own injection point. Ika nodes BOOT at epoch 1,
+// so `wait_for_epoch(1)` returns immediately and the old shape stopped
+// 2-of-4 ~0.3s after genesis — mid network DKG, with Mysticeti still
+// bootstrapping — which is not the documented scenario at all. The test
+// now waits for a REAL boundary (epoch 2) plus the network key before
+// injecting, so what is exercised is the intended shape: a warm cluster
+// loses consensus quorum mid-epoch and must recover when both return.
 #[sim_test]
 async fn sim_two_laggards_one_epoch() {
     telemetry_subscribers::init_for_testing();
@@ -49,11 +49,15 @@ async fn sim_two_laggards_one_epoch() {
         .await
         .unwrap();
 
-    // Prove one healthy boundary before injecting anything.
-    cluster.wait_for_epoch(1).await;
+    // Prove one healthy boundary (nodes boot AT epoch 1, so the first
+    // crossed boundary is epoch 2) and an established network key before
+    // injecting anything.
+    cluster.wait_for_network_key().await.unwrap();
+    cluster.wait_for_epoch(2).await;
 
-    // Double outage inside epoch 1: below MPC quorum (2 healthy < 3-of-4)
-    // for every session in flight. Nothing can complete until they return.
+    // Double outage inside epoch 2: below MPC quorum (2 healthy < 3-of-4)
+    // for every session in flight — and below consensus quorum for
+    // Mysticeti itself. Nothing can complete until they return.
     cluster.stop_validator(FIRST_VICTIM);
     cluster.stop_validator(SECOND_VICTIM);
 
@@ -71,7 +75,7 @@ async fn sim_two_laggards_one_epoch() {
             "first returner rejoins the running epoch",
             || {
                 let handle = cluster.validator_handle(FIRST_VICTIM);
-                (handle.with(|node| node.state().epoch_store_for_testing().epoch()) >= 1)
+                (handle.with(|node| node.state().epoch_store_for_testing().epoch()) >= 2)
                     .then_some(())
             },
         )
@@ -90,14 +94,14 @@ async fn sim_two_laggards_one_epoch() {
     // from the heal is a sub-minute affair when it works at all, and an
     // unbounded wait on a halted cluster burns hours of wall clock under
     // msim (dense retry timers) before the sim-level budget fires.
-    tokio::time::timeout(Duration::from_secs(600), cluster.wait_for_epoch(3))
+    tokio::time::timeout(Duration::from_secs(600), cluster.wait_for_epoch(4))
         .await
-        .expect("cluster never recovered from the dual outage: epoch 3 not reached within 600s of virtual time");
+        .expect("cluster never recovered from the dual outage: epoch 4 not reached within 600s of virtual time");
     for idx in [FIRST_VICTIM, SECOND_VICTIM] {
         poll_until(
             Duration::from_secs(120),
-            "returned validator reaches epoch 3",
-            || (node_epoch(&cluster, idx) >= 3).then_some(()),
+            "returned validator reaches epoch 4",
+            || (node_epoch(&cluster, idx) >= 4).then_some(()),
         )
         .await;
     }
