@@ -68,10 +68,11 @@ const ALL_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
 const TEST_STALE_BATCH_EXPIRY_ROUNDS: u64 = 12;
 
 /// Reads the (instantiated, completed) internal-presign counters of one
-/// service for one (curve, algorithm) pair.
+/// service for one (network key, curve, algorithm) pool.
 fn presign_batch_counters(
     test_state: &IntegrationTestState,
     service_index: usize,
+    network_key_id: ObjectID,
     curve: DWalletCurve,
     algorithm: DWalletSignatureAlgorithm,
 ) -> (u64, u64) {
@@ -79,12 +80,12 @@ fn presign_batch_counters(
     (
         manager
             .instantiated_internal_presign_sessions
-            .get(&(curve, algorithm))
+            .get(&(network_key_id, curve, algorithm))
             .copied()
             .unwrap_or(0),
         manager
             .completed_internal_presign_sessions
-            .get(&(curve, algorithm))
+            .get(&(network_key_id, curve, algorithm))
             .copied()
             .unwrap_or(0),
     )
@@ -180,7 +181,8 @@ async fn test_internal_presign_stale_batch_expiry() {
     let mut batch_seen = false;
     for _ in 0..12 {
         run_one_round_discarding_all_messages(&mut test_state).await;
-        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
         if instantiated > 0 {
             assert_eq!(instantiated, batch_size, "exactly one batch should fire");
             assert_eq!(completed, 0, "the dead batch must never complete");
@@ -196,7 +198,8 @@ async fn test_internal_presign_stale_batch_expiry() {
     // regardless of that lag.
     for round_offset in 0..(TEST_STALE_BATCH_EXPIRY_ROUNDS - 3) {
         run_one_round_discarding_all_messages(&mut test_state).await;
-        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
         assert_eq!(
             (instantiated, completed),
             (batch_size, 0),
@@ -209,7 +212,8 @@ async fn test_internal_presign_stale_batch_expiry() {
     let mut refired = false;
     for _ in 0..(TEST_STALE_BATCH_EXPIRY_ROUNDS + 10) {
         run_one_round_discarding_all_messages(&mut test_state).await;
-        let (instantiated, _) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        let (instantiated, _) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
         if instantiated > batch_size {
             refired = true;
             break;
@@ -221,7 +225,7 @@ async fn test_internal_presign_stale_batch_expiry() {
     );
     for service_index in 0..test_state.dwallet_mpc_services.len() {
         let (instantiated, completed) =
-            presign_batch_counters(&test_state, service_index, curve, algorithm);
+            presign_batch_counters(&test_state, service_index, network_key_id, curve, algorithm);
         assert_eq!(
             (instantiated, completed),
             (batch_size * 2, batch_size),
@@ -237,7 +241,8 @@ async fn test_internal_presign_stale_batch_expiry() {
         pool_size = test_state.epoch_stores[0]
             .presign_pool_size(algorithm, network_key_id)
             .unwrap_or(0);
-        let (instantiated, completed) = presign_batch_counters(&test_state, 0, curve, algorithm);
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
         if pool_size > 0 && instantiated == completed {
             break;
         }
@@ -249,10 +254,10 @@ async fn test_internal_presign_stale_batch_expiry() {
 
     // Final cross-service consistency: instantiation is consensus-driven, so
     // every validator must hold identical counters.
-    let reference = presign_batch_counters(&test_state, 0, curve, algorithm);
+    let reference = presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
     for service_index in 1..test_state.dwallet_mpc_services.len() {
         assert_eq!(
-            presign_batch_counters(&test_state, service_index, curve, algorithm),
+            presign_batch_counters(&test_state, service_index, network_key_id, curve, algorithm),
             reference,
             "service {service_index}: counters diverged from service 0"
         );
@@ -358,12 +363,12 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
                 let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
                 let instantiated = manager
                     .instantiated_internal_presign_sessions
-                    .get(&(*curve, *algorithm))
+                    .get(&(network_key_id, *curve, *algorithm))
                     .copied()
                     .unwrap_or(0);
                 let completed = manager
                     .completed_internal_presign_sessions
-                    .get(&(*curve, *algorithm))
+                    .get(&(network_key_id, *curve, *algorithm))
                     .copied()
                     .unwrap_or(0);
                 let pool_size = test_state.epoch_stores[0]
@@ -399,7 +404,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             let post_instantiated = test_state.dwallet_mpc_services[0]
                 .dwallet_mpc_manager()
                 .instantiated_internal_presign_sessions
-                .get(&(*curve, *algorithm))
+                .get(&(network_key_id, *curve, *algorithm))
                 .copied()
                 .unwrap_or(0);
             let delta_instantiated = post_instantiated - pre_instantiated;
@@ -451,13 +456,13 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         let reference_instantiated = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .instantiated_internal_presign_sessions
-            .get(&(*curve, *algorithm))
+            .get(&(network_key_id, *curve, *algorithm))
             .copied()
             .unwrap_or(0);
         let reference_completed = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .completed_internal_presign_sessions
-            .get(&(*curve, *algorithm))
+            .get(&(network_key_id, *curve, *algorithm))
             .copied()
             .unwrap_or(0);
 
@@ -476,13 +481,13 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             let instantiated = service
                 .dwallet_mpc_manager()
                 .instantiated_internal_presign_sessions
-                .get(&(*curve, *algorithm))
+                .get(&(network_key_id, *curve, *algorithm))
                 .copied()
                 .unwrap_or(0);
             let completed = service
                 .dwallet_mpc_manager()
                 .completed_internal_presign_sessions
-                .get(&(*curve, *algorithm))
+                .get(&(network_key_id, *curve, *algorithm))
                 .copied()
                 .unwrap_or(0);
             assert_eq!(
@@ -871,7 +876,7 @@ async fn test_internal_presign_continues_when_idle() {
         }
         let instantiated = manager
             .instantiated_internal_presign_sessions
-            .get(&(*curve, *algorithm))
+            .get(&(network_key_id, *curve, *algorithm))
             .copied()
             .unwrap_or(0);
         assert!(
@@ -947,7 +952,8 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
     // round. Verified here so the window below provably opens before the
     // first VSS batch.
     for (curve, algorithm) in VSS_ALGORITHMS {
-        let (instantiated, _) = presign_batch_counters(&test_state, 0, *curve, *algorithm);
+        let (instantiated, _) =
+            presign_batch_counters(&test_state, 0, network_key_id, *curve, *algorithm);
         assert_eq!(
             instantiated, 0,
             "{curve:?}/{algorithm:?}: no VSS batch should have fired before the first post-install round"
@@ -1006,7 +1012,13 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
         );
         for (curve, algorithm) in VSS_ALGORITHMS {
             assert_eq!(
-                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                presign_batch_counters(
+                    &test_state,
+                    service_index,
+                    network_key_id,
+                    *curve,
+                    *algorithm
+                ),
                 (batch_size, 0),
                 "validator {service_index}: {curve:?}/{algorithm:?} batch must be counted \
                  instantiated exactly once while parked"
@@ -1031,7 +1043,13 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
         );
         for (curve, algorithm) in VSS_ALGORITHMS {
             assert_eq!(
-                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                presign_batch_counters(
+                    &test_state,
+                    service_index,
+                    network_key_id,
+                    *curve,
+                    *algorithm
+                ),
                 (batch_size, 0),
                 "validator {service_index}: {curve:?}/{algorithm:?} guard must hold while parked"
             );
@@ -1071,8 +1089,13 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
         });
         let first_batches_completed = VSS_ALGORITHMS.iter().all(|(curve, algorithm)| {
             (0..test_state.dwallet_mpc_services.len()).all(|service_index| {
-                let (_, completed) =
-                    presign_batch_counters(&test_state, service_index, *curve, *algorithm);
+                let (_, completed) = presign_batch_counters(
+                    &test_state,
+                    service_index,
+                    network_key_id,
+                    *curve,
+                    *algorithm,
+                );
                 completed >= batch_size
             })
         });
@@ -1105,10 +1128,16 @@ async fn test_internal_presign_vss_parks_until_off_chain_keys_ingested() {
     // Cross-service counter consistency (identifier derivation is
     // committee-uniform, so the counters must be too).
     for (curve, algorithm) in VSS_ALGORITHMS {
-        let reference = presign_batch_counters(&test_state, 0, *curve, *algorithm);
+        let reference = presign_batch_counters(&test_state, 0, network_key_id, *curve, *algorithm);
         for service_index in 1..test_state.dwallet_mpc_services.len() {
             assert_eq!(
-                presign_batch_counters(&test_state, service_index, *curve, *algorithm),
+                presign_batch_counters(
+                    &test_state,
+                    service_index,
+                    network_key_id,
+                    *curve,
+                    *algorithm
+                ),
                 reference,
                 "validator {service_index}: {curve:?}/{algorithm:?} counters diverged from validator 0"
             );
@@ -1323,19 +1352,23 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
             );
         }
 
-        // THE invariant: the shared sequence counter reads identically on
+        // THE invariant: the per-pool sequence counters read identically on
         // every validator after every processed round — parking consumes the
-        // number, so even the validator missing K1's data stays in step.
+        // number, so even the validator missing K1's data stays in step. The
+        // whole per-(key,curve,algo) map must match (a stronger check than a
+        // single shared counter: it also proves no pool's stream leaked into
+        // another's).
         let reference_next_sequence_number = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
-            .next_internal_presign_sequence_number;
+            .next_internal_presign_sequence_number
+            .clone();
         for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
             assert_eq!(
                 service
                     .dwallet_mpc_manager()
                     .next_internal_presign_sequence_number,
                 reference_next_sequence_number,
-                "validator {service_index}: internal presign sequence counter diverged during \
+                "validator {service_index}: internal presign sequence counters diverged during \
                  the install-lag window"
             );
         }
@@ -1439,7 +1472,8 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
         run_one_round_delivering_messages(&mut test_state).await;
         let reference_next_sequence_number = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
-            .next_internal_presign_sequence_number;
+            .next_internal_presign_sequence_number
+            .clone();
         for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
             assert_eq!(
                 service

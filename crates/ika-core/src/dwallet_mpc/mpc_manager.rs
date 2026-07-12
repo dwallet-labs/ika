@@ -322,36 +322,51 @@ pub(crate) struct DWalletMPCManager {
     // Different epochs will see repeating values of this variable,
     // but that is safe as they are synced within an epoch and
     // the session identifier is derived from the epoch as well.
-    pub(crate) next_internal_presign_sequence_number: u64,
+    /// Next internal-presign session sequence number, PER
+    /// (network_key, curve, signature_algorithm) pool. A single shared
+    /// counter would let one pool's stream depend on another's
+    /// instantiation timing: a key adopted at a different consensus round on
+    /// different validators (adoption is cert-gated and not round-uniform)
+    /// would shift every other pool's sequence numbers, so the session
+    /// identifiers — bound to the sequence number — diverge and never reach
+    /// quorum. Per-pool counters make each pool's stream a pure function of
+    /// that pool's own consensus-agreed inputs: a late-adopted key simply
+    /// starts fresh at 1 whenever it starts, identically on every validator.
+    pub(crate) next_internal_presign_sequence_number:
+        HashMap<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Monotonically increasing count of instantiated internal presign sessions
-    /// per (curve, signature_algorithm). Incremented when a session is created.
-    /// Used with `completed_internal_presign_sessions` to prevent instantiating
-    /// new sessions while existing ones haven't completed — each session produces
-    /// a variable number of presigns (1 to n-t), so overlapping batches cause
-    /// pool overshoot.
+    /// per (network_key, curve, signature_algorithm). Incremented when a
+    /// session is created. Used with `completed_internal_presign_sessions` to
+    /// prevent instantiating new sessions while existing ones haven't completed
+    /// — each session produces a variable number of presigns (1 to n-t), so
+    /// overlapping batches cause pool overshoot. Keyed by network key too so
+    /// one key's in-flight batch never gates another key's pool of the same
+    /// algorithm.
     /// Consensus-safe: instantiation is consensus-agreed, so all honest parties
     /// maintain identical values.
     pub(crate) instantiated_internal_presign_sessions:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Monotonically increasing count of completed internal presign sessions
-    /// per (curve, signature_algorithm). Incremented when a session's output
-    /// reaches consensus majority. When this equals `instantiated_internal_presign_sessions`
-    /// for a given pair, new sessions may be instantiated.
+    /// per (network_key, curve, signature_algorithm). Incremented when a
+    /// session's output reaches consensus majority. When this equals
+    /// `instantiated_internal_presign_sessions` for a given tuple, new sessions
+    /// may be instantiated.
     pub(crate) completed_internal_presign_sessions:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Consensus round at which the most recent internal-presign top-up batch
-    /// was instantiated, per (curve, signature_algorithm). Drives the
-    /// stale-batch expiry in `instantiate_internal_presign_sessions`: a batch
-    /// that never reaches an output quorum (e.g. every validator's
+    /// was instantiated, per (network_key, curve, signature_algorithm). Drives
+    /// the stale-batch expiry in `instantiate_internal_presign_sessions`: a
+    /// batch that never reaches an output quorum (e.g. every validator's
     /// computation failed locally) would otherwise block its pool's top-up
-    /// for the rest of the epoch, starving the pool.
+    /// for the rest of the epoch, starving the pool. Per-key so each pool
+    /// carries its own batch-instantiated round.
     /// Consensus-safe: written only with consensus-agreed round numbers, so
     /// all honest parties maintain identical values.
     internal_presign_batch_instantiated_at_round:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// The epoch store for persisting presign pools to disk.
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -553,7 +568,7 @@ impl DWalletMPCManager {
             network_key_id_derivations_spawned: HashSet::new(),
             warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
-            next_internal_presign_sequence_number: 1,
+            next_internal_presign_sequence_number: HashMap::new(),
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
             internal_presign_batch_instantiated_at_round: HashMap::new(),
@@ -1641,11 +1656,17 @@ impl DWalletMPCManager {
     /// which key is the NOA key and apply different pool configs (different
     /// batch sizes ⇒ divergent internal-presign sequence numbers).
     fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
-        self.network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(a_id, a), (b_id, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a_id.cmp(b_id)))
-            .map(|(id, _)| *id)
+        // Select over the ADOPTED (consensus-agreed) set, not the installed set
+        // (`network_keys.network_encryption_keys`): installation completes on
+        // wall-clock time per validator, so choosing over it would let two
+        // honest validators pick a different NOA key while their installs lag,
+        // apply different pool configs (batch sizes), and diverge the
+        // internal-presign top-up decision. The adopted set drives the same
+        // top-up loop, so both agree on the NOA key by construction.
+        self.adopted_network_key_data
+            .values()
+            .min_by(|a, b| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a.id.cmp(&b.id)))
+            .map(|data| data.id)
     }
 
     /// Instantiates internal presign sessions based on consensus-agreed network key IDs.
@@ -1671,12 +1692,13 @@ impl DWalletMPCManager {
         // externally requestable on-chain.
         let pool_algorithms =
             network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
-        // Ordered (`BTreeSet`) on purpose: the loop below assigns internal presign
-        // session sequence numbers from a single shared counter in iteration order,
-        // and the sequence number is bound into the session identifier. Every
-        // validator must iterate keys in the same order (and `pool_algorithms` is
-        // already a deterministically-ordered list), or they derive different
-        // session identifiers for the same work and the sessions never reach quorum.
+        // Ordered (`BTreeSet`) for stable iteration/logging, but the sequence
+        // counters are now PER (key, curve, algorithm) pool (not a single shared
+        // counter consumed in iteration order), so a pool's sequence stream no
+        // longer depends on when other keys are adopted or the iteration order.
+        // Each pool's stream is a pure function of that pool's own consensus-
+        // agreed inputs, so a key adopted at a different round on different
+        // validators still derives identical session identifiers for its pool.
         let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
@@ -1750,12 +1772,12 @@ impl DWalletMPCManager {
                 // presigns (1 to n-t), so overlapping batches cause pool overshoot.
                 let instantiated = self
                     .instantiated_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
+                    .get(&(key_id, curve, signature_algorithm))
                     .copied()
                     .unwrap_or(0);
                 let completed = self
                     .completed_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
+                    .get(&(key_id, curve, signature_algorithm))
                     .copied()
                     .unwrap_or(0);
                 if instantiated != completed {
@@ -1779,7 +1801,7 @@ impl DWalletMPCManager {
                     };
                     let batch_round = self
                         .internal_presign_batch_instantiated_at_round
-                        .get(&(curve, signature_algorithm))
+                        .get(&(key_id, curve, signature_algorithm))
                         .copied()
                         .unwrap_or(0);
                     if consensus_round.saturating_sub(batch_round) < expiry_rounds {
@@ -1795,7 +1817,7 @@ impl DWalletMPCManager {
                         "internal presign top-up batch never completed; presuming it dead and releasing the pool for new top-ups"
                     );
                     self.completed_internal_presign_sessions
-                        .insert((curve, signature_algorithm), instantiated);
+                        .insert((key_id, curve, signature_algorithm), instantiated);
                 }
 
                 if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
@@ -1811,11 +1833,11 @@ impl DWalletMPCManager {
                         );
                         *self
                             .instantiated_internal_presign_sessions
-                            .entry((curve, signature_algorithm))
+                            .entry((key_id, curve, signature_algorithm))
                             .or_insert(0) += 1;
                     }
                     self.internal_presign_batch_instantiated_at_round
-                        .insert((curve, signature_algorithm), consensus_round);
+                        .insert((key_id, curve, signature_algorithm), consensus_round);
                     pools_filled.push(format!(
                         "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
                     ));
@@ -1873,10 +1895,20 @@ impl DWalletMPCManager {
         // Consume the sequence number FIRST, unconditionally: the caller's
         // top-up decision is committee-uniform, so every validator MUST
         // account this session — whether it can run it right now or not —
-        // or identifier derivation (a single counter shared across all
-        // pools and keys) permanently diverges across the committee.
-        let session_sequence_number = self.next_internal_presign_sequence_number;
-        self.next_internal_presign_sequence_number += 1;
+        // or identifier derivation diverges across the committee. The
+        // counter is PER (key, curve, algorithm) pool: a key adopted at a
+        // different round on different validators starts its own pool's
+        // stream fresh at 1 without perturbing any other pool's stream.
+        let sequence_entry = self
+            .next_internal_presign_sequence_number
+            .entry((
+                dwallet_network_encryption_key_id,
+                curve,
+                signature_algorithm,
+            ))
+            .or_insert(1);
+        let session_sequence_number = *sequence_entry;
+        *sequence_entry += 1;
 
         let Some(network_key_identity_bytes) =
             self.internal_presign_network_key_identity_bytes(&dwallet_network_encryption_key_id)
@@ -3153,12 +3185,20 @@ impl DWalletMPCManager {
                 // equality and would block the pool permanently.
                 let instantiated = self
                     .instantiated_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
+                    .get(&(
+                        dwallet_network_encryption_key_id,
+                        curve,
+                        signature_algorithm,
+                    ))
                     .copied()
                     .unwrap_or(0);
                 let completed = self
                     .completed_internal_presign_sessions
-                    .entry((curve, signature_algorithm))
+                    .entry((
+                        dwallet_network_encryption_key_id,
+                        curve,
+                        signature_algorithm,
+                    ))
                     .or_insert(0);
                 if *completed < instantiated {
                     *completed += 1;
