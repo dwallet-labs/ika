@@ -57,7 +57,7 @@ output and validator mpc_data items pass unconditionally (mpc_data
 feeds the NEXT reconfiguration's committee assembly, not this epoch's
 signing). The chain holds those exact bytes:
 `respond_dwallet_network_encryption_key_reconfiguration`
-(`coordinator.move`) pushes the reconfiguration `public_output` bytes
+(`coordinator_inner.move`) pushes the reconfiguration `public_output` bytes
 into `reconfiguration_public_outputs[next_epoch]` as part of a
 quorum-certified dwallet-checkpoint system-session completion. Those
 bytes are byte-identical to what the cert would certify — the cert
