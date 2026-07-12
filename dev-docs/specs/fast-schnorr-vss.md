@@ -98,6 +98,21 @@ against the active committee directly.
   (non-VSS) sign.
 - Internal NOA-VSS is reachable at v4; external user-driven VSS sign is not yet
   enabled.
+- **Epoch-entry parking of VSS presign top-ups.** Internal presign top-up
+  batches fire as soon as the network key is installed (fast, from the handoff
+  data), which is typically *before* the epoch's consensus-frozen off-chain
+  validator key set has been ingested — so the VSS pools' presign input
+  construction fails with the not-ready error class
+  (`NetworkDecryptionKeyNotReady` / `WaitingForNetworkKey`). Such a request is
+  **parked** (`internal_presign_requests_pending_for_network_key_data` on the
+  MPC manager), retried once per service iteration, and activated once the key
+  data lands — never terminally failed (terminal failure on every validator
+  starved the VSS pools after each epoch transition until the stale-batch
+  expiry). The session identifier and sequence number are consumed at
+  instantiation regardless of parking, so identifier derivation and the
+  instantiated/completed batch counters stay committee-uniform — parking is
+  local participation deferral, invisible to the top-up guard and the
+  stale-batch expiry. Any other input-construction error stays terminal.
 
 ## Invariants
 

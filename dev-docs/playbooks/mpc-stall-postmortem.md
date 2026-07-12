@@ -111,14 +111,23 @@ counted.) The roots seen for #1736, keyed by which field is false
   # then confirm that seq never returns (no completion, no re-pull):
   grep "session_sequence_number=<SEQ>" $L
   ```
-  A second, correlated signature at every epoch entry: a burst of
-  `FailedToAdvanceMPC(InvalidParameters)` in `compute_presign` round 1
-  with `should_never_happen=true`, VSS algorithms only, never retried to
-  quorum — the internal-presign refill sessions created inside the
-  epoch-entry key gap. Unlike the three roots above (all fixed), this one
-  has no fix yet; the healthy-vs-wedged discriminator and the standing
-  evidence are on issue #1736. Diagnosis needs a FAILING instrumented run
-  (most runs are healthy) — the captured one is CI run 28577745311.
+  A second, correlated signature at every epoch entry: VSS-algorithm
+  internal-presign refill sessions created inside the epoch-entry key gap
+  (network key installed, off-chain validator key set not yet ingested).
+  Historically this appeared as a `FailedToAdvanceMPC(InvalidParameters)`
+  round-1 burst, later as `should_never_happen=true
+  error=NetworkDecryptionKeyNotReady` with terminally-Failed sessions
+  starving the VSS pools. Both are fixed: those requests now PARK
+  ("network key data not ready for internal presign session; parking it
+  for retry") and activate once the key data lands ("network key data
+  arrived; activating parked internal presign session"). The wedge
+  signature today is a park line with NO later activation line for the
+  same session, or a sustained non-zero
+  `ika_dwallet_mpc_internal_presign_requests_pending_for_network_key_data`
+  gauge — that means the off-chain key set never arrived (back to the
+  announcement/freeze checks). Residual #1736 evidence (the
+  parked-sessions-never-compute CI link) is tracked on that issue; the
+  captured instrumented run is CI run 28577745311.
 
 ## 4. Chain counters — the over/undershoot discriminator
 

@@ -197,6 +197,13 @@ pub struct DWalletMPCMetrics {
     /// pending-request gauges target.
     pub(crate) requests_pending_for_frozen_mpc_data: IntGauge,
 
+    /// Size of `DWalletMPCManager.internal_presign_requests_pending_for_network_key_data`
+    /// — internal presign sessions parked because the target network key's data
+    /// (typically the off-chain VSS validator key set at epoch entry) isn't
+    /// locally available yet. Transient non-zero values at epoch entry are
+    /// expected; sustained ones mean the key data never arrived.
+    pub(crate) internal_presign_requests_pending_for_network_key_data: IntGauge,
+
     /// One series per user session currently tracked in `DWalletMPCManager.sessions`,
     /// labeled by `session_seq` (as a string) and `state`. Value is 1 for the
     /// state the session is currently in, 0 for the other four states. Sessions that leave
@@ -489,6 +496,12 @@ impl DWalletMPCMetrics {
             requests_pending_for_frozen_mpc_data: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_requests_pending_for_frozen_mpc_data",
                 "Sessions parked waiting for the off-chain mpc_data freeze gate",
+                registry,
+            )
+            .unwrap(),
+            internal_presign_requests_pending_for_network_key_data: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_internal_presign_requests_pending_for_network_key_data",
+                "Internal presign sessions parked waiting for their network key's data to be locally available",
                 registry,
             )
             .unwrap(),

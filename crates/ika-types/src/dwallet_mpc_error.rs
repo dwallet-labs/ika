@@ -238,6 +238,19 @@ impl From<serde_json::Error> for DwalletMPCError {
 }
 
 impl DwalletMPCError {
+    /// Whether this error means required network-key material is not locally
+    /// available YET (the key's installation or the off-chain validator key
+    /// ingest is still in flight) rather than a permanent failure. Sessions
+    /// hitting this class should be retried once the material lands, not
+    /// failed terminally.
+    pub fn is_network_key_data_not_ready(&self) -> bool {
+        matches!(
+            self,
+            DwalletMPCError::WaitingForNetworkKey(_)
+                | DwalletMPCError::NetworkDecryptionKeyNotReady
+        )
+    }
+
     /// Returns a short, stable label suitable for use as a Prometheus metric label value.
     /// Cardinality is bounded: one variant ⇒ one label. Keep these strings stable —
     /// alerts depend on them.
