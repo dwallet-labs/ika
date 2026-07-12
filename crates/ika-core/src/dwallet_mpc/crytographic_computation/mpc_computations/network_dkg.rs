@@ -976,60 +976,72 @@ mod network_key_id_derivation_tool {
         network_dkg_public_output_to_protocol_pp_inner,
         reconfiguration_public_output_to_protocol_pp_inner,
     };
+    use dwallet_mpc_types::dwallet_mpc::{
+        VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    };
     use ika_sui_client::SuiConnectorClient;
     use ika_sui_client::metrics::SuiClientMetrics;
     use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
     use ika_types::sui::DWalletCoordinatorInner;
     use std::str::FromStr;
     use sui_types::base_types::ObjectID;
+    use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
+
+    // (env, rpc, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml
+    type DeployedEnv<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+    );
+
+    const DEPLOYED_ENVS: &[DeployedEnv<'static>] = &[
+        (
+            "testnet",
+            "https://fullnode.testnet.sui.io:443",
+            "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a",
+            "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0",
+            "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+            "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+            "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6",
+            "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc",
+        ),
+        (
+            "mainnet",
+            "https://fullnode.mainnet.sui.io:443",
+            "0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa",
+            "0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175",
+            "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
+            "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+            "0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80",
+            "0x5ea59bce034008a006425df777da925633ef384ce25761657ea89e2a08ec75f3",
+        ),
+    ];
+
+    fn ika_network_config(env: &DeployedEnv<'_>) -> IkaNetworkConfig {
+        let (_, _, ika, common, twopc, sys_pkg, sys_obj, coord) = env;
+        let oid = |s: &str| ObjectID::from_str(s).unwrap();
+        IkaNetworkConfig::new(
+            oid(ika),
+            oid(common),
+            oid(twopc),
+            None,
+            oid(sys_pkg),
+            oid(sys_obj),
+            oid(coord),
+        )
+    }
 
     #[ignore = "real-network tool; run manually to derive deployed NetworkKeyIds"]
     #[tokio::test]
     async fn print_deployed_network_key_ids() {
-        // (env, rpc, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml
-        type DeployedEnv<'a> = (
-            &'a str,
-            &'a str,
-            &'a str,
-            &'a str,
-            &'a str,
-            &'a str,
-            &'a str,
-            &'a str,
-        );
-        let envs: &[DeployedEnv] = &[
-            (
-                "testnet",
-                "https://fullnode.testnet.sui.io:443",
-                "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a",
-                "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0",
-                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
-                "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
-                "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6",
-                "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc",
-            ),
-            (
-                "mainnet",
-                "https://fullnode.mainnet.sui.io:443",
-                "0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa",
-                "0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175",
-                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
-                "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
-                "0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80",
-                "0x5ea59bce034008a006425df777da925633ef384ce25761657ea89e2a08ec75f3",
-            ),
-        ];
-        let oid = |s: &str| ObjectID::from_str(s).unwrap();
-        for (name, rpc, ika, common, twopc, sys_pkg, sys_obj, coord) in envs {
-            let config = IkaNetworkConfig::new(
-                oid(ika),
-                oid(common),
-                oid(twopc),
-                None,
-                oid(sys_pkg),
-                oid(sys_obj),
-                oid(coord),
-            );
+        for env in DEPLOYED_ENVS {
+            let (name, rpc, ..) = env;
+            let config = ika_network_config(env);
             let client = SuiConnectorClient::new(rpc, SuiClientMetrics::new_for_testing(), config)
                 .await
                 .unwrap();
@@ -1071,6 +1083,107 @@ mod network_key_id_derivation_tool {
                     "NETWORK_KEY_ID {name}: object_id={id} network_key_id=0x{}",
                     hex::encode(network_key_id)
                 );
+            }
+        }
+    }
+
+    /// One-off release-evidence tool: fetches the DEPLOYED network keys from
+    /// testnet/mainnet and proves their on-chain bytes decode on the exact
+    /// types the v3 backward-compatible reconfiguration arm consumes — the
+    /// real-chain-bytes check the synthesized-anchor regression tests cannot
+    /// provide (those re-encode a fresh output under the current crypto
+    /// crates, so a bcs layout drift against the deployed bytes would not
+    /// trip them). Run with:
+    ///   cargo test -p ika-core --release decode_deployed_network_key_bytes -- --ignored --nocapture
+    #[ignore = "real-network tool; run manually to verify deployed key bytes decode under the pinned crypto crates"]
+    #[tokio::test]
+    async fn decode_deployed_network_key_bytes() {
+        for env in DEPLOYED_ENVS {
+            let (name, rpc, ..) = env;
+            let config = ika_network_config(env);
+            let client = SuiConnectorClient::new(rpc, SuiClientMetrics::new_for_testing(), config)
+                .await
+                .unwrap();
+            let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
+            let DWalletCoordinatorInner::V1(inner) = &coordinator_inner;
+            let epoch = inner.current_epoch;
+            let network_keys = client
+                .get_dwallet_mpc_network_keys(&coordinator_inner)
+                .await
+                .unwrap();
+            for (id, key) in &network_keys {
+                let key_data = client
+                    .get_network_encryption_key_with_full_data_by_epoch(key, epoch)
+                    .await
+                    .unwrap();
+
+                let anchor: VersionedNetworkDkgOutput =
+                    bcs::from_bytes(&key_data.network_dkg_public_output)
+                        .expect("anchor bytes must decode as VersionedNetworkDkgOutput");
+                match &anchor {
+                    VersionedNetworkDkgOutput::V1(v1_inner) => {
+                        // The exact decode the v3 bwd-compat V1 arm performs on
+                        // every reconfiguration of a deployed key.
+                        let decoded: class_groups::dkg::PublicOutput<
+                            { twopc_mpc::secp256k1::SCALAR_LIMBS },
+                            { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },
+                            {
+                                twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS
+                            },
+                        > = bcs::from_bytes(v1_inner).expect(
+                            "V1 anchor inner bytes must decode as the class-groups DKG output",
+                        );
+                        let reencoded = bcs::to_bytes(&decoded).unwrap();
+                        println!(
+                            "DECODE {name}: key {id}: V1 anchor OK ({} bytes, re-encode {})",
+                            v1_inner.len(),
+                            if reencoded == *v1_inner {
+                                "byte-identical".to_string()
+                            } else {
+                                format!("DIFFERS ({} bytes)", reencoded.len())
+                            }
+                        );
+                    }
+                    VersionedNetworkDkgOutput::V2(bytes) => println!(
+                        "DECODE {name}: key {id}: V2-tagged anchor ({} bytes) — not the deployed V1 shape",
+                        bytes.len()
+                    ),
+                    VersionedNetworkDkgOutput::V3(bytes) => println!(
+                        "DECODE {name}: key {id}: V3-tagged anchor ({} bytes) — not the deployed V1 shape",
+                        bytes.len()
+                    ),
+                }
+
+                if key_data.current_reconfiguration_public_output.is_empty() {
+                    println!("DECODE {name}: key {id}: no reconfiguration output on chain");
+                    continue;
+                }
+                let reconfiguration: VersionedDecryptionKeyReconfigurationOutput =
+                    bcs::from_bytes(&key_data.current_reconfiguration_public_output).expect(
+                        "reconfiguration bytes must decode as VersionedDecryptionKeyReconfigurationOutput",
+                    );
+                match &reconfiguration {
+                    VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => {
+                        // The exact decode the v3 bwd-compat V1 arm performs on
+                        // the prior reconfiguration output.
+                        let _: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =
+                            bcs::from_bytes(bytes).expect(
+                                "V2 reconfiguration output must decode as the bwd-compat PublicOutput",
+                            );
+                        println!(
+                            "DECODE {name}: key {id}: V2 reconfiguration output OK ({} bytes)",
+                            bytes.len()
+                        );
+                    }
+                    VersionedDecryptionKeyReconfigurationOutput::V1(bytes) => println!(
+                        "DECODE {name}: key {id}: V1-tagged reconfiguration output ({} bytes) — unsupported by the bwd-compat arm",
+                        bytes.len()
+                    ),
+                    VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => println!(
+                        "DECODE {name}: key {id}: V3-tagged reconfiguration output ({} bytes) — main-path shape",
+                        bytes.len()
+                    ),
+                }
             }
         }
     }
