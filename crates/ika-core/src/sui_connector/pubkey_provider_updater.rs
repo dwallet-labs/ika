@@ -112,7 +112,10 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     // resolve a consensus key and drop, silently dropping its stake from the
     // cert quorum. Resolve each fetched pool to its snapshot name by
     // validator id (StakingPool.id == BlsCommitteeMember.validator_id).
-    let bls_members = system_inner.read_bls_committee(bls_committee);
+    // Lossy: a departed prior-committee member with an unparseable protocol
+    // pubkey is skipped, not fatal — bootstrap must not crash-loop on one bad
+    // record. Its stake then simply doesn't count toward the cert quorum.
+    let bls_members = system_inner.read_bls_committee_lossy(bls_committee);
     let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = bls_members
         .iter()
         .map(|(id, (name, _))| (*id, *name))
