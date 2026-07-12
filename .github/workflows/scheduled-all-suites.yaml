@@ -61,9 +61,15 @@ jobs:
       # `github.token` (a.k.a. secrets.GITHUB_TOKEN) carries the
       # `actions: write` permission granted above, which is all `gh workflow
       # run` needs to dispatch a sibling workflow.
+      #
+      # GH_REPO is REQUIRED: there is no checkout step, so without it `gh`
+      # tries to infer the repo from a local git checkout and dies with
+      # "fatal: not a git repository" before dispatching anything (which
+      # silently killed every nightly fan-out).
       - name: Dispatch ${{ matrix.suite }} against ${{ matrix.branch }}
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           BRANCH: ${{ matrix.branch }}
           SUITE: ${{ matrix.suite }}
         run: |
