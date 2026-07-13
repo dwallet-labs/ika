@@ -247,33 +247,44 @@ impl IkaCheckpointPusher {
     }
 
     /// Retry every pending gap once. A gap that materializes is folded late
-    /// (version-safe) and cleared; one that outlives the deadline is dropped
-    /// with a loud warn — at that point it is genuinely pruned upstream, and
-    /// objects whose only mutation rode it stay missing from the cache until
-    /// a later mutation or a consumer's network fallback repairs them.
+    /// (version-safe) and cleared; one that keeps failing — fetch OR fold —
+    /// outlives the deadline and is dropped with a loud warn. Fold failures
+    /// stay pending rather than dropping immediately because they are not
+    /// all deterministic: `verify_before_fold` fails with MissingCommittee
+    /// while the checkpoint's epoch committee hasn't installed yet (follower
+    /// lag at a Sui epoch boundary, or a restart near one) — exactly the
+    /// transient the in-order scan path retries by pinning its cursor. A
+    /// genuinely deterministic failure warns once per tick and expires at
+    /// the same deadline. After a drop, objects whose only mutation rode
+    /// the checkpoint stay missing from the cache until a later mutation or
+    /// a consumer's network fallback repairs them.
     async fn retry_pending_gaps(&mut self) {
         const GAP_RETRY_DEADLINE: Duration = Duration::from_secs(600);
         let seqs: Vec<CheckpointSequenceNumber> = self.pending_gaps.keys().copied().collect();
         for seq in seqs {
+            let expired = self
+                .pending_gaps
+                .get(&seq)
+                .is_some_and(|since| since.elapsed() > GAP_RETRY_DEADLINE);
             match self.transport.get_full_checkpoint(seq).await {
-                Ok(data) => {
-                    match self.fold_checkpoint(seq, &data) {
-                        Ok(()) => {
-                            info!(seq, "late-materialized checkpoint folded — gap repaired");
-                        }
-                        Err(e) => {
-                            // Deterministic build/verify failure: retrying the
-                            // same bytes cannot heal it.
-                            warn!(seq, error = ?e, "gap checkpoint fetched but failed to fold — dropping");
-                        }
+                Ok(data) => match self.fold_checkpoint(seq, &data) {
+                    Ok(()) => {
+                        info!(seq, "late-materialized checkpoint folded — gap repaired");
+                        self.pending_gaps.remove(&seq);
                     }
-                    self.pending_gaps.remove(&seq);
-                }
+                    Err(e) if expired => {
+                        self.pending_gaps.remove(&seq);
+                        warn!(
+                            seq,
+                            error = ?e,
+                            "gap checkpoint kept failing to fold until the retry deadline — dropping"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(seq, error = ?e, "gap checkpoint fetched but failed to fold — will retry");
+                    }
+                },
                 Err(e) => {
-                    let expired = self
-                        .pending_gaps
-                        .get(&seq)
-                        .is_some_and(|since| since.elapsed() > GAP_RETRY_DEADLINE);
                     if expired {
                         self.pending_gaps.remove(&seq);
                         warn!(

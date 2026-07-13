@@ -397,9 +397,12 @@ impl VerifiedStateCache {
     /// newer-than-the-pusher checkpoint; persisting that here would write a head
     /// ahead of the objects actually durably folded, so a crash at that instant
     /// would leave the restored cache claiming a freshness it doesn't have (the
-    /// staleness tripwire then under-fires). Only the single-threaded, in-order
-    /// pusher persists (reader shadow-writes use `absorb_shadow_entries`), so a
-    /// per-call `source_seq` is contiguous and never overstates.
+    /// staleness tripwire then under-fires). Only the single-threaded pusher
+    /// persists (reader shadow-writes use `absorb_shadow_entries`); its scan
+    /// is in-order, but a pending-gap checkpoint folds LATE with its own
+    /// older seq, so the persisted head write is max-semantics in
+    /// `write_verified_object_cache` — a per-call `source_seq` never
+    /// overstates, and the persisted head never regresses.
     fn persist(&self, inserted_ids: &[ObjectID], head: CheckpointSequenceNumber) {
         let Some(perpetual) = &self.perpetual else {
             return;

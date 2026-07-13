@@ -17,8 +17,8 @@
 //! detection is left to the consumer, which compares the listed count against
 //! the collection `size` it reads from verified parent state.
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -139,6 +139,13 @@ pub struct OcsVerifiedReader {
     /// Bag-entry children are intentionally *not* tracked — their ids are
     /// short-lived (dynamic fields), so tracking would just leak memory.
     high_water: RwLock<HashMap<ObjectID, SequenceNumber>>,
+    /// Skipped bag children (pruned defining checkpoint) that failed even
+    /// the cache-fallback resolution and were already warned about — a
+    /// permanent hole recurs on every pump walk, so the warn fires once per
+    /// id and clears if the id later resolves. Bounded like the ids
+    /// themselves: entries leave the bag (and stop being listed) when their
+    /// session completes.
+    warned_unresolvable_children: RwLock<HashSet<ObjectID>>,
     /// Reject any proof whose checkpoint is more than this many behind the
     /// provider's claimed head. None disables the bound.
     freshness_bound: Option<u64>,
@@ -196,6 +203,7 @@ impl OcsVerifiedReader {
             committees,
             metrics,
             high_water: RwLock::new(HashMap::new()),
+            warned_unresolvable_children: RwLock::new(HashSet::new()),
             freshness_bound,
             cache,
             cache_first,
@@ -743,15 +751,27 @@ impl OcsVerifiedReader {
             for id in &resp.skipped_entry_ids {
                 match Box::pin(self.verified_object(*id)).await {
                     Ok(resolved) => {
+                        // Bag-entry children are short-lived ids the
+                        // high-water map intentionally does not track (see
+                        // the field doc) — `verified_object` recorded one;
+                        // drop it so per-child entries don't accumulate.
+                        self.forget_high_water(id);
+                        self.warned_unresolvable_children.write().remove(id);
                         verified.push(resolved);
                     }
                     Err(e) => {
-                        warn!(
-                            ?id,
-                            error=?e,
-                            "listed dynamic-field child with a pruned defining checkpoint \
-                             could not be resolved from the verified cache either"
-                        );
+                        // Once per id: a permanently unresolvable child
+                        // recurs on every ~50ms pump walk until its session
+                        // completes and the entry leaves the bag — warning
+                        // each walk floods the log without adding signal.
+                        if self.warned_unresolvable_children.write().insert(*id) {
+                            warn!(
+                                ?id,
+                                error=?e,
+                                "listed dynamic-field child with a pruned defining checkpoint \
+                                 could not be resolved from the verified cache either"
+                            );
+                        }
                     }
                 }
             }
