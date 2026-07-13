@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tracing::{info, warn};
+use tracing::info;
 use typed_store::rocks::{DBMap, DBOptions, MetricConf, ReadWriteOptions, default_db_options};
 use typed_store::rocksdb::Options;
 
@@ -19,13 +19,6 @@ use sui_macros::nondeterministic;
 
 pub struct CommitteeStore {
     tables: CommitteeStoreTables,
-    /// A second typed view over the SAME `committee_map` column family, whose
-    /// value type is the pre-`consensus_keys` (mainnet-v1.1.8) `Committee`
-    /// layout. Consulted only when a primary decode fails, so a record this
-    /// binary wrote (which decodes on the primary) is never read through the
-    /// legacy schema. Lets a v4 binary read a `committee_map` entry its own
-    /// prior version persisted, instead of panicking on the layout change.
-    legacy_committee_map: DBMap<EpochId, LegacyCommittee>,
     cache: RwLock<HashMap<EpochId, Arc<Committee>>>,
 }
 
@@ -50,20 +43,49 @@ impl CommitteeStore {
             None,
         );
 
-        // Reopen the same "committee_map" column family under the legacy value
-        // schema for the fallback decode. Reuses the primary's DB handle.
-        let legacy_committee_map = DBMap::reopen(
+        Self::migrate_legacy_records(&tables);
+
+        Self {
+            tables,
+            cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// One-time migration: rewrite `committee_map` records persisted by
+    /// mainnet-v1.1.8 (pre-`consensus_keys` layout, which the current
+    /// `Committee` cannot decode — bcs is positional) in the current layout,
+    /// so every later read is a plain decode. Idempotent and crash-safe: a
+    /// record is rewritten only if it fails the current decode AND succeeds
+    /// the legacy one, so re-running skips already-migrated records. Remove
+    /// together with `LegacyCommittee` once no fleet upgrades directly from
+    /// 1.1.8 data dirs.
+    fn migrate_legacy_records(tables: &CommitteeStoreTables) {
+        let legacy_view: DBMap<EpochId, LegacyCommittee> = DBMap::reopen(
             &tables.committee_map.db,
             Some("committee_map"),
             &ReadWriteOptions::default(),
             false,
         )
         .expect("reopening committee_map under the legacy schema cannot fail — same cf");
-
-        Self {
-            tables,
-            legacy_committee_map,
-            cache: RwLock::new(HashMap::new()),
+        // Current-layout records fail the legacy decode (trailing bytes) and
+        // are yielded as Err items; skip them. For each legacy-decodable
+        // record, confirm the current decode really fails before rewriting,
+        // so a current record can never be misread as legacy.
+        for item in legacy_view.safe_iter() {
+            let Ok((epoch, legacy)) = item else { continue };
+            if tables.committee_map.get(&epoch).is_ok() {
+                continue;
+            }
+            let committee = Committee::from(legacy);
+            tables
+                .committee_map
+                .insert(&epoch, &committee)
+                .expect("failed to rewrite a legacy committee record");
+            info!(
+                epoch,
+                "migrated a pre-consensus-keys (mainnet-1.1.8) committee record; \
+                 consensus_keys is empty for this epoch"
+            );
         }
     }
 
@@ -99,40 +121,10 @@ impl CommitteeStore {
         if let Some(committee) = self.cache.read().get(epoch_id) {
             return Ok(Some(committee.clone()));
         }
-        let committee = match self.tables.committee_map.get(epoch_id) {
-            Ok(committee) => committee,
-            // A decode error is most likely a record written by an older
-            // binary with the pre-`consensus_keys` layout. Fall back to the
-            // legacy view; only if THAT also fails is the record genuinely
-            // unreadable. We reach here only after the primary errored, so a
-            // current-layout record is never mis-read as legacy.
-            Err(primary_err) => match self.legacy_committee_map.get(epoch_id) {
-                Ok(Some(legacy)) => {
-                    info!(
-                        epoch = *epoch_id,
-                        "decoded a pre-consensus-keys (mainnet-1.1.8) committee record; \
-                         consensus_keys is empty for this epoch"
-                    );
-                    Some(Committee::from(legacy))
-                }
-                // Absent under the legacy schema too: surface the ORIGINAL
-                // error rather than the legacy miss.
-                Ok(None) => return Err(primary_err.into()),
-                // Both decodes errored — genuine corruption. Log the legacy
-                // diagnostic before surfacing the primary error, or the
-                // second signal is lost exactly when an operator needs it.
-                Err(legacy_err) => {
-                    warn!(
-                        epoch = *epoch_id,
-                        ?legacy_err,
-                        "committee record failed BOTH the current and legacy decode — \
-                         genuinely corrupt record (legacy error logged here; primary \
-                         error propagated)"
-                    );
-                    return Err(primary_err.into());
-                }
-            },
-        };
+        // Legacy (mainnet-v1.1.8) records were rewritten in the current
+        // layout by `migrate_legacy_records` at store open, so a decode
+        // error here is genuine corruption and is propagated.
+        let committee = self.tables.committee_map.get(epoch_id)?;
         let committee = committee.map(Arc::new);
         if let Some(committee) = committee.as_ref() {
             self.cache.write().insert(*epoch_id, committee.clone());
@@ -145,5 +137,42 @@ impl CommitteeStore {
             .committee_map
             .checkpoint_db(path)
             .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ika_types::committee::LegacyCommittee;
+
+    #[tokio::test]
+    async fn legacy_records_migrate_at_open() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("DB_{:?}", nondeterministic!(ObjectID::random())));
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        {
+            let store = CommitteeStore::new(path.clone(), None);
+            // Plant a 1.1.8-layout record, as a pre-upgrade binary would have
+            // written it.
+            let legacy_view: DBMap<EpochId, LegacyCommittee> = DBMap::reopen(
+                &store.tables.committee_map.db,
+                Some("committee_map"),
+                &ReadWriteOptions::default(),
+                false,
+            )
+            .unwrap();
+            legacy_view
+                .insert(&committee.epoch, &LegacyCommittee::mirror_of(&committee))
+                .unwrap();
+            // The record does not decode under the current schema — this is
+            // the state an upgraded binary opens the store in.
+            assert!(store.tables.committee_map.get(&committee.epoch).is_err());
+        }
+        // Reopen: migration rewrites the record; reads are plain decodes.
+        let store = CommitteeStore::new(path, None);
+        let migrated = store.get_committee(&committee.epoch).unwrap().unwrap();
+        assert_eq!(migrated.epoch, committee.epoch);
+        assert_eq!(migrated.voting_rights, committee.voting_rights);
+        assert_eq!(migrated.quorum_threshold, committee.quorum_threshold);
     }
 }

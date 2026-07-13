@@ -94,9 +94,14 @@ serialization/schema change, MUST preserve all of the following.
    not just the current one. **Known instance:** `Committee` gained a
    `consensus_keys` field at v4 (second-to-last, before `index_map`), so a
    `committee_map` record written by mainnet-v1.1.8 does not decode under
-   the v4 `Committee` (bcs is positional). `CommitteeStore::get_committee`
-   reads such records via a `LegacyCommittee` fallback (empty
-   `consensus_keys`), consulted only after the primary decode fails. The
+   the v4 `Committee` (bcs is positional). `CommitteeStore` migrates such
+   records at store open (`migrate_legacy_records`): each record that fails
+   the current decode but decodes as `LegacyCommittee` is rewritten in the
+   current layout with empty `consensus_keys`, so every later read is a
+   plain decode. The migration is idempotent (already-migrated records pass
+   the current decode and are skipped), hence crash-safe, and the
+   `LegacyCommittee` mirror is deletable once no fleet upgrades directly
+   from 1.1.8 data dirs. The
    empty `consensus_keys` is sound because a legacy record always DESCRIBES
    a ≤v3 epoch, for which no handoff certificate can exist (cert minting is
    v4-gated), so the keys are never asked to verify anything. That holds
@@ -108,7 +113,7 @@ serialization/schema change, MUST preserve all of the following.
    letting a pre-`consensus_keys` record describe a cert-minting epoch —
    cert verification skips every signer it cannot resolve and then fails
    quorum, so an honest validator fail-closes far from the cause; re-check
-   this chain before reusing the legacy fallback for anything else.
+   this chain before reusing the legacy migration for anything else.
    **Rollback caveat (reverse direction, unfixable from the v4 side):** a
    `committee_map` record written by a v4 binary is NOT readable by
    mainnet-v1.1.8 (same positional-bcs reason; 1.1.8 has no fallback).

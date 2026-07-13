@@ -113,11 +113,12 @@ pub struct Committee {
 /// decoded by the current `Committee`. This mirror decodes those records so a
 /// v4 binary can read a `committee_map` entry its own prior (1.1.8) version
 /// persisted. Fields mirror the 1.1.8 declaration order EXACTLY — do not
-/// reorder. Only used as a fallback after a primary `Committee` decode fails
-/// (see `CommitteeStore::get_committee`).
+/// reorder. Only used by `CommitteeStore::migrate_legacy_records`, which
+/// rewrites such records in the current layout at store open; remove both
+/// together once no fleet upgrades directly from 1.1.8 data dirs.
 ///
-/// `Serialize` is derived only to satisfy the `DBMap` value bound; the legacy
-/// view is read-only (all writes go through the primary `Committee` schema).
+/// `Serialize` is derived only to satisfy the `DBMap` value bound; all
+/// writes go through the primary `Committee` schema.
 #[derive(Serialize, Deserialize)]
 pub struct LegacyCommittee {
     epoch: EpochId,
@@ -131,6 +132,26 @@ pub struct LegacyCommittee {
     // not in the wire format) without tripping the dead-code lint.
     _expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
     _index_map: HashMap<AuthorityName, usize>,
+}
+
+impl LegacyCommittee {
+    /// A `LegacyCommittee` mirroring a given `Committee`'s mainnet-v1.1.8
+    /// on-wire layout (no `consensus_keys`), for migration tests.
+    #[cfg(any(test, feature = "test_helpers"))]
+    pub fn mirror_of(committee: &Committee) -> Self {
+        let (expanded_keys, index_map) = Committee::load_inner(&committee.voting_rights);
+        LegacyCommittee {
+            epoch: committee.epoch,
+            voting_rights: committee.voting_rights.clone(),
+            class_groups_public_keys_and_proofs: committee
+                .class_groups_public_keys_and_proofs
+                .clone(),
+            quorum_threshold: committee.quorum_threshold,
+            validity_threshold: committee.validity_threshold,
+            _expanded_keys: expanded_keys,
+            _index_map: index_map,
+        }
+    }
 }
 
 impl From<LegacyCommittee> for Committee {
@@ -750,31 +771,14 @@ pub struct ValidatorEncryptionKeysAndProofs {
 mod tests {
     use super::*;
 
-    /// A `LegacyCommittee` built to mirror a given `Committee`'s
-    /// mainnet-v1.1.8 on-wire layout (no `consensus_keys`).
-    fn legacy_mirror_of(committee: &Committee) -> LegacyCommittee {
-        let (expanded_keys, index_map) = Committee::load_inner(&committee.voting_rights);
-        LegacyCommittee {
-            epoch: committee.epoch,
-            voting_rights: committee.voting_rights.clone(),
-            class_groups_public_keys_and_proofs: committee
-                .class_groups_public_keys_and_proofs
-                .clone(),
-            quorum_threshold: committee.quorum_threshold,
-            validity_threshold: committee.validity_threshold,
-            _expanded_keys: expanded_keys,
-            _index_map: index_map,
-        }
-    }
-
     #[test]
     fn legacy_committee_record_decodes_via_fallback() {
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
-        let legacy_bytes = bcs::to_bytes(&legacy_mirror_of(&committee)).unwrap();
+        let legacy_bytes = bcs::to_bytes(&LegacyCommittee::mirror_of(&committee)).unwrap();
 
         // A 1.1.8-layout record does NOT decode as the current `Committee`
         // (the mid-struct `consensus_keys` field shifts every following byte),
-        // which is exactly why `get_committee` needs the fallback.
+        // which is exactly why the store migrates such records at open.
         assert!(
             bcs::from_bytes::<Committee>(&legacy_bytes).is_err(),
             "legacy record must not silently decode as the current Committee"
@@ -792,9 +796,10 @@ mod tests {
 
     #[test]
     fn current_committee_record_is_not_misread_as_legacy() {
-        // The safety property behind "try legacy only after the primary decode
-        // fails": a current-layout record must not decode cleanly under the
-        // legacy schema (bcs trailing-byte strictness catches the shift).
+        // The safety property behind the migration's "rewrite only records
+        // that fail the current decode": a current-layout record must not
+        // decode cleanly under the legacy schema (bcs trailing-byte
+        // strictness catches the shift).
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let current_bytes = bcs::to_bytes(&committee).unwrap();
         assert!(
