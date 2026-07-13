@@ -1313,6 +1313,20 @@ impl IkaTestClusterBuilder {
         let mut test_cluster = TestClusterBuilder::new()
             .set_network_config(sui_network_config)
             .with_fullnode_rpc_port(port_base + SUI_FULLNODE_RPC_PORT_OFFSET)
+            // The ika node reads ALL of its verified Sui state from this
+            // fullnode via the OCS checkpoint pusher, which folds each
+            // checkpoint's objects in order. Sui's msim default prunes
+            // checkpoints after 2 epochs (`num_epochs_to_retain_for_checkpoints
+            // = Some(2)`), which at these short test epochs (20s) is a ~40s
+            // window — and under msim, proof-building burns virtual time while
+            // the fullnode keeps producing and pruning, so the pusher can fall
+            // behind the prune horizon and PERMANENTLY lose a checkpoint (with
+            // any session_events bag entry on it), pinning an epoch close on
+            // unlucky schedules. Real fullnodes serving an ika direct node
+            // retain far more than the pusher's fold lag; disabling pruning
+            // here restores that fidelity so the tests exercise epoch-boundary
+            // delivery, not an artificial pruning race.
+            .disable_fullnode_pruning()
             .build()
             .await;
 
