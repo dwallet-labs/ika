@@ -105,15 +105,6 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
-    /// Sessions whose persisted own-output consensus transaction was already
-    /// re-submitted this epoch. A computation completed astride an epoch
-    /// boundary can have its output quorum split across the two epochs'
-    /// consensus — outputs sequenced in the dying epoch die with its tally,
-    /// while the durable computation-completed flag suppresses recomputation
-    /// on the re-pull — so on re-pull of a computation-completed session this
-    /// service re-submits the persisted output once, merging the split tally
-    /// in the current epoch.
-    resubmitted_own_outputs: HashSet<SessionIdentifier>,
     /// Admission-rejected requests whose rejection output is held back until
     /// the epoch-close lock target covers their sequence number; retried each
     /// service loop iteration. A rejection that reaches quorum completes the
@@ -241,7 +232,6 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
-            resubmitted_own_outputs: HashSet::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver,
@@ -323,7 +313,6 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
-            resubmitted_own_outputs: HashSet::new(),
             pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
@@ -879,68 +868,6 @@ impl DWalletMPCService {
                             ?session_identifier,
                             "Got a request for a session that was previously computation completed, marking it as computation completed"
                         );
-
-                        // The request being (re-)delivered means the session
-                        // is still UNCOMPLETED on-chain, while our durable
-                        // flag says our output was already sequenced — in
-                        // some epoch. If that was a dying epoch's consensus,
-                        // the output died with its tally and the flag
-                        // suppresses recomputation, so without a re-submit
-                        // the output quorum stays split across epochs
-                        // forever and the epoch-close gate pins the epoch.
-                        // Re-submit the persisted output once per epoch.
-                        if !self.resubmitted_own_outputs.contains(&session_identifier) {
-                            self.resubmitted_own_outputs.insert(session_identifier);
-                            match self
-                                .state
-                                .get_dwallet_mpc_own_output_transaction(session_identifier)
-                            {
-                                Ok(Some(serialized_transaction)) => {
-                                    match bcs::from_bytes::<ConsensusTransaction>(
-                                        &serialized_transaction,
-                                    ) {
-                                        Ok(consensus_message) => {
-                                            info!(
-                                                ?session_identifier,
-                                                "re-submitting own MPC output for a re-pulled computation-completed session"
-                                            );
-                                            if let Err(err) = self
-                                                .dwallet_submit_to_consensus
-                                                .submit_to_consensus(&[consensus_message])
-                                                .await
-                                            {
-                                                error!(
-                                                    ?session_identifier,
-                                                    error=?err,
-                                                    "failed to re-submit own MPC output to consensus"
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                ?session_identifier,
-                                                error=?e,
-                                                should_never_happen = true,
-                                                "failed to deserialize persisted own MPC output transaction"
-                                            );
-                                        }
-                                    }
-                                }
-                                Ok(None) => {
-                                    debug!(
-                                        ?session_identifier,
-                                        "no persisted own MPC output to re-submit (completed via peers' quorum before our own submission)"
-                                    );
-                                }
-                                Err(e) => {
-                                    error!(
-                                        ?session_identifier,
-                                        error=?e,
-                                        "failed to load persisted own MPC output transaction"
-                                    );
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -1877,19 +1804,16 @@ impl DWalletMPCService {
                         public_output_value,
                         malicious_authorities,
                         rejected,
-                    ) {
-                        self.persist_own_output_transaction(session_identifier, &consensus_message);
-                        if let Err(err) = consensus_adapter
-                            .submit_to_consensus(&[consensus_message])
-                            .await
-                        {
-                            error!(
-                                ?session_identifier,
-                                validator=?validator_name,
-                                error=?err,
-                                "failed to submit an MPC output message to consensus",
-                            );
-                        }
+                    ) && let Err(err) = consensus_adapter
+                        .submit_to_consensus(&[consensus_message])
+                        .await
+                    {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            error=?err,
+                            "failed to submit an MPC output message to consensus",
+                        );
                     }
                 }
                 Err(err) => match request.session_type {
@@ -2019,52 +1943,16 @@ impl DWalletMPCService {
 
         if let Some(consensus_message) =
             self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected)
-        {
-            self.persist_own_output_transaction(session_identifier, &consensus_message);
-            if let Err(err) = consensus_adapter
+            && let Err(err) = consensus_adapter
                 .submit_to_consensus(&[consensus_message])
                 .await
-            {
-                error!(
-                    ?session_identifier,
-                    validator=?validator_name,
-                    error=?err,
-                    "failed to submit an MPC SessionFailed message to consensus"
-                );
-            }
-        }
-    }
-
-    /// Persist the serialized own-output consensus transaction so it can be
-    /// re-submitted if the session is re-pulled in a later epoch (see
-    /// `resubmitted_own_outputs`). Best-effort: on a persist failure the
-    /// output still goes to consensus; only the cross-epoch replay is lost.
-    fn persist_own_output_transaction(
-        &self,
-        session_identifier: SessionIdentifier,
-        consensus_message: &ConsensusTransaction,
-    ) {
-        match bcs::to_bytes(consensus_message) {
-            Ok(serialized_transaction) => {
-                if let Err(e) = self.state.insert_dwallet_mpc_own_output_transaction(
-                    session_identifier,
-                    serialized_transaction,
-                ) {
-                    error!(
-                        ?session_identifier,
-                        error=?e,
-                        "failed to persist own MPC output transaction"
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    ?session_identifier,
-                    error=?e,
-                    should_never_happen = true,
-                    "failed to serialize own MPC output transaction"
-                );
-            }
+        {
+            error!(
+                ?session_identifier,
+                validator=?validator_name,
+                error=?err,
+                "failed to submit an MPC SessionFailed message to consensus"
+            );
         }
     }
 

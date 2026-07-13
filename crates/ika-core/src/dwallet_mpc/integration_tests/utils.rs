@@ -114,7 +114,6 @@ pub(crate) struct TestingSubmitToConsensus {
 pub(crate) struct TestingAuthorityState {
     pub(crate) dwallet_mpc_computation_completed_sessions:
         Arc<Mutex<HashMap<SessionIdentifier, bool>>>,
-    pub(crate) dwallet_mpc_own_output_transactions: Arc<Mutex<HashMap<SessionIdentifier, Vec<u8>>>>,
 }
 
 pub(crate) struct TestingDWalletCheckpointNotify {
@@ -552,7 +551,6 @@ impl TestingAuthorityState {
     fn new() -> Self {
         Self {
             dwallet_mpc_computation_completed_sessions: Arc::new(Mutex::new(HashMap::new())),
-            dwallet_mpc_own_output_transactions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -585,30 +583,6 @@ impl AuthorityStateTrait for TestingAuthorityState {
                     .map(|_| (*session_id, true))
             })
             .collect())
-    }
-
-    fn insert_dwallet_mpc_own_output_transaction(
-        &self,
-        session_identifier: SessionIdentifier,
-        serialized_transaction: Vec<u8>,
-    ) -> IkaResult {
-        self.dwallet_mpc_own_output_transactions
-            .lock()
-            .unwrap()
-            .insert(session_identifier, serialized_transaction);
-        Ok(())
-    }
-
-    fn get_dwallet_mpc_own_output_transaction(
-        &self,
-        session_identifier: SessionIdentifier,
-    ) -> IkaResult<Option<Vec<u8>>> {
-        Ok(self
-            .dwallet_mpc_own_output_transactions
-            .lock()
-            .unwrap()
-            .get(&session_identifier)
-            .cloned())
     }
 }
 
