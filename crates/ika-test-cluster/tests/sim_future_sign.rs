@@ -25,15 +25,12 @@ const DWALLET_CURVE_SECP256K1: u32 = 0;
 const DWALLET_SIGNATURE_ALGORITHM_ECDSA_SECP256K1: u32 = 0;
 const HASH_SCHEME_KECCAK256: u32 = 0;
 const EPOCH_MS: u64 = 20_000;
-// Generous: a user session requested astride an epoch close is excluded
-// from the close's lock target (correct), but in a QUIET epoch nothing
-// recomputes the target until the next close — the session is starved
-// for the remainder of that epoch and completes roughly one epoch late.
-// Deterministically reproduced here (seed 1): the imported-key
-// verification was requested astride a close and reached output quorum
-// ~295 virtual seconds later, losing a 300-second budget by seconds.
-// The budget tolerates that liveness shape; the epoch-long latency
-// itself is a real finding tracked on the PR.
+// Generous. A session requested astride an epoch close is excluded from
+// that close's lock target and re-pulled into the next epoch, so its
+// completion can legitimately land an epoch-cycle after the request
+// (observed ~295 virtual seconds for the imported-key verification at
+// 20-second epochs, which lost a 300-second budget by seconds). The
+// budget covers that legitimate re-pull latency with headroom.
 const FLOW_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[sim_test]

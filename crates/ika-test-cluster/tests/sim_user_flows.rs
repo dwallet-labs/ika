@@ -20,16 +20,18 @@
 //!
 //! This flow runs ~ten user sessions against 20-second epochs, so on
 //! most msim schedules one of them lands astride an epoch close — which
-//! made this test the reproducer that cornered the checkpoint-pusher
-//! skip bug: a full-checkpoint fetch failing transiently (contents
-//! lagging the certified head) was skipped FOREVER, leaving a permanent
-//! gap in the verified state cache; a session_events bag entry riding
-//! the skipped checkpoint never reached the fresh epoch's manager, the
-//! session never ran, and the epoch-close gate pinned the epoch
+//! made this test the reproducer that cornered the close-lock wedge:
+//! the OCS checkpoint pusher permanently skipped checkpoints it could
+//! not fetch before the fullnode's pruning watermark passed them, and
+//! the dynamic-fields walk permanently dropped live-listed
+//! `session_events` bag children whose defining checkpoint was pruned —
+//! so a session re-pulled across an epoch boundary never reached the
+//! fresh epoch's MPC manager and the epoch-close gate pinned the epoch
 //! (`all_epoch_sessions_finished=false` with `session_locked=true`).
-//! Fixed in the pusher (stop-and-retry instead of advance-past); this
-//! test guards the fix end-to-end. Evidence trail in
-//! dev-docs/plans/simtest-fault-matrix.md.
+//! Fixed in `push_worker.rs` (250ms poll + pending-gap repair) and
+//! `proof_provider.rs`/`verified_reader.rs` (skipped ids resolved from
+//! the verified cache); this test guards both end-to-end. Evidence
+//! trail in dev-docs/plans/simtest-fault-matrix.md.
 
 #![cfg(msim)]
 
@@ -43,15 +45,12 @@ const DWALLET_SIGNATURE_ALGORITHM_ECDSA_SECP256K1: u32 = 0;
 const HASH_SCHEME_KECCAK256: u32 = 0;
 const HASH_SCHEME_SHA256: u32 = 1;
 const EPOCH_MS: u64 = 20_000;
-// Generous: a user session requested astride an epoch close is excluded
-// from the close's lock target (correct), but in a QUIET epoch nothing
-// recomputes the target until the next close — the session is starved
-// for the remainder of that epoch and completes roughly one epoch late.
-// Deterministically reproduced here (seed 1): the imported-key
-// verification was requested astride a close and reached output quorum
-// ~295 virtual seconds later, losing a 300-second budget by seconds.
-// The budget tolerates that liveness shape; the epoch-long latency
-// itself is a real finding tracked on the PR.
+// Generous. A session requested astride an epoch close is excluded from
+// that close's lock target and re-pulled into the next epoch, so its
+// completion can legitimately land an epoch-cycle after the request
+// (observed ~295 virtual seconds for the imported-key verification at
+// 20-second epochs, which lost a 300-second budget by seconds). The
+// budget covers that legitimate re-pull latency with headroom.
 const FLOW_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[sim_test]

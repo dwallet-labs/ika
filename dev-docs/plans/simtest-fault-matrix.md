@@ -1,8 +1,12 @@
 # Simtest fault matrix — deterministic edge-case coverage under the crypto mock
 
-Status: landed (2026-07-11, PR #1808) — suite green in CI (Simtest run
-29145489698: 6/6 passing on the enabled suite; 3 seeded reproducers of
-open findings marked #[ignore], evidence below).
+Status: COMPLETE (2026-07-13). PR #1808 landed the fault suite (6
+enabled tests + 3 #[ignore]d reproducers of then-open findings); the
+follow-up flow-coverage PR #1809 root-caused and fixed the findings,
+re-enabled every reproducer, and closed at 11/11 passing with zero
+ignores (Simtest runs 29208084278 and 29263090774). The finding
+sections below are kept as the investigation record; the final
+resolution is the RESOLVED section.
 
 ## Motivation
 
@@ -177,6 +181,15 @@ faithful Group B scenario will degrade the MPC computation path on two
 nodes via sui_macros fail points (hook to be added in the computation
 spawn path) while consensus keeps committing.
 
+RESOLVED (PR #1809): the "never recovers" was an artifact of the test's
+own injection point, not a consensus bug. Ika nodes BOOT at epoch 1, so
+`wait_for_epoch(1)` returns immediately and the test was stopping
+2-of-4 ~0.3 seconds after genesis — mid network DKG, with Mysticeti
+still bootstrapping. Injected into a warm cluster (after a real crossed
+boundary and the network key), the dual outage recovers and the test
+passes un-ignored. Portable lesson: `wait_for_epoch(1)` is a NO-OP as a
+"healthy boundary" guard; use `wait_for_epoch(2)`.
+
 
 ## Finding: post-degradation recovery tail is minutes long (open follow-up)
 
@@ -243,7 +256,12 @@ is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
 close race (this), (2) full-consensus-halt recovery (dual node stop),
 (3) expiry round-rate envelope documentation.
 
-## RESOLVED: all reproducers pass — no ignored simtests remain (run 29208084278, 11/11)
+[Follow-ups (1) and (2) were closed by PR #1809 — see the RESOLVED
+section below: (1) was the checkpoint-pusher/dynamic-fields-walk state
+loss, (2) was the test injecting at genesis. (3) remains a
+documentation follow-up on the config field.]
+
+## RESOLVED: all reproducers pass — no ignored simtests remain (runs 29208084278 and, post-revert of the retracted fix, 29263090774: both 11/11)
 
 The close-lock wedge had TWO product legs (both fixed in the
 flow-coverage PR) plus a retracted third hypothesis:
