@@ -245,8 +245,8 @@ close race (this), (2) full-consensus-halt recovery (dual node stop),
 
 ## RESOLVED: all reproducers pass — no ignored simtests remain (run 29208084278, 11/11)
 
-The close-lock wedge had THREE stacked legs, each fixed in product code
-(all in the flow-coverage PR):
+The close-lock wedge had TWO product legs (both fixed in the
+flow-coverage PR) plus a retracted third hypothesis:
 
 1. **Pusher poll cadence vs the pruning watermark** — the fullnode's
    lowest-available watermark trails its executed head by roughly the
@@ -263,13 +263,16 @@ The close-lock wedge had THREE stacked legs, each fixed in product code
    to the next epoch's manager. Fixed: the provider reports skipped
    ids; the verified reader resolves them via `verified_object`'s
    committee-verified cache fallback (trusted listings only).
-3. **Output quorum split across the epoch boundary** — outputs
-   sequenced in the dying epoch die with its tally; adapter retries
-   carry the rest into the new epoch (2+2 of 4, quorum 3 never
-   reached), and the durable computation-completed flag suppresses
-   recomputation on re-pull. Fixed: the validator's own output
-   consensus transaction is persisted at submission and re-submitted
-   once per epoch when a computation-completed session is re-pulled.
+3. ~~Output quorum split across the epoch boundary~~ — RETRACTED and
+   reverted. Design review: no MPC protocol spans an epoch boundary —
+   a session inside the closing epoch's lock target holds the epoch
+   open until its on-chain completion, and a session outside the
+   target never computed in that epoch, so the split state is
+   unreachable; the probe trace read as a split actually reached
+   quorum moments later (starvation latency, not a lost tally). The
+   resubmission mechanism was never isolated as load-bearing and was
+   reverted before merge; legs 1-2 plus the test-driver fixes carry
+   the suite.
 
 The "full consensus halt never recovers" finding was an artifact of the
 two-laggards test's own injection point: nodes boot AT epoch 1, so its
