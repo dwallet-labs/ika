@@ -101,33 +101,21 @@ fn compute_chain_context<C: CounterpartyChain>(
     }
 }
 
-/// An internal presign session deferred because its network key's data is not
-/// locally available yet. In BOTH shapes the session sequence number was
-/// already consumed at instantiation, so identifier derivation and the batch
-/// counters stay committee-uniform; parking defers only this validator's
-/// participation. Entries retry once per service iteration.
+/// An internal presign session that was BUILT (its session identifier is
+/// fixed) but whose MPC input could not be constructed yet because the target
+/// network key's data is not locally available — typically a VSS pool at
+/// epoch entry before the consensus-frozen off-chain validator key set is
+/// ingested, or a key installed on peers but not here. The sequence number
+/// was already consumed at instantiation, so identifier derivation and the
+/// batch counters stay committee-uniform; parking defers only this
+/// validator's participation. Retried once per service iteration.
+///
+/// (There is no "identity not derivable" variant: instantiation resolves the
+/// key's content-derived `NetworkKeyId` FIRST — an adopted key always has one
+/// — and keys the per-pool sequence counter by it, so the identifier is
+/// always buildable at instantiation time.)
 #[derive(Debug, Clone)]
-pub(crate) enum ParkedInternalPresignRequest {
-    /// The request is fully built, but its MPC input construction failed with
-    /// the not-ready error class — typically a VSS pool at epoch entry,
-    /// before the consensus-frozen off-chain validator key set is ingested,
-    /// or a key adopted but not yet locally installed. Boxed: the request
-    /// dwarfs the other variant.
-    Request(Box<DWalletSessionRequest>),
-    /// The request could not even be BUILT: the key's content-derived
-    /// identity (its `NetworkKeyId`, bound into the session identifier) is
-    /// not derivable locally yet — the key is adopted but its installation
-    /// hasn't completed and the `ObjectID → NetworkKeyId` mapping has no
-    /// entry (a fresh key with no handoff-cert pin). The reserved sequence
-    /// number is carried here; the request is built at retry time, once the
-    /// identity becomes derivable.
-    AwaitingKeyIdentity {
-        session_sequence_number: u64,
-        dwallet_network_encryption_key_id: ObjectID,
-        curve: DWalletCurve,
-        signature_algorithm: DWalletSignatureAlgorithm,
-    },
-}
+pub(crate) struct ParkedInternalPresignRequest(pub(crate) Box<DWalletSessionRequest>);
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -326,36 +314,58 @@ pub(crate) struct DWalletMPCManager {
     // Different epochs will see repeating values of this variable,
     // but that is safe as they are synced within an epoch and
     // the session identifier is derived from the epoch as well.
-    pub(crate) next_internal_presign_sequence_number: u64,
+    /// Next internal-presign session sequence number, PER
+    /// (`NetworkKeyId`, curve, signature_algorithm) pool. Keyed by the key's
+    /// content-derived `NetworkKeyId` — the SAME identity bound into the
+    /// session identifier — so the counter and the identifier can never use
+    /// divergent key axes. A single shared counter would let one pool's
+    /// stream depend on another's instantiation timing: a key adopted at a
+    /// different consensus round on different validators (adoption is
+    /// cert-gated and not round-uniform) would shift every other pool's
+    /// sequence numbers, so the session identifiers — bound to the sequence
+    /// number — diverge and never reach quorum. Per-pool counters make each
+    /// pool's ordinal stream start-time-invariant: a late-adopted key simply
+    /// starts fresh at 1 whenever it starts, identically on every validator —
+    /// PROVIDED the start skew stays under one batch lifecycle. A validator
+    /// entering a pool only after a full batch quorum-completed elsewhere
+    /// (mid-epoch restart, very late install) is permanently ordinal-offset
+    /// for that pool; see the top-up loop comment for the scope and the
+    /// tracked fast-forward heal.
+    pub(crate) next_internal_presign_sequence_number:
+        HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Monotonically increasing count of instantiated internal presign sessions
-    /// per (curve, signature_algorithm). Incremented when a session is created.
-    /// Used with `completed_internal_presign_sessions` to prevent instantiating
-    /// new sessions while existing ones haven't completed — each session produces
-    /// a variable number of presigns (1 to n-t), so overlapping batches cause
-    /// pool overshoot.
+    /// per (network_key, curve, signature_algorithm). Incremented when a
+    /// session is created. Used with `completed_internal_presign_sessions` to
+    /// prevent instantiating new sessions while existing ones haven't completed
+    /// — each session produces a variable number of presigns (1 to n-t), so
+    /// overlapping batches cause pool overshoot. Keyed by network key too so
+    /// one key's in-flight batch never gates another key's pool of the same
+    /// algorithm.
     /// Consensus-safe: instantiation is consensus-agreed, so all honest parties
     /// maintain identical values.
     pub(crate) instantiated_internal_presign_sessions:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Monotonically increasing count of completed internal presign sessions
-    /// per (curve, signature_algorithm). Incremented when a session's output
-    /// reaches consensus majority. When this equals `instantiated_internal_presign_sessions`
-    /// for a given pair, new sessions may be instantiated.
+    /// per (network_key, curve, signature_algorithm). Incremented when a
+    /// session's output reaches consensus majority. When this equals
+    /// `instantiated_internal_presign_sessions` for a given tuple, new sessions
+    /// may be instantiated.
     pub(crate) completed_internal_presign_sessions:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Consensus round at which the most recent internal-presign top-up batch
-    /// was instantiated, per (curve, signature_algorithm). Drives the
-    /// stale-batch expiry in `instantiate_internal_presign_sessions`: a batch
-    /// that never reaches an output quorum (e.g. every validator's
+    /// was instantiated, per (network_key, curve, signature_algorithm). Drives
+    /// the stale-batch expiry in `instantiate_internal_presign_sessions`: a
+    /// batch that never reaches an output quorum (e.g. every validator's
     /// computation failed locally) would otherwise block its pool's top-up
-    /// for the rest of the epoch, starving the pool.
+    /// for the rest of the epoch, starving the pool. Per-key so each pool
+    /// carries its own batch-instantiated round.
     /// Consensus-safe: written only with consensus-agreed round numbers, so
     /// all honest parties maintain identical values.
     internal_presign_batch_instantiated_at_round:
-        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+        HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// The epoch store for persisting presign pools to disk.
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -557,7 +567,7 @@ impl DWalletMPCManager {
             network_key_id_derivations_spawned: HashMap::new(),
             warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
-            next_internal_presign_sequence_number: 1,
+            next_internal_presign_sequence_number: HashMap::new(),
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
             internal_presign_batch_instantiated_at_round: HashMap::new(),
@@ -1058,7 +1068,7 @@ impl DWalletMPCManager {
             }
         }
         let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
-        let mut deferred_unmapped_cert_key = false;
+        let mut deferred_unmapped_key = false;
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
@@ -1099,25 +1109,31 @@ impl DWalletMPCManager {
                 }
             }
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
-            // The cert is keyed by the content-derived NetworkKeyId; translate
-            // this overlay key's ObjectID via the temporary map. An unmapped
-            // key is ambiguous: a brand-new key the prior epoch's cert never
-            // references (genuinely not-pinned), or a key this validator
-            // simply never instantiated — the mapping registers at
-            // instantiation, instantiation needs adoption, and adoption
-            // needs the mapping to see the cert's digests. A joiner
-            // consuming the cert lands in exactly that cycle: treating its
-            // key as "not pinned" either adopts parameters the committee
-            // never agreed to (initial-DKG branch) or wedges forever on a
-            // phantom digest mismatch (reconfigured branch). When the cert
-            // references any key, break the cycle: derive this key's
-            // NetworkKeyId from the locally-held blobs on the rayon pool
-            // (an expensive class-groups computation) and defer adoption
-            // until the background derivation registers the mapping.
+            // Adoption is what upholds the invariant the rest of the manager
+            // builds on: EVERY adopted key has a resolvable content-derived
+            // `NetworkKeyId` (the cert digests, the internal-presign per-pool
+            // counters, and the session identifiers all key by it). An
+            // unmapped key therefore defers on EVERY adoption branch — not
+            // only when the cert references keys. The cert-referenced case is
+            // additionally a correctness cycle: the mapping registers at
+            // instantiation, instantiation needs adoption, and adoption needs
+            // the mapping to see the cert's digests — a joiner consuming the
+            // cert lands exactly there, and treating its key as "not pinned"
+            // either adopts parameters the committee never agreed to
+            // (initial-DKG branch) or wedges forever on a phantom digest
+            // mismatch (reconfigured branch). The cert-less case (v3, the
+            // v3→v4 boundary, a fresh key before any cert pins it) would
+            // otherwise adopt an unresolvable key and make the top-up loop's
+            // should-never-happen skip fire routinely on fresh networks.
+            // Break the cycle the same way in both cases: derive this key's
+            // NetworkKeyId from the locally-held blobs on the rayon pool (an
+            // expensive class-groups computation) and defer adoption until
+            // the background derivation registers the mapping. (Deployed
+            // mainnet/testnet keys are seeded into the mapping as constants
+            // and never defer; a fresh DKG registers at output processing on
+            // every validator, so this defer is rare and short.)
             let network_key_id = crate::network_key_id_mapping::network_key_id_for(key_id);
-            if network_key_id.is_none()
-                && (!dkg_digests.is_empty() || !reconfiguration_digests.is_empty())
-            {
+            if network_key_id.is_none() {
                 // Memoize on the derivation inputs, not just the key id, so a
                 // failure while the overlay's reconfiguration output is
                 // transiently empty/incomplete is retried once the overlay
@@ -1137,9 +1153,9 @@ impl DWalletMPCManager {
                         .insert(*key_id, derivation_input_digest);
                     info!(
                         ?key_id,
-                        "handoff cert references network keys but this key's ObjectID has \
-                         no NetworkKeyId mapping (not seeded, never instantiated here) — \
-                         deriving it from the locally-held key data in the background"
+                        "adopting a network key whose ObjectID has no NetworkKeyId mapping \
+                         (not seeded, never instantiated here) — deferring adoption and \
+                         deriving the id from the locally-held key data in the background"
                     );
                     spawn_network_key_id_registration(
                         *key_id,
@@ -1147,7 +1163,7 @@ impl DWalletMPCManager {
                         data.current_reconfiguration_public_output.clone(),
                     );
                 }
-                deferred_unmapped_cert_key = true;
+                deferred_unmapped_key = true;
                 continue;
             }
             let cert_dkg_digest = network_key_id.as_ref().and_then(|id| dkg_digests.get(id));
@@ -1391,7 +1407,7 @@ impl DWalletMPCManager {
         // gains an entry) — memoizing would make the deferral permanent.
         // Skip the memo so the pass re-runs every tick until the mapping
         // resolves.
-        if deferred_unmapped_cert_key {
+        if deferred_unmapped_key {
             return;
         }
         self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
@@ -1668,11 +1684,17 @@ impl DWalletMPCManager {
     /// which key is the NOA key and apply different pool configs (different
     /// batch sizes ⇒ divergent internal-presign sequence numbers).
     fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
-        self.network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(a_id, a), (b_id, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a_id.cmp(b_id)))
-            .map(|(id, _)| *id)
+        // Select over the ADOPTED (consensus-agreed) set, not the installed set
+        // (`network_keys.network_encryption_keys`): installation completes on
+        // wall-clock time per validator, so choosing over it would let two
+        // honest validators pick a different NOA key while their installs lag,
+        // apply different pool configs (batch sizes), and diverge the
+        // internal-presign top-up decision. The adopted set drives the same
+        // top-up loop, so both agree on the NOA key by construction.
+        self.adopted_network_key_data
+            .values()
+            .min_by(|a, b| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a.id.cmp(&b.id)))
+            .map(|data| data.id)
     }
 
     /// Instantiates internal presign sessions based on consensus-agreed network key IDs.
@@ -1698,15 +1720,40 @@ impl DWalletMPCManager {
         // externally requestable on-chain.
         let pool_algorithms =
             network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
-        // Ordered (`BTreeSet`) on purpose: the loop below assigns internal presign
-        // session sequence numbers from a single shared counter in iteration order,
-        // and the sequence number is bound into the session identifier. Every
-        // validator must iterate keys in the same order (and `pool_algorithms` is
-        // already a deterministically-ordered list), or they derive different
-        // session identifiers for the same work and the sessions never reach quorum.
+        // Ordered (`BTreeSet`) for stable iteration/logging, but the sequence
+        // counters are now PER (key, curve, algorithm) pool (not a single shared
+        // counter consumed in iteration order), so a pool's sequence stream no
+        // longer depends on when other keys are adopted or the iteration order.
+        // Per-pool ordinals are START-TIME-INVARIANT: a key adopted at a
+        // different round on different validators still derives identical
+        // session identifiers for its pool, as long as the skew stays under
+        // one batch lifecycle. A validator whose first top-up of a pool lags
+        // past a full batch's quorum completion (mid-epoch restart replaying
+        // rounds before adoption lands, a very late install) starts its
+        // ordinal stream offset from its peers' and never converges — it sits
+        // out that pool's live sessions for the rest of the epoch (peers'
+        // quorum keeps the pool serving; the loss is this validator's
+        // redundancy). The heal — fast-forwarding the pool counter from the
+        // completed sequence numbers observed in consensus outputs — is
+        // tracked as follow-up work; the same exposure existed with the old
+        // shared counter, with cross-pool blast radius on top.
         let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
+            // The per-pool counters and the session identifier both key by the
+            // key's content-derived `NetworkKeyId`, so resolve it once here. An
+            // adopted key always resolves (adoption defers an unmapped key), so
+            // `None` is a should-never-happen — skip the key rather than fall
+            // back to a divergent identity axis.
+            let Some(network_key_id) = self.internal_presign_network_key_id(&key_id) else {
+                error!(
+                    should_never_happen = true,
+                    ?key_id,
+                    "adopted network key has no resolvable NetworkKeyId in the internal-presign \
+                     top-up loop; skipping its pools this iteration"
+                );
+                continue;
+            };
             for (curve, signature_algorithm) in pool_algorithms.iter().copied() {
                 let is_network_owned_address_signing_presign =
                     agreed_network_owned_address_signing_key_id == key_id;
@@ -1777,12 +1824,12 @@ impl DWalletMPCManager {
                 // presigns (1 to n-t), so overlapping batches cause pool overshoot.
                 let instantiated = self
                     .instantiated_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
+                    .get(&(network_key_id, curve, signature_algorithm))
                     .copied()
                     .unwrap_or(0);
                 let completed = self
                     .completed_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
+                    .get(&(network_key_id, curve, signature_algorithm))
                     .copied()
                     .unwrap_or(0);
                 if instantiated != completed {
@@ -1806,7 +1853,7 @@ impl DWalletMPCManager {
                     };
                     let batch_round = self
                         .internal_presign_batch_instantiated_at_round
-                        .get(&(curve, signature_algorithm))
+                        .get(&(network_key_id, curve, signature_algorithm))
                         .copied()
                         .unwrap_or(0);
                     if consensus_round.saturating_sub(batch_round) < expiry_rounds {
@@ -1822,7 +1869,7 @@ impl DWalletMPCManager {
                         "internal presign top-up batch never completed; presuming it dead and releasing the pool for new top-ups"
                     );
                     self.completed_internal_presign_sessions
-                        .insert((curve, signature_algorithm), instantiated);
+                        .insert((network_key_id, curve, signature_algorithm), instantiated);
                 }
 
                 if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
@@ -1832,17 +1879,20 @@ impl DWalletMPCManager {
                     for _ in 1..=sessions_to_instantiate {
                         self.instantiate_internal_presign_session(
                             consensus_round,
+                            network_key_id,
                             key_id,
                             curve,
                             signature_algorithm,
                         );
                         *self
                             .instantiated_internal_presign_sessions
-                            .entry((curve, signature_algorithm))
+                            .entry((network_key_id, curve, signature_algorithm))
                             .or_insert(0) += 1;
                     }
-                    self.internal_presign_batch_instantiated_at_round
-                        .insert((curve, signature_algorithm), consensus_round);
+                    self.internal_presign_batch_instantiated_at_round.insert(
+                        (network_key_id, curve, signature_algorithm),
+                        consensus_round,
+                    );
                     pools_filled.push(format!(
                         "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
                     ));
@@ -1858,80 +1908,52 @@ impl DWalletMPCManager {
         }
     }
 
-    /// Instantiates an internal presign sessions.
-    /// The network key identity bytes bound into internal presign session
-    /// identifiers: the key's flip-invariant, content-derived `NetworkKeyId`.
-    /// Read from the installed key data when available; before installation,
-    /// fall back to the pre-instantiation `ObjectID → NetworkKeyId` mapping
-    /// (seeded deployed keys, handoff-cert background derivation,
-    /// registrations from an earlier install). `None` when neither source has
-    /// it yet — a fresh key adopted but not yet installed, with no cert pin.
-    /// Callers must then DEFER without skipping: skipping a top-up other
-    /// validators perform desynchronizes the shared sequence counter and with
-    /// it every subsequent internal presign session identifier.
-    fn internal_presign_network_key_identity_bytes(
+    /// The key's flip-invariant, content-derived `NetworkKeyId` — the identity
+    /// bound into internal presign session identifiers and the key of the
+    /// per-pool sequence/guard counters. Read from the installed key data when
+    /// available, else from the pre-instantiation `ObjectID → NetworkKeyId`
+    /// mapping (seeded deployed keys, handoff-cert background derivation,
+    /// registrations from an earlier install). An ADOPTED key always resolves
+    /// (adoption defers a key with no mapping — see `adopt_cert_verified_keys`),
+    /// so the top-up path treats `None` as a should-never-happen skip.
+    pub(crate) fn internal_presign_network_key_id(
         &self,
         dwallet_network_encryption_key_id: &ObjectID,
-    ) -> Option<Vec<u8>> {
-        match self
-            .network_keys
+    ) -> Option<NetworkKeyId> {
+        // Installed data first; on either "not installed" OR a (deterministic,
+        // committee-uniform) derivation failure from the installed data, fall
+        // through to the mapping — the doc contract is "installed data when
+        // available, ELSE the mapping", and the mapping entry (seeded,
+        // registered at DKG output processing, or background-derived) is the
+        // same identity the installed data would derive.
+        self.network_keys
             .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)
-        {
-            // Fall back to the network DKG output bytes only for a malformed
-            // key with no derivable id (deterministic, so still
-            // committee-uniform).
-            Ok(key_data) => Some(
-                key_data
-                    .network_key_id()
-                    .map(|id| id.0.to_vec())
-                    .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
-            ),
-            Err(_) => network_key_id_for(dwallet_network_encryption_key_id).map(|id| id.0.to_vec()),
-        }
+            .ok()
+            .and_then(|key_data| key_data.network_key_id().ok())
+            .or_else(|| network_key_id_for(dwallet_network_encryption_key_id))
     }
 
     fn instantiate_internal_presign_session(
         &mut self,
         consensus_round: u64,
+        network_key_id: NetworkKeyId,
         dwallet_network_encryption_key_id: ObjectID,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) {
-        // Consume the sequence number FIRST, unconditionally: the caller's
-        // top-up decision is committee-uniform, so every validator MUST
-        // account this session — whether it can run it right now or not —
-        // or identifier derivation (a single counter shared across all
-        // pools and keys) permanently diverges across the committee.
-        let session_sequence_number = self.next_internal_presign_sequence_number;
-        self.next_internal_presign_sequence_number += 1;
-
-        let Some(network_key_identity_bytes) =
-            self.internal_presign_network_key_identity_bytes(&dwallet_network_encryption_key_id)
-        else {
-            // The key is adopted (the caller iterates the adopted set) but
-            // not installed yet, and no mapping entry exists to derive the
-            // identifier from. Park a deferred-instantiation record carrying
-            // the reserved sequence number; the request is built at retry
-            // time (the installation spawned by
-            // `instantiate_adopted_network_keys` registers the mapping when
-            // it completes).
-            info!(
-                consensus_round,
-                ?dwallet_network_encryption_key_id,
-                ?curve,
-                ?signature_algorithm,
-                ?session_sequence_number,
-                "network key identity not derivable yet for internal presign session; parking it for retry",
-            );
-            self.internal_presign_requests_pending_for_network_key_data
-                .push(ParkedInternalPresignRequest::AwaitingKeyIdentity {
-                    session_sequence_number,
-                    dwallet_network_encryption_key_id,
-                    curve,
-                    signature_algorithm,
-                });
-            return;
-        };
+        // Consume the sequence number, keyed by the key's content-derived
+        // `NetworkKeyId` — the SAME identity bound into the session
+        // identifier below, so the counter and the identifier can never use
+        // divergent key axes. The counter is PER (`NetworkKeyId`, curve,
+        // algorithm) pool: a key adopted at a different round on different
+        // validators starts its own pool's stream fresh at 1 without
+        // perturbing any other pool's stream.
+        let sequence_entry = self
+            .next_internal_presign_sequence_number
+            .entry((network_key_id, curve, signature_algorithm))
+            .or_insert(1);
+        let session_sequence_number = *sequence_entry;
+        *sequence_entry += 1;
 
         // `consensus_round` is logged for traceability but is
         // deliberately NOT part of the request/session identifier:
@@ -1944,7 +1966,7 @@ impl DWalletMPCManager {
             curve,
             signature_algorithm,
             dwallet_network_encryption_key_id,
-            &network_key_identity_bytes,
+            &network_key_id.0,
         );
 
         if let Err(request) = self.try_activate_internal_presign_request(consensus_round, request) {
@@ -1964,7 +1986,7 @@ impl DWalletMPCManager {
                 "network key data not ready for internal presign session; parking it for retry",
             );
             self.internal_presign_requests_pending_for_network_key_data
-                .push(ParkedInternalPresignRequest::Request(request));
+                .push(ParkedInternalPresignRequest(request));
         }
     }
 
@@ -2052,44 +2074,8 @@ impl DWalletMPCManager {
         }
 
         let parked = mem::take(&mut self.internal_presign_requests_pending_for_network_key_data);
-        for parked_request in parked {
-            let request = match parked_request {
-                ParkedInternalPresignRequest::Request(request) => *request,
-                ParkedInternalPresignRequest::AwaitingKeyIdentity {
-                    session_sequence_number,
-                    dwallet_network_encryption_key_id,
-                    curve,
-                    signature_algorithm,
-                } => {
-                    let Some(network_key_identity_bytes) = self
-                        .internal_presign_network_key_identity_bytes(
-                            &dwallet_network_encryption_key_id,
-                        )
-                    else {
-                        // Identity still not derivable — keep it parked.
-                        self.internal_presign_requests_pending_for_network_key_data
-                            .push(ParkedInternalPresignRequest::AwaitingKeyIdentity {
-                                session_sequence_number,
-                                dwallet_network_encryption_key_id,
-                                curve,
-                                signature_algorithm,
-                            });
-                        continue;
-                    };
-                    // Build the request with the sequence number reserved at
-                    // instantiation time — the identifier comes out identical
-                    // to the one peers derived when they instantiated.
-                    DWalletSessionRequest::new_internal_presign(
-                        self.epoch_id,
-                        session_sequence_number,
-                        curve,
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        &network_key_identity_bytes,
-                    )
-                }
-            };
-
+        for ParkedInternalPresignRequest(request) in parked {
+            let request = *request;
             let session_identifier = request.session_identifier;
             let session_sequence_number = request.session_sequence_number;
             // Retry has no consensus-round context; 0 marks "activated on a
@@ -2117,7 +2103,7 @@ impl DWalletMPCManager {
                     // Input still not constructible — keep it parked (silently:
                     // this runs every service iteration).
                     self.internal_presign_requests_pending_for_network_key_data
-                        .push(ParkedInternalPresignRequest::Request(request));
+                        .push(ParkedInternalPresignRequest(request));
                 }
             }
         }
@@ -3177,18 +3163,30 @@ impl DWalletMPCManager {
                 // stale-batch expiry already had its slot reconciled, so a
                 // late completion must not push `completed` past
                 // `instantiated` — the top-up skip compares them for
-                // equality and would block the pool permanently.
-                let instantiated = self
-                    .instantiated_internal_presign_sessions
-                    .get(&(curve, signature_algorithm))
-                    .copied()
-                    .unwrap_or(0);
-                let completed = self
-                    .completed_internal_presign_sessions
-                    .entry((curve, signature_algorithm))
-                    .or_insert(0);
-                if *completed < instantiated {
-                    *completed += 1;
+                // equality and would block the pool permanently. Keyed by the
+                // same content-derived `NetworkKeyId` the top-up loop uses.
+                if let Some(network_key_id) =
+                    self.internal_presign_network_key_id(&dwallet_network_encryption_key_id)
+                {
+                    let instantiated = self
+                        .instantiated_internal_presign_sessions
+                        .get(&(network_key_id, curve, signature_algorithm))
+                        .copied()
+                        .unwrap_or(0);
+                    let completed = self
+                        .completed_internal_presign_sessions
+                        .entry((network_key_id, curve, signature_algorithm))
+                        .or_insert(0);
+                    if *completed < instantiated {
+                        *completed += 1;
+                    }
+                } else {
+                    error!(
+                        should_never_happen = true,
+                        ?dwallet_network_encryption_key_id,
+                        "completed internal presign output for a key with no resolvable \
+                         NetworkKeyId; completion counter not advanced"
+                    );
                 }
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {

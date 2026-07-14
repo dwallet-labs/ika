@@ -41,9 +41,11 @@ impl DWalletSessionRequest {
     /// while processing DIFFERENT consensus rounds. Baking the round in
     /// gave each validator a private session id — sessions with one
     /// participant each, no quorum, a permanently empty presign pool.
-    /// Uniqueness comes from (epoch, session sequence number, session
-    /// type); determinism of the sequence numbers comes from every
-    /// validator walking keys/curves/algorithms in sorted order.
+    /// Uniqueness comes from (epoch, network key identity, curve,
+    /// algorithm, session sequence number, session type); determinism of
+    /// the sequence numbers comes from each (network key, curve,
+    /// algorithm) POOL keeping its own counter, consumed only on that
+    /// pool's consensus-agreed top-up decisions.
     pub fn new_internal_presign(
         epoch: u64,
         session_sequence_number: u64,

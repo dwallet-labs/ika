@@ -497,3 +497,215 @@ async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
         "the adopted data must carry the cert-pinned reconfiguration bytes"
     );
 }
+
+/// THE invariant the internal-presign top-up loop builds on: every key in
+/// `adopted_network_key_data` has a resolvable `NetworkKeyId`
+/// (`internal_presign_network_key_id` returns `Some`). The per-pool
+/// sequence/guard counters and the session identifier both key by the
+/// content-derived `NetworkKeyId`, and the top-up loop treats an adopted
+/// key that does not resolve as a should-never-happen skip — so adoption
+/// (`adopt_cert_verified_keys`) must never admit an unmapped key on ANY
+/// adoption branch (cert-anchored or cert-less): it defers until the
+/// background derivation registers the `ObjectID → NetworkKeyId` mapping.
+///
+/// Drives the REAL adoption path in two phases and asserts the invariant
+/// over the whole adopted set after every pass:
+/// 1. cert-anchored — a cert pins two keys, one mapped, one not;
+/// 2. cert-less (the v3/v3→v4-boundary path) — no cert at all, a fresh
+///    unmapped key must STILL defer (pre-fix it was blindly adopted, so on
+///    any fresh network's first v4 epoch the top-up loop's
+///    should-never-happen skip fired routinely).
+#[tokio::test]
+async fn adopted_keys_always_resolve_a_network_key_id() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+    let prior_epoch = epoch_id - 1;
+
+    // Two cert-pinned keys: one with a registered mapping, one without.
+    let mapped_key_id = ObjectID::random();
+    let mapped_network_key_id = NetworkKeyId([0x61; 32]);
+    crate::network_key_id_mapping::register(mapped_key_id, mapped_network_key_id);
+    let unmapped_key_id = ObjectID::random();
+    let unmapped_network_key_id = NetworkKeyId([0x62; 32]);
+
+    let mapped_dkg_output = b"mapped key network dkg public output".to_vec();
+    let mapped_reconfiguration_output = b"mapped key reconfiguration public output".to_vec();
+    let unmapped_dkg_output = b"unmapped key network dkg public output".to_vec();
+    let unmapped_reconfiguration_output = b"unmapped key reconfiguration public output".to_vec();
+
+    // Items sorted by `HandoffItemKey`'s derived `Ord` (all DKG items
+    // before all reconfiguration items, then by key id within a variant).
+    let mut dkg_items = vec![
+        (
+            HandoffItemKey::NetworkDkgOutput {
+                key_id: mapped_network_key_id,
+            },
+            mpc_data_blob_hash(&mapped_dkg_output),
+        ),
+        (
+            HandoffItemKey::NetworkDkgOutput {
+                key_id: unmapped_network_key_id,
+            },
+            mpc_data_blob_hash(&unmapped_dkg_output),
+        ),
+    ];
+    let mut reconfiguration_items = vec![
+        (
+            HandoffItemKey::NetworkReconfigurationOutput {
+                key_id: mapped_network_key_id,
+            },
+            mpc_data_blob_hash(&mapped_reconfiguration_output),
+        ),
+        (
+            HandoffItemKey::NetworkReconfigurationOutput {
+                key_id: unmapped_network_key_id,
+            },
+            mpc_data_blob_hash(&unmapped_reconfiguration_output),
+        ),
+    ];
+    dkg_items.sort_by(|(a, _), (b, _)| a.cmp(b));
+    reconfiguration_items.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let items = dkg_items.into_iter().chain(reconfiguration_items).collect();
+    let attestation = HandoffAttestation {
+        epoch: prior_epoch,
+        next_committee_pubkey_set_hash: [0u8; 32],
+        items,
+    };
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(
+            prior_epoch,
+            CertifiedHandoffAttestation {
+                attestation,
+                signatures: vec![],
+            },
+        );
+
+    let overlay = Arc::new(HashMap::from([
+        (
+            mapped_key_id,
+            network_key_data(
+                mapped_key_id,
+                epoch_id,
+                mapped_dkg_output.clone(),
+                mapped_reconfiguration_output.clone(),
+            ),
+        ),
+        (
+            unmapped_key_id,
+            network_key_data(
+                unmapped_key_id,
+                epoch_id,
+                unmapped_dkg_output.clone(),
+                unmapped_reconfiguration_output.clone(),
+            ),
+        ),
+    ]));
+    let manager = service.dwallet_mpc_manager_mut();
+
+    // The invariant checked after every pass: nothing enters the adopted
+    // set without a resolvable NetworkKeyId.
+    let assert_all_adopted_resolve =
+        |manager: &crate::dwallet_mpc::mpc_manager::DWalletMPCManager, pass: &str| {
+            for key_id in manager.adopted_network_key_data.keys() {
+                assert!(
+                    manager.internal_presign_network_key_id(key_id).is_some(),
+                    "{pass}: adopted key {key_id:?} has no resolvable NetworkKeyId — the \
+                 internal-presign top-up loop would hit its should-never-happen skip"
+                );
+            }
+        };
+
+    manager.adopt_cert_verified_keys(&overlay);
+    assert!(
+        manager
+            .adopted_network_key_data
+            .contains_key(&mapped_key_id),
+        "the mapped cert-matching key must be adopted"
+    );
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&unmapped_key_id),
+        "the unmapped key must be deferred, not adopted"
+    );
+    assert_all_adopted_resolve(manager, "after the first pass");
+
+    // The background derivation lands: the unmapped key becomes mapped and
+    // the next pass adopts it. The invariant must hold over BOTH keys.
+    crate::network_key_id_mapping::register(unmapped_key_id, unmapped_network_key_id);
+    manager.adopt_cert_verified_keys(&overlay);
+    assert!(
+        manager
+            .adopted_network_key_data
+            .contains_key(&unmapped_key_id),
+        "registration must let the deferred key be adopted on the next pass"
+    );
+    assert_all_adopted_resolve(manager, "after the registration pass");
+
+    // === Phase 2: the CERT-LESS adoption branch (v3 / v3→v4 boundary) ===
+    // Remove the cert entirely: a fresh unmapped key arriving through the
+    // cert-less path must be deferred exactly like the cert-anchored case —
+    // pre-fix this branch blindly adopted it, violating the invariant on any
+    // fresh network's first v4 epoch.
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .remove(&prior_epoch);
+    let certless_key_id = ObjectID::random();
+    let certless_network_key_id = NetworkKeyId([0x63; 32]);
+    let certless_dkg_output = b"certless key network dkg public output".to_vec();
+    let certless_reconfiguration_output = b"certless key reconfiguration public output".to_vec();
+    let certless_overlay = Arc::new(HashMap::from([(
+        certless_key_id,
+        network_key_data(
+            certless_key_id,
+            epoch_id,
+            certless_dkg_output.clone(),
+            certless_reconfiguration_output.clone(),
+        ),
+    )]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&certless_overlay);
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&certless_key_id),
+        "an unmapped key must be deferred on the CERT-LESS adoption branch too"
+    );
+    assert!(
+        manager
+            .network_key_id_derivations_spawned
+            .contains_key(&certless_key_id),
+        "the background NetworkKeyId derivation must be spawned for the cert-less unmapped key"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less deferral pass");
+
+    // Registration unwedges the cert-less branch the same way.
+    crate::network_key_id_mapping::register(certless_key_id, certless_network_key_id);
+    manager.adopt_cert_verified_keys(&certless_overlay);
+    assert!(
+        manager
+            .adopted_network_key_data
+            .contains_key(&certless_key_id),
+        "registration must let the cert-less deferred key be adopted on the next pass"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less registration pass");
+}
