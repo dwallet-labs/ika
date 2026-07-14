@@ -598,7 +598,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
         test_state.consensus_round += 1;
         // Now services can read from the round we just set up
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 

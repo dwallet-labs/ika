@@ -177,8 +177,14 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) last_session_to_complete_in_current_epoch: u64,
     pub(crate) recognized_self_as_malicious: bool,
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
-    /// Events that wait for the network key to update.
-    /// Once we get the network key, these events will be executed.
+    /// Requests parked until their network key's PUBLIC DATA is locally
+    /// available. Drained LEVEL-triggered on every
+    /// `handle_mpc_request_batch` (any parked key whose data now exists),
+    /// never edge-triggered on the consensus instantiation path — the key
+    /// can also materialize via the cert-less chain-copy adoption on a
+    /// fresh boot, which emits no such edge; an edge-only drain stranded a
+    /// reshare in flight across a restart forever and wedged the epoch
+    /// (issue #1834).
     pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
     pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
 
@@ -2658,8 +2664,7 @@ impl DWalletMPCManager {
     /// per service ITERATION — not per consensus round — so a completed
     /// key installs even when no new consensus rounds arrived. Returns
     /// the IDs whose instantiation completed and installed this poll.
-    pub(crate) async fn poll_pending_network_key_instantiations(&mut self) -> Vec<ObjectID> {
-        let mut new_key_ids = Vec::new();
+    pub(crate) async fn poll_pending_network_key_instantiations(&mut self) {
         let in_flight_key_ids: Vec<ObjectID> = self
             .pending_network_key_instantiations
             .keys()
@@ -2834,7 +2839,6 @@ impl DWalletMPCManager {
                         }
                         // Succeeded — drop any prior failure record.
                         self.last_failed_network_key_data.remove(&key_id);
-                        new_key_ids.push(key_id);
                     }
                 }
                 Err(err) => {
@@ -2854,8 +2858,6 @@ impl DWalletMPCManager {
         self.dwallet_mpc_metrics
             .network_key_instantiations_in_flight
             .set(self.pending_network_key_instantiations.len() as i64);
-
-        new_key_ids
     }
 
     /// Instantiates network keys from the cert-verified outputs adopted into `adopted_network_key_data`.

@@ -93,7 +93,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -217,7 +217,7 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -429,7 +429,7 @@ async fn run_rounds(test_state: &mut utils::IntegrationTestState, rounds: usize)
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 }

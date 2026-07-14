@@ -113,7 +113,7 @@ async fn run_one_round_discarding_all_messages(test_state: &mut IntegrationTestS
     );
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
 }
 
@@ -127,7 +127,7 @@ async fn run_one_round_delivering_messages(test_state: &mut IntegrationTestState
     );
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::wait_for_computations(test_state).await;
 }
@@ -374,7 +374,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
         // Run service loop for all services (processes the consensus round).
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
 
         // Read post-loop values that were set DURING round processing
@@ -557,7 +557,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::wait_for_computations(&mut test_state).await;
 
@@ -630,7 +630,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -662,7 +662,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -751,7 +751,7 @@ async fn test_internal_presign_continues_when_idle() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::wait_for_computations(&mut test_state).await;
 
@@ -1253,7 +1253,7 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
         let _ = sender.network_keys_sender.send(both_keys.clone());
     });
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::send_advance_results_between_parties(
         &test_state.committee,
@@ -1263,7 +1263,7 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
     );
     test_state.consensus_round = (round_after_k1 + 2) as usize;
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::run_service_loops_until_network_key_installed(
         &mut test_state.dwallet_mpc_services,
