@@ -1,14 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use ika_types::committee::{Committee, EpochId};
-use ika_types::error::{IkaError, IkaResult};
+use ika_types::committee::{Committee, EpochId, LegacyCommittee};
+use ika_types::error::IkaResult;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use typed_store::rocks::{DBMap, DBOptions, MetricConf, default_db_options};
+use tracing::info;
+use typed_store::rocks::{DBMap, DBOptions, MetricConf, ReadWriteOptions, default_db_options};
 use typed_store::rocksdb::Options;
 
 use typed_store::DBMapUtils;
@@ -42,9 +43,49 @@ impl CommitteeStore {
             None,
         );
 
+        Self::migrate_legacy_records(&tables);
+
         Self {
             tables,
             cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// One-time migration: rewrite `committee_map` records persisted by
+    /// mainnet-v1.1.8 (pre-`consensus_keys` layout, which the current
+    /// `Committee` cannot decode — bcs is positional) in the current layout,
+    /// so every later read is a plain decode. Idempotent and crash-safe: a
+    /// record is rewritten only if it fails the current decode AND succeeds
+    /// the legacy one, so re-running skips already-migrated records. Remove
+    /// together with `LegacyCommittee` once no fleet upgrades directly from
+    /// 1.1.8 data dirs.
+    fn migrate_legacy_records(tables: &CommitteeStoreTables) {
+        let legacy_view: DBMap<EpochId, LegacyCommittee> = DBMap::reopen(
+            &tables.committee_map.db,
+            Some("committee_map"),
+            &ReadWriteOptions::default(),
+            false,
+        )
+        .expect("reopening committee_map under the legacy schema cannot fail — same cf");
+        // Current-layout records fail the legacy decode (trailing bytes) and
+        // are yielded as Err items; skip them. For each legacy-decodable
+        // record, confirm the current decode really fails before rewriting,
+        // so a current record can never be misread as legacy.
+        for item in legacy_view.safe_iter() {
+            let Ok((epoch, legacy)) = item else { continue };
+            if tables.committee_map.get(&epoch).is_ok() {
+                continue;
+            }
+            let committee = Committee::from(legacy);
+            tables
+                .committee_map
+                .insert(&epoch, &committee)
+                .expect("failed to rewrite a legacy committee record");
+            info!(
+                epoch,
+                "migrated a pre-consensus-keys (mainnet-1.1.8) committee record; \
+                 consensus_keys is empty for this epoch"
+            );
         }
     }
 
@@ -80,6 +121,9 @@ impl CommitteeStore {
         if let Some(committee) = self.cache.read().get(epoch_id) {
             return Ok(Some(committee.clone()));
         }
+        // Legacy (mainnet-v1.1.8) records were rewritten in the current
+        // layout by `migrate_legacy_records` at store open, so a decode
+        // error here is genuine corruption and is propagated.
         let committee = self.tables.committee_map.get(epoch_id)?;
         let committee = committee.map(Arc::new);
         if let Some(committee) = committee.as_ref() {
@@ -88,35 +132,89 @@ impl CommitteeStore {
         Ok(committee)
     }
 
-    // todo - make use of cache or remove this method
-    pub fn get_latest_committee(&self) -> IkaResult<Committee> {
-        Ok(self
-            .tables
-            .committee_map
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            // unwrap safe because we guarantee there is at least a genesis epoch
-            // when initializing the store.
-            .unwrap()
-            .1)
-    }
-    /// Return the committee specified by `epoch`. If `epoch` is `None`, return the latest committee.
-    // todo - make use of cache or remove this method
-    pub fn get_or_latest_committee(&self, epoch: Option<EpochId>) -> IkaResult<Committee> {
-        Ok(match epoch {
-            Some(epoch) => self
-                .get_committee(&epoch)?
-                .ok_or(IkaError::MissingCommitteeAtEpoch(epoch))
-                .map(|c| Committee::clone(&*c))?,
-            None => self.get_latest_committee()?,
-        })
-    }
-
     pub fn checkpoint_db(&self, path: &Path) -> IkaResult {
         self.tables
             .committee_map
             .checkpoint_db(path)
             .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ika_types::committee::LegacyCommittee;
+
+    #[tokio::test]
+    async fn legacy_records_migrate_at_open() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("DB_{:?}", nondeterministic!(ObjectID::random())));
+        let (legacy_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let (mut current_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        current_committee.epoch = legacy_committee.epoch + 1;
+        let corrupt_epoch = legacy_committee.epoch + 2;
+        {
+            let store = CommitteeStore::new(path.clone(), None);
+            // Plant a 1.1.8-layout record, as a pre-upgrade binary would have
+            // written it — alongside a current-layout record and a corrupt
+            // one, the mixed state a CF can be in at open.
+            let legacy_view: DBMap<EpochId, LegacyCommittee> = DBMap::reopen(
+                &store.tables.committee_map.db,
+                Some("committee_map"),
+                &ReadWriteOptions::default(),
+                false,
+            )
+            .unwrap();
+            legacy_view
+                .insert(
+                    &legacy_committee.epoch,
+                    &LegacyCommittee::mirror_of(&legacy_committee),
+                )
+                .unwrap();
+            store
+                .tables
+                .committee_map
+                .insert(&current_committee.epoch, &current_committee)
+                .unwrap();
+            let raw_view: DBMap<EpochId, Vec<u8>> = DBMap::reopen(
+                &store.tables.committee_map.db,
+                Some("committee_map"),
+                &ReadWriteOptions::default(),
+                false,
+            )
+            .unwrap();
+            raw_view.insert(&corrupt_epoch, &vec![0xde, 0xad]).unwrap();
+            // The legacy record does not decode under the current schema —
+            // this is the state an upgraded binary opens the store in.
+            assert!(
+                store
+                    .tables
+                    .committee_map
+                    .get(&legacy_committee.epoch)
+                    .is_err()
+            );
+        }
+        // Reopen twice: the first migration rewrites the legacy record, the
+        // second is a no-op over already-migrated records (idempotency); the
+        // corrupt record must not abort either open.
+        for _ in 0..2 {
+            let store = CommitteeStore::new(path.clone(), None);
+            let migrated = store
+                .get_committee(&legacy_committee.epoch)
+                .unwrap()
+                .unwrap();
+            assert_eq!(migrated.epoch, legacy_committee.epoch);
+            assert_eq!(migrated.voting_rights, legacy_committee.voting_rights);
+            assert_eq!(migrated.quorum_threshold, legacy_committee.quorum_threshold);
+            // The current-layout record is untouched by the migration.
+            let untouched = store
+                .get_committee(&current_committee.epoch)
+                .unwrap()
+                .unwrap();
+            assert_eq!(*untouched, current_committee);
+            // The corrupt record is skipped by the migration and surfaces as
+            // a propagated read error, not a panic.
+            assert!(store.get_committee(&corrupt_epoch).is_err());
+        }
     }
 }

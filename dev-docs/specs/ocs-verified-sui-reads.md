@@ -388,6 +388,24 @@ dropping entries are layered:
   *persistent* suspicion is actionable. It is count-only (cannot tell
   *which* entries are missing) and is disabled on direct nodes (where the
   bag is trusted-local but `Bag.size` lags cache-first).
+- **Pruned-defining-checkpoint resolution (direct nodes only)**: the
+  page builder needs each entry's defining checkpoint to construct its
+  inclusion proof, and once the fullnode prunes that checkpoint the
+  proof can never be built again — a skip there is permanent, not
+  transient (this silently hid `session_events` entries of sessions
+  re-pulled across epoch boundaries and pinned epoch closes). The
+  provider therefore reports the ids it listed but could not prove
+  (`skipped_entry_ids`), and the reader resolves each through
+  `verified_object` — its own proof verification, currency check, and
+  committee-verified cache fallback included. Being live-listed proves
+  the entry still exists on-chain, so resolution cannot resurrect a
+  completed session's entry. Trusted listings only: on a mirrored node
+  a relay's skipped ids carry no membership binding (no proof), so they
+  stay omitted and the count-based policing covers them. Residual: if
+  the local cache also lacks the entry (e.g. the node was down when it
+  was folded and the upstream has pruned it), the reader warns per walk
+  until the session completes network-wide and the entry leaves the
+  bag.
 - **Downstream session-id dedup**: the MPC engine keys sessions by
   `SessionIdentifier`, skips already-completed sessions via the
   perpetual store, and treats re-delivery of an in-flight session as a
@@ -476,6 +494,27 @@ the next poll while a bad signature halts the fold loudly
 and folded in order, a cache hit is the object's current state up to the
 poll lag, and safely skips re-running the proof.
 
+**Fetch-failure semantics (pending-gap repair).** The folder polls at
+250 ms because the fullnode's checkpoint-pruning watermark can trail its
+executed head by as little as a couple of seconds: at a slower cadence
+the newest checkpoints of every pruner tick are pruned before the folder
+fetches them, and any checkpoint the folder never folds is a PERMANENT
+cache gap (an Ika object whose only mutation rode it — e.g. a
+`session_events` bag entry — never enters the cache; observed pinning
+epoch closes when the entry belonged to a session re-pulled across an
+epoch boundary). A full-checkpoint fetch failure must therefore neither
+stall the scan (one unfetchable checkpoint would freeze the whole cache
+behind it) nor be skipped silently (the historical behavior, and the
+root cause above). Instead the scan continues and the failed seq becomes
+a **pending gap**, retried at the top of every tick and folded LATE when
+it materializes — out-of-order folding is safe because the cache is
+monotonic-by-version and its fold head is monotone-max, so a late fold
+can only fill gaps, never regress state. A gap that outlives a generous
+retry deadline is dropped with a loud warn (genuinely pruned upstream);
+gaps inside a far-behind fast-forward's sacrificed span go with it.
+Gaps are in-memory only — after a restart the on-chain
+uncompleted-session re-pull is the backstop.
+
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
 folded cache **even when the staleness tripwire trips**.
@@ -491,12 +530,15 @@ versioned-child inner — several fullnode round-trips) slows the pusher
 further and latches the tripwire, a self-reinforcing loop that collapses
 dwallet throughput. **The TTL bound is essential, not merely an
 optimization knob:** a rare singleton like the `System` inner is updated
-only at epoch boundaries, so if the pusher *skips* its update (the
+only at epoch boundaries, so if the pusher *misses* its update (the
 defining checkpoint pruned before the lagging pusher folds it; the
 singleton is never modified again that epoch to re-fold it) the stale
 snapshot would be served *indefinitely* and wedge the epoch — the gate
 that drives epoch advance reads the mid-epoch committee through this
-anchor (#1736). The 2 s interval keeps the refresh well below the
+anchor (#1736). The pending-gap repair above makes such a miss unlikely
+(the folder retries an unfetchable checkpoint instead of skipping it),
+but the TTL bound stays as defense-in-depth for the drop-after-deadline
+and restart cases. The 2 s interval keeps the refresh well below the
 per-tick rate that latches the loop while bounding staleness to ~2 s.
 Ordinary (non-anchor) reads still fall through to the network when the
 tripwire trips. Cache-served anchors are counted

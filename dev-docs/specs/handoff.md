@@ -97,6 +97,25 @@ next epoch inherits.
   Consensus pubkeys are fixed at registration; members that have since
   left the active set are resolved from chain (their staking pool
   object persists) so churn cannot wrongly reject a valid certificate.
+  Two properties of the chain-read prior committee
+  (`fetch_previous_committee`) are load-bearing here:
+  - **Snapshot-name keying.** The consensus-key map is keyed by each
+    member's PRIOR-epoch snapshot name (resolved by validator id from
+    the frozen `previous_committee`), never by the member's current
+    on-chain protocol pubkey — a member that rotated its protocol key
+    at the boundary signed under the old name, and current-name keying
+    would silently drop its stake from the cert quorum.
+  - **Lossy membership read (and its sharp edge).** A prior-committee
+    member whose frozen snapshot `protocol_pubkey` bytes fail to parse
+    is SKIPPED rather than panicking the reader — but the skip is not
+    graceful degradation: the member is absent from `voting_rights`,
+    and verification hard-rejects any certificate carrying a weight-0
+    signer's signature. Since such a member's own node keeps signing,
+    its signature is in every aggregated cert, so every served cert
+    fails and bootstrap surfaces `Rejected`. The reader logs the
+    dropped ids so that outcome is attributable to the corrupt record
+    (near-unreachable trigger: the bytes are validated at
+    registration; the pre-lossy behavior was a panic crash-loop).
 
 ## Consuming the certificate
 
@@ -106,8 +125,16 @@ next epoch inherits.
    and installs the network-key outputs it certifies. Outcomes:
    - `Verified` — persist + install.
    - `Rejected` (peers served certificates but NONE verified) — a
-     genuine trust-anchor mismatch or eclipse: **fail closed, halt the
-     node**. A single bad peer cannot cause this (every peer is tried).
+     genuine trust-anchor mismatch or eclipse: **fail closed** — the
+     node must never anchor on an unverified cert. A single bad peer
+     cannot cause this (every peer is tried). Enforcement today: the
+     epoch-start bootstrap task logs `Rejected` at error and installs
+     nothing (it does NOT hard-halt the process; a refuse-participation
+     policy layers above it), and the prepare-then-start barrier simply
+     never becomes ready without a verified anchor — the node blocks
+     out of MPC participation. The one place that DOES halt the node is
+     the barrier's re-verification failure of a locally-PERSISTED cert
+     (local DB tampering/corruption — see step 2).
    - `Unavailable` (no peer served one) — benign propagation lag;
      retry.
    A validator that already holds the certificate re-verifies it before

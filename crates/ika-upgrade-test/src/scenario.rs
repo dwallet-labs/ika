@@ -102,6 +102,16 @@ pub enum Step {
     ExpectMaliciousActorsAtLeast {
         min_total: u64,
     },
+    /// Assert every running validator's `node.log` does (`present: true`) or
+    /// does not (`present: false`) contain `needle`. Logs are truncated on
+    /// each (re)start, so after a swap this sees only the new binary's
+    /// output. For invariants observable only in logs (e.g. the one-time
+    /// committee-record migration at store open); prefer a metrics step
+    /// where a gauge exists.
+    ExpectLogLine {
+        needle: String,
+        present: bool,
+    },
 }
 
 impl std::fmt::Display for Step {
@@ -134,6 +144,10 @@ impl std::fmt::Display for Step {
             Step::RunWorkload { label } => write!(f, "run_workload({label:?})"),
             Step::ExpectMaliciousActorsAtLeast { min_total } => {
                 write!(f, "expect_malicious_actors_at_least({min_total})")
+            }
+            Step::ExpectLogLine { needle, present } => {
+                let polarity = if *present { "present" } else { "absent" };
+                write!(f, "expect_log_line_{polarity}({needle:?})")
             }
         }
     }
@@ -351,6 +365,24 @@ impl Scenario {
     pub fn expect_malicious_actors_at_least(mut self, min_total: u64) -> Self {
         self.steps
             .push(Step::ExpectMaliciousActorsAtLeast { min_total });
+        self
+    }
+
+    /// Assert every running validator's `node.log` contains `needle`.
+    pub fn expect_log_line_present(mut self, needle: impl Into<String>) -> Self {
+        self.steps.push(Step::ExpectLogLine {
+            needle: needle.into(),
+            present: true,
+        });
+        self
+    }
+
+    /// Assert no running validator's `node.log` contains `needle`.
+    pub fn expect_log_line_absent(mut self, needle: impl Into<String>) -> Self {
+        self.steps.push(Step::ExpectLogLine {
+            needle: needle.into(),
+            present: false,
+        });
         self
     }
 
@@ -607,6 +639,28 @@ impl Scenario {
                         got,
                         expected = *min_total,
                         "malicious-actors assertion passed (scraped from metrics)"
+                    );
+                }
+                Step::ExpectLogLine { needle, present } => {
+                    let c = cluster.as_ref().context("ExpectLogLine before StartAll")?;
+                    for proc in c.validators.iter().filter(|p| p.is_running()) {
+                        let log = std::fs::read_to_string(proc.log_path()).with_context(|| {
+                            format!("read validator log {}", proc.log_path().display())
+                        })?;
+                        let found = log.contains(needle.as_str());
+                        if found != *present {
+                            bail!(
+                                "expected {needle:?} to be {} in {}, but it was {}",
+                                if *present { "present" } else { "absent" },
+                                proc.log_path().display(),
+                                if found { "present" } else { "absent" },
+                            );
+                        }
+                    }
+                    tracing::info!(
+                        needle = needle.as_str(),
+                        present = *present,
+                        "log-line assertion passed on every running validator"
                     );
                 }
                 Step::RunWorkload { label } => {

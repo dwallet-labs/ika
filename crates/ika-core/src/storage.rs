@@ -115,7 +115,13 @@ impl ReadStore for RocksDbStore {
         &self,
         epoch: EpochId,
     ) -> Result<Option<Arc<Committee>>, ika_types::storage::error::Error> {
-        Ok(self.committee_store.get_committee(&epoch).unwrap())
+        // Propagate rather than unwrap: a committee_map read can fail on a
+        // decode error (e.g. a record written by an older binary with a
+        // different `Committee` layout), and a panic here on the read path
+        // would crash-loop under panic=abort.
+        self.committee_store
+            .get_committee(&epoch)
+            .map_err(ika_types::storage::error::Error::custom)
     }
 
     fn get_latest_dwallet_checkpoint(&self) -> Result<VerifiedDWalletCheckpointMessage> {
