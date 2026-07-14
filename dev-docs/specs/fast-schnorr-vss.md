@@ -181,8 +181,15 @@ against the active committee directly.
   and, with it, every subsequent identifier in that pool. Relatedly, the
   NOA-signing-key choice (oldest key by `dkg_at_epoch`) is made over the
   ADOPTED set (not the wall-clock-installed set) and tie-breaks equal
-  `dkg_at_epoch` by key id, so every validator picks the same NOA key and
-  applies the same pool configs regardless of install timing.
+  `dkg_at_epoch` by key id. SCOPE: the adopted set is cert-gated on
+  CONTENT but eventually-consistent in TIMING, so during an adoption-skew
+  window two validators can transiently pick different NOA keys — the
+  selection converges with adoption (sync ticks), it is not round-uniform
+  by construction. For the pool CONFIGS chosen here that transient
+  divergence only shifts top-up timing/counts (per-pool ordinals are
+  unaffected — each pool's counter is its own). A divergent choice at
+  NOA-SIGN instantiation would diverge the sign-session identifier; NOA
+  signing is not yet live, and that residual belongs to the NOA track.
 
 ## Invariants
 
