@@ -42,7 +42,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::handoff::HandoffItemKey;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
@@ -1622,7 +1622,14 @@ impl DWalletMPCManager {
                 // invariant violation — don't page on it. Internal presign
                 // requests park on it before ever getting here (see
                 // `instantiate_internal_presign_session`).
-                if is_internal && !e.is_network_key_data_not_ready() {
+                // `VssShamirCacheUnavailable` is terminal but BY-DESIGN
+                // reachable: during the v3→v4 boundary epoch every network key
+                // is pre-V3 (`NotApplicable` cache), so a NOA VSS sign attempt
+                // hitting it is the expected state of the whole fleet, not an
+                // invariant violation — log it as an error without paging.
+                let is_expected_error_class = e.is_network_key_data_not_ready()
+                    || matches!(e, DwalletMPCError::VssShamirCacheUnavailable(_));
+                if is_internal && !is_expected_error_class {
                     error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");
