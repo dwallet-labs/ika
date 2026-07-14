@@ -3239,59 +3239,56 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         let existing = tables.epoch_mpc_data_ready_signals.get(&signal.authority)?;
         let committee = self.committee();
-        // Next-epoch joiners are legitimate attestation targets but
-        // have weight 0 in the *current* committee, so a plain
-        // current-committee filter would strip them from the recorded
-        // signal — and the freeze partition (which decides NEXT-epoch
-        // membership) would then never see them attested and exclude
-        // them. A joiner that has announced has a signed announcement
-        // in this table, ordered before any ready signal that attests
-        // it (the emitter only attests a peer after validating its
-        // announced blob, which consensus sequences first). So treat
-        // announcers as valid targets too. Garbage padding (neither
-        // committee nor announcer) is still dropped.
-        let announced: BTreeSet<AuthorityName> = tables
-            .validator_mpc_data_announcements
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(authority, _)| authority)
-            .collect();
-        // Canonicalize via the pure helper — handles dedup +
-        // committee filter + quorum-coverage floor in one place
-        // so the byzantine-resistance properties are unit-testable
-        // without a live epoch store. See
-        // `validator_metadata::canonicalize_ready_signal_peers`.
+        // Canonicalize via the pure helper — dedup + a current-committee
+        // quorum-coverage floor + a deterministic length cap. CRITICAL:
+        // this MUST be a pure function of the sequenced signal bytes, so
+        // it does NOT consult the local announcements table (a
+        // wall-clock-populated, JoinerPubkeyProvider-gated view). Instead
+        // it KEEPS every deduped peer — including a next-epoch joiner with
+        // zero current weight — so two honest validators with different
+        // provider-install timing persist the identical canonical set for
+        // the same sequenced signal. Coverage is measured on current
+        // weight only, so a sparse signal still can't push the freeze
+        // trigger; a joiner is frozen only when a stake-quorum of signers
+        // attest it in the tally (`compute_freeze_partition`).
+        //
+        // Cap = K × current committee size: the deduped length is
+        // identical across honest validators (same sequenced bytes), so
+        // the cap decision is itself consensus-deterministic.
+        const READY_SIGNAL_PEERS_CAP_MULTIPLIER: usize = 4;
+        let cap = committee
+            .num_members()
+            .saturating_mul(READY_SIGNAL_PEERS_CAP_MULTIPLIER);
         let (outcome, diagnostics) = crate::validator_metadata::canonicalize_ready_signal_peers(
             &signal.validated_peers,
-            |peer| {
-                let weight = committee.weight(peer);
-                // Keep announcer joiners (current weight 0) as valid
-                // targets with a minimal synthetic weight — negligible
-                // against the current-committee quorum floor (so it
-                // can't let an under-covered signal pass), but enough
-                // to survive the drop-if-zero filter.
-                if weight > 0 || announced.contains(peer) {
-                    weight.max(1)
-                } else {
-                    0
-                }
-            },
+            |peer| committee.weight(peer),
             committee.quorum_threshold(),
+            cap,
         );
         let canonical_peers = match outcome {
             crate::validator_metadata::CanonicalizeReadySignalOutcome::Accept {
                 validated_peers,
             } => validated_peers,
             crate::validator_metadata::CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
-                attested_stake,
+                coverage_stake,
                 quorum,
             } => {
                 warn!(
                     signer = ?signal.authority,
-                    attested_stake,
+                    coverage_stake,
                     quorum,
                     "EpochMpcDataReadySignal below quorum coverage — dropping; \
                      signer should re-broadcast once they have more peer blobs validated"
+                );
+                return Ok(());
+            }
+            crate::validator_metadata::CanonicalizeReadySignalOutcome::OverCap { len, cap } => {
+                warn!(
+                    signer = ?signal.authority,
+                    len,
+                    cap,
+                    "EpochMpcDataReadySignal exceeds the peer-count cap — dropping; \
+                     likely a byzantine signer padding garbage names"
                 );
                 return Ok(());
             }
@@ -3325,22 +3322,52 @@ impl AuthorityPerEpochStore {
                 return Ok(());
             }
         }
-        // Surface byzantine-padding attempts. Placed AFTER the
-        // strict-superset gate so a byzantine signer re-submitting
-        // the same padded payload every consensus round doesn't
-        // log-flood: the gate drops the repeat above, so only the
-        // first padded payload (or a strictly-grown padded payload)
-        // makes it here. Honest emitters dedup + committee-filter
-        // before broadcast, so reaching this branch is a strong
-        // byzantine signal worth a `warn!` for operators.
-        if !diagnostics.non_committee_dropped.is_empty() || diagnostics.duplicates_collapsed != 0 {
+        // Surface anomalies. Placed AFTER the strict-superset gate so a
+        // byzantine signer re-submitting the same payload every consensus
+        // round doesn't log-flood: the gate drops the repeat above, so only
+        // the first anomalous payload (or a strictly-grown one) makes it
+        // here. Two distinct signals, judged separately:
+        // - DUPLICATES are a genuine byzantine tell — honest emitters dedup
+        //   before broadcast — so they warn.
+        // - Non-committee names are NOT: honest emitters deliberately
+        //   include announced next-epoch JOINERS (zero current-epoch
+        //   weight), so a non-empty `non_committee_kept` is the expected
+        //   shape of every honest signal in a churn epoch. Only an
+        //   implausibly large kept set (more kept zero-weight names than
+        //   committee seats — no honest joiner population looks like that)
+        //   warns; the routine case logs at debug. Kept names are inert for
+        //   assembly unless a stake-quorum of signers attest them, but they
+        //   DO land in `epoch_excluded_validators` and the excluded gauge,
+        //   and each one holds the full-coverage fast path open (the freeze
+        //   then fires via the grace path) — bounded, deterministic, and
+        //   the price of keeping canonicalization a pure function of the
+        //   sequenced bytes.
+        if diagnostics.duplicates_collapsed != 0 {
             warn!(
                 signer = ?signal.authority,
                 duplicates_collapsed = diagnostics.duplicates_collapsed,
-                non_committee_dropped = ?diagnostics.non_committee_dropped,
-                "EpochMpcDataReadySignal padded with duplicates / non-committee \
-                 authorities — likely byzantine signer"
+                "EpochMpcDataReadySignal padded with duplicate names — likely \
+                 byzantine signer (honest emitters dedup before broadcast)"
             );
+        }
+        if !diagnostics.non_committee_kept.is_empty() {
+            if diagnostics.non_committee_kept.len() > committee.num_members() {
+                warn!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal carries more zero-weight names than \
+                     committee seats — likely byzantine padding (kept names are \
+                     inert for assembly but hold the full-coverage fast path open \
+                     until the freeze grace)"
+                );
+            } else {
+                debug!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal attests zero-weight names (expected \
+                     for announced next-epoch joiners)"
+                );
+            }
         }
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,

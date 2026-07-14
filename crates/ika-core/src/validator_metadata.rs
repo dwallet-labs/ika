@@ -317,11 +317,16 @@ pub enum CanonicalizeReadySignalOutcome {
     Accept {
         validated_peers: Vec<(AuthorityName, [u8; 32])>,
     },
-    /// Signal rejected: after dedup + committee-filter, the
-    /// remaining peer set attests to less than quorum stake.
-    /// Recorded so a byzantine signer can't push the freeze
-    /// trigger via empty/sparse signals.
-    BelowQuorumCoverage { attested_stake: u64, quorum: u64 },
+    /// Signal rejected: after dedup, the peers with current-committee
+    /// weight cover less than quorum stake. Recorded so a byzantine
+    /// signer can't push the freeze trigger via empty/sparse signals.
+    BelowQuorumCoverage { coverage_stake: u64, quorum: u64 },
+    /// Signal rejected: the deduped peer count exceeds the length cap
+    /// (a byzantine signer padding garbage names). The cap is derived
+    /// from the epoch-fixed committee size, so the deduped length — and
+    /// hence this decision — is identical across honest validators
+    /// decoding the same sequenced signal bytes.
+    OverCap { len: usize, cap: usize },
 }
 
 /// Byzantine-resistance diagnostics surfaced from
@@ -331,10 +336,13 @@ pub enum CanonicalizeReadySignalOutcome {
 /// honest emitters send a deduped, committee-only peer set.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CanonicalizeReadySignalDiagnostics {
-    /// Names that appeared in the inbound `validated_peers` but
-    /// were dropped because they have zero stake (not in the
-    /// current committee). Always sorted.
-    pub non_committee_dropped: Vec<AuthorityName>,
+    /// Names that appeared in the inbound `validated_peers` with zero
+    /// current-committee weight. These are KEPT in the canonical set
+    /// (a next-epoch joiner has zero current weight but is a legitimate
+    /// freeze target), but honest emitters only list committee members
+    /// and announced joiners, so a large count is a byzantine padding
+    /// signal worth a `warn!`. Always sorted.
+    pub non_committee_kept: Vec<AuthorityName>,
     /// Number of duplicate entries collapsed during dedup.
     /// Honest emitters dedup before broadcast, so a non-zero
     /// value is a strong byzantine signal.
@@ -369,8 +377,9 @@ pub struct CanonicalizeReadySignalDiagnostics {
 ///    callers pass in already incorporates the `2f+1` rounding.
 pub fn canonicalize_ready_signal_peers<S>(
     validated_peers: &[(AuthorityName, [u8; 32])],
-    stake_of: S,
+    weight_of: S,
     quorum_threshold: u64,
+    cap: usize,
 ) -> (
     CanonicalizeReadySignalOutcome,
     CanonicalizeReadySignalDiagnostics,
@@ -389,22 +398,44 @@ where
         unique.insert(*peer, *hash);
     }
     let duplicates_collapsed = validated_peers.len().saturating_sub(unique.len());
-    let mut non_committee_dropped: Vec<AuthorityName> = unique
+    // Non-committee (zero current-weight) peers are KEPT: a next-epoch
+    // joiner has zero current weight but is a legitimate freeze target,
+    // attested by a stake-quorum of signers in the tally. Reporting them
+    // as `non_committee_kept` only feeds the byzantine `warn!`. This is
+    // the crux of the fix: canonicalization no longer consults any local
+    // (wall-clock-populated) announcement table to decide whether to keep
+    // a joiner, so the persisted set is a pure function of the sequenced
+    // signal bytes and cannot fork across honest validators.
+    let mut non_committee_kept: Vec<AuthorityName> = unique
         .keys()
         .copied()
-        .filter(|peer| stake_of(peer) == 0)
+        .filter(|peer| weight_of(peer) == 0)
         .collect();
-    non_committee_dropped.sort();
-    unique.retain(|peer, _| stake_of(peer) > 0);
+    non_committee_kept.sort();
     let diagnostics = CanonicalizeReadySignalDiagnostics {
-        non_committee_dropped,
+        non_committee_kept,
         duplicates_collapsed,
     };
-    let attested_stake: u64 = unique.keys().map(&stake_of).sum();
-    if attested_stake < quorum_threshold {
+    // Length cap against a byzantine signer padding garbage into durable
+    // storage. Deterministic: every honest validator decodes the same
+    // sequenced bytes, so the deduped length is identical across them.
+    if unique.len() > cap {
+        return (
+            CanonicalizeReadySignalOutcome::OverCap {
+                len: unique.len(),
+                cap,
+            },
+            diagnostics,
+        );
+    }
+    // Coverage is measured on CURRENT-committee weight only (joiners /
+    // garbage contribute 0), so a sparse signal still can't push the
+    // freeze trigger — but the persisted set keeps every deduped pair.
+    let coverage_stake: u64 = unique.keys().map(&weight_of).sum();
+    if coverage_stake < quorum_threshold {
         return (
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
-                attested_stake,
+                coverage_stake,
                 quorum: quorum_threshold,
             },
             diagnostics,
@@ -3291,6 +3322,86 @@ mod tests {
         );
     }
 
+    /// Full pipeline under the KEEP-zero-weight canonicalization:
+    /// canonicalize each inbound signal → tally the freeze partition →
+    /// carry forward stable mpc_data — with a joiner, a garbage name,
+    /// and a silent carried member all in play at once. This is the
+    /// population the determinism claim is about; the pure-helper tests
+    /// above each cover one stage in isolation.
+    ///
+    /// Committee: a, b, c, d (stake 1 each, quorum 3). d is silent this
+    /// epoch (restarting) but present in the prior cert. j is an
+    /// announced next-epoch joiner (zero current weight) attested by
+    /// all three live signers. g is a garbage name padded by ONE signer
+    /// only. Expected: a, b, c frozen at fresh hashes; j frozen at its
+    /// announced hash (quorum of signers attest it despite zero
+    /// weight); d frozen at its prior-cert digest via carry-forward;
+    /// g excluded (kept by canonicalization, never reaches quorum).
+    #[test]
+    fn canonicalize_tally_carry_forward_chain_keeps_joiner_and_carried_member() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let joiner = auth(0x1E);
+        let garbage = auth(0x6B);
+        let weight_of =
+            |peer: &AuthorityName| -> u64 { if [a, b, c, d].contains(peer) { 1 } else { 0 } };
+        let quorum = 3u64;
+        let cap = 16usize;
+
+        let honest_view = vec![
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (joiner, [0x77; 32]),
+        ];
+        let mut padded_view = honest_view.clone();
+        padded_view.push((garbage, [0x66; 32]));
+
+        // Canonicalize each signal exactly like the record path does.
+        let mut signals: BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> = BTreeMap::new();
+        for (signer, view) in [(a, &honest_view), (b, &honest_view), (c, &padded_view)] {
+            let (outcome, diagnostics) =
+                canonicalize_ready_signal_peers(view, weight_of, quorum, cap);
+            let CanonicalizeReadySignalOutcome::Accept { validated_peers } = outcome else {
+                panic!("honest signal with quorum coverage must canonicalize to Accept");
+            };
+            // Zero-weight names (joiner and, for c, the garbage pad) are
+            // KEPT in the canonical set.
+            assert!(
+                validated_peers.iter().any(|(peer, _)| *peer == joiner),
+                "the joiner must survive canonicalization"
+            );
+            assert!(!diagnostics.non_committee_kept.is_empty());
+            signals.insert(signer, validated_peers);
+        }
+
+        let attested = compute_freeze_partition(&signals, weight_of, quorum);
+        // Prior cert carries d (the silent continuing member) — and a for
+        // good measure, whose fresh attestation must win.
+        let prior: HashMap<_, _> = [(a, [0x99; 32]), (d, [0x44; 32])].into_iter().collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        let frozen_map: HashMap<AuthorityName, [u8; 32]> = partition.frozen.into_iter().collect();
+        assert_eq!(frozen_map.get(&a), Some(&[0x11; 32]), "fresh hash wins");
+        assert_eq!(frozen_map.get(&b), Some(&[0x22; 32]));
+        assert_eq!(frozen_map.get(&c), Some(&[0x33; 32]));
+        assert_eq!(
+            frozen_map.get(&joiner),
+            Some(&[0x77; 32]),
+            "a quorum-attested zero-weight joiner freezes at its announced hash"
+        );
+        assert_eq!(
+            frozen_map.get(&d),
+            Some(&[0x44; 32]),
+            "the silent continuing member freezes at its prior-cert digest"
+        );
+        assert_eq!(
+            partition.excluded,
+            vec![garbage],
+            "the kept-but-never-quorum garbage name is excluded, nothing else"
+        );
+    }
+
     /// Byzantine scenario: validator D serves bytes but they're
     /// malicious (don't decode to valid mpc_data). Honest validators
     /// drop D from their attestation, but byzantine D vouches for
@@ -3424,6 +3535,7 @@ mod tests {
             &[(c, [0xCC; 32]), (a, [0xAA; 32]), (b, [0xBB; 32])], // unsorted on purpose
             |_| 1,
             3,
+            100,
         );
         match outcome {
             CanonicalizeReadySignalOutcome::Accept { validated_peers } => {
@@ -3434,7 +3546,7 @@ mod tests {
             }
             other => panic!("expected Accept, got {other:?}"),
         }
-        assert!(diagnostics.non_committee_dropped.is_empty());
+        assert!(diagnostics.non_committee_kept.is_empty());
         assert_eq!(diagnostics.duplicates_collapsed, 0);
     }
 
@@ -3454,13 +3566,14 @@ mod tests {
             ],
             |_| 1,
             3,
+            100,
         );
         match outcome {
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
-                attested_stake,
+                coverage_stake,
                 quorum,
             } => {
-                assert_eq!(attested_stake, 1);
+                assert_eq!(coverage_stake, 1);
                 assert_eq!(quorum, 3);
             }
             other => panic!("dup-padding must NOT cross the quorum floor: got {other:?}"),
@@ -3468,11 +3581,13 @@ mod tests {
         assert_eq!(diagnostics.duplicates_collapsed, 3);
     }
 
-    /// Byzantine signer pads with non-committee authorities (zero
-    /// stake). The committee filter drops them; diagnostics surface
-    /// the dropped names for caller-side logging.
+    /// Non-committee (zero current-weight) authorities are KEPT in the
+    /// canonical set — a next-epoch joiner is a legitimate freeze target —
+    /// but they contribute 0 to coverage, so a signal that only reaches
+    /// quorum by counting them is still rejected at the coverage floor.
+    /// The kept names are surfaced for caller-side logging.
     #[test]
-    fn canonicalize_ready_signal_rejects_non_committee_padding() {
+    fn canonicalize_ready_signal_coverage_excludes_non_committee() {
         let a = auth(0xAA);
         let outsider1 = auth(0xF0);
         let outsider2 = auth(0xF1);
@@ -3484,17 +3599,15 @@ mod tests {
             ],
             |peer| if *peer == a { 1 } else { 0 },
             3,
+            100,
         );
         match outcome {
-            CanonicalizeReadySignalOutcome::BelowQuorumCoverage { attested_stake, .. } => {
-                assert_eq!(attested_stake, 1)
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage { coverage_stake, .. } => {
+                assert_eq!(coverage_stake, 1)
             }
-            other => panic!("non-committee padding must NOT count: got {other:?}"),
+            other => panic!("non-committee padding must NOT count toward coverage: got {other:?}"),
         }
-        assert_eq!(
-            diagnostics.non_committee_dropped,
-            vec![outsider1, outsider2]
-        );
+        assert_eq!(diagnostics.non_committee_kept, vec![outsider1, outsider2]);
     }
 
     /// Byzantine "race the freeze trigger" attack: an empty
@@ -3504,12 +3617,12 @@ mod tests {
     #[test]
     fn canonicalize_ready_signal_rejects_empty_set() {
         let empty: [(AuthorityName, [u8; 32]); 0] = [];
-        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&empty, |_| 1, 3);
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&empty, |_| 1, 3, 100);
         assert!(matches!(
             outcome,
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
         ));
-        assert!(diagnostics.non_committee_dropped.is_empty());
+        assert!(diagnostics.non_committee_kept.is_empty());
         assert_eq!(diagnostics.duplicates_collapsed, 0);
     }
 
@@ -3533,13 +3646,79 @@ mod tests {
             ],
             |peer| if *peer == a || *peer == b { 1 } else { 0 },
             2, // quorum just low enough for `{a, b}` to clear
+            100,
         );
+        // Accepted: {a, b} cover quorum; `outsider` is kept (inert) and
+        // surfaced in diagnostics rather than dropped.
+        match outcome {
+            CanonicalizeReadySignalOutcome::Accept { validated_peers } => {
+                assert!(validated_peers.iter().any(|(name, _)| *name == outsider));
+            }
+            other => panic!("expected Accept, got {other:?}"),
+        }
+        assert_eq!(diagnostics.duplicates_collapsed, 2);
+        assert_eq!(diagnostics.non_committee_kept, vec![outsider]);
+    }
+
+    /// The V2 fix: a zero-weight (next-epoch joiner) peer is RETAINED in
+    /// the accepted set — canonicalization no longer consults any local
+    /// announcement table to decide whether to keep it — while coverage
+    /// is still measured on current-committee weight only, so the joiner
+    /// alone can't clear the quorum floor.
+    #[test]
+    fn canonicalize_ready_signal_retains_zero_weight_joiner() {
+        let (a, b, c) = (auth(0xAA), auth(0xBB), auth(0xCC));
+        let joiner = auth(0xF0);
+        let weight = |peer: &AuthorityName| if *peer == joiner { 0 } else { 1 };
+
+        // Committee {a,b,c} cover quorum 3; joiner is kept in the output.
+        let (outcome, _) = canonicalize_ready_signal_peers(
+            &[
+                (a, [0xAA; 32]),
+                (b, [0xBB; 32]),
+                (c, [0xCC; 32]),
+                (joiner, [0xF0; 32]),
+            ],
+            weight,
+            3,
+            100,
+        );
+        match outcome {
+            CanonicalizeReadySignalOutcome::Accept { validated_peers } => {
+                assert!(
+                    validated_peers.iter().any(|(name, _)| *name == joiner),
+                    "the zero-weight joiner must be retained"
+                );
+            }
+            other => panic!("expected Accept, got {other:?}"),
+        }
+
+        // A signal of ONLY zero-weight peers covers 0 stake → rejected.
+        let (only_joiners, _) =
+            canonicalize_ready_signal_peers(&[(joiner, [0xF0; 32])], weight, 3, 100);
         assert!(matches!(
-            outcome,
+            only_joiners,
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
+        ));
+    }
+
+    /// A byzantine signer padding beyond the length cap is dropped; the
+    /// decision is a pure function of the (deduped) input length.
+    #[test]
+    fn canonicalize_ready_signal_over_cap_is_dropped() {
+        let peers: Vec<(AuthorityName, [u8; 32])> = (0u8..6).map(|i| (auth(i), [i; 32])).collect();
+        // cap 5, six distinct peers → OverCap.
+        let (over, _) = canonicalize_ready_signal_peers(&peers, |_| 1, 3, 5);
+        assert!(matches!(
+            over,
+            CanonicalizeReadySignalOutcome::OverCap { len: 6, cap: 5 }
+        ));
+        // At the cap (five peers) it is evaluated normally (Accept here).
+        let (at_cap, _) = canonicalize_ready_signal_peers(&peers[..5], |_| 1, 3, 5);
+        assert!(matches!(
+            at_cap,
             CanonicalizeReadySignalOutcome::Accept { .. }
         ));
-        assert_eq!(diagnostics.duplicates_collapsed, 2);
-        assert_eq!(diagnostics.non_committee_dropped, vec![outsider]);
     }
 
     /// Pure assertion of the "strict-superset re-emit" gate at

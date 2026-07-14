@@ -65,6 +65,36 @@ which bytes* deterministic in consensus order.
   strictly (the `sequence_number` exists so consensus dedup does not
   drop re-emits). Per-signer rows REPLACE — the latest signal from a
   signer is its current attestation.
+- **Receive-time canonicalization** (`canonicalize_ready_signal_peers`)
+  MUST be a pure function of the sequenced signal bytes: dedup by
+  authority, a current-committee quorum-coverage floor, and a
+  deterministic length cap (`K × current committee size`). It MUST NOT
+  consult the local announcements table or any `JoinerPubkeyProvider`
+  state — those are wall-clock-populated and would fork the persisted
+  canonical set across honest validators with different poll timing.
+  A next-epoch joiner (zero current-committee weight) survives
+  canonicalization because non-committee peers are **retained** in the
+  persisted `(peer, hash)` set (up to the cap), NOT because of an
+  announcement-table lookup. Coverage is measured on current-committee
+  weight only, so a sparse signal still can't push the freeze trigger; a
+  joiner is frozen only when a stake-quorum of signers attest it in the
+  tally (`compute_freeze_partition`). Kept non-committee names cannot
+  reach the frozen set without a stake-quorum of signers, and the
+  assembly/reconfiguration consumers read the frozen/excluded sets by
+  committee-member key only — but they are NOT fully inert: a garbage
+  name lands durably in `epoch_excluded_validators` and inflates the
+  `dwallet_mpc_data_excluded_validators` gauge (operators alerting on it
+  should know), and each kept-but-never-quorum name holds the
+  full-coverage fast path open, so the freeze fires via the grace path
+  instead — one byzantine signer can force every epoch onto the grace
+  latency for free. Deterministic and bounded by the grace; this is the
+  price of keeping canonicalization a pure function of the sequenced
+  bytes (distinguishing garbage from a legitimately-propagating joiner
+  would require exactly the local state the rule above forbids). The
+  strict-superset re-emit gate also means each accepted REPLACE may swap
+  ALL of a signer's attested hashes — a byzantine signer buys up to
+  `cap − initial` accepted re-emits by growing its set one name at a
+  time; latest-row-wins keeps this deterministic.
 - **Freeze decision** (the commit-boundary rule): the frozen mpc-data
   input set is decided **in the consensus handler at a commit
   boundary**, never from a wall-clock loop — two honest validators must
@@ -161,7 +191,12 @@ which bytes* deterministic in consensus order.
 1. Freeze decisions are pure functions of the consensus sequence
    (commit-boundary, persisted anchor rounds, atomic batch writes via
    `ConsensusCommitOutput`) — restart-safe and identical across honest
-   validators.
+   validators. This covers the **receive-time canonicalization** of each
+   ready signal, not only the freeze tally: the persisted
+   `validated_peers` set must be derivable from the sequenced signal
+   bytes alone. Reading any wall-clock-populated local table (the
+   announcements table, the `JoinerPubkeyProvider`) on this path forks
+   the persisted set and, through it, the freeze partition.
 2. Every blob reference is content-addressed; bytes are verified
    against their digest at every trust boundary (store insert, P2P
    fetch, assembly decode).
