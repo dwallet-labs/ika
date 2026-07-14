@@ -300,10 +300,19 @@ fn unset_object_id() -> ObjectID {
 // Without it those fields stay snake_case while every other config key is
 // kebab-case, so an operator writing `fallback-grpc-url` would have it silently
 // dropped — flipping a mirrored validator into peer-only.
+//
+// `deny_unknown_fields` closes the general form of the same trap: ANY
+// misspelled key in this section (`falback-grpc-url`, `fallback-url`,
+// `fallback_grpc_url`, ...) would otherwise be silently ignored, and since
+// every field here is optional-or-defaulted, the config still deserializes —
+// as a DIFFERENT transport plan than the operator wrote (mirrored-with-
+// fallback silently becomes peer-only). Transport selection is a boot-time,
+// operator-authored choice: fail the boot with a naming error instead.
 #[serde(
     rename_all = "kebab-case",
     rename_all_fields = "kebab-case",
-    tag = "kind"
+    tag = "kind",
+    deny_unknown_fields
 )]
 pub enum SuiDataSource {
     SuiStateDirect {
@@ -1484,14 +1493,14 @@ mod tests {
     ///   `SuiStateDirect { serve_mirror: false }`.
     /// - Serializing back round-trips to the kebab-case keys (`kind`,
     ///   `fallback-grpc-url`, `serve-mirror`), not snake_case.
-    /// - The silent-default risk: a *snake_case* `fallback_grpc_url` key is an
-    ///   unknown field to the kebab-case-renamed variant, so it is dropped and
-    ///   the field stays `None` — exactly the misconfig the `rename_all_fields`
-    ///   comment in the production code warns about (a mirrored validator
-    ///   silently flips to peer-only). `SuiDataSource` has no
-    ///   `deny_unknown_fields`, and serde does not support it on internally
-    ///   tagged enum variants, so the parse *succeeds* with the field unset
-    ///   rather than erroring — this test documents that behavior.
+    /// - Fail-closed on unrecognized keys: a *snake_case* `fallback_grpc_url`
+    ///   or a misspelled `falback-grpc-url` ERRORS the parse
+    ///   (`deny_unknown_fields`) instead of being silently dropped — every
+    ///   field in this section is optional-or-defaulted, so a dropped key
+    ///   would otherwise boot a DIFFERENT transport plan than the operator
+    ///   wrote (mirrored-with-fallback flipping to peer-only). Empirically
+    ///   verified to work on this serde version despite the internally-tagged
+    ///   enum (an earlier note here claimed otherwise).
     #[test]
     fn sui_data_source_deserializes_kebab_case_fields() {
         // sui-state-mirrored with a kebab-case fallback-grpc-url populates the field.
@@ -1564,25 +1573,26 @@ mod tests {
             } if url == "http://fallback:9000"
         ));
 
-        // Silent-default risk: a snake_case `fallback_grpc_url` key does NOT
-        // populate the field. The variant's fields are kebab-case-renamed, so
-        // `fallback_grpc_url` is an unrecognized key; with no
-        // `deny_unknown_fields` (unsupported on internally tagged enums) the
-        // parse succeeds and the field stays None — flipping a would-be
-        // mirrored-with-fallback validator into peer-only.
-        let snake: SuiDataSource = serde_yaml::from_str(
+        // Fail-closed on unrecognized keys (`deny_unknown_fields`): a
+        // snake_case `fallback_grpc_url` — or any typo — must ERROR at parse
+        // time, not silently deserialize with the field unset. Every field
+        // in this section is optional-or-defaulted, so a silently-dropped
+        // key wouldn't fail anything downstream either: the node would just
+        // boot a DIFFERENT transport plan than the operator wrote
+        // (mirrored-with-fallback flipping to peer-only).
+        let snake = serde_yaml::from_str::<SuiDataSource>(
             "kind: sui-state-mirrored\nfallback_grpc_url: http://fallback:9000\n",
-        )
-        .expect("snake_case key is silently ignored, not an error");
+        );
         assert!(
-            matches!(
-                snake,
-                SuiDataSource::SuiStateMirrored {
-                    fallback_grpc_url: None,
-                }
-            ),
-            "snake_case `fallback_grpc_url` must be dropped, leaving the field None \
-             (documents the silent-default misconfig risk)"
+            snake.is_err(),
+            "a snake_case key must fail the parse (fail-closed), not be silently dropped"
+        );
+        let typo = serde_yaml::from_str::<SuiDataSource>(
+            "kind: sui-state-mirrored\nfalback-grpc-url: http://fallback:9000\n",
+        );
+        assert!(
+            typo.is_err(),
+            "a misspelled key must fail the parse (fail-closed), not flip the node to peer-only"
         );
     }
 
