@@ -100,11 +100,25 @@ which bytes* deterministic in consensus order.
   frozen even once stays covered while it is down, so even a
   permanently-down-but-staked member never wedges reconfiguration.
   Carry-forward is deterministic: the prior certificate is
-  consensus-anchored, perpetual, and (by the prepare-then-start
-  barrier) held by every validator before it processes this epoch's
-  consensus. A fresh announcement that diverged (landing a member in
-  `excluded`) is overridden by the known-good prior digest, since the
-  true blob cannot legitimately change between epochs.
+  consensus-anchored and perpetual, and the prepare-then-start barrier
+  holds it locally before this epoch's consensus is processed — on the
+  continuing-validator reconfigure path today; the joiner-promotion and
+  cold-startup consensus-start paths are pending the barrier wiring
+  (see `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`),
+  so until then a first-time joiner racing its bootstrap fetch can
+  freeze without the carried map. A fresh announcement that diverged
+  (landing a member in `excluded`) is overridden by the known-good
+  prior digest, since the true blob cannot legitimately change between
+  epochs. A cert READ ERROR at the freeze
+  (`prior_epoch_mpc_data_digests`) fails the commit rather than
+  degrading to announce-only: a transient read failure that silently
+  dropped the carry-forward map would freeze a shrunken set on that one
+  validator while peers freeze the full set — a divergent frozen set.
+  The commit errors, the consensus handler panics, and the commit
+  replays on restart until the read succeeds (`Ok(empty)` is reserved
+  for the chain-true no-cert epochs: genesis, a v3 prior epoch, the
+  first v4 epoch; a missing perpetual-tables handle also fails the
+  commit — it is a local initialization fault, not a chain-true case).
 - The certificate cannot backfill an announcement for a validator with
   no prior frozen blob (a first-time joiner). For joiners the only
   mechanism is announcement propagation reaching a stake quorum BEFORE

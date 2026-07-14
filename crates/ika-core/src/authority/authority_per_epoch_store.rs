@@ -3395,35 +3395,71 @@ impl AuthorityPerEpochStore {
     /// The prior epoch's handoff-certificate `validator -> mpc_data
     /// digest` map, used to carry forward stable mpc_data for committee
     /// members that did not freshly announce this epoch (see
-    /// `carry_forward_stable_mpc_data`). Empty when there is no prior
-    /// certificate (genesis epoch, v3, or a read error) — carry-forward
-    /// then degrades to announce-only. The certificate is perpetual and
-    /// stake-quorum-signed, and the prepare-then-start barrier guarantees
-    /// every validator holds the prior-epoch certificate before
-    /// processing this epoch's consensus, so the returned map is
-    /// identical across honest validators — a precondition for the freeze
-    /// staying deterministic.
-    fn prior_epoch_mpc_data_digests(&self) -> HashMap<AuthorityName, [u8; 32]> {
+    /// `carry_forward_stable_mpc_data`). Empty (`Ok(HashMap::new())`) only
+    /// for the chain-true no-cert epochs — genesis, a v3 prior epoch, or the
+    /// first v4 epoch — where carry-forward legitimately degrades to
+    /// announce-only uniformly across the committee. The certificate is
+    /// perpetual and stake-quorum-signed. NOTE the uniformity of `Ok(None)`
+    /// currently rests on the prepare-then-start barrier holding the
+    /// prior-epoch certificate before this epoch's consensus is processed —
+    /// which today is wired only into the continuing-validator reconfigure
+    /// path; the joiner-promotion and cold-startup consensus-start paths do
+    /// not yet pass the barrier (deferred — see
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md), so a
+    /// first-time joiner racing its bootstrap fetch can still hit `Ok(None)`
+    /// and freeze without the carry-forward map. This function closes the
+    /// READ-ERROR flavor of the shrunken-set fork; the absent-cert flavor
+    /// closes when the barrier covers all consensus-start paths.
+    ///
+    /// A cert READ ERROR is PROPAGATED, not degraded to empty: silently
+    /// returning an empty map on a transient read failure would shrink THIS
+    /// validator's frozen set (dropping every carry-forward member) while
+    /// peers that read the cert fine keep them — a divergent frozen set is a
+    /// consensus fork. Propagating makes the freeze fail-stop: the commit
+    /// errors, the consensus handler's `.expect` panics the node, and the
+    /// commit replays on restart until the read succeeds. This is the
+    /// freeze-path realization of handoff.md invariant 4 ("fail open with
+    /// retry on read errors"), and it mirrors the ready-signals read in
+    /// `freeze_mpc_data_if_first`, which already `?`-propagates.
+    fn prior_epoch_mpc_data_digests(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
         let Some(prior_epoch) = self.epoch().checked_sub(1) else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
+        // A missing perpetual handle at a freeze commit is a LOCAL
+        // initialization fault, not a chain-true no-cert case: both
+        // epoch-store creation sites install the handle before consensus can
+        // process a commit, and the freeze only runs under v4 where the
+        // handle must be present. Fail the commit (replay) like the read
+        // error below — a silent Ok(empty) here would reintroduce the exact
+        // shrunken-set fork this function exists to close, via the arm two
+        // lines above the fix. Unreachable today; guards future init-order
+        // refactors.
         let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
-            return HashMap::new();
+            error!(
+                prior_epoch,
+                "perpetual-tables handle missing at the mpc_data freeze; failing the \
+                 commit so it replays after initialization completes"
+            );
+            return Err(IkaError::Unknown(
+                "perpetual-tables handle not installed at the mpc_data freeze".to_string(),
+            ));
         };
         let cert = match perpetual.get_certified_handoff_attestation(prior_epoch) {
             Ok(Some(cert)) => cert,
-            Ok(None) => return HashMap::new(),
+            Ok(None) => return Ok(HashMap::new()),
             Err(e) => {
-                warn!(
+                error!(
                     error = ?e,
                     prior_epoch,
                     "failed to read prior-epoch handoff cert for mpc_data carry-forward; \
-                     degrading to announce-only",
+                     failing the freeze so the commit replays rather than freezing a \
+                     divergent (shrunken) mpc_data set",
                 );
-                return HashMap::new();
+                return Err(e);
             }
         };
-        cert.attestation
+        Ok(cert
+            .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
@@ -3432,7 +3468,7 @@ impl AuthorityPerEpochStore {
                 }
                 _ => None,
             })
-            .collect()
+            .collect())
     }
 
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
@@ -3477,7 +3513,7 @@ impl AuthorityPerEpochStore {
             .iter()
             .map(|(name, _)| *name)
             .collect();
-        let prior_mpc_data = self.prior_epoch_mpc_data_digests();
+        let prior_mpc_data = self.prior_epoch_mpc_data_digests()?;
         let partition = crate::validator_metadata::carry_forward_stable_mpc_data(
             attested,
             &committee_members,

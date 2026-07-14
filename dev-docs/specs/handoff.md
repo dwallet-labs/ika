@@ -242,10 +242,27 @@ next epoch inherits.
    sign byte-identical attestations.
 4. Fail closed on contradiction (`Rejected`, persisted-cert
    re-verification failure); fail open with retry on absence
-   (`Unavailable`, read errors).
+   (`Unavailable`, read errors). The freeze is a cert CONSUMER too:
+   `prior_epoch_mpc_data_digests` (carry-forward source) reads the prior
+   cert's `ValidatorMpcData` items, and a READ ERROR there PROPAGATES —
+   the commit fails and replays on restart — rather than degrading to an
+   empty (shrunken) carry-forward map that would diverge this validator's
+   frozen set from its peers'. An empty map is returned only for the
+   chain-true no-cert epochs (genesis, a v3 prior epoch, the first v4
+   epoch). CAVEAT: the committee-uniformity of that empty-map case rests
+   on invariant 5 holding on EVERY consensus-start path; today the
+   barrier is wired only into the continuing-validator reconfigure path
+   (joiner-promotion and cold startup are pending — see
+   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`), so
+   a joiner racing its bootstrap fetch can still freeze absent-cert.
+   The read-error flavor of the fork is closed; the absent-cert flavor
+   closes with the barrier wiring.
 5. The barrier guarantee: no validator participates in epoch E+1
    sessions without locally holding the verified epoch-E handoff
-   artifacts.
+   artifacts. Currently enforced on the continuing-validator
+   reconfigure path; extending it to the fullnode→validator promotion
+   and cold-startup consensus-start paths is planned work (see the
+   plan referenced in invariant 4).
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),
