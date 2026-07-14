@@ -64,7 +64,48 @@ next epoch inherits.
      signature that cannot be verified yet (consensus pubkey provider
      not installed, expected attestation not yet built) is BUFFERED,
      not dropped; buffered signatures are re-verified when the
-     missing dependency installs.
+     missing dependency installs. On a RESTART the missing dependency
+     (the expected attestation) is re-installed by the signature
+     sender's own build path re-running each service iteration — NOT
+     only by a fresh snapshot-ready transition — so buffered-quorum
+     adoption is not the sole recovery path.
+- **Restart recovery of the aggregator.** The expected-attestation
+  install runs on the sender's service iteration even after this
+  validator's own EndOfPublish vote is durably recorded — until the
+  aggregator is built, at which point a steady-state early-out (vote
+  recorded AND aggregator installed) stops the per-tick pass (the
+  hydrate+build it runs re-hashes and rewrites full key blobs, so it
+  must not run once per second until teardown). So a restart after our
+  own EndOfPublishV2 was sequenced rebuilds the in-memory aggregator
+  ONCE by replaying the persisted `handoff_signatures` rows and
+  re-mints+persists the certificate. Buffered-quorum adoption alone is
+  NOT the recovery mechanism — it sees only signatures that arrive after
+  the restart. SCOPE: this replay recovers a NON-divergent validator
+  (the rebuilt attestation matches what the persisted rows endorse). A
+  validator whose rebuilt attestation DIVERGES from the rows re-verifies
+  none of them and mints nothing — its recovery is the barrier
+  peer-fetch of the quorum's certificate, never local replay.
+- **`handoff_signatures` table invariant.** The table holds ONLY rows
+  that verify against the currently-installed expected attestation. A
+  re-install that changes the attestation (e.g. a fresh hydration
+  changed the items) drops the superseded rows from BOTH the aggregator
+  and the table, in one atomic batch-delete — because the deferred-close
+  quorum gate (`handoff_signatures_meet_quorum`) sums the TABLE, not the
+  aggregator. The table therefore plays two roles: a restart-durable
+  source for aggregator rebuild, and the close-gate quorum input; the
+  second role is what makes stale-row hygiene load-bearing. (If the
+  close gate migrates to a sequence-pure tally, that second role is
+  retired.) TRADEOFF (deliberate): the delete is destructive under
+  divergence — a validator that adopted the quorum's attestation via
+  buffered signatures and then installed a divergent local build deletes
+  the quorum's rows, flips its own close gate true → false, and closes
+  via the grace backstop instead of the quorum commit. The persisted
+  certificate is NOT deleted, and the sender's steady-state early-out
+  bounds the clobber to a single recovery pass. The non-destructive
+  alternative (rows keyed by attestation digest, gate counts matching
+  rows) is heavier schema surgery on a gate the planned sequence-pure
+  close-gate rework retires — see
+  `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`.
 - **Deferred close (v4 only)**: after the EndOfPublish stake quorum is
   reached, the epoch close is deferred `end_of_publish_grace_rounds`
   (protocol config, default 50) consensus leader rounds past the

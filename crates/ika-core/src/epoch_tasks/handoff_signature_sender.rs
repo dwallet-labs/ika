@@ -243,9 +243,28 @@ impl HandoffSignatureSender {
         // validator's EOP vote + handoff signature for the whole epoch.
         // The `EndOfPublishV2` consensus key is `(authority)`, so
         // re-submitting the idempotent bundle dedups instead of stacking.
+        //
+        // Steady-state early-out: once our own EndOfPublish vote is durably
+        // recorded AND the aggregator has been built (an expected attestation
+        // installed at least once this epoch), this task has nothing left to
+        // do — the bundle was sequenced and restart recovery, if any, already
+        // ran. Without this gate, every 1s tick from EndOfPublish until epoch
+        // teardown would re-run the hydrate+build+install below: a full-blob
+        // Blake2b re-hash plus an unconditional perpetual-blob rewrite per
+        // network key (MB-scale), on every validator, at the epoch boundary.
+        // The vote check alone is deliberately NOT sufficient: on the first
+        // post-restart tick the aggregator is empty, so this gate does not
+        // fire and the install below replays the durable signature rows,
+        // rebuilds the aggregator, and re-mints+persists the certificate
+        // (buffered-quorum adoption alone only sees signatures that arrive
+        // AFTER the restart). This also bounds the re-install of a DIVERGENT
+        // rebuilt attestation — which drops signature rows endorsing the
+        // previously-installed one — to that single recovery pass instead of
+        // a standing per-tick behavior.
         if epoch_store
             .has_recorded_end_of_publish_vote(&epoch_store.name)
             .map_err(DwalletMPCError::IkaError)?
+            && epoch_store.handoff_aggregator_installed()
         {
             return Ok(());
         }
@@ -293,6 +312,41 @@ impl HandoffSignatureSender {
         let attestation = epoch_store
             .build_local_handoff_attestation(next_committee_pubkeys, &self.builders)
             .map_err(DwalletMPCError::IkaError)?;
+        // Install BEFORE the vote gate below. This is the restart-recovery
+        // path: on the first post-restart tick the in-memory aggregator is
+        // empty, so install replays the durable signature rows, rebuilds the
+        // aggregator, and re-mints+persists the cert. It must run even when
+        // our own EndOfPublish vote is already recorded (the case a
+        // restart-after-EndOfPublishV2 hits) — which is why the vote check
+        // alone doesn't gate it. Reaching here repeatedly is prevented by the
+        // steady-state early-out at the top (vote recorded + aggregator
+        // installed), NOT by this call being cheap: the hydrate above
+        // re-hashes and rewrites full key blobs.
+        //
+        // NOTE (divergence tradeoff, deliberate): if the rebuilt attestation
+        // DIFFERS from the previously-installed one, the install drops the
+        // durable signature rows endorsing the old attestation. For a
+        // divergent validator that had adopted the quorum's attestation via
+        // buffered signatures, this discards that quorum's rows — its local
+        // close gate can flip and it closes via the grace backstop instead of
+        // the quorum commit. Its recovery is the barrier peer-fetch of the
+        // quorum cert (the persisted cert itself is NOT deleted). The
+        // alternative — keeping rows keyed by attestation digest — is heavier
+        // schema surgery on a gate that the planned sequence-pure close-gate
+        // rework retires; see dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md.
+        epoch_store
+            .install_expected_handoff_attestation(attestation.clone())
+            .map_err(DwalletMPCError::IkaError)?;
+        // Now gate the sign+submit: if our EndOfPublish vote is already
+        // durably recorded, the bundle was already sequenced — don't
+        // re-sign/re-submit — but the install above has recovered the
+        // aggregator regardless.
+        if epoch_store
+            .has_recorded_end_of_publish_vote(&epoch_store.name)
+            .map_err(DwalletMPCError::IkaError)?
+        {
+            return Ok(());
+        }
         // The off-chain validator-metadata flag also gates
         // EndOfPublishV2 emission — the bundled flow is the only
         // shape used while the off-chain pipeline is active. Bundle
