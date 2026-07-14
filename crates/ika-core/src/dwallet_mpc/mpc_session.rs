@@ -502,7 +502,6 @@ impl DWalletMPCManager {
     pub(crate) async fn handle_mpc_request_batch(
         &mut self,
         requests: Vec<DWalletSessionRequest>,
-        newly_instantiated_network_key_ids: Vec<ObjectID>,
     ) -> Vec<DWalletSessionRequest> {
         // We only update `next_active_committee` in this block. Once it's set,
         // there will no longer be any pending events targeting it for this epoch.
@@ -530,16 +529,33 @@ impl DWalletMPCManager {
             }
         }
 
-        // Now handle events for which we've just received the corresponding public data.
-        // Since events are only queued in `events_pending_for_network_key` in `handle_mpc_request()` calls from this function,
-        // receiving the network key ensures no further events will be pending for that key.
-        // Therefore, it's safe to process them now, as the queue will remain empty afterward.
-        for key_id in newly_instantiated_network_key_ids {
+        // Drain requests parked on a network key whose public data is now
+        // locally available. LEVEL-triggered on data presence (re-checked
+        // every cycle), NOT edge-triggered on the consensus-round key
+        // instantiation: the key can materialize through paths that never
+        // emit that edge — on a fresh boot the cert-less chain-copy adoption
+        // registers the key's public data without ever passing through
+        // `poll_pending_network_key_instantiations`' newly-instantiated
+        // list. Under the old edge-triggered drain, a reshare in flight
+        // across a restart parked here forever: the session never activated,
+        // no output was ever produced, and the epoch could not close
+        // (issue #1834). Same discipline as the frozen-mpc-data queue below.
+        let ready_key_ids: Vec<ObjectID> = self
+            .requests_pending_for_network_key
+            .keys()
+            .filter(|key_id| self.network_keys.key_public_data_exists(key_id))
+            .copied()
+            .collect();
+        for key_id in ready_key_ids {
             let events_pending_for_newly_updated_network_key = self
                 .requests_pending_for_network_key
                 .remove(&key_id)
                 .unwrap_or_default();
-
+            info!(
+                network_encryption_key_id=?key_id,
+                drained = events_pending_for_newly_updated_network_key.len(),
+                "network key public data is now available; draining requests parked on it"
+            );
             for request in events_pending_for_newly_updated_network_key {
                 // We know this won't fail on a missing network key,
                 // but it could be waiting for the next committee,
@@ -619,13 +635,6 @@ impl DWalletMPCManager {
         {
             // We don't yet have the data for this network encryption key,
             // so we add it to the queue.
-            debug!(
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                session_source=?request.session_type,
-                network_encryption_key_id=?network_encryption_key_id,
-                "Adding request to pending for the network key"
-            );
-
             let request_pending_for_this_network_key = self
                 .requests_pending_for_network_key
                 .entry(network_encryption_key_id)
@@ -636,6 +645,16 @@ impl DWalletMPCManager {
                 .all(|e| e.session_identifier != session_identifier)
             {
                 // Add an event with this session ID only if it doesn't exist.
+                // INFO (not debug), once per parked request: a silently
+                // stranded park here was a multi-hour diagnosis (issue
+                // #1834) — the deferral must be visible in default logs.
+                info!(
+                    session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                    session_source=?request.session_type,
+                    session_identifier=?session_identifier,
+                    network_encryption_key_id=?network_encryption_key_id,
+                    "network key public data not yet available; parking request until it is"
+                );
                 request_pending_for_this_network_key.push(request);
             }
 
@@ -645,20 +664,20 @@ impl DWalletMPCManager {
         if request.requires_next_active_committee && self.next_active_committee.is_none() {
             // We don't have the next active committee yet,
             // so we have to add this request to the pending queue until it arrives.
-            debug!(
-                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
-                request=?request,
-                session_identifier=?request.session_identifier,
-                session_source=?request.session_type,
-                "Adding request to pending for the next epoch active committee"
-            );
-
             if self
                 .requests_pending_for_next_active_committee
                 .iter()
                 .all(|e| e.session_identifier != session_identifier)
             {
                 // Add a request with this session ID only if it doesn't exist.
+                // INFO, once per parked request — see the network-key park
+                // above for why these deferrals must be visible.
+                info!(
+                    session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                    session_identifier=?request.session_identifier,
+                    session_source=?request.session_type,
+                    "next-epoch active committee not yet available; parking request until it is"
+                );
                 self.requests_pending_for_next_active_committee
                     .push(request);
             }

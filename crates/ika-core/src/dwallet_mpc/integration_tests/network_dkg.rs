@@ -396,7 +396,7 @@ pub(crate) async fn create_network_key_test(
     // We therefore distribute the key data status updates at `consensus_round + 1` so
     // that the second service loop run can read the new round and install the key.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // Distribute a fresh consensus round so the next service iterations
     // drive adoption and `instantiate_adopted_network_keys` populates
@@ -409,7 +409,7 @@ pub(crate) async fn create_network_key_test(
     );
     // Process the new round to instantiate the agreed network key in every party.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // The instantiation runs on the rayon pool and installs on a later
     // tick — keep iterating until it lands everywhere.
@@ -562,7 +562,7 @@ async fn test_two_network_keys_same_epoch_dkg() {
     // further iterations until each key installs on every party,
     // populating `manager.network_keys`.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::send_advance_results_between_parties(
         &test_state.committee,
@@ -571,7 +571,7 @@ async fn test_two_network_keys_same_epoch_dkg() {
         round_after_k1 + 1,
     );
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // Both instantiations complete asynchronously on the rayon pool.
     utils::run_service_loops_until_network_key_installed(

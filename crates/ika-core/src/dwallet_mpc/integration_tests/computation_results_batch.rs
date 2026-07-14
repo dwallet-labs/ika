@@ -46,7 +46,7 @@ async fn computation_results_batch_survives_stale_entries() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 

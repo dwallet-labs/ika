@@ -147,7 +147,7 @@ async fn network_owned_address_sign_flow(
 
     // Run service loop iterations to process the requests.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
 
     // Check that NetworkOwnedAddressSign sessions were created.
@@ -231,7 +231,7 @@ async fn wait_for_network_owned_address_sign_output(
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::wait_for_computations(test_state).await;
         result = test_state.network_owned_address_sign_output_receivers[0]
@@ -488,7 +488,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
 
     // Run one service loop iteration to drain the channel and process requests.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
 
     // Assert: pool is empty (all presigns consumed).
@@ -528,7 +528,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::wait_for_computations(&mut test_state).await;
 
@@ -643,7 +643,7 @@ async fn network_owned_address_vss_sign_flow(
             .expect("failed to send network-owned-address VSS sign request");
     }
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
 
     let sign_output = wait_for_network_owned_address_sign_output(&mut test_state).await;

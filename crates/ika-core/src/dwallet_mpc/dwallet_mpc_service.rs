@@ -68,7 +68,6 @@ use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
@@ -437,7 +436,6 @@ impl DWalletMPCService {
             "Spawning dWallet MPC Service"
         );
 
-        let mut newly_instantiated_network_key_ids = vec![];
         loop {
             match self.exit.has_changed() {
                 Ok(true) => {
@@ -470,18 +468,13 @@ impl DWalletMPCService {
                 break;
             }
 
-            newly_instantiated_network_key_ids = self
-                .run_service_loop_iteration(newly_instantiated_network_key_ids)
-                .await;
+            self.run_service_loop_iteration().await;
 
             tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)).await;
         }
     }
 
-    pub(crate) async fn run_service_loop_iteration(
-        &mut self,
-        newly_instantiated_network_key_ids: Vec<ObjectID>,
-    ) -> Vec<ObjectID> {
+    pub(crate) async fn run_service_loop_iteration(&mut self) {
         debug!("Running DWalletMPCService loop");
 
         // Ingest the per-epoch off-chain validator MPC keys (3 PVSS + VSS HPKE)
@@ -510,13 +503,10 @@ impl DWalletMPCService {
         self.process_network_owned_address_sign_requests();
 
         // Receive **new** dWallet MPC events and save them in the local DB.
-        let rejected_sessions = self
-            .handle_new_requests(newly_instantiated_network_key_ids)
-            .await
-            .unwrap_or_else(|e| {
-                error!(error=?e, "failed to handle new events from DWallet MPC service");
-                vec![]
-            });
+        let rejected_sessions = self.handle_new_requests().await.unwrap_or_else(|e| {
+            error!(error=?e, "failed to handle new events from DWallet MPC service");
+            vec![]
+        });
 
         // Adopt locally-observed network-key outputs (cert-digest-gated)
         // and spawn instantiation for any not yet installed — once per
@@ -538,9 +528,12 @@ impl DWalletMPCService {
         self.process_consensus_rounds_from_storage().await;
         // Network-key instantiations complete asynchronously on the rayon
         // pool; poll them once per ITERATION (not per consensus round) so
-        // a completed key installs even when no new rounds arrived.
-        let newly_instantiated_network_key_ids = self
-            .dwallet_mpc_manager
+        // a completed key installs even when no new rounds arrived. Requests
+        // parked on a key drain via the level-triggered check in
+        // `handle_mpc_request_batch` on the next iteration — regardless of
+        // whether the key materialized here or through the chain-copy
+        // adoption path (issue #1834).
+        self.dwallet_mpc_manager
             .poll_pending_network_key_instantiations()
             .await;
 
@@ -559,8 +552,6 @@ impl DWalletMPCService {
             .service_end_of_publish_local
             .set(self.end_of_publish as i64);
         self.dwallet_mpc_manager.refresh_observability_metrics();
-
-        newly_instantiated_network_key_ids
     }
 
     /// Process network-owned-address sign requests received via the channel.
@@ -820,10 +811,7 @@ impl DWalletMPCService {
         self.send_status_update_to_consensus(is_idle).await;
     }
 
-    async fn handle_new_requests(
-        &mut self,
-        newly_instantiated_network_key_ids: Vec<ObjectID>,
-    ) -> DwalletMPCResult<Vec<DWalletSessionRequest>> {
+    async fn handle_new_requests(&mut self) -> DwalletMPCResult<Vec<DWalletSessionRequest>> {
         let uncompleted_requests = self.load_uncompleted_requests().await;
         let pulled_requests = match self.receive_new_sui_requests() {
             Ok(requests) => requests,
@@ -882,7 +870,7 @@ impl DWalletMPCService {
 
         let rejected_sessions = self
             .dwallet_mpc_manager
-            .handle_mpc_request_batch(requests, newly_instantiated_network_key_ids)
+            .handle_mpc_request_batch(requests)
             .await;
 
         Ok(rejected_sessions)

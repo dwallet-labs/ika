@@ -51,7 +51,7 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         consensus_round,
     );
     for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
+        dwallet_mpc_service.run_service_loop_iteration().await;
     }
     consensus_round += 1;
     for i in &parties_that_receive_session_message_before_start_event {

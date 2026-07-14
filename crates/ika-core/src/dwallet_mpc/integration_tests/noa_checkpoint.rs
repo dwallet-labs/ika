@@ -78,7 +78,7 @@ async fn run_until(
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
 
         utils::wait_for_computations(test_state).await;
@@ -359,7 +359,7 @@ async fn test_noa_checkpoint_buffered_context() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 

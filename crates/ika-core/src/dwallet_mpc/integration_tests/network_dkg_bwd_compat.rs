@@ -298,7 +298,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
                 )])));
         });
     for service in v3_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // Fresh phase-2 services start with `last_read_consensus_round = Some(0)`, so the next
     // round read from storage must be `1`. Distribute the status updates from the loop above
@@ -311,7 +311,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         1,
     );
     for service in v3_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // The instantiation runs on the rayon pool and installs on a later
     // tick — keep iterating until it lands everywhere.
@@ -582,7 +582,7 @@ async fn test_v1_anchor_bwd_compat_reconfiguration() {
                 )])));
         });
     for service in p2_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     // Fresh phase-2 services start with `last_read_consensus_round = Some(0)`, so
     // distribute the status updates from the loop above at round 1 to keep
@@ -594,7 +594,7 @@ async fn test_v1_anchor_bwd_compat_reconfiguration() {
         1,
     );
     for service in p2_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::run_service_loops_until_network_key_installed(
         &mut p2_state.dwallet_mpc_services,
@@ -823,7 +823,7 @@ async fn test_v1_anchor_main_reconfiguration_and_anchor_migration() {
                 )])));
         });
     for service in p2_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::send_advance_results_between_parties(
         &p2_state.committee,
@@ -832,7 +832,7 @@ async fn test_v1_anchor_main_reconfiguration_and_anchor_migration() {
         1,
     );
     for service in p2_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::run_service_loops_until_network_key_installed(
         &mut p2_state.dwallet_mpc_services,
@@ -942,7 +942,7 @@ async fn test_v1_anchor_main_reconfiguration_and_anchor_migration() {
                 )])));
         });
     for service in p3_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::send_advance_results_between_parties(
         &p3_state.committee,
@@ -951,7 +951,7 @@ async fn test_v1_anchor_main_reconfiguration_and_anchor_migration() {
         1,
     );
     for service in p3_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration(vec![]).await;
+        service.run_service_loop_iteration().await;
     }
     utils::run_service_loops_until_network_key_installed(
         &mut p3_state.dwallet_mpc_services,

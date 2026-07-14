@@ -997,7 +997,7 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
         // rounds in the epoch store, `process_consensus_rounds_from_storage`
         // is a no-op, so only `process_cryptographic_computations` does work.
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         if iteration > 0 && iteration % 100 == 0 {
             info!(
@@ -1041,7 +1041,7 @@ pub(crate) async fn run_service_loops_until_network_key_installed(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
         for service in dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 }
@@ -1096,12 +1096,6 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut pending_checkpoints = vec![];
     let mut completed_parties = vec![];
     let mut iterations = 0usize;
-    // Track per-party newly-instantiated network key IDs so that sessions waiting
-    // for a key (in `requests_pending_for_network_key`) are activated as soon as the
-    // key is adopted and installed, without requiring a second outer-loop
-    // iteration.
-    let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
-        vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         iterations += 1;
         if iterations >= max_party_iterations() {
@@ -1189,11 +1183,10 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                     _ => false,
                 });
             }
-            let key_ids = std::mem::take(&mut party_newly_instantiated_network_key_ids[i]);
-            let new_key_ids = dwallet_mpc_service
-                .run_service_loop_iteration(key_ids)
-                .await;
-            party_newly_instantiated_network_key_ids[i] = new_key_ids;
+            // Parked-on-network-key requests drain via the level-triggered
+            // check inside `handle_mpc_request_batch` — no id threading
+            // between iterations is needed.
+            dwallet_mpc_service.run_service_loop_iteration().await;
 
             // Check if the party has produced MPC messages or outputs in THIS iteration.
             // We filter for DWalletMPCMessage and DWalletMPCOutput because IdleStatusUpdate
@@ -1256,7 +1249,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             // Run the service loop to allow tokio tasks spawned by rayon to complete
             // and to call receive_completed_computations internally.
-            let _ = dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
+            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
             if !dwallet_mpc_service
                 .dwallet_mpc_manager()
                 .cryptographic_computations_orchestrator
@@ -1513,7 +1506,7 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
         key_id,
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
+        dwallet_mpc_service.run_service_loop_iteration().await;
         assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()
@@ -1689,14 +1682,14 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
         );
         consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         // Poll the service loop to collect rayon results, giving up to
         // POLLS_PER_ROUND × 100ms for single-round computations to finish.
         for _ in 0..POLLS_PER_ROUND {
             tokio::time::sleep(Duration::from_millis(100)).await;
             for service in test_state.dwallet_mpc_services.iter_mut() {
-                service.run_service_loop_iteration(vec![]).await;
+                service.run_service_loop_iteration().await;
             }
         }
         let pool_size = test_state

@@ -77,7 +77,7 @@ async fn test_presign_pool_not_consumed_without_sign_requests() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -146,7 +146,7 @@ async fn test_validators_continue_sessions_across_rounds() {
             test_state.consensus_round += 1;
 
             for service in test_state.dwallet_mpc_services.iter_mut() {
-                service.run_service_loop_iteration(vec![]).await;
+                service.run_service_loop_iteration().await;
             }
         }
 
@@ -250,7 +250,7 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
 
         for (i, service) in test_state.dwallet_mpc_services.iter_mut().enumerate() {
             if i != unresponsive_validator {
-                service.run_service_loop_iteration(vec![]).await;
+                service.run_service_loop_iteration().await;
             }
         }
     }
@@ -300,7 +300,7 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 

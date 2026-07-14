@@ -204,7 +204,7 @@ async fn test_validators_compute_idle_status_correctly() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
 
         // Give rayon threads time to finish MPC computations between rounds.
@@ -289,7 +289,7 @@ async fn test_status_updates_distributed_through_consensus() {
     for round in 0..10 {
         // First, run service loops to generate status updates
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
 
         // Distribute results to all parties
@@ -546,7 +546,7 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::wait_for_computations(&mut test_state).await;
 
@@ -599,7 +599,7 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
     // 2. Distribute and process the divergent status updates (round 2)
     for _ in 0..2 {
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -609,7 +609,7 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
         );
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
     }
 
@@ -678,7 +678,7 @@ async fn test_no_idle_status_update_emitted_below_activation() {
 
     for _round in 0..10 {
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+            service.run_service_loop_iteration().await;
         }
         // Wire-level assertion, checked BEFORE this round's messages are
         // drained for distribution: nothing submitted may be an
