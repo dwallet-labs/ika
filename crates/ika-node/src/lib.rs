@@ -974,7 +974,17 @@ impl IkaNode {
                     perpetual_for_push,
                     metrics_for_push,
                     &packages,
-                    std::time::Duration::from_secs(2),
+                    // The scan must outrun the fullnode's checkpoint pruning
+                    // watermark, which can trail the executed head by as
+                    // little as ~2 seconds: at a 2s cadence the pusher lost
+                    // the 2-3 newest checkpoints of every pruner tick —
+                    // permanently, since a pruned full checkpoint never
+                    // materializes again. 250ms keeps the pusher within a
+                    // checkpoint or two of the head (a get_latest + at most
+                    // a few full-checkpoint fetches per tick — negligible
+                    // load); the pusher's pending-gap retries backstop
+                    // whatever still slips through.
+                    std::time::Duration::from_millis(250),
                     cache_for_push,
                     committees_for_push,
                 )

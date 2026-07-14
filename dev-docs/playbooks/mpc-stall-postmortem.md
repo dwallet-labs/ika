@@ -66,8 +66,8 @@ grep "end-of-publish gate not yet satisfied" $L | tail -1  # same per-condition 
 The gate prints every advance condition as a bool; the `false` one is
 the wedge. (The warn fires only *after* the session lock — pre-lock the
 gate is legitimately unsatisfied for most of the epoch, so it isn't
-counted.) The roots seen for #1736, keyed by which field is false
-(first three fixed, the last still open):
+counted.) The roots seen for #1736, keyed by which field is false (all
+four fixed; kept for the diagnostic shapes):
 
 - **`next_epoch_committee_exists=false` — stale System committee anchor.**
   The notifier writes `next_epoch_committee` on-chain mid-epoch, but each
@@ -100,17 +100,30 @@ counted.) The roots seen for #1736, keyed by which field is false
   presigns = pool starvation = the wedge. Check whether sessions created
   during a validator's key gap ever compute afterwards.
 - **`all_epoch_sessions_finished=false` — a locked user session that is
-  never re-pulled (the still-OPEN core of #1736).** All other gate
-  conditions read true; the epoch locked its last user session and simply
-  waits for a session that never computes. A session held at the lock
-  boundary logs a "holding … re-pulled next epoch otherwise" line with
-  its `session_sequence_number`, then never reappears — the promised
-  next-epoch re-pull does not fire.
+  never re-pulled (WAS the open core of #1736; root-caused and fixed in
+  PR #1809).** All other gate conditions read true; the epoch locked its
+  last user session and simply waits for a session that never computes.
+  The re-pull "does not fire" because the validators literally never see
+  the session's `session_events` bag entry again: the OCS checkpoint
+  pusher permanently skipped checkpoints it could not fetch before the
+  fullnode's pruning watermark passed them (fixed: 250ms poll +
+  pending-gap repair in `push_worker.rs`), and the dynamic-fields walk
+  permanently dropped live-listed bag children whose defining checkpoint
+  was pruned (fixed: the provider reports the skipped ids and the reader
+  resolves them from the committee-verified cache). Diagnosis, if the
+  shape recurs:
   ```bash
   grep -E "holding .*re-pulled next epoch" $L | tail -3   # the held session + its seq
   # then confirm that seq never returns (no completion, no re-pull):
   grep "session_sequence_number=<SEQ>" $L
+  # pusher losing checkpoints? (should be absent post-fix)
+  grep -E "never materialized within the gap retry deadline" $L
+  # walk dropping children the cache can't serve either?
+  grep -E "could not be resolved from the verified cache" $L
   ```
+  The end-to-end guards are `sim_user_flows_across_boundaries` and the
+  presign-traffic sim tests (deterministic reproducers of the original
+  wedge).
   A second, correlated signature at every epoch entry: VSS-algorithm
   internal-presign refill sessions created inside the epoch-entry key gap
   (network key installed, off-chain validator key set not yet ingested).
