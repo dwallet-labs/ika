@@ -149,11 +149,15 @@ mod tests {
     async fn legacy_records_migrate_at_open() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("DB_{:?}", nondeterministic!(ObjectID::random())));
-        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let (legacy_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let (mut current_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        current_committee.epoch = legacy_committee.epoch + 1;
+        let corrupt_epoch = legacy_committee.epoch + 2;
         {
             let store = CommitteeStore::new(path.clone(), None);
             // Plant a 1.1.8-layout record, as a pre-upgrade binary would have
-            // written it.
+            // written it — alongside a current-layout record and a corrupt
+            // one, the mixed state a CF can be in at open.
             let legacy_view: DBMap<EpochId, LegacyCommittee> = DBMap::reopen(
                 &store.tables.committee_map.db,
                 Some("committee_map"),
@@ -162,17 +166,55 @@ mod tests {
             )
             .unwrap();
             legacy_view
-                .insert(&committee.epoch, &LegacyCommittee::mirror_of(&committee))
+                .insert(
+                    &legacy_committee.epoch,
+                    &LegacyCommittee::mirror_of(&legacy_committee),
+                )
                 .unwrap();
-            // The record does not decode under the current schema — this is
-            // the state an upgraded binary opens the store in.
-            assert!(store.tables.committee_map.get(&committee.epoch).is_err());
+            store
+                .tables
+                .committee_map
+                .insert(&current_committee.epoch, &current_committee)
+                .unwrap();
+            let raw_view: DBMap<EpochId, Vec<u8>> = DBMap::reopen(
+                &store.tables.committee_map.db,
+                Some("committee_map"),
+                &ReadWriteOptions::default(),
+                false,
+            )
+            .unwrap();
+            raw_view.insert(&corrupt_epoch, &vec![0xde, 0xad]).unwrap();
+            // The legacy record does not decode under the current schema —
+            // this is the state an upgraded binary opens the store in.
+            assert!(
+                store
+                    .tables
+                    .committee_map
+                    .get(&legacy_committee.epoch)
+                    .is_err()
+            );
         }
-        // Reopen: migration rewrites the record; reads are plain decodes.
-        let store = CommitteeStore::new(path, None);
-        let migrated = store.get_committee(&committee.epoch).unwrap().unwrap();
-        assert_eq!(migrated.epoch, committee.epoch);
-        assert_eq!(migrated.voting_rights, committee.voting_rights);
-        assert_eq!(migrated.quorum_threshold, committee.quorum_threshold);
+        // Reopen twice: the first migration rewrites the legacy record, the
+        // second is a no-op over already-migrated records (idempotency); the
+        // corrupt record must not abort either open.
+        for _ in 0..2 {
+            let store = CommitteeStore::new(path.clone(), None);
+            let migrated = store
+                .get_committee(&legacy_committee.epoch)
+                .unwrap()
+                .unwrap();
+            assert_eq!(migrated.epoch, legacy_committee.epoch);
+            assert_eq!(migrated.voting_rights, legacy_committee.voting_rights);
+            assert_eq!(migrated.quorum_threshold, legacy_committee.quorum_threshold);
+            // The current-layout record is untouched by the migration.
+            let untouched = store
+                .get_committee(&current_committee.epoch)
+                .unwrap()
+                .unwrap();
+            assert_eq!(*untouched, current_committee);
+            // The corrupt record is skipped by the migration and surfaces as
+            // a propagated read error, not a panic.
+            assert!(store.get_committee(&corrupt_epoch).is_err());
+        }
     }
 }
