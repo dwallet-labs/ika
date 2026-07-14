@@ -346,7 +346,7 @@ const digest = sessionIdentifierDigest(bytesToHash, senderAddressBytes);
 | SECP256K1 | Taproot             | SHA256                          |
 | SECP256R1 | ECDSASecp256r1      | SHA256, DoubleSHA256            |
 | ED25519   | EdDSA               | SHA512                          |
-| RISTRETTO | SchnorrkelSubstrate | Merlin                          |
+| RISTRETTO | Schnorrkel          | Merlin                          |
 
 The SDK provides compile-time type safety and runtime validation for curve/signature/hash
 combinations via `hash-signature-validation`.
