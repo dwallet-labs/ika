@@ -669,6 +669,7 @@ mod tests {
             }],
             next_page_token: None,
             claimed_latest_checkpoint_seq: 100,
+            skipped_entry_ids: Vec::new(),
         };
         let provider = Arc::new(MapProvider::new().with_bag(bag));
         let (_dir, transport) = transport_over_with_committee(provider, committee);

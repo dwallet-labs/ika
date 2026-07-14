@@ -324,6 +324,16 @@ pub struct VerifiedDynamicFieldsPageResponse {
     pub entries: Vec<VerifiedObjectEntry>,
     pub next_page_token: Option<Vec<u8>>,
     pub claimed_latest_checkpoint_seq: CheckpointSequenceNumber,
+    /// Children the upstream LISTED for this page but could not build a
+    /// proof for — typically because the child's defining checkpoint was
+    /// already pruned upstream, which is PERMANENT: the entry would be
+    /// silently missing from every future page too. Being live-listed
+    /// proves the child still exists on-chain, so the consumer can resolve
+    /// each id through a verified object read, whose committee-verified
+    /// cache fallback serves entries whose defining checkpoint is gone.
+    /// `serde(default)` keeps wire compatibility with older relays.
+    #[serde(default)]
+    pub skipped_entry_ids: Vec<ObjectID>,
 }
 
 #[async_trait]
@@ -631,6 +641,7 @@ impl ProofProvider for LocalProofProvider {
         let mut summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary> =
             BTreeMap::new();
         let mut entries = Vec::with_capacity(page.entries.len());
+        let mut skipped_entry_ids = Vec::new();
         self.metrics
             .dynamic_fields_walk_entries_seen_total
             .inc_by(page.entries.len() as u64);
@@ -648,6 +659,7 @@ impl ProofProvider for LocalProofProvider {
                     self.metrics
                         .dynamic_fields_walk_entries_skipped_transient_total
                         .inc();
+                    skipped_entry_ids.push(entry.object_id);
                     continue;
                 }
                 Err(e) => {
@@ -676,6 +688,7 @@ impl ProofProvider for LocalProofProvider {
                     self.metrics
                         .dynamic_fields_walk_entries_skipped_transient_total
                         .inc();
+                    skipped_entry_ids.push(entry.object_id);
                     continue;
                 }
                 Err(e) => {
@@ -694,6 +707,7 @@ impl ProofProvider for LocalProofProvider {
             entries,
             next_page_token: page.next_page_token,
             claimed_latest_checkpoint_seq: head,
+            skipped_entry_ids,
         })
     }
 }

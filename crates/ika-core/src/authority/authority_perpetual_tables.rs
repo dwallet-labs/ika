@@ -624,7 +624,15 @@ impl AuthorityPerpetualTables {
     ) -> IkaResult {
         let mut wb = self.verified_object_cache.batch();
         wb.insert_batch(&self.verified_object_cache, snapshots)?;
-        wb.insert_batch(&self.verified_object_cache_head, [((), head)])?;
+        // Monotone: a LATE fold of a pending-gap checkpoint persists with its
+        // own (older) source seq while the in-order scan has already pushed
+        // the head past it — writing that seq through would regress the
+        // restored head below what is durably folded and under-fire the
+        // reader's staleness tripwire after a restart.
+        let persisted = self.verified_object_cache_head.get(&())?.unwrap_or(0);
+        if head > persisted {
+            wb.insert_batch(&self.verified_object_cache_head, [((), head)])?;
+        }
         wb.write()?;
         Ok(())
     }

@@ -1,8 +1,12 @@
 # Simtest fault matrix — deterministic edge-case coverage under the crypto mock
 
-Status: landed (2026-07-11, PR #1808) — suite green in CI (Simtest run
-29145489698: 6/6 passing on the enabled suite; 3 seeded reproducers of
-open findings marked #[ignore], evidence below).
+Status: COMPLETE (2026-07-13). PR #1808 landed the fault suite (6
+enabled tests + 3 #[ignore]d reproducers of then-open findings); the
+follow-up flow-coverage PR #1809 root-caused and fixed the findings,
+re-enabled every reproducer, and closed at 11/11 passing with zero
+ignores (Simtest runs 29208084278 and 29263090774). The finding
+sections below are kept as the investigation record; the final
+resolution is the RESOLVED section.
 
 ## Motivation
 
@@ -177,6 +181,15 @@ faithful Group B scenario will degrade the MPC computation path on two
 nodes via sui_macros fail points (hook to be added in the computation
 spawn path) while consensus keeps committing.
 
+RESOLVED (PR #1809): the "never recovers" was an artifact of the test's
+own injection point, not a consensus bug. Ika nodes BOOT at epoch 1, so
+`wait_for_epoch(1)` returns immediately and the test was stopping
+2-of-4 ~0.3 seconds after genesis — mid network DKG, with Mysticeti
+still bootstrapping. Injected into a warm cluster (after a real crossed
+boundary and the network key), the dual outage recovers and the test
+passes un-ignored. Portable lesson: `wait_for_epoch(1)` is a NO-OP as a
+"healthy boundary" guard; use `wait_for_epoch(2)`.
+
 
 ## Finding: post-degradation recovery tail is minutes long (open follow-up)
 
@@ -242,3 +255,131 @@ now #[ignore]d reproducers with deterministic seeds; the enabled suite
 is six passing scenarios. TOP FOLLOW-UPS, in order: (1) the presign
 close race (this), (2) full-consensus-halt recovery (dual node stop),
 (3) expiry round-rate envelope documentation.
+
+[Follow-ups (1) and (2) were closed by PR #1809 — see the RESOLVED
+section below: (1) was the checkpoint-pusher/dynamic-fields-walk state
+loss, (2) was the test injecting at genesis. (3) remains a
+documentation follow-up on the config field.]
+
+## RESOLVED: all reproducers pass — no ignored simtests remain (runs 29208084278 and, post-revert of the retracted fix, 29263090774: both 11/11)
+
+The close-lock wedge had TWO product legs (both fixed in the
+flow-coverage PR) plus a retracted third hypothesis:
+
+1. **Pusher poll cadence vs the pruning watermark** — the fullnode's
+   lowest-available watermark trails its executed head by roughly the
+   pusher's old 2s poll, so every pruner tick (~10s) permanently
+   vaporized the 2-3 newest checkpoints before the pusher fetched them.
+   Fixed: 250ms poll; plus fetch failures now become retried "pending
+   gaps" folded late (version-safe) instead of being skipped forever —
+   and instead of stalling the scan, which a first fix attempt tried
+   and which froze the whole cache behind one unfetchable checkpoint.
+2. **Dynamic-fields walk dropped pruned-defining-tx children forever** —
+   the proof-provider skipped live-listed bag children it could not
+   build proofs for as "transient", every tick, permanently. A
+   session_events entry created astride an epoch boundary was invisible
+   to the next epoch's manager. Fixed: the provider reports skipped
+   ids; the verified reader resolves them via `verified_object`'s
+   committee-verified cache fallback (trusted listings only).
+3. ~~Output quorum split across the epoch boundary~~ — RETRACTED and
+   reverted. Design review: no MPC protocol spans an epoch boundary —
+   a session inside the closing epoch's lock target holds the epoch
+   open until its on-chain completion, and a session outside the
+   target never computed in that epoch, so the split state is
+   unreachable; the probe trace read as a split actually reached
+   quorum moments later (starvation latency, not a lost tally). The
+   resubmission mechanism was never isolated as load-bearing and was
+   reverted before merge; legs 1-2 plus the test-driver fixes carry
+   the suite.
+
+The "full consensus halt never recovers" finding was an artifact of the
+two-laggards test's own injection point: nodes boot AT epoch 1, so its
+`wait_for_epoch(1)` "healthy boundary" was a no-op and it decapitated
+the cluster ~0.3s after genesis, mid network DKG. Injected into a warm
+cluster (post-boundary, network key established), the dual outage
+recovers and the test passes. The quiet-epoch close-target starvation
+observed earlier was the stale-cache face of legs 1-2.
+
+## ROOT CAUSE FOUND + FIXED: the close-lock wedge was the checkpoint pusher skipping unfetchable checkpoints
+
+Cornered via the `sim_user_flows` reproducer with full sui_connector
+debug logging (deterministic seed): the OCS checkpoint pusher
+(`push_worker.rs`) polled the certified head every tick and, on a
+full-checkpoint fetch failure, **advanced its cursor past the
+checkpoint forever** ("fetch failed; advancing past"). The newest 2–3
+checkpoints of every poll window routinely 404 (contents materialize
+after the summary certifies — msim's virtual-time cadence makes this
+constant; the skips repeat every ~10s poll, in identical bursts on all
+four validators). Every skip left a PERMANENT gap in the verified state
+cache the bag event pump reads: a `session_events` bag entry whose
+creating checkpoint was skipped never entered any validator's cache, so
+the pump never delivered the request to the fresh epoch's manager, the
+session never ran, and `all_epoch_sessions_finished=false` pinned the
+epoch forever. The 4,443 "served the committee-verified cached snapshot
+(pusher behind)" fallback warns during the wedge were the same rot from
+the read side, and the stale coordinator reads explain the "quiet-epoch
+close-target starvation" latency shape too (the manager's synced close
+target came from a stale cached coordinator).
+
+FIX: the pusher now STOPS the scan at a failed fetch and retries the
+same checkpoint next tick (in-order folding preserved; contract unit
+tests rewritten to assert retry-and-recover, including the recovery of
+an end-of-epoch checkpoint on a previously failed seq). The
+FAR_BEHIND_THRESHOLD fast-forward remains the explicit escape valve for
+genuinely pruned history; STALL_THRESHOLD warns cover the stretch in
+between. All four `#[ignore]`d reproducers are re-enabled to guard the
+fix end-to-end.
+
+## Finding (superseded by the root cause above): the close-lock wedge is reachable from a single user request (flow-coverage PR)
+
+The happy-path flow suite (PR #1809, `sim_user_flows.rs` /
+`sim_future_sign.rs`) hit the same close/serve wedge WITHOUT presign
+traffic: the flow runs ~ten sequential user sessions against 20-second
+epochs, so on most msim schedules one of them lands astride an epoch
+close — and a user MPC session locked into the close target astride
+the close left the next epoch permanently unable to advance
+(`session_locked=true`, `all_epoch_sessions_finished=false`, pinned
+9.5+ virtual minutes to test end). The visible victim varies by
+schedule (the imported-key verification on one run, the imported-key
+dwallet's dedicated presign on another — msim schedules shift with the
+log configuration). `sim_user_flows_across_boundaries` is preserved as
+an `#[ignore]`d reproducer of this — a much cheaper route into the bug
+than the traffic reproducer (one request, no stream).
+
+Two adjacent latency findings from the same investigation, real but
+non-wedging:
+
+- **Quiet-epoch close-target starvation**: a session excluded from the
+  close target (correctly, for arriving astride the lock) is starved
+  for the ENTIRE next epoch when that epoch is quiet — on-chain,
+  `update_last_user_initiated_session_to_complete_in_current_epoch`
+  only runs on session initiate/complete, so nothing recomputes the
+  target between locks in an idle epoch. Off-chain the manager mirrors
+  the stale value and holds votes/sessions against it. Cost: roughly a
+  full epoch of latency per unlucky request (24h on mainnet).
+  Deterministically reproduced (seed 1): an imported-key verification
+  requested astride a close reached output quorum ~295 virtual seconds
+  (≈ one 20s-epoch cycle plus closes) after the request.
+- **Global presign astride a close**: same shape observed for the
+  pool-served path — the serve vote is held all of the following quiet
+  epoch and pops only at the next close's lock recomputation.
+
+Ruled out (2026-07-12, deterministic A/B on the `sim_user_flows`
+reproducer, single-test dispatches, default log config): the wedge is
+NOT closed by main up to 496bc2fc55, nor by the internal-presign
+entry-window fixes #1818 (park on not-ready instead of terminal
+failure) + #1819 (sequence-counter uniformity under install lag) — with
+both merged in, the run still pins the epoch (`session_locked=true`,
+`all_epoch_sessions_finished=false`; the victim session shifted from
+the imported-key verification to the dedicated presign, the usual
+schedule sensitivity). Those PRs fix a different family (system-session
+entry-window races); the user-session close-lock wedge and the
+quiet-epoch close-target starvation remain open.
+
+The flow suite also produced harness knowledge worth keeping: the
+pinned Sui renders Move enum values in object JSON WITHOUT a variant
+tag ({type, fields} only), so fieldless variants are unobservable —
+completion waits must match output-field presence, retry the follow-up
+transaction (abort = still pending), or read BCS state
+(`wait_for_user_sessions_drained`). See the drivers in
+`crates/ika-test-cluster/src/flows.rs`.
