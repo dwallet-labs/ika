@@ -1,7 +1,10 @@
-Status: active (updated 2026-07-12) — all in-scope fixes are now open PRs
-awaiting review (#1820–#1827); the barrier/close-gate cluster is deliberately
-deferred with its own plan (see below). Flip to `landed` when the fix PRs
-merge and the deferred cluster has an owner.
+Status: active (updated 2026-07-14) — the fix track is MERGED to main
+(#1809, #1820–#1825, #1827, #1828, #1833); #1826 is the last open code PR.
+Two release-blocker fixes found after the merge are open: #1835 (reshare
+stranded across a restart, issue #1834) and #1837 (legacy-migration panic
+under msim/debug, issue #1836). The barrier/close-gate cluster remains
+deliberately deferred with its own plan (see below). Flip to `landed` when
+the remaining PRs merge and the deferred cluster has an owner.
 
 # Protocol-v4 activation gate list
 
@@ -19,7 +22,7 @@ must be capped at v3 and lifted in the release that closes this list
 Source: the 1.2.0 pre-release code review, re-verified at head `c7cfd03f4c`
 by a 14-item design pass (2026-07-12).
 
-## Fix PRs (open, awaiting review)
+## Fix PRs (merged, except as noted)
 
 - **#1820** (`fix/v4-gate-list`): pubkey-provider `refresh()` per-member
   verify-skip; prior-committee consensus-key map keyed by snapshot name;
@@ -44,7 +47,8 @@ by a 14-item design pass (2026-07-12).
 - **#1825** (`fix/v4-networkkeyid-memo-retry`): a failed NetworkKeyId
   derivation retries when its input bytes change instead of being memoized
   as permanently failed.
-- **#1826** (`fix/v4-presign-per-key-counters`): internal-presign
+- **#1826** (`fix/v4-presign-per-key-counters`, OPEN — conflict-resolved
+  against the merged #1825, suites green): internal-presign
   sequence/guard counters keyed per `(NetworkKeyId, curve, algorithm)` pool
   (the shared-counter design was retired — a key adopted at different
   rounds on different validators shifted every other pool's identifiers);
@@ -53,6 +57,22 @@ by a 14-item design pass (2026-07-12).
 - **#1827** (`fix/v4-freeze-cert-read-fail-stop`): the mpc_data freeze
   fail-stops on a prior-cert read error instead of freezing a shrunken
   (divergent) carry-forward set.
+
+## Post-merge release blockers (open PRs)
+
+- **#1835** (issue #1834): a reshare in flight across the upgrade restart
+  parked forever in `requests_pending_for_network_key` — the drain was
+  edge-triggered on the consensus instantiation path, which the fresh-boot
+  chain-copy adoption never fires; the epoch could never close. Fixed by a
+  level-triggered drain (re-checked every service cycle).
+- **#1837** (issue #1836): the legacy committee-record migration scanned
+  the whole CF under the legacy schema at every store open; typed-store
+  panics on schema-mismatched records under debug assertions, so every
+  msim node restart panicked (main simtest red). Fixed by a
+  schema-version marker gating the scan to once per data dir.
+- **#1839** (from the #1838 re-review): a misspelled `sui-data-source`
+  key silently flipped a mirrored node to peer-only; now fails the boot
+  (`deny_unknown_fields`).
 
 ## Deferred — barrier escape + sequence-pure close gate
 
