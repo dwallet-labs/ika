@@ -10,6 +10,27 @@ retries = 3
 # Timeout tests after 4 minutes
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+[profile.cluster]
+# For the in-process Sui+ika swarm suite (test-cluster.yaml). Deliberately
+# NOT profile.ci: its 60s-slow x5 terminate-after would kill legitimate
+# cluster tests, which run for many minutes.
+#
+# One retry, in a fresh process, for the port-allocation race at swarm
+# startup: get_available_port binds-then-releases a port, and under
+# process-per-test parallelism another node can grab it before the swarm
+# node binds ("Address already in use" inside sui-node's p2p startup, the
+# test dies in <1s). A fresh process re-picks ports, so one retry clears
+# it; a deterministic failure still fails (twice), and nextest reports any
+# retried-then-passed test as FLAKY in the summary — retries never hide a
+# test that flaked.
+retries = 1
+# Match the flags the workflow passes explicitly, so behavior is identical
+# with or without them.
+fail-fast = false
+# Replay a failing test's captured output immediately — when the runner pod
+# dies (OOM/eviction), the live log is the only surviving evidence.
+failure-output = "immediate"
+
 [profile.simtestnightly]
 # Print out output for failing tests as soon as they fail, and also at the end
 # of the run (for easy scrollability).
