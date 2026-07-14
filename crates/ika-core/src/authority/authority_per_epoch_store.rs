@@ -2357,6 +2357,15 @@ impl AuthorityPerEpochStore {
     /// (e.g. ones drained from RocksDB at restart) get folded in
     /// correctly. Re-installing with a different attestation
     /// discards the old aggregator state.
+    /// Whether the handoff aggregator has been built (an expected
+    /// attestation was installed at least once this epoch). Used by the
+    /// signature sender's steady-state early-out: once the own vote is
+    /// durably recorded AND this is true, the per-tick
+    /// hydrate+build+install pass has nothing left to do.
+    pub fn handoff_aggregator_installed(&self) -> bool {
+        self.handoff_aggregator.lock().is_some()
+    }
+
     pub fn install_expected_handoff_attestation(
         &self,
         attestation: ika_types::handoff::HandoffAttestation,
@@ -2390,6 +2399,12 @@ impl AuthorityPerEpochStore {
         let committee = self.committee();
         let tables = self.tables()?;
         let mut replayed_signatures: usize = 0;
+        // Rows that endorse a superseded attestation are dropped from the
+        // aggregator AND deleted from the table below. The close-gate quorum
+        // sum (`handoff_signatures_meet_quorum`) reads the TABLE, not the
+        // aggregator, so leaving stale rows behind would let a re-install
+        // that changed the attestation still count the old endorsements.
+        let mut stale_signers: Vec<AuthorityName> = Vec::new();
         for entry in tables.handoff_signatures.safe_iter() {
             let (signer, signature) = entry?;
             let msg = ika_types::handoff::HandoffSignatureMessage {
@@ -2406,10 +2421,27 @@ impl AuthorityPerEpochStore {
                     "persisted handoff signature no longer verifies against the \
                      installed attestation — dropping on replay"
                 );
+                stale_signers.push(signer);
                 continue;
             }
             aggregator.insert_verified(signer, signature);
             replayed_signatures += 1;
+        }
+        // Atomically delete the superseded rows so the table matches the
+        // installed attestation (single write batch — no half-deleted state).
+        // Done after the aggregator is fully built, so a delete failure
+        // surfaces as an error without having touched the correct in-memory
+        // aggregator. Idempotent: a crash before the write leaves the rows to
+        // be re-identified and re-deleted on the next install.
+        if !stale_signers.is_empty() {
+            let mut batch = tables.handoff_signatures.batch();
+            batch.delete_batch(&tables.handoff_signatures, stale_signers.iter())?;
+            batch.write()?;
+            info!(
+                epoch = attestation.epoch,
+                dropped = stale_signers.len(),
+                "deleted superseded handoff signature rows on attestation re-install"
+            );
         }
         let aggregator_signer_count = aggregator.signer_count();
         let aggregator_stake = aggregator.accumulated_stake();
@@ -3110,15 +3142,23 @@ impl AuthorityPerEpochStore {
         Ok(stake >= committee.quorum_threshold())
     }
 
-    /// Deterministic, consensus-sequenced check that a stake quorum of valid
-    /// handoff signatures has been recorded this epoch — i.e. a certified
-    /// handoff attestation can be minted. Sums the `handoff_signatures` table
-    /// (written only for signatures that validated against the expected
-    /// attestation) the same way `local_blob_coverage_meets_quorum` sums blob
-    /// coverage, so every validator evaluates the same value at the same
-    /// commit. Gates the epoch close (#1736): closing before this holds lets
-    /// the epoch close while no validator can mint the cert the next epoch's
-    /// prepare-then-start barrier requires.
+    /// Checks that a stake quorum of valid handoff signatures has been
+    /// recorded this epoch — i.e. a certified handoff attestation can be
+    /// minted. Sums the `handoff_signatures` table (written only for
+    /// signatures that validated against the locally-installed expected
+    /// attestation). Gates the epoch close (#1736): closing before this holds
+    /// lets the epoch close while no validator can mint the cert the next
+    /// epoch's prepare-then-start barrier requires.
+    ///
+    /// NOT a pure consensus function, in either direction: rows land only
+    /// after the LOCAL expected attestation installs (wall-clock), and a
+    /// re-install of a DIFFERENT attestation DELETES rows endorsing the
+    /// superseded one — so the value can move down as well as up, at
+    /// wall-clock-determined commits that differ across validators. See the
+    /// call-site NOTE in `decide_v4_epoch_close` for why the close stays
+    /// safe anyway, and
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md for the
+    /// planned replacement by a sequence-pure tally.
     pub fn handoff_signatures_meet_quorum(&self) -> IkaResult<bool> {
         let committee = self.committee();
         let stake: u64 = self
@@ -3199,59 +3239,56 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         let existing = tables.epoch_mpc_data_ready_signals.get(&signal.authority)?;
         let committee = self.committee();
-        // Next-epoch joiners are legitimate attestation targets but
-        // have weight 0 in the *current* committee, so a plain
-        // current-committee filter would strip them from the recorded
-        // signal — and the freeze partition (which decides NEXT-epoch
-        // membership) would then never see them attested and exclude
-        // them. A joiner that has announced has a signed announcement
-        // in this table, ordered before any ready signal that attests
-        // it (the emitter only attests a peer after validating its
-        // announced blob, which consensus sequences first). So treat
-        // announcers as valid targets too. Garbage padding (neither
-        // committee nor announcer) is still dropped.
-        let announced: BTreeSet<AuthorityName> = tables
-            .validator_mpc_data_announcements
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(authority, _)| authority)
-            .collect();
-        // Canonicalize via the pure helper — handles dedup +
-        // committee filter + quorum-coverage floor in one place
-        // so the byzantine-resistance properties are unit-testable
-        // without a live epoch store. See
-        // `validator_metadata::canonicalize_ready_signal_peers`.
+        // Canonicalize via the pure helper — dedup + a current-committee
+        // quorum-coverage floor + a deterministic length cap. CRITICAL:
+        // this MUST be a pure function of the sequenced signal bytes, so
+        // it does NOT consult the local announcements table (a
+        // wall-clock-populated, JoinerPubkeyProvider-gated view). Instead
+        // it KEEPS every deduped peer — including a next-epoch joiner with
+        // zero current weight — so two honest validators with different
+        // provider-install timing persist the identical canonical set for
+        // the same sequenced signal. Coverage is measured on current
+        // weight only, so a sparse signal still can't push the freeze
+        // trigger; a joiner is frozen only when a stake-quorum of signers
+        // attest it in the tally (`compute_freeze_partition`).
+        //
+        // Cap = K × current committee size: the deduped length is
+        // identical across honest validators (same sequenced bytes), so
+        // the cap decision is itself consensus-deterministic.
+        const READY_SIGNAL_PEERS_CAP_MULTIPLIER: usize = 4;
+        let cap = committee
+            .num_members()
+            .saturating_mul(READY_SIGNAL_PEERS_CAP_MULTIPLIER);
         let (outcome, diagnostics) = crate::validator_metadata::canonicalize_ready_signal_peers(
             &signal.validated_peers,
-            |peer| {
-                let weight = committee.weight(peer);
-                // Keep announcer joiners (current weight 0) as valid
-                // targets with a minimal synthetic weight — negligible
-                // against the current-committee quorum floor (so it
-                // can't let an under-covered signal pass), but enough
-                // to survive the drop-if-zero filter.
-                if weight > 0 || announced.contains(peer) {
-                    weight.max(1)
-                } else {
-                    0
-                }
-            },
+            |peer| committee.weight(peer),
             committee.quorum_threshold(),
+            cap,
         );
         let canonical_peers = match outcome {
             crate::validator_metadata::CanonicalizeReadySignalOutcome::Accept {
                 validated_peers,
             } => validated_peers,
             crate::validator_metadata::CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
-                attested_stake,
+                coverage_stake,
                 quorum,
             } => {
                 warn!(
                     signer = ?signal.authority,
-                    attested_stake,
+                    coverage_stake,
                     quorum,
                     "EpochMpcDataReadySignal below quorum coverage — dropping; \
                      signer should re-broadcast once they have more peer blobs validated"
+                );
+                return Ok(());
+            }
+            crate::validator_metadata::CanonicalizeReadySignalOutcome::OverCap { len, cap } => {
+                warn!(
+                    signer = ?signal.authority,
+                    len,
+                    cap,
+                    "EpochMpcDataReadySignal exceeds the peer-count cap — dropping; \
+                     likely a byzantine signer padding garbage names"
                 );
                 return Ok(());
             }
@@ -3285,22 +3322,52 @@ impl AuthorityPerEpochStore {
                 return Ok(());
             }
         }
-        // Surface byzantine-padding attempts. Placed AFTER the
-        // strict-superset gate so a byzantine signer re-submitting
-        // the same padded payload every consensus round doesn't
-        // log-flood: the gate drops the repeat above, so only the
-        // first padded payload (or a strictly-grown padded payload)
-        // makes it here. Honest emitters dedup + committee-filter
-        // before broadcast, so reaching this branch is a strong
-        // byzantine signal worth a `warn!` for operators.
-        if !diagnostics.non_committee_dropped.is_empty() || diagnostics.duplicates_collapsed != 0 {
+        // Surface anomalies. Placed AFTER the strict-superset gate so a
+        // byzantine signer re-submitting the same payload every consensus
+        // round doesn't log-flood: the gate drops the repeat above, so only
+        // the first anomalous payload (or a strictly-grown one) makes it
+        // here. Two distinct signals, judged separately:
+        // - DUPLICATES are a genuine byzantine tell — honest emitters dedup
+        //   before broadcast — so they warn.
+        // - Non-committee names are NOT: honest emitters deliberately
+        //   include announced next-epoch JOINERS (zero current-epoch
+        //   weight), so a non-empty `non_committee_kept` is the expected
+        //   shape of every honest signal in a churn epoch. Only an
+        //   implausibly large kept set (more kept zero-weight names than
+        //   committee seats — no honest joiner population looks like that)
+        //   warns; the routine case logs at debug. Kept names are inert for
+        //   assembly unless a stake-quorum of signers attest them, but they
+        //   DO land in `epoch_excluded_validators` and the excluded gauge,
+        //   and each one holds the full-coverage fast path open (the freeze
+        //   then fires via the grace path) — bounded, deterministic, and
+        //   the price of keeping canonicalization a pure function of the
+        //   sequenced bytes.
+        if diagnostics.duplicates_collapsed != 0 {
             warn!(
                 signer = ?signal.authority,
                 duplicates_collapsed = diagnostics.duplicates_collapsed,
-                non_committee_dropped = ?diagnostics.non_committee_dropped,
-                "EpochMpcDataReadySignal padded with duplicates / non-committee \
-                 authorities — likely byzantine signer"
+                "EpochMpcDataReadySignal padded with duplicate names — likely \
+                 byzantine signer (honest emitters dedup before broadcast)"
             );
+        }
+        if !diagnostics.non_committee_kept.is_empty() {
+            if diagnostics.non_committee_kept.len() > committee.num_members() {
+                warn!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal carries more zero-weight names than \
+                     committee seats — likely byzantine padding (kept names are \
+                     inert for assembly but hold the full-coverage fast path open \
+                     until the freeze grace)"
+                );
+            } else {
+                debug!(
+                    signer = ?signal.authority,
+                    non_committee_kept = ?diagnostics.non_committee_kept,
+                    "EpochMpcDataReadySignal attests zero-weight names (expected \
+                     for announced next-epoch joiners)"
+                );
+            }
         }
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,
@@ -3355,35 +3422,71 @@ impl AuthorityPerEpochStore {
     /// The prior epoch's handoff-certificate `validator -> mpc_data
     /// digest` map, used to carry forward stable mpc_data for committee
     /// members that did not freshly announce this epoch (see
-    /// `carry_forward_stable_mpc_data`). Empty when there is no prior
-    /// certificate (genesis epoch, v3, or a read error) — carry-forward
-    /// then degrades to announce-only. The certificate is perpetual and
-    /// stake-quorum-signed, and the prepare-then-start barrier guarantees
-    /// every validator holds the prior-epoch certificate before
-    /// processing this epoch's consensus, so the returned map is
-    /// identical across honest validators — a precondition for the freeze
-    /// staying deterministic.
-    fn prior_epoch_mpc_data_digests(&self) -> HashMap<AuthorityName, [u8; 32]> {
+    /// `carry_forward_stable_mpc_data`). Empty (`Ok(HashMap::new())`) only
+    /// for the chain-true no-cert epochs — genesis, a v3 prior epoch, or the
+    /// first v4 epoch — where carry-forward legitimately degrades to
+    /// announce-only uniformly across the committee. The certificate is
+    /// perpetual and stake-quorum-signed. NOTE the uniformity of `Ok(None)`
+    /// currently rests on the prepare-then-start barrier holding the
+    /// prior-epoch certificate before this epoch's consensus is processed —
+    /// which today is wired only into the continuing-validator reconfigure
+    /// path; the joiner-promotion and cold-startup consensus-start paths do
+    /// not yet pass the barrier (deferred — see
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md), so a
+    /// first-time joiner racing its bootstrap fetch can still hit `Ok(None)`
+    /// and freeze without the carry-forward map. This function closes the
+    /// READ-ERROR flavor of the shrunken-set fork; the absent-cert flavor
+    /// closes when the barrier covers all consensus-start paths.
+    ///
+    /// A cert READ ERROR is PROPAGATED, not degraded to empty: silently
+    /// returning an empty map on a transient read failure would shrink THIS
+    /// validator's frozen set (dropping every carry-forward member) while
+    /// peers that read the cert fine keep them — a divergent frozen set is a
+    /// consensus fork. Propagating makes the freeze fail-stop: the commit
+    /// errors, the consensus handler's `.expect` panics the node, and the
+    /// commit replays on restart until the read succeeds. This is the
+    /// freeze-path realization of handoff.md invariant 4 ("fail open with
+    /// retry on read errors"), and it mirrors the ready-signals read in
+    /// `freeze_mpc_data_if_first`, which already `?`-propagates.
+    fn prior_epoch_mpc_data_digests(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
         let Some(prior_epoch) = self.epoch().checked_sub(1) else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
+        // A missing perpetual handle at a freeze commit is a LOCAL
+        // initialization fault, not a chain-true no-cert case: both
+        // epoch-store creation sites install the handle before consensus can
+        // process a commit, and the freeze only runs under v4 where the
+        // handle must be present. Fail the commit (replay) like the read
+        // error below — a silent Ok(empty) here would reintroduce the exact
+        // shrunken-set fork this function exists to close, via the arm two
+        // lines above the fix. Unreachable today; guards future init-order
+        // refactors.
         let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
-            return HashMap::new();
+            error!(
+                prior_epoch,
+                "perpetual-tables handle missing at the mpc_data freeze; failing the \
+                 commit so it replays after initialization completes"
+            );
+            return Err(IkaError::Unknown(
+                "perpetual-tables handle not installed at the mpc_data freeze".to_string(),
+            ));
         };
         let cert = match perpetual.get_certified_handoff_attestation(prior_epoch) {
             Ok(Some(cert)) => cert,
-            Ok(None) => return HashMap::new(),
+            Ok(None) => return Ok(HashMap::new()),
             Err(e) => {
-                warn!(
+                error!(
                     error = ?e,
                     prior_epoch,
                     "failed to read prior-epoch handoff cert for mpc_data carry-forward; \
-                     degrading to announce-only",
+                     failing the freeze so the commit replays rather than freezing a \
+                     divergent (shrunken) mpc_data set",
                 );
-                return HashMap::new();
+                return Err(e);
             }
         };
-        cert.attestation
+        Ok(cert
+            .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
@@ -3392,7 +3495,7 @@ impl AuthorityPerEpochStore {
                 }
                 _ => None,
             })
-            .collect()
+            .collect())
     }
 
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
@@ -3437,7 +3540,7 @@ impl AuthorityPerEpochStore {
             .iter()
             .map(|(name, _)| *name)
             .collect();
-        let prior_mpc_data = self.prior_epoch_mpc_data_digests();
+        let prior_mpc_data = self.prior_epoch_mpc_data_digests()?;
         let partition = crate::validator_metadata::carry_forward_stable_mpc_data(
             attested,
             &committee_members,
@@ -4134,11 +4237,19 @@ impl AuthorityPerEpochStore {
                 // validator's `expected_handoff_attestation` install and its
                 // consensus-pubkey provider (a ~5s background Sui poll); until
                 // both are present, sequenced `EndOfPublishV2` bundles buffer and
-                // write no row. So close-determinism does NOT come from this gate
-                // being a deterministic function of the sequence; it comes from
+                // write no row. The gate can also move DOWN: re-installing a
+                // different expected attestation deletes rows endorsing the
+                // superseded one, so a validator that adopted the quorum's
+                // attestation and then rebuilt a divergent local one flips this
+                // gate true -> false and misses the quorum's close commit. So
+                // close-determinism does NOT come from this gate being a
+                // deterministic function of the sequence; it comes from
                 // buffered-quorum adoption (a lagging validator reaches quorum
                 // from peers' signatures at the same sequenced bundle index) plus
-                // the `grace*4` liveness backstop in `decide_v4_epoch_close`.
+                // the `grace*4` liveness backstop in `decide_v4_epoch_close`,
+                // which also covers the deletion-flipped validator (it closes
+                // late via the backstop; its cert recovery is the barrier
+                // peer-fetch).
                 let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
 
                 // The close decision (and the liveness backstop for a genuinely
@@ -5725,6 +5836,111 @@ mod tests {
                 .is_some(),
             "#1736: install_expected_handoff_attestation must persist the cert it \
              mints during signature replay (pre-fix it stayed in memory only)"
+        );
+    }
+
+    /// V9b: re-installing a DIFFERENT attestation must delete the signature
+    /// rows that endorsed the superseded one from the TABLE — not only from
+    /// the in-memory aggregator — because the deferred-close quorum gate
+    /// (`handoff_signatures_meet_quorum`) sums the table. Pre-fix the stale
+    /// rows survived and the gate could count old endorsements.
+    #[tokio::test]
+    async fn install_reinstall_drops_stale_rows_from_table_and_gate() {
+        let (base_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let names: Vec<AuthorityName> = base_committee.names().copied().collect();
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let consensus_keys: HashMap<_, _> = names
+            .iter()
+            .copied()
+            .zip(consensus_keypairs.iter().map(|kp| kp.public().clone()))
+            .collect();
+        let committee = Arc::new(Committee::new(
+            base_committee.epoch,
+            base_committee.voting_rights.clone(),
+            HashMap::new(),
+            consensus_keys,
+            base_committee.quorum_threshold,
+            base_committee.validity_threshold,
+        ));
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        let epoch = 0u64;
+        // Attestation A and a DIFFERENT attestation B (distinct next-committee
+        // hash), so signatures over A do not verify against B.
+        let attestation_a = build_handoff_attestation(epoch, [0xAAu8; 32], vec![]).unwrap();
+        let attestation_b = build_handoff_attestation(epoch, [0xBBu8; 32], vec![]).unwrap();
+
+        // A full QUORUM (3 of 4, threshold 3) of A-endorsing rows lands in
+        // the table — so the close gate reads TRUE before the re-install and
+        // the gate assertion below actually reacts to the fix (with a
+        // sub-quorum the final !gate assertion would pass even with the
+        // deletion reverted — a vacuous check).
+        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
+            let message = sign_handoff_attestation(attestation_a.clone(), *name, keypair);
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &message.signature)
+                .unwrap();
+        }
+        epoch_store
+            .install_expected_handoff_attestation(attestation_a)
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            3,
+            "the three A-endorsing rows are present after installing A"
+        );
+        assert!(
+            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "the close gate must read true with a quorum of A-endorsing rows and A installed"
+        );
+
+        // Re-install B: the A-endorsing rows no longer verify and must be
+        // deleted from the table, flipping the gate true -> false (the gate
+        // must not count endorsements of a superseded attestation).
+        epoch_store
+            .install_expected_handoff_attestation(attestation_b)
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            0,
+            "stale A-endorsing rows must be deleted from the table on re-install to B"
+        );
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "the close gate must not count the superseded rows"
         );
     }
 

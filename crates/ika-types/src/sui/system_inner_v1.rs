@@ -280,6 +280,37 @@ impl SystemInnerTrait for SystemInnerV1 {
             .collect()
     }
 
+    fn read_bls_committee_lossy(
+        &self,
+        bls_committee: &BlsCommittee,
+    ) -> Vec<(ObjectID, (AuthorityName, StakeUnit))> {
+        bls_committee
+            .members
+            .iter()
+            .filter_map(|v| {
+                match AuthorityPublicKey::from_bytes(v.protocol_pubkey.bytes.as_ref()) {
+                    Ok(pubkey) => Some((v.validator_id, ((&pubkey).into(), 1))),
+                    // A prior-committee member with an unparseable protocol
+                    // pubkey is dropped, not fatal — panicking here would
+                    // crash-loop a bootstrapping validator on a chain-record
+                    // fault it cannot fix. BUT the drop is NOT graceful
+                    // degradation: the member is absent from the built
+                    // committee's `voting_rights` (weight 0), and handoff-cert
+                    // verification HARD-REJECTS a certificate carrying a
+                    // signature from a weight-0 signer ("signer is not a
+                    // member of the verifying committee"). Since the member's
+                    // node runs fine (its local keys are intact) and its
+                    // signature lands in every aggregated cert, every served
+                    // cert then fails verification — surfacing as
+                    // `BootstrapOutcome::Rejected`. An operator seeing
+                    // Rejected together with this log line should suspect a
+                    // corrupt prior-committee record, not wrong peers.
+                    Err(_) => None,
+                }
+            })
+            .collect()
+    }
+
     fn validator_set(&self) -> &ValidatorSetV1 {
         &self.validator_set
     }

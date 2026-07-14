@@ -8,7 +8,7 @@ that fits in one PR description belongs there instead.
 
 - One file per effort, kebab-case topic name (e.g.
   `reconfiguration-unification.md`).
-- Start with a STATUS line: `Status: active | landed | superseded |
+- Start with a STATUS line: `Status: active | deferred | landed | superseded |
   abandoned` (+ date and the PRs that executed it). Update it when the
   state changes — a stale "active" plan misleads both humans and agents.
 - A plan records INTENT and sequencing; durable behavior belongs in

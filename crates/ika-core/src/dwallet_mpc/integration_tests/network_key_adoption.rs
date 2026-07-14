@@ -430,17 +430,57 @@ async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
         "an unmapped cert-referenced key must be deferred, not adopted"
     );
     assert!(
-        manager.network_key_id_derivations_spawned.contains(&key_id),
+        manager
+            .network_key_id_derivations_spawned
+            .contains_key(&key_id),
         "the background NetworkKeyId derivation must be spawned for the unmapped key"
     );
 
-    // Same overlay again: the deferral must have skipped the memoization
-    // (so the pass re-evaluates) and must not respawn the derivation.
+    // Same overlay again (identical derivation inputs): the memo is keyed on
+    // the input digest, so an unchanged overlay must not respawn.
     manager.adopt_cert_verified_keys(&overlay);
     assert_eq!(
         manager.network_key_id_derivations_spawned.len(),
         1,
-        "the derivation must be spawned at most once per key"
+        "the derivation must not respawn for unchanged derivation inputs"
+    );
+
+    // Changed derivation inputs (a fresh reconfiguration output, as the
+    // overlay republishes during convergence) MUST re-spawn: the memo is
+    // keyed on the input digest, so a transient-input failure self-heals.
+    let mut changed_reconfiguration_output = reconfiguration_output.clone();
+    changed_reconfiguration_output.push(0xEE);
+    let changed_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            dkg_output.clone(),
+            changed_reconfiguration_output,
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&changed_overlay);
+    assert_eq!(
+        manager.network_key_id_derivations_spawned.len(),
+        1,
+        "one key id, memoized by digest (the entry is replaced, not added)"
+    );
+    // The stored digest reflects the NEW inputs, proving a re-spawn happened.
+    let expected_digest = ika_network::mpc_artifacts::mpc_data_blob_hash(
+        &bcs::to_bytes(&(&dkg_output, &{
+            let mut r = reconfiguration_output.clone();
+            r.push(0xEE);
+            r
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        manager
+            .network_key_id_derivations_spawned
+            .get(&key_id)
+            .copied(),
+        Some(expected_digest),
+        "changed inputs must update the memo digest (i.e. re-spawn the derivation)"
     );
 
     // Simulate the background derivation completing: registration alone —
@@ -653,7 +693,7 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     assert!(
         manager
             .network_key_id_derivations_spawned
-            .contains(&certless_key_id),
+            .contains_key(&certless_key_id),
         "the background NetworkKeyId derivation must be spawned for the cert-less unmapped key"
     );
     assert_all_adopted_resolve(manager, "after the cert-less deferral pass");

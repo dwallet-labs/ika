@@ -42,7 +42,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::handoff::HandoffItemKey;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
@@ -292,11 +292,15 @@ pub(crate) struct DWalletMPCManager {
     warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
 
     /// Keys whose background `NetworkKeyId` derivation has been spawned by
-    /// the adoption pass, so the expensive class-groups derive runs at most
-    /// once per key per manager (i.e. per epoch). A successful derivation
-    /// registers in the process-global mapping, so later epochs resolve the
-    /// key without re-deriving.
-    pub(crate) network_key_id_derivations_spawned: HashSet<ObjectID>,
+    /// the adoption pass, memoized by the digest of the exact derivation
+    /// inputs (DKG output + current reconfiguration output). The expensive
+    /// class-groups derive runs at most once per key per distinct input set:
+    /// a deterministic failure on unchanged inputs is not retried (no rayon
+    /// hammering), but a NEW reconfiguration output (the overlay republishes
+    /// during convergence) changes the digest and re-derives — so a
+    /// transient-input failure self-heals. A successful derivation registers
+    /// in the process-global mapping, short-circuiting before this gate.
+    pub(crate) network_key_id_derivations_spawned: HashMap<ObjectID, [u8; 32]>,
 
     /// Sessions whose protocol-cryptographic-data generation already
     /// failed and was logged. The generation re-runs every 20ms service
@@ -560,7 +564,7 @@ impl DWalletMPCManager {
             pending_network_key_instantiations: HashMap::new(),
             last_cert_read_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
-            network_key_id_derivations_spawned: HashSet::new(),
+            network_key_id_derivations_spawned: HashMap::new(),
             warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: HashMap::new(),
@@ -1130,7 +1134,23 @@ impl DWalletMPCManager {
             // every validator, so this defer is rare and short.)
             let network_key_id = crate::network_key_id_mapping::network_key_id_for(key_id);
             if network_key_id.is_none() {
-                if self.network_key_id_derivations_spawned.insert(*key_id) {
+                // Memoize on the derivation inputs, not just the key id, so a
+                // failure while the overlay's reconfiguration output is
+                // transiently empty/incomplete is retried once the overlay
+                // republishes a different (complete) output — instead of
+                // being pinned to failure for the whole epoch.
+                let derivation_input_digest = mpc_data_blob_hash(
+                    &bcs::to_bytes(&(
+                        &data.network_dkg_public_output,
+                        &data.current_reconfiguration_public_output,
+                    ))
+                    .unwrap_or_default(),
+                );
+                if self.network_key_id_derivations_spawned.get(key_id)
+                    != Some(&derivation_input_digest)
+                {
+                    self.network_key_id_derivations_spawned
+                        .insert(*key_id, derivation_input_digest);
                     info!(
                         ?key_id,
                         "adopting a network key whose ObjectID has no NetworkKeyId mapping \
@@ -1638,7 +1658,14 @@ impl DWalletMPCManager {
                 // invariant violation — don't page on it. Internal presign
                 // requests park on it before ever getting here (see
                 // `instantiate_internal_presign_session`).
-                if is_internal && !e.is_network_key_data_not_ready() {
+                // `VssShamirCacheUnavailable` is terminal but BY-DESIGN
+                // reachable: during the v3→v4 boundary epoch every network key
+                // is pre-V3 (`NotApplicable` cache), so a NOA VSS sign attempt
+                // hitting it is the expected state of the whole fleet, not an
+                // invariant violation — log it as an error without paging.
+                let is_expected_error_class = e.is_network_key_data_not_ready()
+                    || matches!(e, DwalletMPCError::VssShamirCacheUnavailable(_));
+                if is_internal && !is_expected_error_class {
                     error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");

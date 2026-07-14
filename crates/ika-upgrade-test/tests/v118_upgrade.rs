@@ -202,6 +202,14 @@ async fn v118_atomic_upgrade_to_local_build() {
         .wait_for_epoch(3)
         .expect_protocol_version_at_least(4)
         .expect_committee_size(4)
+        // The swapped binaries opened 1.1.8-written `committee_map` records:
+        // the store must have migrated them at open (positive check), and no
+        // validator may have fallen back to the chain-read of the prior
+        // committee (negative check — that fallback is exactly what would
+        // mask a silent mis-migration, since the boundary read degrades a
+        // local decode failure to "absent").
+        .expect_log_line_present("migrated a pre-consensus-keys (mainnet-1.1.8) committee record")
+        .expect_log_line_absent("prior committee absent locally")
         // Steady-state lifecycle on the local build at v4: fresh DKG,
         // pool-served global presign, sign — all on top of state a 1.1.8
         // network created. (No `set_global_presign_config` step: the config

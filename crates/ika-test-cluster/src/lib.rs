@@ -26,6 +26,9 @@ use ika_sui_client::ika_dwallet_transactions::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm::memory::{Swarm, SwarmBuilder};
+
+pub mod flows;
+pub use flows::{ImportedKeyHandle, PresignHandle};
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
@@ -679,21 +682,14 @@ impl IkaTestCluster {
         //     the preimage form that the centralized DKG expects.
         // Mirroring `ika::dwallet_commands::on_chain_session_preimage`.
         let session_id_random_bytes: [u8; 32] = rand::random();
-        let preimage: [u8; 32] = {
-            let mut hasher = Keccak256::default();
-            hasher.update(self.publisher_address.to_vec());
-            hasher.update(session_id_random_bytes);
-            let digest = hasher.finalize();
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(digest.as_ref());
-            buf
-        };
+        let preimage = on_chain_session_preimage(&self.publisher_address, &session_id_random_bytes);
         let centralized_session_id = SessionIdentifier::new(SessionType::User, preimage).to_vec();
 
         let centralized_result =
             create_dkg_output_by_curve_v2(curve, protocol_pp.clone(), centralized_session_id)
                 .map_err(|e| anyhow::anyhow!("create_dkg_output_by_curve_v2: {e}"))?;
 
+        let user_secret_key_share = centralized_result.centralized_secret_output.clone();
         let encrypted_centralized_secret_share_and_proof = encrypt_secret_key_share_and_prove_v2(
             curve,
             centralized_result.centralized_secret_output,
@@ -784,10 +780,29 @@ impl IkaTestCluster {
         let dwallet_id: ObjectID = dwallet_id_str
             .parse()
             .map_err(|e| anyhow::anyhow!("failed to parse dwallet_id {dwallet_id_str}: {e}"))?;
+        let dwallet_cap_id =
+            flows::find_created_object_by_type(&self.sui_rpc_url, &response, "DWalletCap")
+                .await
+                .map_err(|e| anyhow::anyhow!("DKG created no DWalletCap: {e}"))?;
+        let encrypted_user_secret_key_share_id = flows::fetch_nested_event_field(
+            &self.sui_rpc_url,
+            &digest,
+            "DWalletDKGRequestEvent",
+            &[
+                "user_secret_key_share",
+                "encrypted_user_secret_key_share_id",
+            ],
+        )
+        .await
+        .and_then(|s| s.parse().ok());
 
         Ok(DwalletDkgHandle {
             dwallet_id,
             session_identifier: session_id_random_bytes,
+            dwallet_cap_id,
+            encrypted_user_secret_key_share_id,
+            user_secret_key_share,
+            curve,
         })
     }
 
@@ -1012,12 +1027,23 @@ pub struct UserEncryptionKey {
 pub struct DwalletDkgHandle {
     pub dwallet_id: ObjectID,
     pub session_identifier: [u8; 32],
+    /// The `DWalletCap` transferred to the publisher by the DKG request —
+    /// required by the sign / future-sign flows.
+    pub dwallet_cap_id: ObjectID,
+    /// The encrypted-share object created by the DKG — the source share a
+    /// transfer re-encrypts. `None` when the event did not carry it.
+    pub encrypted_user_secret_key_share_id: Option<ObjectID>,
+    /// The user's (centralized party's) secret key share — retained so the
+    /// sign / future-sign / make-public / transfer flows can run without
+    /// on-chain share decryption.
+    pub user_secret_key_share: Vec<u8>,
+    pub curve: u32,
 }
 
 /// Gas budget large enough to cover even the heaviest dWallet
 /// coordinator transactions (DKG with payment + session id +
 /// encryption key Move calls).
-const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 1_000_000_000;
+pub(crate) const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 1_000_000_000;
 
 /// Fetch the events emitted by `tx_digest` and return the first
 /// `field_name` value found in an event whose Move type contains
@@ -1028,7 +1054,7 @@ const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 1_000_000_000;
 /// `execute_transaction` in `ika-sui-client` builds a
 /// `SuiTransactionBlockResponse` with only `effects` populated — events
 /// have to be fetched separately via the SDK's `event_api`.
-async fn fetch_event_field(
+pub(crate) async fn fetch_event_field(
     sui_rpc_url: &str,
     tx_digest: &sui_types::digests::TransactionDigest,
     event_type_substr: &str,
@@ -1287,6 +1313,20 @@ impl IkaTestClusterBuilder {
         let mut test_cluster = TestClusterBuilder::new()
             .set_network_config(sui_network_config)
             .with_fullnode_rpc_port(port_base + SUI_FULLNODE_RPC_PORT_OFFSET)
+            // The ika node reads ALL of its verified Sui state from this
+            // fullnode via the OCS checkpoint pusher, which folds each
+            // checkpoint's objects in order. Sui's msim default prunes
+            // checkpoints after 2 epochs (`num_epochs_to_retain_for_checkpoints
+            // = Some(2)`), which at these short test epochs (20s) is a ~40s
+            // window — and under msim, proof-building burns virtual time while
+            // the fullnode keeps producing and pruning, so the pusher can fall
+            // behind the prune horizon and PERMANENTLY lose a checkpoint (with
+            // any session_events bag entry on it), pinning an epoch close on
+            // unlucky schedules. Real fullnodes serving an ika direct node
+            // retain far more than the pusher's fold lag; disabling pruning
+            // here restores that fidelity so the tests exercise epoch-boundary
+            // delivery, not an artificial pruning race.
+            .disable_fullnode_pruning()
             .build()
             .await;
 
@@ -1663,4 +1703,19 @@ fn metadata_workspace_manifest() -> Result<std::path::PathBuf> {
         }
     }
     anyhow::bail!("workspace Cargo.toml not found above {}", start.display())
+}
+
+/// The on-chain user-session preimage: `keccak256(sender || random_bytes)` —
+/// mirroring `ika::dwallet_commands::on_chain_session_preimage`.
+pub(crate) fn on_chain_session_preimage(
+    sender: &sui_types::base_types::SuiAddress,
+    session_id_random_bytes: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = Keccak256::default();
+    hasher.update(sender.to_vec());
+    hasher.update(session_id_random_bytes);
+    let digest = hasher.finalize();
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(digest.as_ref());
+    buf
 }

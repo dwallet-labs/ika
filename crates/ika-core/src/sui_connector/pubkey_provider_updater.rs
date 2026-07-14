@@ -28,7 +28,7 @@ use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
@@ -55,8 +55,8 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
 /// Chain-reads the **previous** committee as a quorum-checkable
 /// `Committee`, for a joiner that never locally observed/persisted that
 /// epoch (so its `committee_store` has no entry for it). The membership
-/// is decoded with `read_bls_committee`; each member's consensus key is
-/// fetched and carried on the committee so its prior-epoch handoff
+/// is decoded with `read_bls_committee_lossy`; each member's consensus key
+/// is fetched and carried on the committee so its prior-epoch handoff
 /// signatures verify by name (best-effort per member: one whose
 /// validator_info fails to decode is skipped and only its signatures are
 /// lost, never the whole committee). The class-groups / PVSS maps are left empty:
@@ -101,6 +101,50 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         .map(|m| m.validator_id)
         .collect();
     let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
+    // Both name-keyed maps on the returned `Committee` must use the SAME name
+    // space, and it must be the PRIOR-epoch snapshot's — that is the name each
+    // member signed its handoff attestation under. `voting_rights` already
+    // comes from the frozen `previous_committee` snapshot; the consensus-key
+    // map must too. Keying the consensus map by the member's CURRENT on-chain
+    // protocol_pubkey (from which `AuthorityName` is derived) would diverge
+    // for any validator that rotated its protocol key at the boundary — its
+    // handoff signatures, signed under the old name, would then fail to
+    // resolve a consensus key and drop, silently dropping its stake from the
+    // cert quorum. Resolve each fetched pool to its snapshot name by
+    // validator id (StakingPool.id == BlsCommitteeMember.validator_id).
+    // Lossy: a departed prior-committee member with an unparseable protocol
+    // pubkey is skipped, not fatal — bootstrap must not crash-loop on one bad
+    // record. NOTE: the skip is NOT graceful quorum degradation. The skipped
+    // member is absent from `voting_rights`, and cert verification
+    // HARD-REJECTS a certificate carrying a weight-0 signer's signature —
+    // and since that member's own node runs fine, its signature is in every
+    // aggregated cert, so every served cert fails verification and bootstrap
+    // surfaces `Rejected`. The warn below makes that outcome attributable to
+    // the corrupt prior-committee record instead of the Rejected log's
+    // default "wrong prior-committee view / wrong peers" guidance. (Trigger
+    // requires registration-validated snapshot bytes to fail BLS parse —
+    // near-unreachable; the pre-lossy behavior was a panic crash-loop.)
+    let bls_members = system_inner.read_bls_committee_lossy(bls_committee);
+    if bls_members.len() < bls_committee.members.len() {
+        let parsed_ids: HashSet<ObjectID> = bls_members.iter().map(|(id, _)| *id).collect();
+        let dropped: Vec<ObjectID> = bls_committee
+            .members
+            .iter()
+            .map(|member| member.validator_id)
+            .filter(|id| !parsed_ids.contains(id))
+            .collect();
+        warn!(
+            ?dropped,
+            "prior-committee members dropped by the lossy read (unparseable protocol \
+             pubkey in the frozen snapshot): any handoff cert carrying their signatures \
+             will FAIL verification (weight-0 signer) — a subsequent Rejected outcome \
+             means a corrupt prior-committee record, not wrong peers"
+        );
+    }
+    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = bls_members
+        .iter()
+        .map(|(id, (name, _))| (*id, *name))
+        .collect();
     // Tolerate a member whose validator_info fails to decode: `verify()`
     // rejects on ANY malformed metadata field (addresses, next-epoch keys),
     // not just the consensus key needed here, and the member may have
@@ -123,11 +167,19 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
                 continue;
             }
         };
-        let name: AuthorityName = (&verified.protocol_pubkey).into();
+        // The consensus pubkey VALUE is fixed at registration, so reading the
+        // current one is correct; only the map KEY must be the snapshot name.
+        let Some(name) = snapshot_name_by_id.get(&pool.id).copied() else {
+            warn!(
+                validator_id = ?pool.id,
+                "prior-committee staking pool absent from the previous_committee \
+                 snapshot; skipping"
+            );
+            continue;
+        };
         consensus_keys.insert(name, verified.consensus_pubkey.clone());
     }
-    let voting_rights: Vec<(AuthorityName, StakeUnit)> = system_inner
-        .read_bls_committee(bls_committee)
+    let voting_rights: Vec<(AuthorityName, StakeUnit)> = bls_members
         .into_iter()
         .map(|(_, (name, stake))| (name, stake))
         .collect();
@@ -307,12 +359,29 @@ where
             .get_validators_info_by_ids(validator_ids)
             .await?;
 
+        // Tolerate a member whose validator_info fails to decode, exactly as
+        // `fetch_previous_committee` does: `verify()` rejects on ANY malformed
+        // metadata field, not just the consensus key needed here. Failing the
+        // whole refresh on one bad record would return Err every 5s forever
+        // and install NO provider — suppressing joiner-announcement relay for
+        // the entire epoch on a single deterministic error. Skipping costs
+        // only that member's relayed announcements (its own direct
+        // announcements still reach peers), and cert verification needs only a
+        // quorum of the members that DO verify.
         let mut consensus_keys_by_name: BTreeMap<AuthorityName, Ed25519PublicKey> = BTreeMap::new();
+        // Collect skips silently here; the warns are emitted AFTER the
+        // `last_installed` dedup below, so a deterministically-bad record
+        // warns once per actual map change instead of twice per 5s poll
+        // tick for the rest of the epoch (~34k lines/day).
+        let mut skipped_members: Vec<(ObjectID, u64)> = Vec::new();
         for pool in &staking_pools {
-            let verified = pool
-                .validator_info
-                .verify()
-                .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+            let verified = match pool.validator_info.verify() {
+                Ok(verified) => verified,
+                Err(code) => {
+                    skipped_members.push((pool.id, code));
+                    continue;
+                }
+            };
             let name: AuthorityName = (&verified.protocol_pubkey).into();
             consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
         }
@@ -322,6 +391,18 @@ where
             if last.as_ref() == Some(&consensus_keys_by_name) {
                 return Ok(());
             }
+        }
+
+        if !skipped_members.is_empty() {
+            warn!(
+                epoch = self.epoch_id,
+                label = self.label,
+                skipped = ?skipped_members,
+                installed = consensus_keys_by_name.len(),
+                "installing pubkey provider with an incomplete member set \
+                 (validator_info failed verify; (validator_id, code) pairs listed); \
+                 relayed announcements from the skipped members will be dropped"
+            );
         }
 
         let entries: Vec<(AuthorityName, Ed25519PublicKey)> =

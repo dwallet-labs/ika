@@ -1,13 +1,12 @@
 name: Simtest
 
-# Manually triggered. Simtest runs deterministic single-threaded msim tests
-# with real (sequential) class-groups crypto, so wall time is long — running
-# on every PR is not worth it. Use this when you want to validate the simtest
-# stack against a branch.
-#
-# See the "## Simtest" section in CLAUDE.md for background on the msim
-# patches, IP allocation, pubfile handling, and the rayon × msim
-# incompatibility.
+# Manually triggered. Runs the deterministic msim test suite (every
+# #[sim_test] in the workspace — single-OS-thread simulation with the
+# dwallet-mpc-unsafe-mock crypto, so a seed reproduces a run exactly).
+# On the large runner the full suite is ~25-35 minutes wall; dispatch it
+# for any change touching dwallet_mpc, sui_connector, or epoch/session
+# lifecycle. Background on the msim patches and gotchas:
+# dev-docs/conventions/simtest.md.
 
 on:
   workflow_dispatch:
@@ -57,9 +56,9 @@ env:
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
   RUST_LOG: ${{ inputs.rust_log }}
-  # The simtest watchdog treats CPU-bound class-groups operations as
-  # deadlocks (simulated time stops advancing while a rayon worker
-  # crunches). Disable so the test isn't killed mid-crypto.
+  # The simtest watchdog treats CPU-bound stretches as deadlocks
+  # (simulated time stops advancing while a worker crunches). Disable so
+  # a heavy computation isn't killed mid-flight.
   MSIM_DISABLE_WATCHDOG: "1"
   # Virtual-time budget per #[sim_test]: fault tests deliberately include
   # long sub-quorum windows and slow recovery tails; virtual seconds cost
@@ -70,17 +69,20 @@ env:
 jobs:
   simtest:
     name: cargo simtest
-    runs-on: ubuntu-latest
-    # Generous timeout: sequential class-groups crypto is slow under msim
-    # (no `parallel` feature — see CLAUDE.md).
+    # Self-hosted large runner (same as the integration/TS suites): each
+    # #[sim_test] is a single-OS-thread process, and nextest runs one per
+    # core — the whole suite runs simultaneously here, whereas the 4-vCPU
+    # hosted runner ran it in waves and died mid-suite once the suite grew
+    # ("runner lost communication ... starves it for CPU/Memory").
+    runs-on: ika-k8s-large
+    # Headroom over the ~25-35 minute normal suite: a genuine liveness
+    # wedge in a test burns wall clock slowly toward its virtual-time
+    # budget, and the run should fail on the test's own evidence rather
+    # than be killed silently here.
     timeout-minutes: 240
     steps:
-      - name: Clean runner disk
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup SSH
         uses: ./.github/actions/setup-ssh
@@ -94,12 +96,14 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          # IPv4 + retry: some runners lack IPv6 egress while DNS returns
-          # AAAA records; apt mirror flakiness otherwise fails the job.
+          # IPv4 + retry: some runner pods lack IPv6 egress while DNS returns
+          # AAAA records; apt mirror flakiness otherwise fails the job. The
+          # k8s pods run as root without sudo, hence the guard.
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
           APT="-o Acquire::ForceIPv4=true"
           for attempt in 1 2 3; do
-            sudo apt-get $APT update && \
-              sudo apt-get $APT install -y cmake clang pkg-config libssl-dev && break
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev && break
             echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
           done
           command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }

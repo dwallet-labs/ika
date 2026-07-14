@@ -3,22 +3,25 @@
 
 //! Global-presign traffic across epoch boundaries under msim.
 //!
-//! The enabled test streams presign requests across two epoch boundaries
-//! (the close-lock fires at every boundary with requests astride it) and
-//! requires the strongest invariant available on-chain: the coordinator's
+//! Both tests stream presign requests across two epoch boundaries (the
+//! close-lock fires at every boundary with requests astride it) and
+//! require the strongest invariant available on-chain: the coordinator's
 //! user-session keeper fully drains (started == completed) and epochs keep
 //! advancing — the sim twin of the tokio epoch-boundary presign test, with
-//! deterministic seeding.
+//! deterministic seeding. The second test additionally holds a wide
+//! MPC-degradation window open during the traffic.
 //!
-//! OPEN BUG, preserved as the ignored reproducer below: adding an
-//! MPC-degradation window (two validators skipping computations) DURING
-//! the traffic leaves the epoch permanently unable to close —
-//! all_epoch_sessions_finished=false with every other gate condition true,
-//! surviving a 900-virtual-second budget across four schedule variants,
-//! including with the stale-batch expiry overridden to sim round scale.
-//! A presign vote agreed while the committee is sub-quorum appears to
-//! leave a locked-set session that never completes after the heal. The
-//! full evidence trail is in dev-docs/plans/simtest-fault-matrix.md.
+//! Both were `#[ignore]`d reproducers of the close-lock wedge (the epoch
+//! pinned with `all_epoch_sessions_finished=false` after traffic astride
+//! the close) until its root cause was fixed: the OCS checkpoint pusher
+//! permanently skipped checkpoints it could not fetch before the
+//! fullnode's pruning watermark passed them, and the dynamic-fields walk
+//! permanently dropped live-listed `session_events` bag children whose
+//! defining checkpoint was pruned — so a session re-pulled across an
+//! epoch boundary never reached the fresh epoch's MPC manager. Full
+//! forensic trail in dev-docs/plans/simtest-fault-matrix.md; the fixes
+//! live in `push_worker.rs`, `proof_provider.rs`, and
+//! `verified_reader.rs`. These tests guard them end-to-end.
 
 #![cfg(msim)]
 
@@ -35,17 +38,10 @@ const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 5_000_000_000;
 const FIRST_VICTIM: usize = 1;
 const SECOND_VICTIM: usize = 3;
 
-// Reproducer (msim-only): global-presign traffic astride epoch-close locks
-// pins all_epoch_sessions_finished=false on some schedule — ~100 presigns
-// serve successfully, no held votes, yet one locked-set session never
-// completes and the epoch cannot close (stuck 840+ virtual seconds across
-// seven schedule variants; fault injection is NOT required — pure traffic
-// suffices). The tokio twin passes on real timing, so this is a narrow
-// scheduling-sensitive race in the close/serve interplay that msim's
-// determinism exposes. Reproduce with seed 1 via the simtest workflow,
-// test_filter=sim_presign_traffic; evidence trail in
-// dev-docs/plans/simtest-fault-matrix.md.
-#[ignore = "reproducer: presign traffic astride close-locks pins the epoch under msim; see the fault-matrix plan"]
+// Pure traffic astride close-locks — no fault injection. This was the
+// cheapest reproducer of the close-lock wedge (one locked-set session
+// never completed and the epoch pinned) before the pusher/walk fixes;
+// see the module doc.
 #[sim_test]
 async fn sim_presign_traffic_across_boundaries() {
     telemetry_subscribers::init_for_testing();
@@ -64,14 +60,9 @@ async fn sim_presign_traffic_across_boundaries() {
     let traffic_end_epoch = traffic_start_epoch + 2;
 
     // Stream presigns until two boundaries have crossed with requests in
-    // flight; open the degradation window after the first few submissions
-    // and heal it mid-stream, so requests land before, during, and after
-    // the sub-quorum window. The window is deliberately SHORT (one
-    // submission wide): a longer window accumulates a session/checkpoint
-    // backlog whose timer-paced drain stretches the following close by
-    // many virtual minutes (or worse) — that harsher shape is preserved in
-    // `sim_presign_long_degradation_reproducer` below as an ignored
-    // reproducer, with the findings in the fault-matrix plan.
+    // flight — pure traffic, no fault injection; the degraded variant with
+    // a WIDE sub-quorum window lives in
+    // `sim_presign_long_degradation_reproducer` below.
     let ika_coin_id = cluster.packages.ika_supply_id;
     let mut submitted_count: u64 = 0;
     loop {
@@ -166,15 +157,13 @@ async fn sim_presign_traffic_across_boundaries() {
     }
 }
 
-/// The harsher variant preserved as a reproducer: a WIDE degradation window
-/// (three submissions) accumulates enough of a session/checkpoint backlog
-/// that the following epoch's close stretches to many virtual minutes —
-/// observed completing at +6 virtual minutes on one schedule and exceeding a
-/// 900-second budget on others (seed 1, schedule-perturbed variants). The
-/// close is timer-paced through the backlog rather than wedged on a single
-/// condition (no stuck-gate warns fire). Root cause of the slow drain is an
-/// open follow-up in `dev-docs/plans/simtest-fault-matrix.md`.
-#[ignore = "reproducer: post-degradation close stretches to minutes-or-worse under a wide backlog; see the fault-matrix plan"]
+/// The harsher variant: a WIDE degradation window (three submissions)
+/// accumulates a session/checkpoint backlog through the sub-quorum window,
+/// and the following epoch's close must drain it. Before the pusher/walk
+/// fixes (see the module doc) this exceeded 900-virtual-second budgets on
+/// some schedules and was kept `#[ignore]`d; with the verified-state
+/// pipeline no longer silently losing entries, the drain completes and the
+/// test passes within the normal budget.
 #[sim_test]
 async fn sim_presign_long_degradation_reproducer() {
     telemetry_subscribers::init_for_testing();

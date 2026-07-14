@@ -64,7 +64,48 @@ next epoch inherits.
      signature that cannot be verified yet (consensus pubkey provider
      not installed, expected attestation not yet built) is BUFFERED,
      not dropped; buffered signatures are re-verified when the
-     missing dependency installs.
+     missing dependency installs. On a RESTART the missing dependency
+     (the expected attestation) is re-installed by the signature
+     sender's own build path re-running each service iteration — NOT
+     only by a fresh snapshot-ready transition — so buffered-quorum
+     adoption is not the sole recovery path.
+- **Restart recovery of the aggregator.** The expected-attestation
+  install runs on the sender's service iteration even after this
+  validator's own EndOfPublish vote is durably recorded — until the
+  aggregator is built, at which point a steady-state early-out (vote
+  recorded AND aggregator installed) stops the per-tick pass (the
+  hydrate+build it runs re-hashes and rewrites full key blobs, so it
+  must not run once per second until teardown). So a restart after our
+  own EndOfPublishV2 was sequenced rebuilds the in-memory aggregator
+  ONCE by replaying the persisted `handoff_signatures` rows and
+  re-mints+persists the certificate. Buffered-quorum adoption alone is
+  NOT the recovery mechanism — it sees only signatures that arrive after
+  the restart. SCOPE: this replay recovers a NON-divergent validator
+  (the rebuilt attestation matches what the persisted rows endorse). A
+  validator whose rebuilt attestation DIVERGES from the rows re-verifies
+  none of them and mints nothing — its recovery is the barrier
+  peer-fetch of the quorum's certificate, never local replay.
+- **`handoff_signatures` table invariant.** The table holds ONLY rows
+  that verify against the currently-installed expected attestation. A
+  re-install that changes the attestation (e.g. a fresh hydration
+  changed the items) drops the superseded rows from BOTH the aggregator
+  and the table, in one atomic batch-delete — because the deferred-close
+  quorum gate (`handoff_signatures_meet_quorum`) sums the TABLE, not the
+  aggregator. The table therefore plays two roles: a restart-durable
+  source for aggregator rebuild, and the close-gate quorum input; the
+  second role is what makes stale-row hygiene load-bearing. (If the
+  close gate migrates to a sequence-pure tally, that second role is
+  retired.) TRADEOFF (deliberate): the delete is destructive under
+  divergence — a validator that adopted the quorum's attestation via
+  buffered signatures and then installed a divergent local build deletes
+  the quorum's rows, flips its own close gate true → false, and closes
+  via the grace backstop instead of the quorum commit. The persisted
+  certificate is NOT deleted, and the sender's steady-state early-out
+  bounds the clobber to a single recovery pass. The non-destructive
+  alternative (rows keyed by attestation digest, gate counts matching
+  rows) is heavier schema surgery on a gate the planned sequence-pure
+  close-gate rework retires — see
+  `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`.
 - **Deferred close (v4 only)**: after the EndOfPublish stake quorum is
   reached, the epoch close is deferred `end_of_publish_grace_rounds`
   (protocol config, default 50) consensus leader rounds past the
@@ -97,6 +138,25 @@ next epoch inherits.
   Consensus pubkeys are fixed at registration; members that have since
   left the active set are resolved from chain (their staking pool
   object persists) so churn cannot wrongly reject a valid certificate.
+  Two properties of the chain-read prior committee
+  (`fetch_previous_committee`) are load-bearing here:
+  - **Snapshot-name keying.** The consensus-key map is keyed by each
+    member's PRIOR-epoch snapshot name (resolved by validator id from
+    the frozen `previous_committee`), never by the member's current
+    on-chain protocol pubkey — a member that rotated its protocol key
+    at the boundary signed under the old name, and current-name keying
+    would silently drop its stake from the cert quorum.
+  - **Lossy membership read (and its sharp edge).** A prior-committee
+    member whose frozen snapshot `protocol_pubkey` bytes fail to parse
+    is SKIPPED rather than panicking the reader — but the skip is not
+    graceful degradation: the member is absent from `voting_rights`,
+    and verification hard-rejects any certificate carrying a weight-0
+    signer's signature. Since such a member's own node keeps signing,
+    its signature is in every aggregated cert, so every served cert
+    fails and bootstrap surfaces `Rejected`. The reader logs the
+    dropped ids so that outcome is attributable to the corrupt record
+    (near-unreachable trigger: the bytes are validated at
+    registration; the pre-lossy behavior was a panic crash-loop).
 
 ## Consuming the certificate
 
@@ -106,8 +166,16 @@ next epoch inherits.
    and installs the network-key outputs it certifies. Outcomes:
    - `Verified` — persist + install.
    - `Rejected` (peers served certificates but NONE verified) — a
-     genuine trust-anchor mismatch or eclipse: **fail closed, halt the
-     node**. A single bad peer cannot cause this (every peer is tried).
+     genuine trust-anchor mismatch or eclipse: **fail closed** — the
+     node must never anchor on an unverified cert. A single bad peer
+     cannot cause this (every peer is tried). Enforcement today: the
+     epoch-start bootstrap task logs `Rejected` at error and installs
+     nothing (it does NOT hard-halt the process; a refuse-participation
+     policy layers above it), and the prepare-then-start barrier simply
+     never becomes ready without a verified anchor — the node blocks
+     out of MPC participation. The one place that DOES halt the node is
+     the barrier's re-verification failure of a locally-PERSISTED cert
+     (local DB tampering/corruption — see step 2).
    - `Unavailable` (no peer served one) — benign propagation lag;
      retry.
    A validator that already holds the certificate re-verifies it before
@@ -174,10 +242,27 @@ next epoch inherits.
    sign byte-identical attestations.
 4. Fail closed on contradiction (`Rejected`, persisted-cert
    re-verification failure); fail open with retry on absence
-   (`Unavailable`, read errors).
+   (`Unavailable`, read errors). The freeze is a cert CONSUMER too:
+   `prior_epoch_mpc_data_digests` (carry-forward source) reads the prior
+   cert's `ValidatorMpcData` items, and a READ ERROR there PROPAGATES —
+   the commit fails and replays on restart — rather than degrading to an
+   empty (shrunken) carry-forward map that would diverge this validator's
+   frozen set from its peers'. An empty map is returned only for the
+   chain-true no-cert epochs (genesis, a v3 prior epoch, the first v4
+   epoch). CAVEAT: the committee-uniformity of that empty-map case rests
+   on invariant 5 holding on EVERY consensus-start path; today the
+   barrier is wired only into the continuing-validator reconfigure path
+   (joiner-promotion and cold startup are pending — see
+   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`), so
+   a joiner racing its bootstrap fetch can still freeze absent-cert.
+   The read-error flavor of the fork is closed; the absent-cert flavor
+   closes with the barrier wiring.
 5. The barrier guarantee: no validator participates in epoch E+1
    sessions without locally holding the verified epoch-E handoff
-   artifacts.
+   artifacts. Currently enforced on the continuing-validator
+   reconfigure path; extending it to the fullnode→validator promotion
+   and cold-startup consensus-start paths is planned work (see the
+   plan referenced in invariant 4).
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),

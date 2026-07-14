@@ -87,7 +87,45 @@ serialization/schema change, MUST preserve all of the following.
    vN−1 binary MUST reopen under vN. A validator stopped on vN−1 and
    restarted on vN against the *same* RocksDB data dir must resume and
    catch up — verified by a positive read-back (it reaches the live
-   epoch), not merely by "did not panic".
+   epoch), not merely by "did not panic". This extends to ANY durable
+   local table whose value schema changes across a version bump: a binary
+   reads its OWN store written by its previous version, so the reader must
+   tolerate the prior layout (a fallback decode or a versioned envelope),
+   not just the current one. **Known instance:** `Committee` gained a
+   `consensus_keys` field at v4 (second-to-last, before `index_map`), so a
+   `committee_map` record written by mainnet-v1.1.8 does not decode under
+   the v4 `Committee` (bcs is positional). `CommitteeStore` migrates such
+   records at store open (`migrate_legacy_records`): each record that fails
+   the current decode but decodes as `LegacyCommittee` is rewritten in the
+   current layout with empty `consensus_keys`, so every later read is a
+   plain decode. The migration is idempotent (already-migrated records pass
+   the current decode and are skipped), hence crash-safe, and the
+   `LegacyCommittee` mirror is deletable once no fleet upgrades directly
+   from 1.1.8 data dirs. The
+   empty `consensus_keys` is sound because a legacy record always DESCRIBES
+   a ≤v3 epoch, for which no handoff certificate can exist (cert minting is
+   v4-gated), so the keys are never asked to verify anything. That holds
+   through a three-link chain: (1) 1.1.8's `MAX_PROTOCOL_VERSION = 3`; (2)
+   1.1.8's `reconfigure` runs `check_protocol_version` BEFORE
+   `insert_new_committee`, so 1.1.8 can never persist a committee record
+   for a v4 epoch; (3) the state-sync `insert_committee` plumbing has no
+   live callers on either version. If a future change breaks any link —
+   letting a pre-`consensus_keys` record describe a cert-minting epoch —
+   cert verification skips every signer it cannot resolve and then fails
+   quorum, so an honest validator fail-closes far from the cause; re-check
+   this chain before reusing the legacy migration for anything else.
+   **Rollback caveat (reverse direction, unfixable from the v4 side):** a
+   `committee_map` record written by a v4 binary is NOT readable by
+   mainnet-v1.1.8 (same positional-bcs reason; 1.1.8 has no fallback).
+   Rolling a validator back to 1.1.8 after it has written any new-layout
+   committee record requires clearing the `committee_map` column family.
+   Clearing is safe, but note what actually happens afterwards: past-epoch
+   history is NOT rebuilt (nothing repopulates old epochs —
+   `insert_new_committee` fires only inside `AuthorityState::reconfigure`,
+   at future epoch boundaries), so the map stays empty until the next
+   reconfiguration inserts the then-next committee. That is acceptable
+   because nothing on 1.1.8 reads `committee_map` history at runtime; the
+   current-epoch committee is always rebuilt from chain state at startup.
 
 ## Genesis must start at v3 and upgrade into v4
 

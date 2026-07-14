@@ -163,6 +163,9 @@ pub enum DwalletMPCError {
     #[error("waiting for network key with ID: {0}")]
     WaitingForNetworkKey(ObjectID),
 
+    #[error("VSS Shamir cache unavailable for network key {0}")]
+    VssShamirCacheUnavailable(ObjectID),
+
     #[error("the dwallet secret does not match the dwallet output")]
     DWalletSecretNotMatchedDWalletOutput,
 
@@ -321,6 +324,7 @@ impl DwalletMPCError {
             DwalletMPCError::ValidatorIDNotFound(_) => "validator_id_not_found",
             DwalletMPCError::IkaError(_) => "ika_error",
             DwalletMPCError::WaitingForNetworkKey(_) => "waiting_for_network_key",
+            DwalletMPCError::VssShamirCacheUnavailable(_) => "vss_shamir_cache_unavailable",
             DwalletMPCError::DWalletSecretNotMatchedDWalletOutput => {
                 "dwallet_secret_not_matched_output"
             }
@@ -354,5 +358,25 @@ impl DwalletMPCError {
             DwalletMPCError::OffChainAssemblyIncomplete { .. } => "off_chain_assembly_incomplete",
             DwalletMPCError::PresignAlreadyUsed(_) => "presign_already_used",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vss_cache_unavailable_is_terminal_not_a_transient_wait() {
+        let id = ObjectID::random();
+        // The not-ready class parks and retries; a completed-but-unusable VSS
+        // cache (pre-V3 key, or a real derivation failure) must NOT be in it,
+        // or a VSS sign session parks forever instead of failing fast.
+        assert!(DwalletMPCError::WaitingForNetworkKey(id).is_network_key_data_not_ready());
+        assert!(!DwalletMPCError::VssShamirCacheUnavailable(id).is_network_key_data_not_ready());
+        // Stable metric label (alerts depend on it).
+        assert_eq!(
+            DwalletMPCError::VssShamirCacheUnavailable(id).kind(),
+            "vss_shamir_cache_unavailable"
+        );
     }
 }
