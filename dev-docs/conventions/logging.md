@@ -64,5 +64,8 @@ run proves nothing about a demoted line. Use the
 
 ## See also
 
+- [`../playbooks/mpc-anomaly-diagnostics.md`](../playbooks/mpc-anomaly-diagnostics.md)
+  — bounded per-session debug metadata that is flushed at `WARN`/`ERROR` only
+  when an MPC anomaly occurs.
 - [`metrics.md`](metrics.md) — for a signal a **test or alert** must
   assert on, prefer a scrapable metric over grepping a log string.

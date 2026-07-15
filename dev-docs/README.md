@@ -60,6 +60,9 @@ them has a bug — determine which before changing either.
 - [`playbooks/mpc-stall-postmortem.md`](playbooks/mpc-stall-postmortem.md)
   — the check-ordered diagnosis procedure for "MPC stopped making
   progress", distilled from real wedge investigations.
+- [`playbooks/mpc-anomaly-diagnostics.md`](playbooks/mpc-anomaly-diagnostics.md)
+  — anomaly-only MPC session snapshots: trigger conditions, malicious-source
+  attribution, bounded/redacted fields, example output, and library limits.
 - [`playbooks/test-testing.md`](playbooks/test-testing.md) — prove an
   expensive integration/upgrade test actually catches its failure: inject a
   minimal fault, grep the predicted log evidence (the exit code is not the

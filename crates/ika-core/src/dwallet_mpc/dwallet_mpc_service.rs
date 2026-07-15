@@ -16,6 +16,7 @@ use crate::dwallet_checkpoints::{
 };
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::dwallet_mpc::mpc_diagnostics::{MpcAnomalyContext, MpcAnomalyKind, output_digest};
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
@@ -47,7 +48,7 @@ use ika_types::message::{
     MakeDWalletUserSecretKeySharesPublicOutput, PartialSignatureVerificationOutput, PresignOutput,
     SignOutput,
 };
-use ika_types::messages_consensus::ConsensusTransaction;
+use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
     GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier, SessionType,
@@ -78,6 +79,19 @@ const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
 
 pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
+
+fn diagnostic_output_digest(message: &ConsensusTransaction) -> Option<[u8; 32]> {
+    let report = match &message.kind {
+        ConsensusTransactionKind::DWalletMPCOutput(output) => {
+            DWalletMPCOutputReport::External(output.clone())
+        }
+        ConsensusTransactionKind::DWalletInternalMPCOutput(output) => {
+            DWalletMPCOutputReport::Internal(output.clone())
+        }
+        _ => return None,
+    };
+    report.output().ok().as_ref().and_then(output_digest)
+}
 
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
@@ -459,6 +473,8 @@ impl DWalletMPCService {
             };
 
             if self.dwallet_mpc_manager.recognized_self_as_malicious {
+                self.dwallet_mpc_manager
+                    .emit_self_malicious_service_exit_anomaly(self.last_read_consensus_round);
                 error!(
                     authority=?self.name,
                     "the node has identified itself as malicious, breaking from MPC service loop"
@@ -1637,8 +1653,7 @@ impl DWalletMPCService {
         >,
     ) {
         let committee = self.committee.clone();
-        let validator_name = &self.name;
-        let party_id = self.dwallet_mpc_manager.party_id;
+        let validator_name = self.name;
 
         for (computation_id, computation_result) in completed_computation_results {
             let session_identifier = computation_id.session_identifier;
@@ -1650,6 +1665,39 @@ impl DWalletMPCService {
             } else {
                 ComputationResultData::Native
             };
+            let (computation_result_name, computation_error_kind) = match &computation_result {
+                Ok(GuaranteedOutputDeliveryRoundResult::Advance { .. }) => ("advance", None),
+                Ok(GuaranteedOutputDeliveryRoundResult::Finalize { .. }) => ("finalize", None),
+                Err(error) => ("error", Some(error.kind().to_string())),
+            };
+            if let Some(session) = self
+                .dwallet_mpc_manager
+                .sessions
+                .get_mut(&session_identifier)
+            {
+                session.record_computation_completed(
+                    computation_id.consensus_round,
+                    computation_id.mpc_round,
+                    computation_id.attempt_number,
+                    computation_result_name,
+                    computation_error_kind.clone(),
+                );
+            }
+            if let Some(error_kind) = computation_error_kind.clone() {
+                self.dwallet_mpc_manager.emit_session_anomaly(
+                    session_identifier,
+                    MpcAnomalyKind::LocalComputationFailed,
+                    MpcAnomalyContext {
+                        current_consensus_round: self.last_read_consensus_round,
+                        trigger_conditions: vec!["local_mpc_computation_returned_error"],
+                        error: Some(format!(
+                            "{error_kind}; detailed value remains in the originating error log"
+                        )),
+                        error_kind: Some(error_kind),
+                        ..Default::default()
+                    },
+                );
+            }
 
             // Skip ONLY this result on a missing/non-active session —
             // never abandon the rest of the batch. A result for a session
@@ -1677,6 +1725,17 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "received a computation update for a non-active session"
                 );
+                self.dwallet_mpc_manager.emit_session_anomaly(
+                    session_identifier,
+                    MpcAnomalyKind::ComputationUpdateAfterSessionCompletion,
+                    MpcAnomalyContext {
+                        current_consensus_round: self.last_read_consensus_round,
+                        trigger_conditions: vec![
+                            "local_computation_update_received_after_session_became_non_active",
+                        ],
+                        ..Default::default()
+                    },
+                );
                 continue;
             };
 
@@ -1689,6 +1748,18 @@ impl DWalletMPCService {
                         "Advanced session"
                     );
 
+                    if let Some(session) = self
+                        .dwallet_mpc_manager
+                        .sessions
+                        .get_mut(&session_identifier)
+                    {
+                        session.record_message_submission(
+                            self.last_read_consensus_round,
+                            computation_id.mpc_round,
+                            computation_id.attempt_number,
+                            message.len(),
+                        );
+                    }
                     let message = self.new_dwallet_mpc_message(session_identifier, message);
 
                     if let Err(err) = consensus_adapter.submit_to_consensus(&[message]).await {
@@ -1698,6 +1769,19 @@ impl DWalletMPCService {
                             ?computation_result_data,
                             error=?err,
                             "failed to submit a message to consensus"
+                        );
+                        self.dwallet_mpc_manager.emit_session_anomaly(
+                            session_identifier,
+                            MpcAnomalyKind::ProtocolMessageSubmissionFailed,
+                            MpcAnomalyContext {
+                                current_consensus_round: self.last_read_consensus_round,
+                                trigger_conditions: vec![
+                                    "mpc_protocol_message_submission_to_consensus_failed",
+                                ],
+                                error: Some(err.to_string()),
+                                error_kind: Some("consensus_submission".to_string()),
+                                ..Default::default()
+                            },
                         );
                     }
                 }
@@ -1792,16 +1876,71 @@ impl DWalletMPCService {
                         public_output_value,
                         malicious_authorities,
                         rejected,
-                    ) && let Err(err) = consensus_adapter
-                        .submit_to_consensus(&[consensus_message])
-                        .await
-                    {
-                        error!(
-                            ?session_identifier,
-                            validator=?validator_name,
-                            error=?err,
-                            "failed to submit an MPC output message to consensus",
-                        );
+                    ) {
+                        let output_digest = diagnostic_output_digest(&consensus_message);
+                        if let Some(session) = self
+                            .dwallet_mpc_manager
+                            .sessions
+                            .get_mut(&session_identifier)
+                        {
+                            session.record_local_output_produced(
+                                Some(computation_id.consensus_round),
+                                output_digest,
+                                rejected,
+                            );
+                        }
+                        if rejected {
+                            self.dwallet_mpc_manager.emit_session_anomaly(
+                                session_identifier,
+                                MpcAnomalyKind::LocalRejectedOutput,
+                                MpcAnomalyContext {
+                                    current_consensus_round: self.last_read_consensus_round,
+                                    trigger_conditions: vec![
+                                        "local_validator_submitting_rejected_output",
+                                    ],
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        let submission_result = consensus_adapter
+                            .submit_to_consensus(&[consensus_message])
+                            .await;
+                        if let Some(session) = self
+                            .dwallet_mpc_manager
+                            .sessions
+                            .get_mut(&session_identifier)
+                        {
+                            session.record_local_output_submission(
+                                self.last_read_consensus_round,
+                                output_digest,
+                                rejected,
+                                submission_result
+                                    .as_ref()
+                                    .map(|_| ())
+                                    .map_err(|error| error.to_string()),
+                            );
+                        }
+                        if let Err(err) = submission_result {
+                            error!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                error=?err,
+                                "failed to submit an MPC output message to consensus",
+                            );
+                            self.dwallet_mpc_manager.emit_session_anomaly(
+                                session_identifier,
+                                MpcAnomalyKind::OutputSubmissionFailed,
+                                MpcAnomalyContext {
+                                    current_consensus_round: self.last_read_consensus_round,
+                                    trigger_conditions: vec![
+                                        "mpc_output_submission_to_consensus_failed",
+                                    ],
+                                    error: Some(err.to_string()),
+                                    error_kind: Some("consensus_submission".to_string()),
+                                    ..Default::default()
+                                },
+                            );
+                        }
                     }
                 }
                 Err(err) => match request.session_type {
@@ -1815,14 +1954,8 @@ impl DWalletMPCService {
                         );
                     }
                     _ => {
-                        self.submit_failed_session(
-                            session_identifier,
-                            &request,
-                            &validator_name.to_string(),
-                            party_id,
-                            err,
-                        )
-                        .await;
+                        self.submit_failed_session(session_identifier, &request, err)
+                            .await;
                     }
                 },
             }
@@ -1881,16 +2014,11 @@ impl DWalletMPCService {
         &mut self,
         rejected_sessions: Vec<DWalletSessionRequest>,
     ) {
-        let validator_name = &self.name;
-        let party_id = self.dwallet_mpc_manager.party_id;
-
         for request in rejected_sessions {
             let session_identifier = request.session_identifier;
             self.submit_failed_session(
                 session_identifier,
                 &request,
-                &validator_name.to_string(),
-                party_id,
                 DwalletMPCError::MPCSessionError {
                     session_identifier,
                     error: "failed to create session".to_string(),
@@ -1901,13 +2029,14 @@ impl DWalletMPCService {
     }
 
     async fn submit_failed_session(
-        &self,
+        &mut self,
         session_identifier: SessionIdentifier,
         request: &DWalletSessionRequest,
-        validator_name: &str,
-        party_id: u16,
         error: DwalletMPCError,
     ) {
+        let validator_name = self.name.to_string();
+        let party_id = self.dwallet_mpc_manager.party_id;
+        let error_kind = error.kind().to_string();
         let protocol_metric_data = DWalletSessionRequestMetricData::from(&request.protocol_data);
         error!(
             ?session_identifier,
@@ -1917,7 +2046,7 @@ impl DWalletMPCService {
             session_sequence_number=?request.session_sequence_number,
             protocol_data=?protocol_metric_data.to_string(),
             error=?error,
-            error_kind=error.kind(),
+            error_kind=%error_kind,
             "rejecting session."
         );
 
@@ -1931,16 +2060,69 @@ impl DWalletMPCService {
 
         if let Some(consensus_message) =
             self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected)
-            && let Err(err) = consensus_adapter
-                .submit_to_consensus(&[consensus_message])
-                .await
         {
-            error!(
-                ?session_identifier,
-                validator=?validator_name,
-                error=?err,
-                "failed to submit an MPC SessionFailed message to consensus"
+            let output_digest = diagnostic_output_digest(&consensus_message);
+            if let Some(session) = self
+                .dwallet_mpc_manager
+                .sessions
+                .get_mut(&session_identifier)
+            {
+                session.record_local_output_produced(
+                    self.last_read_consensus_round,
+                    output_digest,
+                    rejected,
+                );
+            }
+            self.dwallet_mpc_manager.emit_session_anomaly(
+                session_identifier,
+                MpcAnomalyKind::LocalRejectedOutput,
+                MpcAnomalyContext {
+                    current_consensus_round: self.last_read_consensus_round,
+                    trigger_conditions: vec!["local_validator_submitting_rejected_output"],
+                    error: Some(format!(
+                        "{error_kind}; detailed value remains in the originating error log"
+                    )),
+                    error_kind: Some(error_kind.clone()),
+                    ..Default::default()
+                },
             );
+            let submission_result = consensus_adapter
+                .submit_to_consensus(&[consensus_message])
+                .await;
+            if let Some(session) = self
+                .dwallet_mpc_manager
+                .sessions
+                .get_mut(&session_identifier)
+            {
+                session.record_local_output_submission(
+                    self.last_read_consensus_round,
+                    output_digest,
+                    rejected,
+                    submission_result
+                        .as_ref()
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                );
+            }
+            if let Err(err) = submission_result {
+                error!(
+                    ?session_identifier,
+                    validator=?validator_name,
+                    error=?err,
+                    "failed to submit an MPC SessionFailed message to consensus"
+                );
+                self.dwallet_mpc_manager.emit_session_anomaly(
+                    session_identifier,
+                    MpcAnomalyKind::RejectedOutputSubmissionFailed,
+                    MpcAnomalyContext {
+                        current_consensus_round: self.last_read_consensus_round,
+                        trigger_conditions: vec!["rejected_output_submission_to_consensus_failed"],
+                        error: Some(err.to_string()),
+                        error_kind: Some("consensus_submission".to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
         }
     }
 

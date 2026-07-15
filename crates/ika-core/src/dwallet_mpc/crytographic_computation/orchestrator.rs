@@ -25,6 +25,7 @@ use crate::runtime::IkaRuntimes;
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -231,6 +232,24 @@ impl CryptographicComputationsOrchestrator {
     fn has_available_cores_to_perform_computation(&mut self) -> bool {
         self.currently_running_cryptographic_computations.len()
             < self.available_cores_for_cryptographic_computations
+    }
+
+    pub(crate) fn running_computation_count_for_session(
+        &self,
+        session_identifier: &SessionIdentifier,
+    ) -> usize {
+        self.currently_running_cryptographic_computations
+            .iter()
+            .filter(|computation_id| &computation_id.session_identifier == session_identifier)
+            .count()
+    }
+
+    pub(crate) fn has_seen_computation(&self, computation_id: &ComputationId) -> bool {
+        self.currently_running_cryptographic_computations
+            .contains(computation_id)
+            || self
+                .completed_cryptographic_computations
+                .contains(computation_id)
     }
 
     /// Try to spawn a cryptographic `computation_request` to execute in a different thread
