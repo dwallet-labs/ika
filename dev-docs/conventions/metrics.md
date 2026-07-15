@@ -72,16 +72,17 @@ cross-binary malicious-detection test asserts exclusion programmatically
 instead of matching a log line. Log-level discipline itself lives in
 [`logging.md`](logging.md).
 
-The literal previous-release rollout gate also exports per-authority
-network-key reconfiguration observations from its current-binary validator.
-`ika_dwallet_mpc_network_key_reconfiguration_output_info` carries the session,
+Per-authority output observations are protocol-generic.
+`ika_dwallet_mpc_session_output_info` carries the protocol name, session,
 authority, and canonical BCS-output digest; the paired
-`_reported_malicious_actors` and `_output_rejected` gauges preserve each
-authority's report envelope. This lets one instrumented current validator
-verify all consensus-submitted outputs, including reports from an unmodified
-historical binary. The series reset with the per-epoch manager. The unlabeled,
-always-present `_sessions_pending` gauge makes a clean zero distinguishable
-from a missing scrape.
+`ika_dwallet_mpc_session_reported_malicious_actors` and
+`ika_dwallet_mpc_session_output_rejected` gauges preserve each authority's
+report envelope. This lets one instrumented validator verify
+consensus-submitted outputs from any protocol, including reports from an
+unmodified historical binary. The series reset with the per-epoch manager.
+`ika_dwallet_mpc_protocol_sessions_pending{protocol_name=...}` emits zero for a
+completed protocol while its session remains tracked, so tests can distinguish
+a clean zero from a missing protocol observation.
 
 ## Inventory (generated)
 
@@ -148,13 +149,10 @@ ika_dwallet_mpc_network_key_instantiation_failures_total
 ika_dwallet_mpc_network_key_instantiation_sub_call_duration_seconds
 ika_dwallet_mpc_network_key_instantiations_in_flight
 ika_dwallet_mpc_network_key_loaded_epoch
-ika_dwallet_mpc_network_key_reconfiguration_output_info
-ika_dwallet_mpc_network_key_reconfiguration_output_rejected
-ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors
-ika_dwallet_mpc_network_key_reconfiguration_sessions_pending
 ika_dwallet_mpc_number_of_expected_sign_sessions
 ika_dwallet_mpc_number_of_unexpected_sign_sessions
 ika_dwallet_mpc_protocol_data_generation_errors_total
+ika_dwallet_mpc_protocol_sessions_pending
 ika_dwallet_mpc_ready_to_advance_result_total
 ika_dwallet_mpc_received_requests_start_count
 ika_dwallet_mpc_requests_pending_for_frozen_mpc_data
@@ -163,6 +161,9 @@ ika_dwallet_mpc_requests_pending_for_next_active_committee
 ika_dwallet_mpc_self_output_to_quorum_consensus_rounds
 ika_dwallet_mpc_service_end_of_publish_local
 ika_dwallet_mpc_session_start_count
+ika_dwallet_mpc_session_output_info
+ika_dwallet_mpc_session_output_rejected
+ika_dwallet_mpc_session_reported_malicious_actors
 ika_dwallet_mpc_session_state_count
 ika_dwallet_mpc_sessions_rejected_total
 ika_dwallet_mpc_sessions_with_self_output_no_quorum

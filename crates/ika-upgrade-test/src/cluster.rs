@@ -49,6 +49,8 @@ use crate::process::ValidatorProcess;
 use crate::sui::SuiLocalnet;
 use crate::{DEFAULT_EPOCH_DURATION_MS, DEFAULT_NUM_VALIDATORS};
 
+const NETWORK_KEY_RECONFIGURATION_PROTOCOL: &str = "Network Encryption Key Reconfiguration";
+
 /// A running out-of-process cluster. Owns the Sui localnet, the validator
 /// processes, and the notifier; tears everything down on `Drop` (each child has
 /// `kill_on_drop`).
@@ -595,14 +597,68 @@ fn required_unlabeled_metric(
     )
 }
 
+fn required_labeled_metric(
+    body: &str,
+    metric: &str,
+    expected_labels: &[(&str, &str)],
+    validator: &ValidatorProcess,
+) -> Result<u64> {
+    let samples = parse_metric_samples(body, metric)?;
+    let matching = samples
+        .into_iter()
+        .filter(|sample| {
+            expected_labels.iter().all(|(name, value)| {
+                sample
+                    .labels
+                    .get(*name)
+                    .is_some_and(|actual| actual == value)
+            })
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        matching.len() == 1,
+        "validator {} metrics endpoint {} returned {} samples for {metric} with labels {expected_labels:?}; expected exactly one",
+        validator.index,
+        validator.metrics_endpoint(),
+        matching.len()
+    );
+    let value = matching[0].value;
+    ensure!(
+        value.is_finite() && value >= 0.0 && value.fract() == 0.0,
+        "validator {} metrics endpoint {} returned invalid {metric} value {value} with labels {expected_labels:?}",
+        validator.index,
+        validator.metrics_endpoint()
+    );
+    Ok(value as u64)
+}
+
+fn metric_samples_for_protocol(
+    body: &str,
+    metric: &str,
+    protocol_name: &str,
+) -> Result<Vec<PrometheusSample>> {
+    parse_metric_samples(body, metric)?
+        .into_iter()
+        .map(|sample| {
+            let sample_protocol = sample
+                .labels
+                .get("protocol_name")
+                .with_context(|| format!("{metric} sample missing protocol_name label"))?;
+            Ok((sample_protocol == protocol_name).then_some(sample))
+        })
+        .filter_map(Result::transpose)
+        .collect()
+}
+
 fn canonical_network_key_outputs(
     body: &str,
     expected_authorities: &BTreeSet<String>,
     observer: &str,
 ) -> Result<BTreeMap<String, String>> {
-    let output_samples = parse_metric_samples(
+    let output_samples = metric_samples_for_protocol(
         body,
-        "ika_dwallet_mpc_network_key_reconfiguration_output_info",
+        "ika_dwallet_mpc_session_output_info",
+        NETWORK_KEY_RECONFIGURATION_PROTOCOL,
     )?;
     ensure!(
         !output_samples.is_empty(),
@@ -610,7 +666,8 @@ fn canonical_network_key_outputs(
     );
 
     let envelope_values = |metric: &str| {
-        let samples = parse_metric_samples(body, metric)?;
+        let samples =
+            metric_samples_for_protocol(body, metric, NETWORK_KEY_RECONFIGURATION_PROTOCOL)?;
         ensure!(
             !samples.is_empty(),
             "{observer} is missing required {metric} samples"
@@ -641,9 +698,8 @@ fn canonical_network_key_outputs(
         }
         Ok::<_, anyhow::Error>(values)
     };
-    let malicious =
-        envelope_values("ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors")?;
-    let rejected = envelope_values("ika_dwallet_mpc_network_key_reconfiguration_output_rejected")?;
+    let malicious = envelope_values("ika_dwallet_mpc_session_reported_malicious_actors")?;
+    let rejected = envelope_values("ika_dwallet_mpc_session_output_rejected")?;
 
     let mut outputs_by_session: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for sample in output_samples {
@@ -1161,11 +1217,24 @@ impl ClusterOfProcesses {
                     .get(*index)
                     .with_context(|| format!("validator index {index} out of range"))?;
                 let body = validator.metrics().await?;
-                for metric in [
-                    "ika_dwallet_mpc_network_key_reconfiguration_sessions_pending",
-                    "ika_dwallet_mpc_network_key_instantiations_in_flight",
+                let protocol_pending = required_labeled_metric(
+                    &body,
+                    "ika_dwallet_mpc_protocol_sessions_pending",
+                    &[("protocol_name", NETWORK_KEY_RECONFIGURATION_PROTOCOL)],
+                    validator,
+                )?;
+                let instantiations = required_unlabeled_metric(
+                    &body,
+                    &["ika_dwallet_mpc_network_key_instantiations_in_flight"],
+                    validator,
+                )?;
+                for (metric, value) in [
+                    (
+                        "network-key reconfiguration sessions pending",
+                        protocol_pending,
+                    ),
+                    ("network-key instantiations in flight", instantiations),
                 ] {
-                    let value = required_unlabeled_metric(&body, &[metric], validator)?;
                     if value != 0 {
                         pending.push(format!(
                             "validator {} at {} reports {metric}={value}",
@@ -1646,13 +1715,13 @@ mod tests {
             .flat_map(|(authority, digest)| {
                 [
                     format!(
-                        "ika_dwallet_mpc_network_key_reconfiguration_output_info{{session_id=\"session\",authority=\"{authority}\",output_digest=\"{digest}\"}} 1\n"
+                        "ika_dwallet_mpc_session_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\",output_digest=\"{digest}\"}} 1\n"
                     ),
                     format!(
-                        "ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors{{session_id=\"session\",authority=\"{authority}\"}} 0\n"
+                        "ika_dwallet_mpc_session_reported_malicious_actors{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\"}} 0\n"
                     ),
                     format!(
-                        "ika_dwallet_mpc_network_key_reconfiguration_output_rejected{{session_id=\"session\",authority=\"{authority}\"}} 0\n"
+                        "ika_dwallet_mpc_session_output_rejected{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\"}} 0\n"
                     ),
                 ]
             })
@@ -1690,6 +1759,22 @@ mod tests {
         assert!(error.contains("http://127.0.0.1:0/metrics"));
     }
 
+    #[test]
+    fn labeled_metric_requires_the_requested_protocol() {
+        let validator = stopped_validator();
+        let body = "ika_dwallet_mpc_protocol_sessions_pending{protocol_name=\"Sign\"} 0\n";
+        let error = required_labeled_metric(
+            body,
+            "ika_dwallet_mpc_protocol_sessions_pending",
+            &[("protocol_name", NETWORK_KEY_RECONFIGURATION_PROTOCOL)],
+            &validator,
+        )
+        .expect_err("missing requested protocol must fail closed")
+        .to_string();
+        assert!(error.contains("validator 2"));
+        assert!(error.contains("http://127.0.0.1:0/metrics"));
+    }
+
     #[tokio::test]
     async fn stopped_validator_health_and_metrics_fail_closed() {
         let validator = stopped_validator();
@@ -1723,8 +1808,11 @@ mod tests {
             .into_iter()
             .map(str::to_string)
             .collect();
-        let body =
+        let mut body =
             network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(
+            "ika_dwallet_mpc_session_output_info{protocol_name=\"Sign\",session_id=\"unrelated\",authority=\"a\",output_digest=\"different\"} 1\n",
+        );
         let canonical = canonical_network_key_outputs(&body, &expected, "validator 0").unwrap();
         assert_eq!(canonical["session"], "same");
     }
@@ -1753,11 +1841,10 @@ mod tests {
     #[test]
     fn rejects_missing_network_key_envelope_metric() {
         let expected = ["a"].into_iter().map(str::to_string).collect();
-        let body = concat!(
-            "ika_dwallet_mpc_network_key_reconfiguration_output_info{session_id=\"session\",authority=\"a\",output_digest=\"same\"} 1\n",
-            "ika_dwallet_mpc_network_key_reconfiguration_output_rejected{session_id=\"session\",authority=\"a\"} 0\n",
+        let body = format!(
+            "ika_dwallet_mpc_session_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"same\"}} 1\nika_dwallet_mpc_session_output_rejected{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\"}} 0\n"
         );
-        let error = canonical_network_key_outputs(body, &expected, "validator 0")
+        let error = canonical_network_key_outputs(&body, &expected, "validator 0")
             .expect_err("missing malicious envelope metric must fail closed");
         assert!(error.to_string().contains("missing required"));
     }

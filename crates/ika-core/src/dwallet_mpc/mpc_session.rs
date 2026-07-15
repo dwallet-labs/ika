@@ -38,7 +38,7 @@ pub(crate) struct DWalletMPCSessionOutput {
 }
 
 #[derive(Clone)]
-pub(crate) struct NetworkKeyReconfigurationOutputObservation {
+pub(crate) struct SessionOutputObservation {
     pub(crate) digests: HashSet<[u8; 32]>,
     pub(crate) malicious_actor_count: usize,
     pub(crate) rejected: bool,
@@ -88,6 +88,11 @@ pub(crate) struct DWalletSession {
     /// Same idea — set to `Some(_)` once we've seen a request, preserved across transitions.
     pub(super) session_type: Option<SessionType>,
 
+    /// Stable protocol name from the session request. Outputs can arrive before
+    /// their request, so this remains `None` until the request is observed and
+    /// is then preserved across terminal status transitions.
+    pub(super) protocol_name: Option<String>,
+
     // -------- per-session timing/diagnostic counters --------
     // All of these are populated in this process's lifetime only — pre-restart events
     // do not contribute. They feed the `ika_dwallet_mpc_user_session_*` per-seq gauges.
@@ -121,17 +126,10 @@ pub(crate) struct DWalletSession {
     /// digest.
     pub(super) distinct_output_digests: HashSet<[u8; 32]>,
 
-    /// Set once the on-chain request identifies this as a network-key
-    /// reconfiguration session. Outputs can arrive before the request, so the
-    /// per-authority observations below are collected while the request kind
-    /// is unknown and exposed only after this flag becomes true.
-    pub(super) is_network_key_reconfiguration: bool,
-
     /// Canonical submitted output observed from each authority through
-    /// consensus. This preserves the individual votes that a later weighted
-    /// majority would otherwise hide.
-    pub(super) network_key_reconfiguration_output_observations:
-        HashMap<AuthorityName, NetworkKeyReconfigurationOutputObservation>,
+    /// consensus. This is protocol-agnostic and preserves individual votes
+    /// that a later weighted majority would otherwise hide.
+    pub(super) output_observations: HashMap<AuthorityName, SessionOutputObservation>,
 }
 
 /// Possible statuses of a session:
@@ -208,17 +206,17 @@ impl DWalletSession {
     ) -> Self {
         // If the new session is created with an Active status the request is right there;
         // pull seq/type out of it so they survive any later transition to a unit variant.
-        let (session_sequence_number, session_type, is_network_key_reconfiguration) = match &status
-        {
+        let (session_sequence_number, session_type, protocol_name) = match &status {
             SessionStatus::Active { request, .. } => (
                 request.session_sequence_number,
                 Some(request.session_type),
-                matches!(
-                    &request.protocol_data,
-                    ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+                Some(
+                    DWalletSessionRequestMetricData::from(&request.protocol_data)
+                        .name()
+                        .to_owned(),
                 ),
             ),
-            _ => (None, None, false),
+            _ => (None, None, None),
         };
         Self {
             status,
@@ -231,14 +229,14 @@ impl DWalletSession {
             created_at: Instant::now(),
             session_sequence_number,
             session_type,
+            protocol_name,
             first_output_consensus_round: None,
             self_output_consensus_round: None,
             quorum_consensus_round: None,
             distinct_output_authorities: HashSet::new(),
             local_output_rejected: None,
             distinct_output_digests: HashSet::new(),
-            is_network_key_reconfiguration,
-            network_key_reconfiguration_output_observations: HashMap::new(),
+            output_observations: HashMap::new(),
         }
     }
 
@@ -254,13 +252,9 @@ impl DWalletSession {
         self.session_type = Some(session_type);
     }
 
-    pub(crate) fn mark_network_key_reconfiguration(&mut self) {
-        self.is_network_key_reconfiguration = true;
-    }
-
-    pub(crate) fn discard_unclassified_output_observations(&mut self) {
-        if !self.is_network_key_reconfiguration {
-            self.network_key_reconfiguration_output_observations.clear();
+    pub(crate) fn set_protocol_name(&mut self, protocol_name: String) {
+        if self.protocol_name.is_none() {
+            self.protocol_name = Some(protocol_name);
         }
     }
 
@@ -366,11 +360,6 @@ impl DWalletSession {
         sender_party_id: PartyID,
         output: DWalletMPCOutputReport,
     ) {
-        let may_be_network_key_reconfiguration = self.is_network_key_reconfiguration
-            || matches!(&self.status, SessionStatus::WaitingForSessionRequest)
-            || !self
-                .network_key_reconfiguration_output_observations
-                .is_empty();
         debug!(
             session_identifier=?output.session_identifier(),
             from_authority=?output.authority(),
@@ -425,22 +414,20 @@ impl DWalletSession {
             if let Ok(output_bytes) = bcs::to_bytes(&output) {
                 let digest: [u8; 32] = DefaultHash::digest(&output_bytes).into();
                 self.distinct_output_digests.insert(digest);
-                if may_be_network_key_reconfiguration {
-                    self.network_key_reconfiguration_output_observations
-                        .entry(authority)
-                        .and_modify(|observation| {
-                            observation.digests.insert(digest);
-                            observation.malicious_actor_count = observation
-                                .malicious_actor_count
-                                .max(malicious_authorities.len());
-                            observation.rejected |= rejected;
-                        })
-                        .or_insert_with(|| NetworkKeyReconfigurationOutputObservation {
-                            digests: HashSet::from([digest]),
-                            malicious_actor_count: malicious_authorities.len(),
-                            rejected,
-                        });
-                }
+                self.output_observations
+                    .entry(authority)
+                    .and_modify(|observation| {
+                        observation.digests.insert(digest);
+                        observation.malicious_actor_count = observation
+                            .malicious_actor_count
+                            .max(malicious_authorities.len());
+                        observation.rejected |= rejected;
+                    })
+                    .or_insert_with(|| SessionOutputObservation {
+                        digests: HashSet::from([digest]),
+                        malicious_actor_count: malicious_authorities.len(),
+                        rejected,
+                    });
             }
             if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
                 e.insert(DWalletMPCSessionOutput {
@@ -846,10 +833,9 @@ impl DWalletMPCManager {
         }
 
         let status = self.session_status_from_request(request.clone(), false);
-        let is_network_key_reconfiguration = matches!(
-            &request.protocol_data,
-            ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
-        );
+        let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
+            .name()
+            .to_owned();
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
@@ -863,11 +849,7 @@ impl DWalletMPCManager {
             // unit-variant states (ComputationCompleted/Completed/Failed) which would
             // otherwise discard this information.
             session.set_request_metadata(request.session_sequence_number, request.session_type);
-            if is_network_key_reconfiguration {
-                session.mark_network_key_reconfiguration();
-            } else {
-                session.discard_unclassified_output_observations();
-            }
+            session.set_protocol_name(protocol_name.clone());
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -893,11 +875,7 @@ impl DWalletMPCManager {
             // explicit set covers the non-Active creation path (e.g. Failed).
             if let Some(session) = self.sessions.get_mut(&session_identifier) {
                 session.set_request_metadata(request.session_sequence_number, request.session_type);
-                if is_network_key_reconfiguration {
-                    session.mark_network_key_reconfiguration();
-                } else {
-                    session.discard_unclassified_output_observations();
-                }
+                session.set_protocol_name(protocol_name);
             }
         }
         Some(status)

@@ -199,6 +199,13 @@ drives them across epochs:
   with every validator healthy and locally current, zero reported malicious
   actors, no stranded work, and identical canonical per-authority outputs.
 
+The current validator's per-authority output observations and pending-session
+counts are protocol-generic and labeled by protocol name. This scenario filters
+that shared data to network-key reconfiguration because that is the deployment
+boundary it specifies; other protocol compatibility scenarios can apply the
+same evidence to DKG, presign, sign, or verification sessions without adding
+protocol-specific node instrumentation.
+
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see
 [`../playbooks/ci-suites.md`](../playbooks/ci-suites.md).

@@ -2022,6 +2022,9 @@ impl DWalletMPCManager {
             Ok((public_input, private_input)) => {
                 let session_sequence_number = request.session_sequence_number;
                 let session_type = request.session_type;
+                let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
+                    .name()
+                    .to_owned();
                 let status = SessionStatus::Active {
                     public_input,
                     private_input,
@@ -2037,6 +2040,7 @@ impl DWalletMPCManager {
                 if let Some(session) = self.sessions.get_mut(&session_identifier) {
                     session.status = status;
                     session.set_request_metadata(session_sequence_number, session_type);
+                    session.set_protocol_name(protocol_name);
                 } else {
                     self.new_session(
                         &session_identifier,
@@ -3460,7 +3464,7 @@ impl DWalletMPCManager {
         let mut state_counts: HashMap<&str, i64> = HashMap::new();
         let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
         let mut sessions_with_self_output_no_quorum = 0i64;
-        let mut network_key_reconfiguration_sessions_pending = 0i64;
+        let mut protocol_sessions_pending: HashMap<String, i64> = HashMap::new();
         for session in self.sessions.values() {
             *state_counts
                 .entry(session_state_label(&session.status))
@@ -3484,39 +3488,48 @@ impl DWalletMPCManager {
             {
                 sessions_with_self_output_no_quorum += 1;
             }
-            if session.is_network_key_reconfiguration {
+            if let Some(protocol_name) = &session.protocol_name {
+                let pending = protocol_sessions_pending
+                    .entry(protocol_name.clone())
+                    .or_default();
                 if !matches!(
                     session.status,
                     SessionStatus::Completed | SessionStatus::Failed
                 ) {
-                    network_key_reconfiguration_sessions_pending += 1;
+                    *pending += 1;
                 }
                 let session_id = hex::encode(session.session_identifier.as_ref());
-                for (authority, observation) in
-                    &session.network_key_reconfiguration_output_observations
-                {
+                for (authority, observation) in &session.output_observations {
                     let authority = authority.to_string();
                     for digest in &observation.digests {
                         let output_digest = hex::encode(digest);
                         metrics
-                            .network_key_reconfiguration_output_info
-                            .with_label_values(&[&session_id, &authority, &output_digest])
+                            .session_output_info
+                            .with_label_values(&[
+                                protocol_name,
+                                &session_id,
+                                &authority,
+                                &output_digest,
+                            ])
                             .set(1);
                     }
                     metrics
-                        .network_key_reconfiguration_reported_malicious_actors
-                        .with_label_values(&[&session_id, &authority])
+                        .session_reported_malicious_actors
+                        .with_label_values(&[protocol_name, &session_id, &authority])
                         .set(observation.malicious_actor_count as i64);
                     metrics
-                        .network_key_reconfiguration_output_rejected
-                        .with_label_values(&[&session_id, &authority])
+                        .session_output_rejected
+                        .with_label_values(&[protocol_name, &session_id, &authority])
                         .set(observation.rejected as i64);
                 }
             }
         }
-        metrics
-            .network_key_reconfiguration_sessions_pending
-            .set(network_key_reconfiguration_sessions_pending);
+        for (protocol_name, pending) in protocol_sessions_pending {
+            metrics
+                .protocol_sessions_pending
+                .with_label_values(&[&protocol_name])
+                .set(pending);
+        }
         for state in ALL_SESSION_STATES.iter().copied() {
             metrics
                 .session_state_count
