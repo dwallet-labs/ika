@@ -58,15 +58,18 @@ gh run watch <run-id>
 gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<attempt> / rust-tests-log
 ```
 
-## Upgrade test (run-when-needed, not in the nightly fan-out)
+## Upgrade test (release gate and focused PR check)
 
 `.github/workflows/upgrade-test.yaml` runs the out-of-process cross-binary
 upgrade harness (`crates/ika-upgrade-test/`) — real, separately-compiled
 `ika-validator` child processes against an external `sui` localnet, swapped
-across epochs. It is `workflow_dispatch`-only and deliberately NOT part of
-`scheduled-all-suites.yaml`: it is a pre-mainnet-upgrade rehearsal and a
-check for changes to versioning / serialization / the epoch boundary, not a
-per-push gate. The contract it verifies is
+across epochs. Manual dispatch remains available. Pull requests that touch
+MPC, crypto dependencies, serialization, protocol configuration, the upgrade
+harness, or `Cargo.lock` automatically run the focused literal-v1.1.8 mixed
+rollout rather than the entire matrix. The release workflow calls the same
+reusable workflow with the exact candidate SHA and blocks tag publication on
+that scenario. It is not part of `scheduled-all-suites.yaml`. The contract it
+verifies is
 [`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
 
 ```bash
@@ -98,11 +101,24 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=cross_binary
 #   override the old side, e.g. a specific commit kept at v3:
 #   -f old_ref=<sha-or-branch> -f old_max_protocol_version=3 -f old_bin_name=ika-validator
 
-# Atomic mainnet rehearsal: boot the literal mainnet-v1.1.8 binary, swap all
-# to the current build, confirm v4 and continued serving. Pick it explicitly
+# Coordinated full-committee rehearsal: boot literal mainnet-v1.1.8, then
+# sequentially swap all validators to current before the tested reshare.
 # before a mainnet upgrade (builds the tag at its own old toolchain).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 #   override the old tag:  -f old_ref=tag-or-sha  (defaults to mainnet-v1.1.8)
+
+# Release-blocking decentralized rollout: one current validator and three
+# literal v1.1.8 validators remain mixed through two protocol-v3 network-key
+# reconfigurations. Real crypto and production presign-pool sizing are forced;
+# its >=8-minute epoch reserves the bounded restart before the midpoint.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_mixed_rollout \
+  -f candidate_sha=<exact-candidate-sha>
+
+# Test-test the release gate with the repository's compiled-in, feature-gated
+# one-validator reconfiguration-message fault. This run is expected to fail;
+# its logs must show the exact zero-malicious or output-convergence assertion.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_mixed_rollout \
+  -f candidate_sha=<exact-candidate-sha> -f test_testing_fault=true
 
 # Loaded runner slack: bump epochs for the upgrade scenarios.
 #   -f epoch_duration_ms=600000
@@ -113,31 +129,37 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 # runs that FINISH — a runner death drops it like every other artifact).
 ```
 
-### Scenario differences — `cross_binary` vs `v118_upgrade` (and the rest)
+### Scenario differences
 
-All four scenarios genesis at **protocol v3** (a v4 *genesis* DKG is rejected
+All scenarios genesis at **protocol v3** (a v4 *genesis* DKG is rejected
 forever — the network must upgrade *into* v4) with one notifier + a validator
 committee. They differ in the OLD binary, how it is swapped, and what
 continuity they prove:
 
-| | `smoke` | `workload` | `cross_binary` | `v118_upgrade` |
-|---|---|---|---|---|
-| OLD binary | current build | current build | **this branch pinned to `MAX_PROTOCOL_VERSION=3`** (one-line patch, current toolchain) | **the literal `mainnet-v1.1.8` `ika-node`** from the tag (old toolchain, `--no-default-features`) |
-| Binary swap | none | none | **rolling** — one at a time; mixed-binary committees exchange consensus + MPC mid-epoch | **atomic** — all validators at once |
-| Committee churn | no | no | **yes** — 4 → 3 → 5 → 4 across epochs (remove, join 2 brand-new validators, remove); a real reshare to a different party set at every boundary | **no** — fixed 4 |
-| `GlobalPresignConfig` | n/a | full | **empty** (harness arrangement → routes presign per-dWallet; exercises targeted-presign) | **populated** (mainnet-faithful → global presign; exercises the pre-activation fallback / upgrade-window deadlock guard) |
-| Proves | 4 validators reach epoch 2 | one full DKG→Presign→Sign lifecycle | wire-compat + on-disk compat + reshare/churn **between two builds of the same branch** | the **real mainnet 1.1.8 → current upgrade**: local boots against RocksDB **written by 1.1.8**, reshares a key whose DKG bytes were **produced by 1.1.8's crypto**, 1.1.8 dWallets stay usable, global-presign pre-activation fallback (no deadlock) |
+| Scenario | Binary topology at tested reshare | Protocol transition | Primary invariant |
+|---|---|---|---|
+| `smoke` | current only | none | process harness reaches epoch 2 |
+| `workload` | current only | v3 → v4 | user DKG → Presign → Sign survives activation |
+| `cross_binary` | current source plus current source pinned to max v3 | v3 → v4 | current-source wire compatibility and multi-epoch churn |
+| `v118_upgrade` | literal v1.1.8, then every validator sequentially restarted onto current before the tested reshare | v3 → v4 | historical RocksDB/key continuity and pre-activation global presign |
+| `v118_churn` | current only by the tested churn reshare | v3 → v4 | v1.1.8-origin key reshared to a new post-upgrade validator |
+| `v118_mixed_rollout` | **one current + three literal v1.1.8** for two reshares | held at v3 | exact production rollout topology, zero false-malicious results, no stranded validator/session, canonical 4-of-4 output convergence |
+| `legacy_config` | current only | v3 → v4 | old JSON-RPC-only configuration remains accepted |
 
-**Why the swap style differs:** `cross_binary`'s two binaries are the same
-branch differing only in advertised protocol version, so they are
-MPC-wire-compatible and a *rolling* swap with mixed committees is valid.
-`v118_upgrade` can't do that — this branch single-pins `cryptography-private`,
-so a mixed 1.1.8/local committee can't exchange MPC messages; it must swap
-**atomically** (a coordinated full-network restart). A *rolling* `cross_binary`
-from 1.1.8 is therefore invalid; to get churn from a real 1.1.8 origin you swap
-atomically first, then churn — which is exactly **`v118_churn`** (`v118_upgrade`
-+ one post-swap joiner: the v4 reshare of the 1.1.8-origin network key then
-includes a party that never held it, with no mixed committee).
+`stop_and_swap([0, 1, 2, 3])` is sequential: it restarts and health-checks
+each process before moving to the next. Therefore `v118_upgrade` and
+`v118_churn` are coordinated full-committee replacement tests, not atomic
+restart tests, and they replace every validator before intentionally crossing
+their tested reshare. `v118_mixed_rollout` closes that gap by swapping only
+validator 0, explicitly witnessing the reconfiguration start after the swap,
+and retaining the other three literal historical processes through completion.
+
+On-chain epoch advancement is deliberately not a success criterion for the
+mixed scenario. A 3-of-4 old-binary majority can continue while the upgraded
+validator is divergent or self-convicted. The test additionally requires local
+epoch and health on all four processes, exact protocol-v3 ceilings, zero
+malicious reports and self-malicious logs, completed on-chain and local session
+accounting, and the same canonical output digest from all four authorities.
 
 **Which to use:** `v118_upgrade` is the pre-mainnet-upgrade rehearsal (real
 release, real on-disk + crypto continuity); `v118_churn` is the same plus one

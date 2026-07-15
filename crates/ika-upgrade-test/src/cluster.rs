@@ -12,11 +12,12 @@
 //! YAML on a persistent data dir and hand it to a real binary via
 //! `--config-path`, instead of starting `IkaNode` in-process.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::{NodeConfig, SuiDataSource};
 use ika_protocol_config::ProtocolVersion;
@@ -33,9 +34,11 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
-use ika_types::crypto::KeypairTraits;
-use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
-use ika_types::sui::SystemInner;
+use ika_types::crypto::{AuthorityPublicKeyBytes, KeypairTraits};
+use ika_types::messages_dwallet_mpc::{
+    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
+};
+use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use rand::rngs::OsRng;
 use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
@@ -67,6 +70,10 @@ pub struct ClusterOfProcesses {
     /// aligned with `validators` by index; joiners append. A mirrored
     /// validator's `sui_state_mirror_peers` is built from these.
     validator_peer_ids: Vec<String>,
+    /// Protocol authorities aligned with `validators`. The convergence check
+    /// compares exact identities, not just a count that a missing validator
+    /// and an unexpected sender could accidentally satisfy.
+    validator_authorities: Vec<AuthorityPublicKeyBytes>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -297,6 +304,10 @@ impl ClusterBuilder {
             .iter()
             .map(|init| hex::encode(init.network_key_pair.public().0.to_bytes()))
             .collect();
+        let validator_authorities = validator_init_configs
+            .iter()
+            .map(|init| init.key_pair.public().into())
+            .collect();
 
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
         // set refuses to boot without a Sui trust anchor. Seed every validator
@@ -422,6 +433,7 @@ impl ClusterBuilder {
             publisher_keypair,
             committee,
             validator_peer_ids,
+            validator_authorities,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -493,6 +505,214 @@ fn parse_labelless_gauge(body: &str, metric: &str) -> Option<u64> {
         })
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct PrometheusSample {
+    labels: BTreeMap<String, String>,
+    value: f64,
+}
+
+/// Parse exact Prometheus samples for one metric name. Prefix collisions are
+/// rejected (`metric_other` is not `metric`); labels used by this harness are
+/// hex/identifier strings and therefore never contain escaped commas.
+fn parse_metric_samples(body: &str, metric: &str) -> Result<Vec<PrometheusSample>> {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let rest = line.strip_prefix(metric)?;
+            if !rest.starts_with(' ') && !rest.starts_with('{') {
+                return None;
+            }
+            Some(rest)
+        })
+        .map(|rest| {
+            let (labels, value) = if let Some(rest) = rest.strip_prefix('{') {
+                let (raw_labels, value) = rest
+                    .split_once("} ")
+                    .with_context(|| format!("malformed labeled sample for {metric}: {rest}"))?;
+                let labels = raw_labels
+                    .split(',')
+                    .map(|pair| {
+                        let (name, value) = pair.split_once('=').with_context(|| {
+                            format!("malformed label in sample for {metric}: {pair}")
+                        })?;
+                        let value = value
+                            .strip_prefix('"')
+                            .and_then(|value| value.strip_suffix('"'))
+                            .with_context(|| {
+                                format!("unquoted label in sample for {metric}: {pair}")
+                            })?;
+                        Ok((name.to_string(), value.to_string()))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?;
+                (labels, value)
+            } else {
+                (BTreeMap::new(), rest.trim())
+            };
+            let value = value
+                .parse::<f64>()
+                .with_context(|| format!("non-numeric sample for {metric}: {value}"))?;
+            Ok(PrometheusSample { labels, value })
+        })
+        .collect()
+}
+
+fn required_unlabeled_metric(
+    body: &str,
+    metric_names: &[&str],
+    validator: &ValidatorProcess,
+) -> Result<u64> {
+    for metric in metric_names {
+        let samples = parse_metric_samples(body, metric)?;
+        if samples.is_empty() {
+            continue;
+        }
+        if samples.len() != 1 || !samples[0].labels.is_empty() {
+            bail!(
+                "validator {} metrics endpoint {} returned {} non-canonical samples for {}",
+                validator.index,
+                validator.metrics_endpoint(),
+                samples.len(),
+                metric
+            );
+        }
+        let value = samples[0].value;
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+            bail!(
+                "validator {} metrics endpoint {} returned invalid {} value {}",
+                validator.index,
+                validator.metrics_endpoint(),
+                metric,
+                value
+            );
+        }
+        return Ok(value as u64);
+    }
+    bail!(
+        "validator {} metrics endpoint {} is missing required metric (accepted names: {})",
+        validator.index,
+        validator.metrics_endpoint(),
+        metric_names.join(", ")
+    )
+}
+
+fn canonical_network_key_outputs(
+    body: &str,
+    expected_authorities: &BTreeSet<String>,
+    observer: &str,
+) -> Result<BTreeMap<String, String>> {
+    let output_samples = parse_metric_samples(
+        body,
+        "ika_dwallet_mpc_network_key_reconfiguration_output_info",
+    )?;
+    ensure!(
+        !output_samples.is_empty(),
+        "{observer} is missing network-key output observations"
+    );
+
+    let envelope_values = |metric: &str| {
+        let samples = parse_metric_samples(body, metric)?;
+        ensure!(
+            !samples.is_empty(),
+            "{observer} is missing required {metric} samples"
+        );
+        let mut values = BTreeMap::new();
+        for sample in samples {
+            let session = sample
+                .labels
+                .get("session_id")
+                .cloned()
+                .with_context(|| format!("{metric} sample missing session_id label"))?;
+            let authority = sample
+                .labels
+                .get("authority")
+                .cloned()
+                .with_context(|| format!("{metric} sample missing authority label"))?;
+            ensure!(
+                sample.value.is_finite() && sample.value >= 0.0 && sample.value.fract() == 0.0,
+                "{metric} sample for session {session} authority {authority} has invalid value {}",
+                sample.value
+            );
+            ensure!(
+                values
+                    .insert((session.clone(), authority.clone()), sample.value as u64)
+                    .is_none(),
+                "{observer} has duplicate {metric} samples for session {session} authority {authority}"
+            );
+        }
+        Ok::<_, anyhow::Error>(values)
+    };
+    let malicious =
+        envelope_values("ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors")?;
+    let rejected = envelope_values("ika_dwallet_mpc_network_key_reconfiguration_output_rejected")?;
+
+    let mut outputs_by_session: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for sample in output_samples {
+        ensure!(
+            sample.value == 1.0,
+            "{observer} output-info sample has value {}, expected 1",
+            sample.value
+        );
+        let session = sample
+            .labels
+            .get("session_id")
+            .cloned()
+            .context("output-info sample missing session_id label")?;
+        let authority = sample
+            .labels
+            .get("authority")
+            .cloned()
+            .context("output-info sample missing authority label")?;
+        let digest = sample
+            .labels
+            .get("output_digest")
+            .cloned()
+            .context("output-info sample missing output_digest label")?;
+        let previous = outputs_by_session
+            .entry(session.clone())
+            .or_default()
+            .insert(authority.clone(), digest.clone());
+        ensure!(
+            previous.as_ref().is_none_or(|previous| previous == &digest),
+            "{observer} observed conflicting digests for session {session} authority {authority}"
+        );
+    }
+
+    let mut canonical = BTreeMap::new();
+    for (session, outputs) in outputs_by_session {
+        let observed_authorities = outputs.keys().cloned().collect::<BTreeSet<_>>();
+        ensure!(
+            &observed_authorities == expected_authorities,
+            "{observer} observed the wrong authority set for network-key session {session}: observed={observed_authorities:?}, expected={expected_authorities:?}"
+        );
+        let digests: BTreeSet<_> = outputs.values().cloned().collect();
+        ensure!(
+            digests.len() == 1,
+            "{observer} observed divergent per-authority outputs for network-key session {session}: {outputs:?}"
+        );
+        for authority in outputs.keys() {
+            let key = (session.clone(), authority.clone());
+            ensure!(
+                malicious.get(&key) == Some(&0),
+                "{observer} observed authority {authority} report a non-zero or missing malicious set for session {session}: {:?}",
+                malicious.get(&key)
+            );
+            ensure!(
+                rejected.get(&key) == Some(&0),
+                "{observer} observed authority {authority} submit a rejected or missing output for session {session}: {:?}",
+                rejected.get(&key)
+            );
+        }
+        canonical.insert(
+            session,
+            digests
+                .into_iter()
+                .next()
+                .expect("one digest after length check"),
+        );
+    }
+    Ok(canonical)
+}
+
 impl ClusterOfProcesses {
     /// Current on-chain ika epoch (read from the system object).
     pub async fn current_epoch(&self) -> Result<u64> {
@@ -512,6 +732,460 @@ impl ClusterOfProcesses {
             .await
             .map_err(|e| anyhow::anyhow!("get_system_inner: {e}"))?;
         Ok(inner.protocol_version)
+    }
+
+    async fn coordinator_snapshot(
+        &self,
+    ) -> Result<(
+        ika_types::sui::system_inner_v1::DWalletCoordinatorInnerV1,
+        BTreeMap<ObjectID, DWalletNetworkEncryptionKey>,
+    )> {
+        let (_, coordinator) = self
+            .ika_client
+            .get_dwallet_coordinator_inner()
+            .await
+            .map_err(|error| anyhow::anyhow!("get_dwallet_coordinator_inner: {error}"))?;
+        let keys = self
+            .ika_client
+            .get_dwallet_mpc_network_keys(&coordinator)
+            .await
+            .map_err(|error| anyhow::anyhow!("get_dwallet_mpc_network_keys: {error}"))?;
+        let DWalletCoordinatorInner::V1(inner) = coordinator;
+        Ok((inner, keys.into_iter().collect()))
+    }
+
+    /// Assert every expected validator process is still running and its admin
+    /// endpoint is reachable. This intentionally does not filter to running
+    /// processes: a dead expected validator is the failure being tested.
+    pub async fn expect_all_validators_healthy(&self) -> Result<()> {
+        for validator in &self.validators {
+            validator.expect_healthy().await?;
+        }
+        Ok(())
+    }
+
+    /// Wait until every validator's local epoch-store has entered `target`.
+    /// On-chain epoch progress is insufficient: a quorum can advance while one
+    /// validator remains on the previous epoch. v1.1.8 exported
+    /// `current_epoch`; current builds export the renamed `ika_current_epoch`.
+    pub async fn wait_for_all_validators_local_epoch(
+        &self,
+        target: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let mut lagging = Vec::new();
+            for validator in &self.validators {
+                if !validator.is_running() {
+                    bail!(
+                        "validator {} is not running while waiting for local epoch {} (metrics endpoint {})",
+                        validator.index,
+                        target,
+                        validator.metrics_endpoint()
+                    );
+                }
+                let body = validator.metrics().await?;
+                let epoch = required_unlabeled_metric(
+                    &body,
+                    &["ika_current_epoch", "current_epoch"],
+                    validator,
+                )?;
+                if epoch != target {
+                    lagging.push((validator.index, validator.metrics_endpoint(), epoch));
+                }
+            }
+            if lagging.is_empty() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "validators did not all enter local epoch {target} within {timeout:?}: {lagging:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Fail if any validator locally reports a protocol version above the
+    /// supplied ceiling. The metric exists under the same name in v1.1.8 and
+    /// current builds.
+    pub async fn expect_all_validators_protocol_version_at_most(&self, ceiling: u64) -> Result<()> {
+        for validator in &self.validators {
+            let body = validator.metrics().await?;
+            let version =
+                required_unlabeled_metric(&body, &["ika_current_protocol_version"], validator)?;
+            if version > ceiling {
+                bail!(
+                    "validator {} at {} reports protocol version {}, above ceiling {}",
+                    validator.index,
+                    validator.metrics_endpoint(),
+                    version,
+                    ceiling
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Assert the epoch's mid-epoch network-key reconfiguration has not been
+    /// initiated yet. A key may still be `NetworkReconfigurationCompleted`
+    /// from the previous epoch, so the epoch-scoped next-committee marker and
+    /// completion counter are the deterministic witnesses.
+    pub async fn expect_network_key_reconfiguration_not_started(&self, epoch: u64) -> Result<()> {
+        let (coordinator, keys) = self.coordinator_snapshot().await?;
+        ensure!(
+            coordinator.current_epoch == epoch,
+            "expected coordinator epoch {epoch} before network-key reconfiguration, got {}",
+            coordinator.current_epoch
+        );
+        ensure!(
+            !keys.is_empty(),
+            "coordinator epoch {epoch} has no network encryption keys"
+        );
+        ensure!(
+            coordinator.next_epoch_active_committee.is_none(),
+            "epoch {epoch} mid-epoch reconfiguration was already initiated"
+        );
+        ensure!(
+            coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed == 0,
+            "epoch {epoch} already reports {} completed network-key reconfigurations",
+            coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed
+        );
+        Ok(())
+    }
+
+    /// Wait until the requested epoch's network keys are visibly in the
+    /// `AwaitingNetworkReconfiguration` state. This makes the mixed-version
+    /// overlap deterministic: the binary swap is complete before the harness
+    /// witnesses the real on-chain reshare request.
+    pub async fn wait_for_network_key_reconfiguration_started(
+        &self,
+        epoch: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let (coordinator, keys) = self.coordinator_snapshot().await?;
+            ensure!(
+                coordinator.current_epoch == epoch,
+                "expected coordinator epoch {epoch} while waiting for network-key reconfiguration start, got {}",
+                coordinator.current_epoch
+            );
+            ensure!(
+                !keys.is_empty(),
+                "coordinator epoch {epoch} has no network encryption keys"
+            );
+            let awaiting = keys
+                .values()
+                .filter(|key| {
+                    key.state == DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration
+                })
+                .count();
+            if awaiting == keys.len() {
+                tracing::info!(
+                    epoch,
+                    keys = keys.len(),
+                    "network-key reconfiguration started"
+                );
+                return Ok(());
+            }
+            if coordinator.next_epoch_active_committee.is_some()
+                && coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed > 0
+            {
+                bail!(
+                    "network-key reconfiguration in epoch {epoch} completed before the harness observed every key in the started state"
+                );
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "network-key reconfiguration did not start in epoch {epoch} within {timeout:?}; states={:?}",
+                    keys.values().map(|key| &key.state).collect::<Vec<_>>()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Wait for the same epoch's on-chain network-key reconfiguration and all
+    /// system sessions to complete. Observing this before the epoch boundary
+    /// prevents quorum progress in the next epoch from masking a stranded
+    /// minority validator.
+    pub async fn wait_for_network_key_reconfiguration_completed(
+        &self,
+        epoch: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let (coordinator, keys) = self.coordinator_snapshot().await?;
+            ensure!(
+                coordinator.current_epoch == epoch,
+                "coordinator advanced to epoch {} before the harness observed epoch {epoch} network-key reconfiguration completion",
+                coordinator.current_epoch
+            );
+            let all_keys_completed = !keys.is_empty()
+                && keys.values().all(|key| {
+                    key.state == DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
+                });
+            let expected = coordinator.dwallet_network_encryption_keys.size;
+            let completed =
+                coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
+            let system = &coordinator.sessions_manager.system_sessions_keeper;
+            if all_keys_completed
+                && completed == expected
+                && system.started_sessions_count == system.completed_sessions_count
+            {
+                tracing::info!(
+                    epoch,
+                    completed,
+                    system_sessions = system.completed_sessions_count,
+                    "network-key reconfiguration completed"
+                );
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "network-key reconfiguration did not complete in epoch {epoch} within {timeout:?}: key_states={:?}, completed={completed}/{expected}, system_sessions={}/{}",
+                    keys.values().map(|key| &key.state).collect::<Vec<_>>(),
+                    system.completed_sessions_count,
+                    system.started_sessions_count
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Assert the malicious-actor gauge exactly on the specified validator
+    /// observers. Historical v1.1.8 does not export this gauge, so callers name
+    /// the current-binary observer(s); missing metrics still fail closed.
+    pub async fn expect_malicious_actors_exactly(
+        &self,
+        observer_indices: &[usize],
+        expected: u64,
+    ) -> Result<()> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no malicious-metric observers supplied"
+        );
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            let actual = required_unlabeled_metric(
+                &body,
+                &["ika_dwallet_mpc_malicious_actors_count"],
+                validator,
+            )?;
+            ensure!(
+                actual == expected,
+                "validator {} at {} reports {} malicious actors; expected exactly {}",
+                validator.index,
+                validator.metrics_endpoint(),
+                actual,
+                expected
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn expect_malicious_actors_at_least(
+        &self,
+        observer_indices: &[usize],
+        minimum: u64,
+    ) -> Result<()> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no malicious-metric observers supplied"
+        );
+        let mut maximum = 0;
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            let actual = required_unlabeled_metric(
+                &body,
+                &["ika_dwallet_mpc_malicious_actors_count"],
+                validator,
+            )?;
+            maximum = maximum.max(actual);
+        }
+        ensure!(
+            maximum >= minimum,
+            "malicious-metric observers {observer_indices:?} reported maximum {maximum}; expected at least {minimum}"
+        );
+        Ok(())
+    }
+
+    /// Assert every authority submitted the same canonical network-key
+    /// reconfiguration output for every observed session. The current-binary
+    /// observer records individual consensus reports from all committee
+    /// members, including literal historical binaries; this catches a 3-vs-1
+    /// split even when the majority result lets the chain keep advancing.
+    pub async fn expect_network_key_output_converged(
+        &self,
+        observer_indices: &[usize],
+        timeout: Duration,
+    ) -> Result<()> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no output-convergence observers supplied"
+        );
+        let expected_authorities: BTreeSet<_> = self
+            .validator_authorities
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let expected_epoch = self.current_epoch().await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            ensure!(
+                self.current_epoch().await? == expected_epoch,
+                "coordinator advanced beyond epoch {expected_epoch} before network-key output observations converged"
+            );
+            let mut canonical_by_session: Option<BTreeMap<String, String>> = None;
+            let mut incomplete = Vec::new();
+            for index in observer_indices {
+                let validator = self
+                    .validators
+                    .get(*index)
+                    .with_context(|| format!("validator index {index} out of range"))?;
+                let body = validator.metrics().await?;
+                let observer = format!(
+                    "validator {} metrics endpoint {}",
+                    validator.index,
+                    validator.metrics_endpoint()
+                );
+                let observer_canonical =
+                    match canonical_network_key_outputs(&body, &expected_authorities, &observer) {
+                        Ok(canonical) => canonical,
+                        Err(error)
+                            if error.to_string().contains("missing network-key")
+                                || error.to_string().contains("missing required")
+                                || error.to_string().contains("wrong authority set") =>
+                        {
+                            incomplete.push(error.to_string());
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!("validate network-key convergence from {observer}")
+                            });
+                        }
+                    };
+
+                if let Some(expected) = &canonical_by_session {
+                    ensure!(
+                        expected == &observer_canonical,
+                        "network-key observers disagree: expected {expected:?}, validator {} at {} reported {observer_canonical:?}",
+                        validator.index,
+                        validator.metrics_endpoint()
+                    );
+                } else {
+                    canonical_by_session = Some(observer_canonical);
+                }
+            }
+            if incomplete.is_empty() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "network-key output observations did not become complete within {timeout:?}: {}",
+                    incomplete.join("; ")
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Assert both chain and local-observer views have no stranded network-key
+    /// work for `epoch`. The chain checks system-session accounting and every
+    /// key state; the current observer checks always-present pending and
+    /// instantiation gauges.
+    pub async fn expect_no_pending_network_key_reconfiguration(
+        &self,
+        epoch: u64,
+        observer_indices: &[usize],
+        timeout: Duration,
+    ) -> Result<()> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no network-key pending-state observers supplied"
+        );
+        let (coordinator, keys) = self.coordinator_snapshot().await?;
+        ensure!(
+            coordinator.current_epoch == epoch,
+            "expected coordinator epoch {epoch}, got {}",
+            coordinator.current_epoch
+        );
+        ensure!(
+            !keys.is_empty(),
+            "coordinator epoch {epoch} has no network encryption keys"
+        );
+        ensure!(
+            keys.values().all(|key| key.state
+                == DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted),
+            "epoch {epoch} has non-completed network-key states: {:?}",
+            keys.values().map(|key| &key.state).collect::<Vec<_>>()
+        );
+        ensure!(
+            coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed
+                == coordinator.dwallet_network_encryption_keys.size,
+            "epoch {epoch} completed network-key count {}/{}",
+            coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed,
+            coordinator.dwallet_network_encryption_keys.size
+        );
+        let system = &coordinator.sessions_manager.system_sessions_keeper;
+        ensure!(
+            system.started_sessions_count == system.completed_sessions_count,
+            "epoch {epoch} has stranded immediate/system sessions: completed {}/started {}",
+            system.completed_sessions_count,
+            system.started_sessions_count
+        );
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let current_epoch = self.current_epoch().await?;
+            ensure!(
+                current_epoch == epoch,
+                "coordinator advanced to epoch {current_epoch} before epoch {epoch} local network-key work drained"
+            );
+            let mut pending = Vec::new();
+            for index in observer_indices {
+                let validator = self
+                    .validators
+                    .get(*index)
+                    .with_context(|| format!("validator index {index} out of range"))?;
+                let body = validator.metrics().await?;
+                for metric in [
+                    "ika_dwallet_mpc_network_key_reconfiguration_sessions_pending",
+                    "ika_dwallet_mpc_network_key_instantiations_in_flight",
+                ] {
+                    let value = required_unlabeled_metric(&body, &[metric], validator)?;
+                    if value != 0 {
+                        pending.push(format!(
+                            "validator {} at {} reports {metric}={value}",
+                            validator.index,
+                            validator.metrics_endpoint()
+                        ));
+                    }
+                }
+            }
+            if pending.is_empty() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "network-key reconfiguration remained pending within {timeout:?}: {}",
+                    pending.join("; ")
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 
     /// The minimum canonical network DKG output version reported across all
@@ -761,6 +1435,8 @@ impl ClusterOfProcesses {
         });
         self.validator_peer_ids
             .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
+        self.validator_authorities
+            .push(init.key_pair.public().into());
         Ok(index)
     }
 
@@ -945,4 +1621,144 @@ fn rayon_threads_per_node(node_count: usize) -> usize {
         "upgrade-test rayon budget: available_parallelism vs cgroup cpu.max"
     );
     threads
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stopped_validator() -> ValidatorProcess {
+        ValidatorProcess::new(
+            2,
+            PathBuf::from("validator"),
+            PathBuf::from("config.yaml"),
+            PathBuf::from("data"),
+            "127.0.0.1:9002".parse().unwrap(),
+            0,
+            PathBuf::from("node.log"),
+            1,
+        )
+    }
+
+    fn network_key_metrics(outputs: &[(&str, &str)]) -> String {
+        outputs
+            .iter()
+            .flat_map(|(authority, digest)| {
+                [
+                    format!(
+                        "ika_dwallet_mpc_network_key_reconfiguration_output_info{{session_id=\"session\",authority=\"{authority}\",output_digest=\"{digest}\"}} 1\n"
+                    ),
+                    format!(
+                        "ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors{{session_id=\"session\",authority=\"{authority}\"}} 0\n"
+                    ),
+                    format!(
+                        "ika_dwallet_mpc_network_key_reconfiguration_output_rejected{{session_id=\"session\",authority=\"{authority}\"}} 0\n"
+                    ),
+                ]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parses_exact_labeled_metric_without_prefix_collision() {
+        let body = concat!(
+            "# TYPE ika_output_info gauge\n",
+            "ika_output_info{session_id=\"abc\",authority=\"k#01\",output_digest=\"deadbeef\"} 1\n",
+            "ika_output_info_extra{session_id=\"wrong\"} 7\n",
+        );
+        let samples = parse_metric_samples(body, "ika_output_info").unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].labels["session_id"], "abc");
+        assert_eq!(samples[0].labels["authority"], "k#01");
+        assert_eq!(samples[0].labels["output_digest"], "deadbeef");
+        assert_eq!(samples[0].value, 1.0);
+    }
+
+    #[test]
+    fn rejects_malformed_labeled_metric() {
+        let body = "ika_output_info{session_id=abc} 1\n";
+        assert!(parse_metric_samples(body, "ika_output_info").is_err());
+    }
+
+    #[test]
+    fn missing_required_metric_names_validator_and_endpoint() {
+        let validator = stopped_validator();
+        let error = required_unlabeled_metric("", &["ika_required"], &validator)
+            .expect_err("missing metric must fail closed");
+        let error = error.to_string();
+        assert!(error.contains("validator 2"));
+        assert!(error.contains("http://127.0.0.1:0/metrics"));
+    }
+
+    #[tokio::test]
+    async fn stopped_validator_health_and_metrics_fail_closed() {
+        let validator = stopped_validator();
+        let health = validator
+            .expect_healthy()
+            .await
+            .expect_err("stopped validator must be unhealthy")
+            .to_string();
+        assert!(health.contains("validator 2"));
+        assert!(health.contains("http://127.0.0.1:9002"));
+
+        let metrics = validator
+            .metrics()
+            .await
+            .expect_err("unreachable metrics endpoint must fail")
+            .to_string();
+        assert!(metrics.contains("validator 2"));
+        assert!(metrics.contains("http://127.0.0.1:0/metrics"));
+    }
+
+    #[test]
+    fn parses_historical_and_current_labelless_gauges_exactly() {
+        let body = "current_epoch 3\nika_current_epoch 4\nika_current_epoch_extra 9\n";
+        assert_eq!(parse_labelless_gauge(body, "current_epoch"), Some(3));
+        assert_eq!(parse_labelless_gauge(body, "ika_current_epoch"), Some(4));
+    }
+
+    #[test]
+    fn accepts_four_authority_network_key_output_convergence() {
+        let expected = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let body =
+            network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("d", "same")]);
+        let canonical = canonical_network_key_outputs(&body, &expected, "validator 0").unwrap();
+        assert_eq!(canonical["session"], "same");
+    }
+
+    #[test]
+    fn rejects_one_divergent_network_key_output() {
+        let expected = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let body = network_key_metrics(&[
+            ("a", "different"),
+            ("b", "majority"),
+            ("c", "majority"),
+            ("d", "majority"),
+        ]);
+        let error = canonical_network_key_outputs(&body, &expected, "validator 0")
+            .expect_err("3-vs-1 output split must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("divergent per-authority outputs")
+        );
+    }
+
+    #[test]
+    fn rejects_missing_network_key_envelope_metric() {
+        let expected = ["a"].into_iter().map(str::to_string).collect();
+        let body = concat!(
+            "ika_dwallet_mpc_network_key_reconfiguration_output_info{session_id=\"session\",authority=\"a\",output_digest=\"same\"} 1\n",
+            "ika_dwallet_mpc_network_key_reconfiguration_output_rejected{session_id=\"session\",authority=\"a\"} 0\n",
+        );
+        let error = canonical_network_key_outputs(body, &expected, "validator 0")
+            .expect_err("missing malicious envelope metric must fail closed");
+        assert!(error.to_string().contains("missing required"));
+    }
 }

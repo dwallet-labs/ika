@@ -3460,6 +3460,7 @@ impl DWalletMPCManager {
         let mut state_counts: HashMap<&str, i64> = HashMap::new();
         let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
         let mut sessions_with_self_output_no_quorum = 0i64;
+        let mut network_key_reconfiguration_sessions_pending = 0i64;
         for session in self.sessions.values() {
             *state_counts
                 .entry(session_state_label(&session.status))
@@ -3483,7 +3484,39 @@ impl DWalletMPCManager {
             {
                 sessions_with_self_output_no_quorum += 1;
             }
+            if session.is_network_key_reconfiguration {
+                if !matches!(
+                    session.status,
+                    SessionStatus::Completed | SessionStatus::Failed
+                ) {
+                    network_key_reconfiguration_sessions_pending += 1;
+                }
+                let session_id = hex::encode(session.session_identifier.as_ref());
+                for (authority, observation) in
+                    &session.network_key_reconfiguration_output_observations
+                {
+                    let authority = authority.to_string();
+                    for digest in &observation.digests {
+                        let output_digest = hex::encode(digest);
+                        metrics
+                            .network_key_reconfiguration_output_info
+                            .with_label_values(&[&session_id, &authority, &output_digest])
+                            .set(1);
+                    }
+                    metrics
+                        .network_key_reconfiguration_reported_malicious_actors
+                        .with_label_values(&[&session_id, &authority])
+                        .set(observation.malicious_actor_count as i64);
+                    metrics
+                        .network_key_reconfiguration_output_rejected
+                        .with_label_values(&[&session_id, &authority])
+                        .set(observation.rejected as i64);
+                }
+            }
         }
+        metrics
+            .network_key_reconfiguration_sessions_pending
+            .set(network_key_reconfiguration_sessions_pending);
         for state in ALL_SESSION_STATES.iter().copied() {
             metrics
                 .session_state_count

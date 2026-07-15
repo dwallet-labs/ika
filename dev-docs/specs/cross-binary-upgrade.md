@@ -74,14 +74,18 @@ serialization/schema change, MUST preserve all of the following.
    [`epoch-close-session-lock.md`](epoch-close-session-lock.md) for the
    completion-target / close-predicate rules this builds on.
 
-4. **Wire compatibility.** A vN binary MUST correctly deserialize the
-   consensus messages and MPC messages produced by vN−1 peers, and vice
-   versa. The versioned-enum payloads are the trap: adding a variant in
-   vN+1 breaks vN deserialization unless vN was written to tolerate it.
-   Wire compatibility is what makes a **rolling** swap (mixed committee,
-   peers exchanging consensus + MPC messages mid-epoch) valid at all — it
-   is only valid between builds that are mutually wire-compatible (see
-   the crypto-boundary exception below).
+4. **Wire and cryptographic-output compatibility.** A vN binary MUST
+   correctly deserialize the consensus and MPC messages produced by vN−1
+   peers, and vice versa. It MUST also construct the same canonical MPC
+   transcript and output while both select the same on-chain protocol
+   version. Matching `protocol_version` values are not enough: dependency
+   behavior, transcript construction, serialization, and output finalization
+   are compiled into each binary. A validator-by-validator rollout therefore
+   requires a literal previous-release/current mixed committee to exchange
+   real MPC messages and agree on output bytes. A dependency boundary that
+   cannot do so blocks the release; it is not grounds to replace the
+   historical binary with current source pinned to an older advertised
+   version.
 
 5. **On-disk compatibility.** `AuthorityPerpetualTables` written by a
    vN−1 binary MUST reopen under vN. A validator stopped on vN−1 and
@@ -137,37 +141,38 @@ next-committee assembly, which by construction never serves the genesis
 requirement (4/4 class-groups keys, 0/4 PVSS). This is also the path
 mainnet itself takes, so upgrade testing must follow it.
 
-## The crypto-boundary exception: a naive rolling swap is NOT always valid
+## Literal previous-release compatibility is a release gate
 
-A rolling, mixed-committee swap is valid **only between builds that share
-the same crypto and differ solely in the protocol version they
-advertise**. Across a crypto-library boundary it is not, and the upgrade
-must instead be an **atomic, coordinated full-network restart**.
+The decentralized rollout topology is one release-candidate validator and
+the rest of the committee on the literal previous release. That topology must
+remain valid through a network-key reconfiguration while the on-chain
+protocol version remains v3. Operational instructions cannot turn a
+validator-by-validator deployment into an atomic restart, and quorum progress
+cannot establish compatibility: three matching old validators can advance the
+chain while the upgraded validator produces different bytes, falls behind, or
+records itself as malicious.
 
-The concrete instance that defines this rule (`mainnet-v1.1.8` → current
-`dev`):
+The `mainnet-v1.1.8` → current boundary is especially important because
+v1.1.8 links the former `class_groups`/`inkrypto` dependency while current
+source links `cryptography-private`. The prior assumption was that their MPC
+wire formats were not interchangeable and therefore that every validator had
+to be replaced before the next MPC boundary. That assumption conflicts with
+the deployment contract. The release gate must run the literal binaries with
+real cryptography and either prove compatible canonical output or expose a
+release blocker.
 
-- v1.1.8 links `class_groups` from the `inkrypto` crypto library; `dev`
-  links `cryptography-private` (the migration between the two). Their MPC
-  wire formats are not interchangeable, so a mixed v1.1.8/`dev` committee
-  cannot exchange MPC messages.
-- v4 also changed validator-key publication from the bare
-  `ClassGroupsEncryptionKeyAndProof` shape to the combined
-  `ValidatorEncryptionKeysAndProofs`. A v1.1.8 binary booted into a
-  committee whose validator records were registered in the new shape
-  fails to decode the on-chain record (`class groups public key …
-  remaining input`) and panics on the key-mismatch check at startup.
-- The current build carries **backward** compatibility for the v1.1.8
-  key shape, so it can read state v1.1.8 wrote; v1.1.8 has no **forward**
-  compatibility for the new shape. Compatibility across this boundary is
-  therefore one-directional, which is exactly why the swap must be atomic
-  (every validator restarts onto the new binary together) rather than
-  rolling.
+Protocol v4 also changes validator-key publication from the bare
+`ClassGroupsEncryptionKeyAndProof` shape to the combined
+`ValidatorEncryptionKeysAndProofs`. Current code can read the historical key
+shape; v1.1.8 cannot read the new shape. The mixed-rollout gate deliberately
+holds v3 and does not register new-shape validators during its mixed phase.
+Forward-only v4 state therefore does not excuse incompatibility for the v3
+network-key reshare.
 
-A change that introduces a new crypto-library or validator-key-shape
-boundary inherits this constraint: it MUST document whether mixed
-committees remain wire-compatible, and if not, that its rollout is an
-atomic restart, not a rolling swap.
+Any crypto-library, transcript, validator-key, or serialization change MUST
+state how the literal previous release interoperates during a rolling rollout.
+If it cannot, the candidate is not releasable until compatibility is restored
+or the decentralized rollout contract is explicitly changed outside this test.
 
 ## How this is verified
 
@@ -183,11 +188,16 @@ drives them across epochs:
   two wire-compatible builds (an OLD build of the current branch pinned
   to `MAX_PROTOCOL_VERSION = 3`, and the current `dev`): the vote
   advances v3 → v4 while the committee reshapes 4 → 3 → 5 → 4.
-- `tests/v118_upgrade.rs` — the atomic mainnet rehearsal: boot the literal
-  `mainnet-v1.1.8` binary, run the mainnet user flow at v3, swap all
-  validators at once to the current build, and confirm the network
-  upgrades to v4 and keeps serving through the pre-activation presign
-  window.
+- `tests/v118_upgrade.rs` — the coordinated full-committee mainnet
+  rehearsal: boot the literal `mainnet-v1.1.8` binary, run the mainnet user
+  flow at v3, sequentially restart all validators onto the current build
+  before the tested reshare, and confirm the network upgrades to v4 and keeps
+  serving through the pre-activation presign window.
+- `tests/v118_mixed_rollout.rs` — the release-blocking deployment topology:
+  upgrade exactly one member of a four-validator literal v1.1.8 committee,
+  hold protocol v3, and require two network-key reconfigurations to complete
+  with every validator healthy and locally current, zero reported malicious
+  actors, no stranded work, and identical canonical per-authority outputs.
 
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see

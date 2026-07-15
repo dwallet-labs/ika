@@ -154,6 +154,27 @@ pub struct DWalletMPCMetrics {
     /// assert exclusion programmatically instead of grepping logs.
     pub(crate) malicious_actors_count: IntGauge,
 
+    /// Number of network-key reconfiguration sessions that are still
+    /// non-terminal on this validator. This is deliberately unlabeled and
+    /// always exported so a release-gate assertion can distinguish a clean
+    /// zero from a missing metric.
+    pub(crate) network_key_reconfiguration_sessions_pending: IntGauge,
+
+    /// Per-authority network-key reconfiguration outputs observed through
+    /// consensus. The digest is over canonical BCS output bytes and excludes
+    /// the sender/malicious envelope. A current validator therefore exposes
+    /// the literal previous-release validators' submitted results without
+    /// requiring instrumentation in the historical binary.
+    pub(crate) network_key_reconfiguration_output_info: IntGaugeVec,
+
+    /// Malicious-actor count carried in each authority's network-key
+    /// reconfiguration output report.
+    pub(crate) network_key_reconfiguration_reported_malicious_actors: IntGaugeVec,
+
+    /// Whether each authority's network-key reconfiguration output report was
+    /// rejected (0 = canonical output, 1 = rejected output).
+    pub(crate) network_key_reconfiguration_output_rejected: IntGaugeVec,
+
     /// Histogram-by-bucket of how long each currently-Active session has been
     /// tracked for. Labels: `session_type` (`user` / `system` /
     /// `internal_presign` / `noa_sign`), `age_bucket` (`<30s`, `<5m`, `<30m`,
@@ -445,6 +466,34 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
+            network_key_reconfiguration_sessions_pending: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_network_key_reconfiguration_sessions_pending",
+                "Network-key reconfiguration sessions still non-terminal on this validator",
+                registry,
+            )
+            .unwrap(),
+            network_key_reconfiguration_output_info: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_network_key_reconfiguration_output_info",
+                "Per-authority canonical network-key reconfiguration output digest observed through consensus",
+                &["session_id", "authority", "output_digest"],
+                registry,
+            )
+            .unwrap(),
+            network_key_reconfiguration_reported_malicious_actors:
+                register_int_gauge_vec_with_registry!(
+                    "ika_dwallet_mpc_network_key_reconfiguration_reported_malicious_actors",
+                    "Malicious-actor count carried in each authority's network-key reconfiguration output report",
+                    &["session_id", "authority"],
+                    registry,
+                )
+                .unwrap(),
+            network_key_reconfiguration_output_rejected: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_network_key_reconfiguration_output_rejected",
+                "Whether each authority's network-key reconfiguration output report was rejected",
+                &["session_id", "authority"],
+                registry,
+            )
+            .unwrap(),
             active_sessions_by_age: register_int_gauge_vec_with_registry!(
                 "ika_dwallet_mpc_active_sessions_by_age",
                 "Active session count by session type and age bucket",
@@ -607,6 +656,10 @@ impl DWalletMPCMetrics {
         self.user_session_local_output_rejected.reset();
         self.user_session_output_received_from.reset();
         self.user_session_distinct_output_digests.reset();
+        self.network_key_reconfiguration_output_info.reset();
+        self.network_key_reconfiguration_reported_malicious_actors
+            .reset();
+        self.network_key_reconfiguration_output_rejected.reset();
     }
 }
 

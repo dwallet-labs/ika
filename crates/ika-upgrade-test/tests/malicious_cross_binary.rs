@@ -21,7 +21,8 @@
 //! malicious actor and reconfigure without it (committee dips to 3), so the
 //! network still reaches epoch 3. The test asserts detection **programmatically**
 //! by scraping the honest validators' `ika_dwallet_mpc_malicious_actors_count`
-//! gauge (`expect_malicious_actors_at_least(1)`) — no log grep. A green run
+//! gauge on the deliberately faulty current-binary observer
+//! (`expect_malicious_actors_at_least(&[3], 1)`) — no log grep. A green run
 //! means the harness/protocol catches a cross-binary misbehaving validator —
 //! i.e. malicious detection is not vacuous. This is NOT a production test; it
 //! exists to validate the test infrastructure (see `.claude/skills/test-testing`).
@@ -120,7 +121,7 @@ async fn honest_committee_marks_faulty_local_validator_malicious() {
         // recorded a malicious actor. The exit code alone is not the assertion —
         // the network could reach epoch 3 without ever flagging anyone, which is
         // exactly the vacuous-pass this guards against.
-        .expect_malicious_actors_at_least(1)
+        .expect_malicious_actors_at_least(&[3], 1)
         .run()
         .await
         .expect("honest committee should reconfigure past a faulty cross-binary validator");
