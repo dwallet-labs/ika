@@ -103,6 +103,14 @@ impl From<&NetworkOwnedAddressSignData> for SignData {
 #[display("Network Encryption Key DKG")]
 pub struct NetworkEncryptionKeyDkgData {}
 
+/// Canonical protocol name for network-key reconfiguration sessions, as
+/// produced by `NetworkEncryptionKeyReconfigurationData`'s `Display`. Named
+/// because it labels the `ika_dwallet_mpc_session_*` metrics that a release-gate
+/// compatibility test filters on and that we allow-list for export; the
+/// `mod tests` below fails if this constant and the `Display` string diverge.
+pub const NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME: &str =
+    "Network Encryption Key Reconfiguration";
+
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Network Encryption Key Reconfiguration")]
 pub struct NetworkEncryptionKeyReconfigurationData {}
@@ -552,5 +560,27 @@ impl ProtocolData {
                 ..
             } => Some(*dwallet_network_encryption_key_id),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dwallet_session_request::DWalletSessionRequestMetricData;
+
+    /// The metric label a release-gate compatibility test filters on is the
+    /// protocol `Display` string, surfaced through `name()`. Anchor them so a
+    /// cosmetic rename of the `Display` fails here instead of silently making
+    /// the gate observe nothing.
+    #[test]
+    fn network_key_reconfiguration_protocol_name_matches_metric_label() {
+        let protocol_data = ProtocolData::NetworkEncryptionKeyReconfiguration {
+            data: NetworkEncryptionKeyReconfigurationData {},
+            dwallet_network_encryption_key_id: ObjectID::ZERO,
+        };
+        assert_eq!(
+            DWalletSessionRequestMetricData::from(&protocol_data).name(),
+            NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME,
+        );
     }
 }

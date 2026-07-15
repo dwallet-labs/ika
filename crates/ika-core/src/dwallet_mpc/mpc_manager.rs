@@ -73,6 +73,15 @@ use ika_types::noa_checkpoint::{
 };
 
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
+use crate::request_protocol_data::NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME;
+
+/// Protocols whose per-authority output observations are exported as
+/// `ika_dwallet_mpc_session_output_*` metrics. Restricted deliberately: those
+/// series are labeled by session id and authority, so exporting every protocol
+/// would add one series per sign/presign session on production validators.
+/// Extend this only when a compatibility scenario actually scrapes another
+/// protocol's per-authority outputs.
+const OUTPUT_OBSERVATION_EXPORT_PROTOCOLS: &[&str] = &[NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME];
 
 /// Compute the agreed chain context for any `CounterpartyChain` implementation.
 /// Updates `current_context` in place if a new context is agreed upon.
@@ -3498,29 +3507,34 @@ impl DWalletMPCManager {
                 ) {
                     *pending += 1;
                 }
-                let session_id = hex::encode(session.session_identifier.as_ref());
-                for (authority, observation) in &session.output_observations {
-                    let authority = authority.to_string();
-                    for digest in &observation.digests {
-                        let output_digest = hex::encode(digest);
+                // The per-authority, per-session output digests are
+                // high-cardinality (session id x authority); only export them
+                // for the protocols a compatibility scenario scrapes.
+                if OUTPUT_OBSERVATION_EXPORT_PROTOCOLS.contains(&protocol_name.as_str()) {
+                    let session_id = hex::encode(session.session_identifier.as_ref());
+                    for (authority, observation) in &session.output_observations {
+                        let authority = authority.to_string();
+                        for digest in &observation.digests {
+                            let output_digest = hex::encode(digest);
+                            metrics
+                                .session_output_info
+                                .with_label_values(&[
+                                    protocol_name,
+                                    &session_id,
+                                    &authority,
+                                    &output_digest,
+                                ])
+                                .set(1);
+                        }
                         metrics
-                            .session_output_info
-                            .with_label_values(&[
-                                protocol_name,
-                                &session_id,
-                                &authority,
-                                &output_digest,
-                            ])
-                            .set(1);
+                            .session_reported_malicious_actors
+                            .with_label_values(&[protocol_name, &session_id, &authority])
+                            .set(observation.malicious_actor_count as i64);
+                        metrics
+                            .session_output_rejected
+                            .with_label_values(&[protocol_name, &session_id, &authority])
+                            .set(observation.rejected as i64);
                     }
-                    metrics
-                        .session_reported_malicious_actors
-                        .with_label_values(&[protocol_name, &session_id, &authority])
-                        .set(observation.malicious_actor_count as i64);
-                    metrics
-                        .session_output_rejected
-                        .with_label_values(&[protocol_name, &session_id, &authority])
-                        .set(observation.rejected as i64);
                 }
             }
         }

@@ -200,11 +200,14 @@ drives them across epochs:
   actors, no stranded work, and identical canonical per-authority outputs.
 
 The current validator's per-authority output observations and pending-session
-counts are protocol-generic and labeled by protocol name. This scenario filters
-that shared data to network-key reconfiguration because that is the deployment
-boundary it specifies; other protocol compatibility scenarios can apply the
-same evidence to DKG, presign, sign, or verification sessions without adding
-protocol-specific node instrumentation.
+counts are collected protocol-generically and labeled by protocol name. This
+scenario filters that data to network-key reconfiguration because that is the
+deployment boundary it specifies. The per-authority output series are exported
+only for an allow-listed set of protocols (`OUTPUT_OBSERVATION_EXPORT_PROTOCOLS`
+in `mpc_manager.rs`, currently just network-key reconfiguration) to keep their
+session-id/authority cardinality bounded on production validators; a future DKG,
+presign, sign, or verification compatibility scenario adds its protocol to that
+allow-list rather than adding protocol-specific node instrumentation.
 
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see

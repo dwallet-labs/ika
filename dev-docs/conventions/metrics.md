@@ -72,17 +72,23 @@ cross-binary malicious-detection test asserts exclusion programmatically
 instead of matching a log line. Log-level discipline itself lives in
 [`logging.md`](logging.md).
 
-Per-authority output observations are protocol-generic.
+Per-authority output observations are collected protocol-generically but
+**exported only for an allow-listed set of protocols** (currently network-key
+reconfiguration; see `OUTPUT_OBSERVATION_EXPORT_PROTOCOLS` in `mpc_manager.rs`).
 `ika_dwallet_mpc_session_output_info` carries the protocol name, session,
 authority, and canonical BCS-output digest; the paired
 `ika_dwallet_mpc_session_reported_malicious_actors` and
 `ika_dwallet_mpc_session_output_rejected` gauges preserve each authority's
 report envelope. This lets one instrumented validator verify
-consensus-submitted outputs from any protocol, including reports from an
-unmodified historical binary. The series reset with the per-epoch manager.
-`ika_dwallet_mpc_protocol_sessions_pending{protocol_name=...}` emits zero for a
-completed protocol while its session remains tracked, so tests can distinguish
-a clean zero from a missing protocol observation.
+consensus-submitted outputs, including reports from an unmodified historical
+binary. The allow-list is deliberate: these series are labeled by session id
+and authority, so exporting every protocol would add one series per
+sign/presign session on production validators — extend it only when a scenario
+actually scrapes another protocol's outputs. The series reset with the
+per-epoch manager. `ika_dwallet_mpc_protocol_sessions_pending{protocol_name=...}`
+is exported for every protocol (it is bounded — one series per protocol name)
+and emits zero for a completed protocol while its session remains tracked, so
+tests can distinguish a clean zero from a missing protocol observation.
 
 ## Inventory (generated)
 

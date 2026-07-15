@@ -49,6 +49,10 @@ use crate::process::ValidatorProcess;
 use crate::sui::SuiLocalnet;
 use crate::{DEFAULT_EPOCH_DURATION_MS, DEFAULT_NUM_VALIDATORS};
 
+// Must equal `NetworkEncryptionKeyReconfigurationData`'s `Display` in ika-core
+// (`request_protocol_data.rs`), which labels the metrics scraped below. ika-core
+// has no dep edge here, so a `mod tests` there anchors that string to its own
+// `NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME` constant and trips if it drifts.
 const NETWORK_KEY_RECONFIGURATION_PROTOCOL: &str = "Network Encryption Key Reconfiguration";
 
 /// A running out-of-process cluster. Owns the Sui localnet, the validator
@@ -650,28 +654,43 @@ fn metric_samples_for_protocol(
         .collect()
 }
 
+/// Outcome of inspecting one observer's network-key output metrics.
+///
+/// `Incomplete` means the observer has not recorded enough yet and the caller
+/// should keep polling; a hard `Err` (divergent digests, a malicious/rejected
+/// report, or malformed metrics) is release-blocking and must not be retried.
+/// Distinguishing the two by type keeps the retry/fail decision off fragile
+/// error-string matching.
+#[derive(Debug)]
+enum NetworkKeyOutputConvergence {
+    Incomplete(String),
+    Converged(BTreeMap<String, String>),
+}
+
 fn canonical_network_key_outputs(
     body: &str,
     expected_authorities: &BTreeSet<String>,
     observer: &str,
-) -> Result<BTreeMap<String, String>> {
+) -> Result<NetworkKeyOutputConvergence> {
     let output_samples = metric_samples_for_protocol(
         body,
         "ika_dwallet_mpc_session_output_info",
         NETWORK_KEY_RECONFIGURATION_PROTOCOL,
     )?;
-    ensure!(
-        !output_samples.is_empty(),
-        "{observer} is missing network-key output observations"
-    );
+    if output_samples.is_empty() {
+        return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
+            "{observer} is missing network-key output observations"
+        )));
+    }
 
-    let envelope_values = |metric: &str| {
+    // An absent envelope gauge means the observer has not recorded the full
+    // report yet (retry). Malformed or duplicated samples are hard failures.
+    let envelope_values = |metric: &str| -> Result<Option<BTreeMap<(String, String), u64>>> {
         let samples =
             metric_samples_for_protocol(body, metric, NETWORK_KEY_RECONFIGURATION_PROTOCOL)?;
-        ensure!(
-            !samples.is_empty(),
-            "{observer} is missing required {metric} samples"
-        );
+        if samples.is_empty() {
+            return Ok(None);
+        }
         let mut values = BTreeMap::new();
         for sample in samples {
             let session = sample
@@ -696,10 +715,16 @@ fn canonical_network_key_outputs(
                 "{observer} has duplicate {metric} samples for session {session} authority {authority}"
             );
         }
-        Ok::<_, anyhow::Error>(values)
+        Ok(Some(values))
     };
-    let malicious = envelope_values("ika_dwallet_mpc_session_reported_malicious_actors")?;
-    let rejected = envelope_values("ika_dwallet_mpc_session_output_rejected")?;
+    let (Some(malicious), Some(rejected)) = (
+        envelope_values("ika_dwallet_mpc_session_reported_malicious_actors")?,
+        envelope_values("ika_dwallet_mpc_session_output_rejected")?,
+    ) else {
+        return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
+            "{observer} is missing required network-key envelope samples"
+        )));
+    };
 
     let mut outputs_by_session: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for sample in output_samples {
@@ -736,10 +761,11 @@ fn canonical_network_key_outputs(
     let mut canonical = BTreeMap::new();
     for (session, outputs) in outputs_by_session {
         let observed_authorities = outputs.keys().cloned().collect::<BTreeSet<_>>();
-        ensure!(
-            &observed_authorities == expected_authorities,
-            "{observer} observed the wrong authority set for network-key session {session}: observed={observed_authorities:?}, expected={expected_authorities:?}"
-        );
+        if &observed_authorities != expected_authorities {
+            return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
+                "{observer} observed the wrong authority set for network-key session {session}: observed={observed_authorities:?}, expected={expected_authorities:?}"
+            )));
+        }
         let digests: BTreeSet<_> = outputs.values().cloned().collect();
         ensure!(
             digests.len() == 1,
@@ -766,7 +792,7 @@ fn canonical_network_key_outputs(
                 .expect("one digest after length check"),
         );
     }
-    Ok(canonical)
+    Ok(NetworkKeyOutputConvergence::Converged(canonical))
 }
 
 impl ClusterOfProcesses {
@@ -1117,20 +1143,14 @@ impl ClusterOfProcesses {
                     validator.metrics_endpoint()
                 );
                 let observer_canonical =
-                    match canonical_network_key_outputs(&body, &expected_authorities, &observer) {
-                        Ok(canonical) => canonical,
-                        Err(error)
-                            if error.to_string().contains("missing network-key")
-                                || error.to_string().contains("missing required")
-                                || error.to_string().contains("wrong authority set") =>
-                        {
-                            incomplete.push(error.to_string());
+                    match canonical_network_key_outputs(&body, &expected_authorities, &observer)
+                        .with_context(|| {
+                            format!("validate network-key convergence from {observer}")
+                        })? {
+                        NetworkKeyOutputConvergence::Converged(canonical) => canonical,
+                        NetworkKeyOutputConvergence::Incomplete(reason) => {
+                            incomplete.push(reason);
                             continue;
-                        }
-                        Err(error) => {
-                            return Err(error).with_context(|| {
-                                format!("validate network-key convergence from {observer}")
-                            });
                         }
                     };
 
@@ -1813,7 +1833,11 @@ mod tests {
         body.push_str(
             "ika_dwallet_mpc_session_output_info{protocol_name=\"Sign\",session_id=\"unrelated\",authority=\"a\",output_digest=\"different\"} 1\n",
         );
-        let canonical = canonical_network_key_outputs(&body, &expected, "validator 0").unwrap();
+        let NetworkKeyOutputConvergence::Converged(canonical) =
+            canonical_network_key_outputs(&body, &expected, "validator 0").unwrap()
+        else {
+            panic!("four matching authorities must converge");
+        };
         assert_eq!(canonical["session"], "same");
     }
 
@@ -1839,13 +1863,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_network_key_envelope_metric() {
+    fn missing_network_key_envelope_metric_is_incomplete_not_converged() {
         let expected = ["a"].into_iter().map(str::to_string).collect();
         let body = format!(
             "ika_dwallet_mpc_session_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"same\"}} 1\nika_dwallet_mpc_session_output_rejected{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\"}} 0\n"
         );
-        let error = canonical_network_key_outputs(&body, &expected, "validator 0")
-            .expect_err("missing malicious envelope metric must fail closed");
-        assert!(error.to_string().contains("missing required"));
+        // A missing malicious-actor envelope is a not-yet-recorded observation:
+        // the observer keeps polling (and the caller ultimately times out —
+        // still fail-closed), rather than declaring a hard divergence.
+        let NetworkKeyOutputConvergence::Incomplete(reason) =
+            canonical_network_key_outputs(&body, &expected, "validator 0").unwrap()
+        else {
+            panic!("a missing envelope metric must be reported as incomplete");
+        };
+        assert!(reason.contains("missing required"));
     }
 }
