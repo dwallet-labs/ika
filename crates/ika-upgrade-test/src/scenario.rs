@@ -31,6 +31,8 @@ use crate::cluster::{ClusterBuilder, ClusterOfProcesses};
 use crate::mpc_timings::{self, TimingSnapshot};
 use crate::workload::WorkloadDriver;
 
+const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -820,8 +822,16 @@ impl Scenario {
                     let c = cluster
                         .as_ref()
                         .context("ExpectNetworkKeyOutputConverged before StartAll")?;
-                    c.expect_network_key_output_converged(observer_indices, self.epoch_timeout)
-                        .await?;
+                    // The system session has already completed before normal
+                    // scenarios reach this assertion. Allow metrics propagation
+                    // some slack, but do not reuse a multi-minute epoch timeout:
+                    // a missing authority output is itself release-blocking.
+                    c.expect_network_key_output_converged(
+                        observer_indices,
+                        self.epoch_timeout
+                            .min(NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT),
+                    )
+                    .await?;
                 }
                 Step::ExpectNoPendingNetworkKeyReconfiguration {
                     epoch,
