@@ -106,8 +106,11 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .wait_for_network_key_reconfiguration_completed(2)
         .expect_all_validators_healthy()
         .wait_for_all_validators_local_epoch(2)
-        .expect_malicious_actors_exactly(&current_observer, 0)
+        // Check the individual authority outputs first so a compatibility
+        // failure reports the exact 3-vs-1 digest split before the aggregate
+        // malicious-actor gauge stops the scenario.
         .expect_network_key_output_converged(&current_observer)
+        .expect_malicious_actors_exactly(&current_observer, 0)
         .expect_no_pending_network_key_reconfiguration(2, &current_observer)
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
@@ -124,8 +127,8 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .wait_for_network_key_reconfiguration_completed(3)
         .expect_all_validators_healthy()
         .wait_for_all_validators_local_epoch(3)
-        .expect_malicious_actors_exactly(&current_observer, 0)
         .expect_network_key_output_converged(&current_observer)
+        .expect_malicious_actors_exactly(&current_observer, 0)
         .expect_no_pending_network_key_reconfiguration(3, &current_observer)
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
