@@ -355,7 +355,10 @@ jobs:
               OLD_BIN_NAME=ika-node
               ;;
             cross_binary)
-              : "${OLD_REF:=$GITHUB_REF_NAME}"
+              # The old side is current source with only the protocol ceiling
+              # patched. Pin it to the same immutable candidate commit instead
+              # of a branch name that can move between setup and compilation.
+              : "${OLD_REF:=$CANDIDATE_SHA}"
               : "${OLD_BIN_NAME:=ika-validator}"
               : "${PATCH_MAX:=3}"
               ;;
@@ -430,12 +433,20 @@ jobs:
           WT="$GITHUB_WORKSPACE/old-build"
           git worktree remove --force "$WT" 2>/dev/null || true
           rm -rf "$WT"
-          # `fetch-depth: 0` fetches all tags + the triggering ref's history,
-          # but an arbitrary `old_ref` override (another branch/sha) may not be
-          # present locally — best-effort fetch it, then let worktree add fail
-          # loudly if the ref truly does not exist.
-          git fetch --no-tags origin "$OLD_REF" 2>/dev/null || true
-          git worktree add --force --detach "$WT" "$OLD_REF"
+          # Resolve the requested ref to one immutable commit before creating
+          # the worktree. A remote branch is normally present only as
+          # origin/<name>; an arbitrary SHA may need an explicit fetch.
+          if git rev-parse --verify "${OLD_REF}^{commit}" >/dev/null 2>&1; then
+            OLD_COMMIT=$(git rev-parse --verify "${OLD_REF}^{commit}")
+          elif git rev-parse --verify "origin/${OLD_REF}^{commit}" >/dev/null 2>&1; then
+            OLD_COMMIT=$(git rev-parse --verify "origin/${OLD_REF}^{commit}")
+          else
+            git fetch --no-tags origin "$OLD_REF"
+            OLD_COMMIT=$(git rev-parse --verify "FETCH_HEAD^{commit}")
+          fi
+          test -n "$OLD_COMMIT" || { echo "could not resolve old_ref '$OLD_REF' to a commit" >&2; exit 1; }
+          echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
+          git worktree add --force --detach "$WT" "$OLD_COMMIT"
           if [ -n "$PATCH_MAX" ]; then
             [[ "$PATCH_MAX" =~ ^[0-9]+$ ]] || { echo "old_max_protocol_version must be numeric, got '$PATCH_MAX'" >&2; exit 1; }
             SOURCE="$WT/crates/ika-protocol-config/src/lib.rs"
