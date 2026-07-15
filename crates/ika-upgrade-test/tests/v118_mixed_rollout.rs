@@ -14,6 +14,14 @@
 //! therefore witnesses each reconfiguration's on-chain started/completed
 //! states and checks local epoch, liveness, malicious reporting, pending work,
 //! logs, and per-authority output digests before allowing the next boundary.
+//!
+//! Beyond the reshare itself, each reconfiguration is followed by a full user
+//! **DKG → Presign → ECDSA Sign → Taproot Sign** lifecycle driven through the
+//! `ika` CLI, so the gate also proves the mixed committee keeps *serving users*
+//! at v3, not only that the system reshare converges. The workloads run in the
+//! settled window after a reshare's assertions and before the next epoch — not
+//! between the timed reconfiguration start/completed observations, which a
+//! multi-minute lifecycle would otherwise perturb.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,7 +39,7 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
     if std::env::var("RUN_V118_MIXED_ROLLOUT").is_err() {
         eprintln!(
             "skipping: set RUN_V118_MIXED_ROLLOUT=1 \
-             (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/SUI_BIN)"
+             (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
     }
@@ -46,6 +54,7 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
+    let ika_cli = bin_from_env("IKA_BIN", "target/release/ika");
     let sui = bin_from_env("SUI_BIN", "sui");
     let repo = std::env::current_dir()
         .expect("cwd")
@@ -77,6 +86,8 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
+        // Drives DKG/Presign/Sign through the `ika` CLI after each reshare.
+        .with_ika_cli(ika_cli)
         .start_all(old)
         // Epoch 2 guarantees the all-v1.1.8 committee completed genesis
         // network DKG. Require every node's local epoch, not just the on-chain
@@ -116,6 +127,13 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .expect_log_line_absent("recognized_self_as_malicious")
         .expect_protocol_version_at_most(3)
         .expect_all_validators_protocol_version_at_most(3)
+        // The mixed committee must also keep serving users, not just converge on
+        // the system reshare. Run a full user lifecycle in the settled window
+        // after the reshare's assertions — a fresh dWallet DKG, a global presign,
+        // and an ECDSA + Taproot sign, all across the 1-current/3-v1.1.8
+        // committee at v3. Placed here (not between the timed reshare
+        // observations) so the ~minutes-long lifecycle cannot perturb them.
+        .run_workload("mixed-v3-after-first-reshare")
         .wait_for_epoch(3)
         .wait_for_all_validators_local_epoch(3)
         .expect_all_validators_healthy()
@@ -134,6 +152,9 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .expect_log_line_absent("recognized_self_as_malicious")
         .expect_protocol_version_at_most(3)
         .expect_all_validators_protocol_version_at_most(3)
+        // Serve a second full user lifecycle after the second reshare, proving
+        // continued user-facing service is not a one-off of the first boundary.
+        .run_workload("mixed-v3-after-second-reshare")
         .wait_for_epoch(4)
         .wait_for_all_validators_local_epoch(4)
         .expect_all_validators_healthy()
@@ -147,6 +168,7 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
 
     tracing::info!(
         "v1.1.8 mixed rollout PASSED: one current + three literal v1.1.8 validators \
-         completed two protocol-v3 network-key reconfigurations with identical outputs"
+         completed two protocol-v3 network-key reconfigurations with identical outputs \
+         and served a full DKG/Presign/Sign user lifecycle after each"
     );
 }
