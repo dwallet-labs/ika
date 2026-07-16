@@ -1,0 +1,6 @@
+# Cloudflare Pages redirects (docs are a static Next.js export, so
+# framework-level redirects are unavailable; Pages serves this file).
+# The guide was renamed when the release shipped as 1.2.1 — the
+# testnet-v1.2.1 GitHub release links the old slug.
+/docs/operators/upgrading-to-1-2-0 /docs/operators/upgrading-to-1-2-1 301
+/docs/operators/upgrading-to-1-2-0/ /docs/operators/upgrading-to-1-2-1 301
