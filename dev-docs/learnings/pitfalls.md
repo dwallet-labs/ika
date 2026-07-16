@@ -122,6 +122,14 @@ rule, not the instance.
   inside it WITH margin for CI contention; don't tune to "passes alone".
   (`epoch_scaled_poll_interval` compresses poll cadences but cannot
   compress the crypto.)
+  Follow-up (issue #1772): window-sizing alone is NOT sufficient — the
+  same test later flaked at 240s epochs (a 60s window) when the localnet
+  fullnode went transiently unreachable inside the window. No window
+  width is sound against environmental stalls. Where the protocol
+  defines miss semantics (here: a joiner missing the freeze is excluded
+  for one epoch and self-heals at the next), assert the guarantee —
+  eventual capture with a bounded one-epoch grace — not the
+  lucky-timing first-window capture.
 - **Test-harness state that production syncs from chain must be set
   explicitly.** The in-process harness never syncs the epoch-close lock
   target, so it stays 0 and (correctly) gates everything; tests set it

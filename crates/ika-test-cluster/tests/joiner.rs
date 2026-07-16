@@ -80,6 +80,34 @@ async fn test_joiner_added_at_epoch_2() {
 /// but overrun that window in a short test epoch; `epoch_scaled_poll_interval`
 /// scales every cadence on this path to ~1% of the epoch (a no-op at
 /// production epoch lengths), so the path fits a bounded test epoch.
+///
+/// Assertion semantics (issue #1772): capture by the FIRST freeze after
+/// the joiner registers — the one that fires during epoch 1 and fixes
+/// the epoch-2 committee — is timing-dependent BY DESIGN. The spec rule
+/// is "a joiner that misses the freeze window is excluded, not waited
+/// for" (`dev-docs/specs/validator-mpc-data-announcements.md`), and an
+/// environmental stall inside the window (CI contention, a transient
+/// fullnode outage) legitimately excludes the joiner — observed even at
+/// 240s test epochs (60s window). No window width makes a strict
+/// epoch-2 assertion sound, so this test asserts the protocol's actual
+/// guarantees instead:
+///   1. Continuing members are NEVER missing from the committee's
+///      class-groups map (they are carry-forward-protected at the
+///      freeze) — a gap there fails immediately.
+///   2. The joiner is captured into the epoch-2 committee (the normal
+///      path), OR it was excluded there and MUST self-heal into the
+///      epoch-3 committee: an excluded joiner still holds its epoch-2
+///      committee seat (exclusion is off-chain-only — the assembled
+///      committee keeps chain voting_rights), so during epoch 2 it
+///      self-announces straight into consensus and the next freeze
+///      captures it.
+/// A joiner still absent at epoch 3 is the never-announces deadlock
+/// class this test exists to catch. Trade-off to know when reading CI
+/// logs: a structural regression that killed ONLY the joiner P2P
+/// fan-out path would surface as EVERY run taking the warn-logged
+/// epoch-3 fallback (self-healing via the consensus self-announcement
+/// path), not as a red test — if the fallback warn becomes routine,
+/// treat it as that regression.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_joiner_lands_in_next_committee_class_groups() {
     telemetry_subscribers::init_for_testing();
@@ -119,38 +147,116 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
         .expect("add_joiner_validator failed");
 
     cluster.wait_for_epoch(2).await;
-    // Fail fast instead of hanging: an excluded joiner never enters the
-    // epoch-2 working set, so it would never reach epoch 2. The cluster
-    // is already at epoch 2 here, so an in-committee joiner reaches it
-    // promptly.
+    // The joiner node must follow the cluster to epoch 2 whether or not
+    // the freeze captured it: even an excluded joiner keeps its epoch-2
+    // chain-committee seat (exclusion is off-chain-only) and advances
+    // epochs normally — CI failure runs of this test showed exactly
+    // that. This wait only fails fast on a dead joiner node.
     tokio::time::timeout(
         std::time::Duration::from_secs(60),
         wait_for_node_epoch(&joiner.node_handle, 2),
     )
     .await
     .expect(
-        "joiner did not reach epoch 2 within 60s of the cluster — \
-         likely excluded from the freeze (its mpc_data never propagated)",
+        "joiner node did not reach epoch 2 within 60s of the cluster — \
+         node dead or not following the chain",
     );
 
     let joiner_name = joiner.authority_name();
 
-    // Read the epoch-2 committee from the joiner's own node and assert
-    // its class-groups material is present — i.e. the freeze captured
-    // the joiner and the off-chain assembler resolved its mpc_data.
-    let in_class_groups = joiner.node_handle.with(|node| {
+    // Read the epoch-2 committee from the joiner's own node: did the
+    // epoch-1 freeze capture the mid-epoch joiner, and is every
+    // continuing member covered?
+    let (joiner_captured, joiner_in_voting_rights, members_missing_class_groups) =
+        joiner.node_handle.with(|node| {
+            let epoch_store = node.state().epoch_store_for_testing();
+            let committee = epoch_store.committee();
+            assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
+            let joiner_captured = committee
+                .class_groups_public_keys_and_proofs
+                .contains_key(&joiner_name);
+            let joiner_in_voting_rights = committee
+                .voting_rights
+                .iter()
+                .any(|(name, _)| *name == joiner_name);
+            let members_missing_class_groups: Vec<_> = committee
+                .voting_rights
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| {
+                    *name != joiner_name
+                        && !committee
+                            .class_groups_public_keys_and_proofs
+                            .contains_key(name)
+                })
+                .collect();
+            (
+                joiner_captured,
+                joiner_in_voting_rights,
+                members_missing_class_groups,
+            )
+        });
+
+    // Continuing members are carry-forward-protected at the freeze —
+    // only first-time joiners can be excluded — so a class-groups gap
+    // for any of them is a real invariant violation. Fail immediately;
+    // the joiner grace below must not mask it.
+    assert!(
+        members_missing_class_groups.is_empty(),
+        "epoch-2 committee class_groups_public_keys_and_proofs is missing \
+         continuing members {members_missing_class_groups:?} — members are \
+         carry-forward-protected and must never be excluded by the freeze"
+    );
+
+    if joiner_captured {
+        return;
+    }
+
+    // The joiner missed the epoch-2 capture — legitimate under load
+    // (excluded, not waited for). It must now self-heal: it announces
+    // during epoch 2 and the next freeze must capture it into the
+    // epoch-3 committee. `joiner_in_voting_rights` disambiguates the
+    // miss in logs: true = announcement propagation missed the freeze
+    // window; false = on-chain registration missed the mid-epoch
+    // committee selection entirely (the joiner then goes through the
+    // full mid-epoch-joiner path one epoch later).
+    tracing::warn!(
+        ?joiner_name,
+        joiner_in_voting_rights,
+        "joiner missed the epoch-2 freeze capture (legitimate under CI \
+         load); asserting the one-epoch self-heal into the epoch-3 \
+         committee"
+    );
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        cluster.wait_for_epoch(3),
+    )
+    .await
+    .expect("cluster did not reach epoch 3 within 300s during the joiner self-heal window");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for_node_epoch(&joiner.node_handle, 3),
+    )
+    .await
+    .expect("joiner node did not reach epoch 3 within 60s of the cluster during self-heal");
+
+    let joiner_captured_at_epoch_3 = joiner.node_handle.with(|node| {
         let epoch_store = node.state().epoch_store_for_testing();
         let committee = epoch_store.committee();
-        assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
+        assert_eq!(committee.epoch(), 3, "joiner node should be at epoch 3");
         committee
             .class_groups_public_keys_and_proofs
             .contains_key(&joiner_name)
     });
     assert!(
-        in_class_groups,
-        "joiner {joiner_name:?} must appear in epoch-2 committee \
-         class_groups_public_keys_and_proofs (freeze must capture \
-         the mid-epoch joiner)"
+        joiner_captured_at_epoch_3,
+        "joiner {joiner_name:?} was excluded from the epoch-2 committee \
+         (tolerated once — first-freeze capture is timing-dependent by \
+         design) and is STILL absent from the epoch-3 committee \
+         class_groups_public_keys_and_proofs: the one-epoch self-heal \
+         (announce during epoch 2 → captured by the next freeze) failed \
+         — the never-announces deadlock class this test exists to catch"
     );
 }
 
