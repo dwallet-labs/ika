@@ -81,10 +81,14 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/release/}"
           NETWORK="${TAG%%-*}"
+          # Tag convention: release/{network}-v{version} (the "v" is
+          # stripped here; bare release/{network}-{version} tags from before
+          # the convention change still parse).
           VERSION="${TAG#*-}"
+          VERSION="${VERSION#v}"
 
           if [[ "$NETWORK" != "mainnet" && "$NETWORK" != "testnet" && "$NETWORK" != "devnet" ]]; then
-            echo "::error::Invalid network '$NETWORK' in tag. Must be mainnet, testnet, or devnet. Tag format: release/{network}-{version}"
+            echo "::error::Invalid network '$NETWORK' in tag. Must be mainnet, testnet, or devnet. Tag format: release/{network}-v{version}"
             exit 1
           fi
 
@@ -395,10 +399,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Download all artifacts
+      - name: Download platform binaries
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
+          # Platform binaries only: the upgrade-compatibility-gate is a called
+          # workflow, so its always()-uploaded log artifacts land in THIS run's
+          # artifact namespace and would otherwise show up as fake platforms.
+          pattern: "{linux,macos,windows}-*"
 
       - name: Create build summary
         run: |
@@ -432,42 +440,130 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Download all artifacts
+      - name: Download platform binaries
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
+          # Platform binaries only: the upgrade-compatibility-gate is a called
+          # workflow, so its always()-uploaded log artifacts (upgrade-test-log-*,
+          # resource-sampler-*, ...) land in THIS run's artifact namespace and
+          # would otherwise be packaged as fake platform tarballs.
+          pattern: "{linux,macos,windows}-*"
 
       - name: Package release assets
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
+          # Mainnet mints the bare v-tag: the Homebrew formula's download URL
+          # and asset glob interpolate it. Other networks attach the release
+          # to the TRIGGER tag itself (release/<network>-v<version>, already
+          # pointing at this run's commit) — publishing a release on an
+          # existing tag creates no tag and fires no push event, so it cannot
+          # re-trigger this workflow. Asset filenames use the network-qualified
+          # slash-free stem — GitHub asset names cannot contain '/'.
+          NETWORK="${{ needs.version.outputs.network }}"
+          if [ "$NETWORK" = "mainnet" ]; then
+            ASSET_STEM="$VERSION"
+            RELEASE_TAG="$VERSION"
+          else
+            ASSET_STEM="${NETWORK}-${VERSION}"
+            RELEASE_TAG="${{ github.ref_name }}"
+          fi
+          echo "ASSET_STEM=${ASSET_STEM}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
           for dir in artifacts/*/; do
             platform="$(basename "$dir")"
             # download-artifact strips unix modes; restore the executable bit
             # so the tarballs (and the Homebrew install) carry runnable binaries.
             chmod +x "$dir"*
-            tar -czvf "ika-${VERSION}-${platform}.tar.gz" -C "$dir" .
+            tar -czvf "ika-${ASSET_STEM}-${platform}.tar.gz" -C "$dir" .
           done
+
+      - name: Compose release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ needs.version.outputs.version }}"
+          NETWORK="${{ needs.version.outputs.network }}"
+          # The auto-generated changelog goes into a collapsed section at the
+          # bottom; the curated sections above it are a scaffold the release
+          # manager fills in before publishing. Fetched via the API (instead
+          # of --generate-notes) so it can be embedded inside the template.
+          NOTES=$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq '.body')
+          {
+            sed -e "s|__VERSION__|${VERSION}|g" \
+                -e "s|__NETWORK__|${NETWORK}|g" \
+                -e "s|__SHA__|${GITHUB_SHA}|g" \
+                -e "s|__SHA_SHORT__|${GITHUB_SHA:0:10}|g" \
+                -e "s|__REPO__|${GITHUB_REPOSITORY}|g" <<'SCAFFOLD'
+          # Ika __VERSION__ (__NETWORK__)
+
+          > **⚠️ Scaffold — the release manager fills this in before
+          > publishing.** Each section says what belongs in it; write for the
+          > reader named in its heading, delete sections that don't apply,
+          > then delete this banner. Style reference: the testnet-v1.2.1
+          > release.
+
+          ## Protocol
+
+          <!-- The protocol version this release runs and/or advertises. If a
+          new version activates after the rollout, spell out the activation
+          mechanism and timing (e.g. automatic capability tally, ~1 epoch
+          after quorum of stake upgrades) and list what the new version
+          brings, in operator-visible terms. -->
+
+          ## ⚠️ dApp developers
+
+          <!-- Client compatibility: minimum @ika.xyz/sdk version, what
+          breaks without it, and the action deadline relative to the
+          rollout/activation. Delete this section if nothing changes for
+          dApps. -->
+
+          ## Operators: read before upgrading
+
+          <!-- Link the operators upgrade guide on docs.ika.xyz, then the
+          essentials as bullets: binary/image changes, config edges, metric
+          renames, resource-profile changes, the supported rollout strategy
+          (rolling vs coordinated, and what validated it), rollback caveats.
+          Delete what doesn't apply. -->
+
+          ## Validation
+
+          Built at [`__SHA_SHORT__`](https://github.com/__REPO__/commit/__SHA__).
+          This tag passed the release-blocking v1.1.8 mixed-rollout
+          compatibility gate before this draft was created.
+
+          <!-- Add further validation evidence for this exact commit (full
+          suite runs, upgrade matrix) — only what actually ran against it. -->
+
+          <details>
+          <summary>Full changelog (auto-generated)</summary>
+
+          SCAFFOLD
+            printf '%s\n' "$NOTES"
+            cat <<'SCAFFOLD'
+
+          </details>
+          SCAFFOLD
+          } > release-body.md
 
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v${{ needs.version.outputs.version }}"
-          # Mainnet keeps the bare v-tag: the Homebrew formula's download URL
-          # interpolates it. Other networks get a qualified tag so pushing
-          # release/mainnet-X and release/testnet-X for the same version does
-          # not collide on one release name (as happened for 1.1.8).
-          NETWORK="${{ needs.version.outputs.network }}"
-          if [ "$NETWORK" = "mainnet" ]; then
-            RELEASE_TAG="$VERSION"
-          else
-            RELEASE_TAG="${NETWORK}-${VERSION}"
-          fi
+          # --target pins mainnet's publish-time tag mint: a draft's tag is
+          # created only when the draft is published, and without --target it
+          # would point at the default branch's HEAD at publish time — not the
+          # tagged release commit this run built. For non-mainnet the trigger
+          # tag already exists, so --target is ignored.
           gh release create "$RELEASE_TAG" \
             --draft \
-            --title "$RELEASE_TAG" \
-            --generate-notes \
-            ika-${VERSION}-*.tar.gz
+            --title "$ASSET_STEM" \
+            --target "${{ github.sha }}" \
+            --notes-file release-body.md \
+            ika-${ASSET_STEM}-*.tar.gz
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
