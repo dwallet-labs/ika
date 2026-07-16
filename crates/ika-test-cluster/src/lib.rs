@@ -41,6 +41,7 @@ use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
 use ika_types::crypto::AuthorityPublicKeyBytes;
+use ika_types::handoff::HandoffItemKey;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
@@ -806,16 +807,6 @@ impl IkaTestCluster {
         })
     }
 
-    /// Poll the chain until the `DWallet` at `dwallet_id` transitions
-    /// out of the in-flight DKG states (`DKGRequested`,
-    /// `AwaitingNetworkDKGVerification`, etc.) into a terminal one
-    /// (`Active` / equivalent on success, `NetworkRejected*` on
-    /// failure). Returns `Ok` on success terminal state, `Err` on
-    /// rejection or timeout.
-    ///
-    /// Events-based detection (`DWalletSessionResultEvent` emitted
-    /// by `sessions_manager`) doesn't surface reliably through the
-    /// Sui SDK's `MoveEventModule` / `MoveModule` filters in this
     /// Return the set of epochs for which the given node has a
     /// persisted `CertifiedHandoffAttestation` in its perpetual
     /// tables. Use this to verify the off-chain handoff pipeline
@@ -835,6 +826,50 @@ impl IkaTestCluster {
         })
     }
 
+    /// Authority names pinned by the `ValidatorMpcData` items of the
+    /// node's persisted handoff cert for `source_epoch` — the durable,
+    /// consensus-anchored record of that epoch's frozen off-chain
+    /// mpc_data input set. Unlike the chain-view committee's
+    /// class-groups map (which stays populated for a member the
+    /// off-chain freeze excluded, because chain writes remain under
+    /// v4), absence here means the frozen set really did not carry the
+    /// validator's mpc_data. `None` while the node has no cert for
+    /// that epoch: cert persistence trails the epoch switch by the
+    /// quorum aggregation of consensus-ordered handoff signatures, so
+    /// callers should poll.
+    pub fn handoff_cert_mpc_data_validators_for_node(
+        &self,
+        node_handle: &IkaNodeHandle,
+        source_epoch: ika_types::committee::EpochId,
+    ) -> Option<Vec<ika_types::crypto::AuthorityName>> {
+        node_handle.with(|node| {
+            node.state()
+                .perpetual_tables()
+                .get_certified_handoff_attestation(source_epoch)
+                .expect("read certified handoff attestation from perpetual tables")
+                .map(|cert| {
+                    cert.attestation
+                        .items
+                        .into_iter()
+                        .filter_map(|(key, _digest)| match key {
+                            HandoffItemKey::ValidatorMpcData { validator } => Some(validator),
+                            _ => None,
+                        })
+                        .collect()
+                })
+        })
+    }
+
+    /// Poll the chain until the `DWallet` at `dwallet_id` transitions
+    /// out of the in-flight DKG states (`DKGRequested`,
+    /// `AwaitingNetworkDKGVerification`, etc.) into a terminal one
+    /// (`Active` / equivalent on success, `NetworkRejected*` on
+    /// failure). Returns `Ok` on success terminal state, `Err` on
+    /// rejection or timeout.
+    ///
+    /// Events-based detection (`DWalletSessionResultEvent` emitted
+    /// by `sessions_manager`) doesn't surface reliably through the
+    /// Sui SDK's `MoveEventModule` / `MoveModule` filters in this
     /// in-process setup, so we query the on-chain object state
     /// instead. The `DWalletCoordinator` stores each dWallet as a
     /// dynamic object field of its `dwallets: ObjectTable<ID,
