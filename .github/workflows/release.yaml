@@ -395,10 +395,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Download all artifacts
+      - name: Download platform binaries
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
+          # Platform binaries only: the upgrade-compatibility-gate is a called
+          # workflow, so its always()-uploaded log artifacts land in THIS run's
+          # artifact namespace and would otherwise show up as fake platforms.
+          pattern: "{linux,macos,windows}-*"
 
       - name: Create build summary
         run: |
@@ -432,42 +436,49 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Download all artifacts
+      - name: Download platform binaries
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
+          # Platform binaries only: the upgrade-compatibility-gate is a called
+          # workflow, so its always()-uploaded log artifacts (upgrade-test-log-*,
+          # resource-sampler-*, ...) land in THIS run's artifact namespace and
+          # would otherwise be packaged as fake platform tarballs.
+          pattern: "{linux,macos,windows}-*"
 
       - name: Package release assets
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
-          for dir in artifacts/*/; do
-            platform="$(basename "$dir")"
-            # download-artifact strips unix modes; restore the executable bit
-            # so the tarballs (and the Homebrew install) carry runnable binaries.
-            chmod +x "$dir"*
-            tar -czvf "ika-${VERSION}-${platform}.tar.gz" -C "$dir" .
-          done
-
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="v${{ needs.version.outputs.version }}"
-          # Mainnet keeps the bare v-tag: the Homebrew formula's download URL
-          # interpolates it. Other networks get a qualified tag so pushing
-          # release/mainnet-X and release/testnet-X for the same version does
-          # not collide on one release name (as happened for 1.1.8).
+          # Mainnet keeps the bare v-name: the Homebrew formula's download URL
+          # and asset glob interpolate it. Other networks qualify BOTH the
+          # release tag and the asset filenames with the network, so pushing
+          # release/mainnet-X and release/testnet-X for the same version
+          # collides on neither the release name (as happened for 1.1.8) nor
+          # the downloaded tarball filenames.
           NETWORK="${{ needs.version.outputs.network }}"
           if [ "$NETWORK" = "mainnet" ]; then
             RELEASE_TAG="$VERSION"
           else
             RELEASE_TAG="${NETWORK}-${VERSION}"
           fi
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+          for dir in artifacts/*/; do
+            platform="$(basename "$dir")"
+            # download-artifact strips unix modes; restore the executable bit
+            # so the tarballs (and the Homebrew install) carry runnable binaries.
+            chmod +x "$dir"*
+            tar -czvf "ika-${RELEASE_TAG}-${platform}.tar.gz" -C "$dir" .
+          done
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           gh release create "$RELEASE_TAG" \
             --draft \
             --title "$RELEASE_TAG" \
             --generate-notes \
-            ika-${VERSION}-*.tar.gz
+            ika-${RELEASE_TAG}-*.tar.gz
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
