@@ -1682,21 +1682,25 @@ impl DWalletMPCService {
                     computation_id.mpc_round,
                     computation_id.attempt_number,
                     computation_result_name,
-                    computation_error.as_ref().map(|(code, _)| *code),
                     computation_error
                         .as_ref()
-                        .map_or_else(Vec::new, |(_, party_ids)| party_ids.clone()),
+                        .map(|diagnostic| diagnostic.error_code),
+                    computation_error
+                        .as_ref()
+                        .map_or_else(Vec::new, |diagnostic| diagnostic.party_ids.clone()),
                 );
             }
-            if let Some((error_code, error_party_ids)) = computation_error {
+            if let Some(diagnostic) = computation_error {
                 self.dwallet_mpc_manager.emit_session_anomaly(
                     session_identifier,
                     MpcAnomalyKind::LocalComputationFailed,
                     MpcAnomalyContext {
                         current_consensus_round: self.last_read_consensus_round,
                         trigger_conditions: vec!["local_mpc_computation_returned_error"],
-                        error_code: Some(error_code),
-                        error_party_ids,
+                        error_code: Some(diagnostic.error_code),
+                        error_party_ids: diagnostic.party_ids,
+                        error_backtrace: diagnostic.backtrace,
+                        error_backtrace_truncated: diagnostic.backtrace_truncated,
                         ..Default::default()
                     },
                 );
@@ -2038,7 +2042,7 @@ impl DWalletMPCService {
     ) {
         let validator_name = self.name.to_string();
         let party_id = self.dwallet_mpc_manager.party_id;
-        let (error_code, error_party_ids) = dwallet_mpc_error_diagnostic(&error);
+        let error_diagnostic = dwallet_mpc_error_diagnostic(&error);
         let protocol_metric_data = DWalletSessionRequestMetricData::from(&request.protocol_data);
         error!(
             ?session_identifier,
@@ -2048,7 +2052,7 @@ impl DWalletMPCService {
             session_sequence_number=?request.session_sequence_number,
             protocol_data=?protocol_metric_data.to_string(),
             error=?error,
-            error_kind=%error_code,
+            error_kind=%error_diagnostic.error_code,
             "rejecting session."
         );
 
@@ -2081,8 +2085,10 @@ impl DWalletMPCService {
                 MpcAnomalyContext {
                     current_consensus_round: self.last_read_consensus_round,
                     trigger_conditions: vec!["local_validator_submitting_rejected_output"],
-                    error_code: Some(error_code),
-                    error_party_ids,
+                    error_code: Some(error_diagnostic.error_code),
+                    error_party_ids: error_diagnostic.party_ids,
+                    error_backtrace: error_diagnostic.backtrace,
+                    error_backtrace_truncated: error_diagnostic.backtrace_truncated,
                     ..Default::default()
                 },
             );

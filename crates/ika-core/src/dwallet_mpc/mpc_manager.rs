@@ -3623,6 +3623,8 @@ impl DWalletMPCManager {
                 quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
                 local_output_rejected = ?snapshot.local_output_rejected,
                 error_code = snapshot.error_code.unwrap_or("none"),
+                error_backtrace_present = snapshot.error_backtrace.is_some(),
+                error_backtrace_truncated = snapshot.error_backtrace_truncated,
                 recent_trace_dropped_events = snapshot.recent_trace_dropped_events,
                 diagnostic_json = %diagnostic_json,
                 "abnormal MPC session diagnostic snapshot"
@@ -3645,6 +3647,8 @@ impl DWalletMPCManager {
                 quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
                 local_output_rejected = ?snapshot.local_output_rejected,
                 error_code = snapshot.error_code.unwrap_or("none"),
+                error_backtrace_present = snapshot.error_backtrace.is_some(),
+                error_backtrace_truncated = snapshot.error_backtrace_truncated,
                 recent_trace_dropped_events = snapshot.recent_trace_dropped_events,
                 diagnostic_json = %diagnostic_json,
                 "abnormal MPC session diagnostic snapshot"
@@ -3885,14 +3889,16 @@ impl DWalletMPCManager {
             }
             Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => None,
             Err(e) => {
-                let (error_code, error_party_ids) = mpc_error_diagnostic(&e);
+                let error_diagnostic = mpc_error_diagnostic(&e);
                 self.emit_session_anomaly(
                     *session_identifier,
                     MpcAnomalyKind::VotingFailure,
                     MpcAnomalyContext {
                         trigger_conditions: vec!["weighted_majority_vote_failed"],
-                        error_code: Some(error_code),
-                        error_party_ids,
+                        error_code: Some(error_diagnostic.error_code),
+                        error_party_ids: error_diagnostic.party_ids,
+                        error_backtrace: error_diagnostic.backtrace,
+                        error_backtrace_truncated: error_diagnostic.backtrace_truncated,
                         ..Default::default()
                     },
                 );

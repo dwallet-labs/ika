@@ -5,7 +5,8 @@
 //!
 //! These types deliberately cannot contain protocol payloads, private outputs,
 //! secret shares, or private MPC state. Callers record identifiers, digests,
-//! sizes, rounds, party IDs, state transitions, and sanitized error strings.
+//! sizes, rounds, party IDs, state transitions, sanitized error codes, and
+//! bounded crypto-library backtraces.
 
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -20,6 +21,11 @@ use sui_types::base_types::ObjectID;
 /// A session can receive arbitrarily many protocol messages, so this must stay
 /// fixed rather than tracking the complete transcript.
 pub(crate) const MAX_SESSION_DIAGNOSTIC_EVENTS: usize = 64;
+
+/// Backtraces identify the crypto call path without formatting the error kind,
+/// whose variants may contain private caller-provided strings. Keep the stored
+/// representation bounded independently from the session event ring buffer.
+pub(crate) const MAX_MPC_ERROR_BACKTRACE_BYTES: usize = 16 * 1024;
 
 pub(crate) fn output_digest(output: &DWalletMPCOutputKind) -> Option<[u8; 32]> {
     bcs::to_bytes(output)
@@ -257,6 +263,8 @@ pub(crate) struct MpcAnomalyContext {
     pub(crate) trigger_conditions: Vec<&'static str>,
     pub(crate) error_code: Option<&'static str>,
     pub(crate) error_party_ids: Vec<PartyID>,
+    pub(crate) error_backtrace: Option<String>,
+    pub(crate) error_backtrace_truncated: bool,
     pub(crate) running_computation_count: usize,
     pub(crate) vote: Option<OutputVoteDiagnostics>,
     pub(crate) local_authority_malicious: bool,
@@ -311,6 +319,10 @@ pub(crate) struct MpcAnomalySnapshot {
     pub(crate) trigger_conditions: Vec<&'static str>,
     pub(crate) error_code: Option<&'static str>,
     pub(crate) error_party_ids: Vec<PartyID>,
+    /// A bounded rendering of `mpc::Error::backtrace`. The error kind is never
+    /// formatted because some variants contain arbitrary, potentially private data.
+    pub(crate) error_backtrace: Option<String>,
+    pub(crate) error_backtrace_truncated: bool,
     pub(crate) service_loop_termination_reason: Option<&'static str>,
     pub(crate) recent_trace_dropped_events: u64,
     pub(crate) recent_trace: Vec<SessionDiagnosticEvent>,
@@ -324,10 +336,41 @@ impl MpcAnomalySnapshot {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MpcErrorDiagnostic {
+    pub(crate) error_code: &'static str,
+    pub(crate) party_ids: Vec<PartyID>,
+    pub(crate) backtrace: Option<String>,
+    pub(crate) backtrace_truncated: bool,
+}
+
+fn bounded_backtrace(backtrace: &std::backtrace::Backtrace) -> (Option<String>, bool) {
+    bounded_backtrace_string(backtrace.to_string())
+}
+
+fn bounded_backtrace_string(backtrace: String) -> (Option<String>, bool) {
+    if backtrace.is_empty() {
+        return (None, false);
+    }
+    if backtrace.len() <= MAX_MPC_ERROR_BACKTRACE_BYTES {
+        return (Some(backtrace), false);
+    }
+
+    let boundary = backtrace
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= MAX_MPC_ERROR_BACKTRACE_BYTES)
+        .last()
+        .unwrap_or(0);
+    (Some(backtrace[..boundary].to_owned()), true)
+}
+
 /// Convert an MPC error into allow-listed diagnostic metadata. Never format the
 /// complete error: `Serialization` and `Consumer` can contain arbitrary strings.
-pub(crate) fn mpc_error_diagnostic(error: &mpc::Error) -> (&'static str, Vec<PartyID>) {
-    match &error.kind {
+/// The crypto backtrace is safe to render separately because it contains call
+/// locations rather than the error kind or its values.
+pub(crate) fn mpc_error_diagnostic(error: &mpc::Error) -> MpcErrorDiagnostic {
+    let (error_code, party_ids) = match &error.kind {
         mpc::ErrorKind::InvalidParameters => ("invalid_parameters", vec![]),
         mpc::ErrorKind::DecryptionFailed => ("decryption_failed", vec![]),
         mpc::ErrorKind::IdentityEphemeralKey => ("identity_ephemeral_key", vec![]),
@@ -349,17 +392,27 @@ pub(crate) fn mpc_error_diagnostic(error: &mpc::Error) -> (&'static str, Vec<Par
         mpc::ErrorKind::Bcs(_) => ("bcs", vec![]),
         mpc::ErrorKind::Serialization(_) => ("serialization", vec![]),
         mpc::ErrorKind::Consumer(_) => ("consumer", vec![]),
+    };
+    let (backtrace, backtrace_truncated) = bounded_backtrace(&error.backtrace);
+    MpcErrorDiagnostic {
+        error_code,
+        party_ids,
+        backtrace,
+        backtrace_truncated,
     }
 }
 
-pub(crate) fn dwallet_mpc_error_diagnostic(
-    error: &DwalletMPCError,
-) -> (&'static str, Vec<PartyID>) {
+pub(crate) fn dwallet_mpc_error_diagnostic(error: &DwalletMPCError) -> MpcErrorDiagnostic {
     match error {
         DwalletMPCError::MPCError(error) | DwalletMPCError::FailedToAdvanceMPC(error) => {
             mpc_error_diagnostic(error)
         }
-        _ => (error.kind(), vec![]),
+        _ => MpcErrorDiagnostic {
+            error_code: error.kind(),
+            party_ids: vec![],
+            backtrace: None,
+            backtrace_truncated: false,
+        },
     }
 }
 
@@ -422,6 +475,8 @@ impl BoundedSessionDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::backtrace::Backtrace;
+    use std::sync::Arc;
 
     #[test]
     fn trace_is_bounded_and_anomalies_are_deduplicated() {
@@ -458,22 +513,47 @@ mod tests {
     #[test]
     fn mpc_error_diagnostics_do_not_format_arbitrary_error_content() {
         let secret_marker = "PRIVATE_MPC_VALUE_MUST_NOT_APPEAR";
-        let error = mpc::Error::from(mpc::ErrorKind::Serialization(secret_marker.to_string()));
+        let error = mpc::Error {
+            kind: mpc::ErrorKind::Serialization(secret_marker.to_string()),
+            backtrace: Arc::new(Backtrace::force_capture()),
+        };
 
-        let (error_code, party_ids) = mpc_error_diagnostic(&error);
+        let diagnostic = mpc_error_diagnostic(&error);
 
-        assert_eq!(error_code, "serialization");
-        assert!(party_ids.is_empty());
-        assert!(!error_code.contains(secret_marker));
+        assert_eq!(diagnostic.error_code, "serialization");
+        assert!(diagnostic.party_ids.is_empty());
+        assert!(
+            diagnostic
+                .backtrace
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(!diagnostic.backtrace_truncated);
+        assert!(
+            !serde_json::to_string(&diagnostic.backtrace)
+                .unwrap()
+                .contains(secret_marker)
+        );
     }
 
     #[test]
     fn mpc_error_diagnostics_preserve_only_exposed_party_ids() {
         let error = mpc::Error::from(mpc::ErrorKind::InvalidMessage(vec![2, 5]));
 
-        let (error_code, party_ids) = mpc_error_diagnostic(&error);
+        let diagnostic = mpc_error_diagnostic(&error);
 
-        assert_eq!(error_code, "invalid_message");
-        assert_eq!(party_ids, vec![2, 5]);
+        assert_eq!(diagnostic.error_code, "invalid_message");
+        assert_eq!(diagnostic.party_ids, vec![2, 5]);
+    }
+
+    #[test]
+    fn mpc_error_backtrace_is_bounded_on_a_utf8_boundary() {
+        let oversized = format!("{}é", "a".repeat(MAX_MPC_ERROR_BACKTRACE_BYTES));
+
+        let (backtrace, truncated) = bounded_backtrace_string(oversized);
+        let backtrace = backtrace.unwrap();
+
+        assert!(truncated);
+        assert_eq!(backtrace.len(), MAX_MPC_ERROR_BACKTRACE_BYTES);
     }
 }

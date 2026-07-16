@@ -819,6 +819,8 @@ impl DWalletSession {
             trigger_conditions: context.trigger_conditions,
             error_code: context.error_code,
             error_party_ids: context.error_party_ids,
+            error_backtrace: context.error_backtrace,
+            error_backtrace_truncated: context.error_backtrace_truncated,
             service_loop_termination_reason: context.service_loop_termination_reason,
             recent_trace_dropped_events: self.diagnostics.dropped_events(),
             recent_trace: self.diagnostics.events(),

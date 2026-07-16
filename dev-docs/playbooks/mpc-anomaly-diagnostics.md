@@ -110,14 +110,20 @@ and rounds. It never stores raw protocol messages, private outputs, secret
 shares, MPC private state, private keys, tokens, or digests of private values.
 Computation errors are reduced to an allow-listed `error_code`; complete error
 strings are never copied into the snapshot because several error variants can
-carry arbitrary strings or bytes. When the MPC library exposes party IDs for
-unresponsive, invalid-message, or malicious-message errors, only those IDs are
-retained in `error_party_ids`.
+carry arbitrary strings or bytes. Crypto-library errors also expose their
+captured call-stack backtrace separately as `error_backtrace`, capped at 16 KiB,
+with `error_backtrace_truncated` reporting truncation. Only the backtrace is
+formatted—not the error kind or its values—so caller-provided private input or
+output cannot enter the snapshot through an error message. When the MPC library
+exposes party IDs for unresponsive, invalid-message, or malicious-message
+errors, only those IDs are retained in `error_party_ids`. Non-crypto error
+variants do not expose backtraces and leave `error_backtrace` unset.
 
 The emitted line has stable top-level fields for filtering:
 `event`, `schema_version`, `anomaly_kind`, `severity`, `session_id`,
 `session_type`, `epoch`, `local_party_id`, `tracked_session`,
 `local_output_observed`, `quorum_reached_without_local_output`, `error_code`,
+`error_backtrace_present`, `error_backtrace_truncated`,
 `local_authority_malicious`, and `recent_trace_dropped_events`.
 `diagnostic_json` contains the complete
 versioned, privacy-safe snapshot as one JSON value. This remains one physical
