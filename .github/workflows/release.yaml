@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "release/*-*"
+      # Exclude the minted release tags (release/<network>-v<version>, note
+      # the "v") so publishing a draft release does not re-trigger this
+      # workflow. Only the bare-version trigger tags
+      # (release/<network>-<version>) start a build.
+      - "!release/*-v*"
   workflow_dispatch:
     inputs:
       network:
@@ -449,25 +454,29 @@ jobs:
       - name: Package release assets
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
-          # Mainnet keeps the bare v-name: the Homebrew formula's download URL
-          # and asset glob interpolate it. Other networks qualify BOTH the
-          # release tag and the asset filenames with the network, so pushing
-          # release/mainnet-X and release/testnet-X for the same version
-          # collides on neither the release name (as happened for 1.1.8) nor
-          # the downloaded tarball filenames.
+          # Mainnet keeps the bare v-name everywhere: the Homebrew formula's
+          # download URL and asset glob interpolate it. Other networks get a
+          # network-qualified asset stem and mint their release tag inside the
+          # release/ namespace (release/<network>-v<version>); the on.push.tags
+          # filter excludes "-v" tags so publishing the draft does not
+          # re-trigger this workflow. Asset filenames always use the slash-free
+          # stem — GitHub asset names cannot contain '/'.
           NETWORK="${{ needs.version.outputs.network }}"
           if [ "$NETWORK" = "mainnet" ]; then
+            ASSET_STEM="$VERSION"
             RELEASE_TAG="$VERSION"
           else
-            RELEASE_TAG="${NETWORK}-${VERSION}"
+            ASSET_STEM="${NETWORK}-${VERSION}"
+            RELEASE_TAG="release/${NETWORK}-${VERSION}"
           fi
+          echo "ASSET_STEM=${ASSET_STEM}" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
           for dir in artifacts/*/; do
             platform="$(basename "$dir")"
             # download-artifact strips unix modes; restore the executable bit
             # so the tarballs (and the Homebrew install) carry runnable binaries.
             chmod +x "$dir"*
-            tar -czvf "ika-${RELEASE_TAG}-${platform}.tar.gz" -C "$dir" .
+            tar -czvf "ika-${ASSET_STEM}-${platform}.tar.gz" -C "$dir" .
           done
 
       - name: Create draft release
@@ -480,10 +489,10 @@ jobs:
           # release commit this run built.
           gh release create "$RELEASE_TAG" \
             --draft \
-            --title "$RELEASE_TAG" \
+            --title "$ASSET_STEM" \
             --target "${{ github.sha }}" \
             --generate-notes \
-            ika-${RELEASE_TAG}-*.tar.gz
+            ika-${ASSET_STEM}-*.tar.gz
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
