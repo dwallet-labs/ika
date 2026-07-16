@@ -4,9 +4,8 @@
 mod input;
 
 use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
-use fastcrypto::hash::HashFunction;
 use group::PartyID;
-use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, DefaultHash};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
@@ -22,6 +21,11 @@ use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use crate::dwallet_mpc::mpc_diagnostics::{
+    BoundedSessionDiagnostics, LocalComputationState, MPC_ANOMALY_SCHEMA_VERSION,
+    MpcAnomalyContext, MpcAnomalyKind, MpcAnomalySnapshot, SessionDiagnosticEvent, output_digest,
+    report_digest,
+};
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
@@ -35,6 +39,20 @@ use tokio::sync::broadcast;
 pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) output: DWalletMPCOutputKind,
     pub(crate) malicious_authorities: Vec<AuthorityName>,
+    pub(crate) output_digest: [u8; 32],
+    pub(crate) report_digest: [u8; 32],
+    pub(crate) rejected: bool,
+}
+
+#[derive(Debug)]
+pub(crate) enum AddOutputResult {
+    Accepted {
+        conflicting_output_digests: bool,
+        own_rejected_output: bool,
+    },
+    Invalid {
+        error_code: &'static str,
+    },
 }
 
 #[derive(Clone)]
@@ -130,6 +148,26 @@ pub(crate) struct DWalletSession {
     /// consensus. This is protocol-agnostic and preserves individual votes
     /// that a later weighted majority would otherwise hide.
     pub(super) output_observations: HashMap<AuthorityName, SessionOutputObservation>,
+
+    /// Bounded metadata-only history, flushed only for abnormal sessions.
+    pub(super) diagnostics: BoundedSessionDiagnostics,
+
+    pub(super) request_epoch: Option<u64>,
+    pub(super) protocol: Option<String>,
+    pub(super) network_encryption_key_id: Option<ObjectID>,
+    pub(super) network_key_reconfiguration: bool,
+    pub(super) session_start_consensus_round: Option<u64>,
+    pub(super) local_computation_attempts_started: u64,
+    pub(super) local_computation_attempts_completed: u64,
+    pub(super) local_computation_attempts_failed: u64,
+    pub(super) local_computation_last_failed: bool,
+    pub(super) local_output_produced: bool,
+    pub(super) local_output_submitted: bool,
+    pub(super) local_output_submission_succeeded: Option<bool>,
+    pub(super) local_output_submission_round: Option<u64>,
+    pub(super) local_output_digest: Option<[u8; 32]>,
+    #[cfg(test)]
+    last_anomaly_snapshot: Option<MpcAnomalySnapshot>,
 }
 
 /// Possible statuses of a session:
@@ -218,7 +256,8 @@ impl DWalletSession {
             ),
             _ => (None, None, None),
         };
-        Self {
+        let diagnostics = BoundedSessionDiagnostics::new(status.to_string());
+        let mut session = Self {
             status,
             outputs_by_consensus_round: BTreeMap::new(),
             session_identifier,
@@ -237,7 +276,29 @@ impl DWalletSession {
             local_output_rejected: None,
             distinct_output_digests: HashSet::new(),
             output_observations: HashMap::new(),
+            diagnostics,
+            request_epoch: None,
+            protocol: None,
+            network_encryption_key_id: None,
+            network_key_reconfiguration: false,
+            session_start_consensus_round: None,
+            local_computation_attempts_started: 0,
+            local_computation_attempts_completed: 0,
+            local_computation_attempts_failed: 0,
+            local_computation_last_failed: false,
+            local_output_produced: false,
+            local_output_submitted: false,
+            local_output_submission_succeeded: None,
+            local_output_submission_round: None,
+            local_output_digest: None,
+            #[cfg(test)]
+            last_anomaly_snapshot: None,
+        };
+        if let SessionStatus::Active { request, .. } = &session.status {
+            let request = request.clone();
+            session.set_request_diagnostic_metadata(&request);
         }
+        session
     }
 
     /// Records the session's on-chain identity (sequence number + type) on this session
@@ -258,6 +319,26 @@ impl DWalletSession {
         }
     }
 
+    pub(crate) fn set_request_diagnostic_metadata(&mut self, request: &DWalletSessionRequest) {
+        self.request_epoch = Some(request.epoch);
+        self.protocol =
+            Some(DWalletSessionRequestMetricData::from(&request.protocol_data).to_string());
+        self.network_encryption_key_id = request.protocol_data.network_encryption_key_id();
+        self.network_key_reconfiguration = matches!(
+            request.protocol_data,
+            ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+        );
+        self.diagnostics
+            .record(SessionDiagnosticEvent::RequestMetadataObserved {
+                epoch: request.epoch,
+                session_type: request.session_type,
+                session_sequence_number: request.session_sequence_number,
+                protocol: self.protocol.clone().unwrap_or_default(),
+                network_encryption_key_id: self.network_encryption_key_id,
+                network_key_reconfiguration: self.network_key_reconfiguration,
+            });
+    }
+
     pub(crate) fn clear_data(&mut self) {
         self.computation_type = match self.computation_type {
             SessionComputationType::MPC { .. } => SessionComputationType::MPC {
@@ -267,6 +348,7 @@ impl DWalletSession {
         };
 
         self.outputs_by_consensus_round = BTreeMap::new();
+        self.diagnostics.clear_trace();
     }
 
     /// Adds an incoming message.
@@ -324,6 +406,14 @@ impl DWalletSession {
             %signature_algorithm,
             "Received a dWallet MPC message",
         );
+        self.session_start_consensus_round
+            .get_or_insert(consensus_round);
+        self.diagnostics
+            .record(SessionDiagnosticEvent::MessageReceived {
+                consensus_round,
+                sender_party_id,
+                message_size_bytes: message.message.len(),
+            });
 
         let SessionComputationType::MPC {
             messages_by_consensus_round,
@@ -359,7 +449,7 @@ impl DWalletSession {
         consensus_round: u64,
         sender_party_id: PartyID,
         output: DWalletMPCOutputReport,
-    ) {
+    ) -> AddOutputResult {
         debug!(
             session_identifier=?output.session_identifier(),
             from_authority=?output.authority(),
@@ -377,14 +467,18 @@ impl DWalletSession {
             self.first_output_consensus_round
                 .map_or(consensus_round, |previous| previous.min(consensus_round)),
         );
-        self.distinct_output_authorities.insert(output.authority());
+        self.session_start_consensus_round
+            .get_or_insert(consensus_round);
+        let authority = output.authority();
+        self.distinct_output_authorities.insert(authority);
+        let rejected = output.rejected();
 
         if sender_party_id == self.party_id {
             // First occurrence wins — a later retransmission of our output shouldn't
             // overwrite the round in which it originally looped back.
             self.self_output_consensus_round
                 .get_or_insert(consensus_round);
-            self.local_output_rejected = Some(output.rejected());
+            self.local_output_rejected = Some(rejected);
 
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
@@ -392,59 +486,107 @@ impl DWalletSession {
                 session_sequence_number = ?self.status.session_sequence_number(),
                 authority = ?self.validator_name,
                 consensus_round,
-                rejected = output.rejected(),
+                rejected,
                 "Received our output from consensus, marking session as computation completed",
             );
 
             self.mark_mpc_session_as_computation_completed()
         }
 
+        let malicious_authorities = output.malicious_authorities();
+        let output = match output.output() {
+            Ok(output) => output,
+            Err(_) => {
+                self.diagnostics
+                    .record(SessionDiagnosticEvent::OutputObserved {
+                        consensus_round,
+                        sender_party_id,
+                        output_digest: None,
+                        report_digest: None,
+                        rejected,
+                        reported_malicious_count: malicious_authorities.len(),
+                        valid: false,
+                    });
+                return AddOutputResult::Invalid {
+                    error_code: "invalid_output_envelope",
+                };
+            }
+        };
+        let Some(output_digest) = output_digest(&output) else {
+            self.diagnostics
+                .record(SessionDiagnosticEvent::OutputObserved {
+                    consensus_round,
+                    sender_party_id,
+                    output_digest: None,
+                    report_digest: None,
+                    rejected,
+                    reported_malicious_count: malicious_authorities.len(),
+                    valid: false,
+                });
+            return AddOutputResult::Invalid {
+                error_code: "output_digest_failed",
+            };
+        };
+        let Some(report_digest) = report_digest(&output, &malicious_authorities) else {
+            self.diagnostics
+                .record(SessionDiagnosticEvent::OutputObserved {
+                    consensus_round,
+                    sender_party_id,
+                    output_digest: Some(output_digest),
+                    report_digest: None,
+                    rejected,
+                    reported_malicious_count: malicious_authorities.len(),
+                    valid: false,
+                });
+            return AddOutputResult::Invalid {
+                error_code: "report_digest_failed",
+            };
+        };
+        self.distinct_output_digests.insert(output_digest);
+        self.output_observations
+            .entry(authority)
+            .and_modify(|observation| {
+                observation.digests.insert(output_digest);
+                observation.malicious_actor_count = observation
+                    .malicious_actor_count
+                    .max(malicious_authorities.len());
+                observation.rejected |= rejected;
+            })
+            .or_insert_with(|| SessionOutputObservation {
+                digests: HashSet::from([output_digest]),
+                malicious_actor_count: malicious_authorities.len(),
+                rejected,
+            });
+        if sender_party_id == self.party_id {
+            self.local_output_digest = self.local_output_digest.or(Some(output_digest));
+        }
+        self.diagnostics
+            .record(SessionDiagnosticEvent::OutputObserved {
+                consensus_round,
+                sender_party_id,
+                output_digest: Some(output_digest),
+                report_digest: Some(report_digest),
+                rejected,
+                reported_malicious_count: malicious_authorities.len(),
+                valid: true,
+            });
         let consensus_round_output_map = self
             .outputs_by_consensus_round
             .entry(consensus_round)
             .or_default();
+        if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
+            e.insert(DWalletMPCSessionOutput {
+                output,
+                malicious_authorities,
+                output_digest,
+                report_digest,
+                rejected,
+            });
+        }
 
-        let authority = output.authority();
-        let rejected = output.rejected();
-        let malicious_authorities = output.malicious_authorities();
-        if let Ok(output) = output.output() {
-            // Hash the output content (sender + malicious-authorities envelope excluded) so
-            // identical outputs from different validators collapse to the same digest —
-            // more than one digest here is the split-vote signal.
-            if let Ok(output_bytes) = bcs::to_bytes(&output) {
-                let digest: [u8; 32] = DefaultHash::digest(&output_bytes).into();
-                self.distinct_output_digests.insert(digest);
-                self.output_observations
-                    .entry(authority)
-                    .and_modify(|observation| {
-                        observation.digests.insert(digest);
-                        observation.malicious_actor_count = observation
-                            .malicious_actor_count
-                            .max(malicious_authorities.len());
-                        observation.rejected |= rejected;
-                    })
-                    .or_insert_with(|| SessionOutputObservation {
-                        digests: HashSet::from([digest]),
-                        malicious_actor_count: malicious_authorities.len(),
-                        rejected,
-                    });
-            }
-            if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
-                e.insert(DWalletMPCSessionOutput {
-                    output,
-                    malicious_authorities,
-                });
-            }
-        } else {
-            warn!(
-                session_identifier=?output.session_identifier(),
-                from_authority=?output.authority(),
-                receiving_authority=?self.validator_name,
-                consensus_round,
-                status =? self.status,
-                rejected=output.rejected(),
-                "Received an invalid dWallet MPC output",
-            );
+        AddOutputResult::Accepted {
+            conflicting_output_digests: self.distinct_output_digests.len() > 1,
+            own_rejected_output: sender_party_id == self.party_id && rejected,
         }
     }
 
@@ -455,11 +597,249 @@ impl DWalletSession {
     }
 
     pub(crate) fn mark_mpc_session_as_completed(&mut self) {
+        self.record_status_transition("Completed");
         self.status = SessionStatus::Completed;
     }
 
     pub(crate) fn mark_mpc_session_as_computation_completed(&mut self) {
+        self.record_status_transition("Computation Completed");
         self.status = SessionStatus::ComputationCompleted;
+    }
+
+    pub(crate) fn set_status(&mut self, status: SessionStatus) {
+        self.record_status_transition(&status.to_string());
+        self.status = status;
+    }
+
+    fn record_status_transition(&mut self, to: &str) {
+        let from = self.status.to_string();
+        if from != to {
+            self.diagnostics
+                .record(SessionDiagnosticEvent::StatusTransition {
+                    from,
+                    to: to.to_string(),
+                });
+        }
+    }
+
+    pub(crate) fn record_computation_started(
+        &mut self,
+        consensus_round: u64,
+        mpc_round: Option<u64>,
+        attempt_number: u64,
+    ) {
+        self.session_start_consensus_round
+            .get_or_insert(consensus_round);
+        self.local_computation_attempts_started =
+            self.local_computation_attempts_started.saturating_add(1);
+        self.local_computation_last_failed = false;
+        self.diagnostics
+            .record(SessionDiagnosticEvent::ComputationStarted {
+                consensus_round,
+                mpc_round,
+                attempt_number,
+            });
+    }
+
+    pub(crate) fn record_computation_completed(
+        &mut self,
+        consensus_round: u64,
+        mpc_round: Option<u64>,
+        attempt_number: u64,
+        result: &'static str,
+        error_code: Option<&'static str>,
+        error_party_ids: Vec<PartyID>,
+    ) {
+        self.local_computation_attempts_completed =
+            self.local_computation_attempts_completed.saturating_add(1);
+        if error_code.is_some() {
+            self.local_computation_attempts_failed =
+                self.local_computation_attempts_failed.saturating_add(1);
+            self.local_computation_last_failed = true;
+        }
+        self.diagnostics
+            .record(SessionDiagnosticEvent::ComputationCompleted {
+                consensus_round,
+                mpc_round,
+                attempt_number,
+                result,
+                error_code,
+                error_party_ids,
+            });
+    }
+
+    pub(crate) fn record_message_submission(
+        &mut self,
+        consensus_round: Option<u64>,
+        mpc_round: Option<u64>,
+        attempt_number: u64,
+        message_size_bytes: usize,
+    ) {
+        self.diagnostics
+            .record(SessionDiagnosticEvent::MessageSubmitted {
+                consensus_round,
+                mpc_round,
+                attempt_number,
+                message_size_bytes,
+            });
+    }
+
+    pub(crate) fn record_local_output_produced(
+        &mut self,
+        consensus_round: Option<u64>,
+        output_digest: Option<[u8; 32]>,
+        rejected: bool,
+    ) {
+        self.local_output_produced = true;
+        if let Some(consensus_round) = consensus_round {
+            self.session_start_consensus_round
+                .get_or_insert(consensus_round);
+        }
+        self.local_output_digest = output_digest;
+        self.local_output_rejected = Some(rejected);
+        self.diagnostics
+            .record(SessionDiagnosticEvent::OutputProduced {
+                consensus_round,
+                output_digest,
+                rejected,
+            });
+    }
+
+    pub(crate) fn record_local_output_submission(
+        &mut self,
+        consensus_round: Option<u64>,
+        output_digest: Option<[u8; 32]>,
+        rejected: bool,
+        succeeded: bool,
+        error_code: Option<&'static str>,
+    ) {
+        self.local_output_submitted = true;
+        self.local_output_submission_round = self.local_output_submission_round.or(consensus_round);
+        self.local_output_digest = self.local_output_digest.or(output_digest);
+        self.local_output_rejected = Some(rejected);
+        self.local_output_submission_succeeded = Some(succeeded);
+        self.diagnostics
+            .record(SessionDiagnosticEvent::OutputSubmissionFinished {
+                consensus_round,
+                output_digest,
+                rejected,
+                succeeded,
+                error_code,
+            });
+    }
+
+    pub(crate) fn record_quorum(
+        &mut self,
+        consensus_round: u64,
+        winning_output_digest: [u8; 32],
+        rejected: bool,
+    ) {
+        self.quorum_consensus_round.get_or_insert(consensus_round);
+        self.diagnostics
+            .record(SessionDiagnosticEvent::QuorumReached {
+                consensus_round,
+                winning_output_digest,
+                rejected,
+                local_output_observed: self.self_output_consensus_round.is_some(),
+            });
+    }
+
+    pub(crate) fn record_quorum_output_cached(&mut self) {
+        self.diagnostics
+            .record(SessionDiagnosticEvent::QuorumOutputCached {
+                without_local_output: self.self_output_consensus_round.is_none(),
+            });
+    }
+
+    pub(crate) fn anomaly_snapshot(
+        &mut self,
+        anomaly: MpcAnomalyKind,
+        manager_epoch: u64,
+        context: MpcAnomalyContext,
+    ) -> Option<MpcAnomalySnapshot> {
+        if !self.diagnostics.begin_anomaly(anomaly) {
+            return None;
+        }
+
+        let local_computation_state = if context.running_computation_count > 0 {
+            LocalComputationState::Running
+        } else if self.local_output_produced {
+            LocalComputationState::OutputProduced
+        } else if self.local_computation_last_failed {
+            LocalComputationState::Failed
+        } else if self.local_computation_attempts_started > 0 {
+            LocalComputationState::WaitingForProtocolInput
+        } else {
+            LocalComputationState::NotStarted
+        };
+
+        let snapshot = MpcAnomalySnapshot {
+            schema_version: MPC_ANOMALY_SCHEMA_VERSION,
+            anomaly_kind: anomaly,
+            session_id: self.session_identifier.into_bytes(),
+            session_type: self
+                .session_type
+                .unwrap_or_else(|| self.session_identifier.session_type()),
+            computation_type: match &self.computation_type {
+                SessionComputationType::MPC { .. } => "MPC",
+                SessionComputationType::Native => "Native",
+            },
+            protocol: self.protocol.clone(),
+            session_sequence_number: self.session_sequence_number,
+            epoch: self.request_epoch.unwrap_or(manager_epoch),
+            local_authority: self.validator_name,
+            local_party_id: self.party_id,
+            session_start_consensus_round: self.session_start_consensus_round,
+            current_consensus_round: context.current_consensus_round,
+            source_authority: context.source_authority,
+            source_party_id: context.source_party_id,
+            local_output_submission_round: self.local_output_submission_round,
+            local_output_consensus_round: self.self_output_consensus_round,
+            quorum_consensus_round: self.quorum_consensus_round,
+            lifecycle_status: self.status.to_string(),
+            local_computation_state,
+            local_computation_attempts_started: self.local_computation_attempts_started,
+            local_computation_attempts_completed: self.local_computation_attempts_completed,
+            local_computation_attempts_failed: self.local_computation_attempts_failed,
+            running_computation_count: context.running_computation_count,
+            local_output_produced: self.local_output_produced,
+            local_output_submitted: self.local_output_submitted,
+            local_output_submission_succeeded: self.local_output_submission_succeeded,
+            local_output_observed: self.self_output_consensus_round.is_some(),
+            local_output_rejected: self.local_output_rejected,
+            local_output_digest: self.local_output_digest,
+            quorum_reached_without_local_output: self.quorum_consensus_round.is_some()
+                && self.self_output_consensus_round.is_none(),
+            network_key_reconfiguration: self.network_key_reconfiguration,
+            network_encryption_key_id: self.network_encryption_key_id,
+            vote: context.vote,
+            local_authority_malicious: context.local_authority_malicious,
+            quorum_output_cached_without_local_output: context
+                .quorum_output_cached_without_local_output,
+            trigger_conditions: context.trigger_conditions,
+            error_code: context.error_code,
+            error_party_ids: context.error_party_ids,
+            error_backtrace: context.error_backtrace,
+            error_backtrace_truncated: context.error_backtrace_truncated,
+            service_loop_termination_reason: context.service_loop_termination_reason,
+            recent_trace_dropped_events: self.diagnostics.dropped_events(),
+            recent_trace: self.diagnostics.events(),
+        };
+        #[cfg(test)]
+        {
+            self.last_anomaly_snapshot = Some(snapshot.clone());
+        }
+        Some(snapshot)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn emitted_anomaly_count(&self) -> usize {
+        self.diagnostics.emitted_anomaly_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_anomaly_snapshot(&self) -> Option<&MpcAnomalySnapshot> {
+        self.last_anomaly_snapshot.as_ref()
     }
 
     pub(crate) fn request_metric_data(&self) -> Option<DWalletSessionRequestMetricData> {
@@ -843,13 +1223,14 @@ impl DWalletMPCManager {
         let new_type = SessionComputationType::from(&request.protocol_data);
 
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
-            session.status = status.clone();
+            session.set_status(status.clone());
             session.counterparty_chain = request.counterparty_chain;
             // Record seq + type on the session entry so they survive future transitions to
             // unit-variant states (ComputationCompleted/Completed/Failed) which would
             // otherwise discard this information.
             session.set_request_metadata(request.session_sequence_number, request.session_type);
             session.set_protocol_name(protocol_name.clone());
+            session.set_request_diagnostic_metadata(&request);
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -876,6 +1257,7 @@ impl DWalletMPCManager {
             if let Some(session) = self.sessions.get_mut(&session_identifier) {
                 session.set_request_metadata(request.session_sequence_number, request.session_type);
                 session.set_protocol_name(protocol_name);
+                session.set_request_diagnostic_metadata(&request);
             }
         }
         Some(status)

@@ -173,6 +173,19 @@ pub struct DWalletMPCMetrics {
     /// (0 = canonical output, 1 = rejected output).
     pub(crate) session_output_rejected: IntGaugeVec,
 
+    /// Privacy-safe anomaly snapshots emitted to the validator's local log sink.
+    /// Labels are fixed enums: `anomaly_kind`, `session_type` (or `unknown` when
+    /// service termination has no source session), and `severity`.
+    pub(crate) anomaly_snapshots_total: IntCounterVec,
+
+    /// Individual reasons present in emitted anomaly snapshots. One snapshot can
+    /// increment several triggers. Trigger values are compile-time static strings.
+    pub(crate) anomaly_triggers_total: IntCounterVec,
+
+    /// Anomaly snapshots intentionally not emitted after a bounded diagnostic
+    /// store reaches capacity. Labels: fixed `reason` values only.
+    pub(crate) anomaly_snapshots_dropped_total: IntCounterVec,
+
     /// Histogram-by-bucket of how long each currently-Active session has been
     /// tracked for. Labels: `session_type` (`user` / `system` /
     /// `internal_presign` / `noa_sign`), `age_bucket` (`<30s`, `<5m`, `<30m`,
@@ -489,6 +502,27 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_session_output_rejected",
                 "Whether each authority's session output report was rejected",
                 &["protocol_name", "session_id", "authority"],
+                registry,
+            )
+            .unwrap(),
+            anomaly_snapshots_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_anomaly_snapshots_total",
+                "Privacy-safe MPC anomaly snapshots emitted to the local log sink",
+                &["anomaly_kind", "session_type", "severity"],
+                registry,
+            )
+            .unwrap(),
+            anomaly_triggers_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_anomaly_triggers_total",
+                "Trigger conditions included in emitted privacy-safe MPC anomaly snapshots",
+                &["trigger", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            anomaly_snapshots_dropped_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_anomaly_snapshots_dropped_total",
+                "Privacy-safe MPC anomaly snapshots not emitted due to a bounded diagnostic capacity",
+                &["reason"],
                 registry,
             )
             .unwrap(),

@@ -39,6 +39,7 @@ pub struct NetworkOwnedAddressSignOutput {
 }
 
 pub mod dwallet_mpc_service;
+mod mpc_diagnostics;
 pub mod mpc_manager;
 pub mod mpc_session;
 
