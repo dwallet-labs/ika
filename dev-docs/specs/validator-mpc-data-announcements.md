@@ -202,7 +202,27 @@ which bytes* deterministic in consensus order.
    fetch, assembly decode).
 3. `Committee.class_groups_public_keys_and_proofs` is load-bearing for
    the reconfiguration MPC: it is never populated partially and never
-   left empty for a non-excluded member.
+   left empty for a non-excluded member. This binds every builder of
+   the map, not only the off-chain assembly. The chain-view builders —
+   `get_epoch_start_system` in `ika-sui-client` (feeding
+   `EpochStartSystem::get_ika_committee`, the epoch store's committee
+   and, pre-v4, the MPC manager's validator-key seed) and the
+   sui_syncer legacy chain fallback (`new_committee`, feeding the
+   reconfiguration MPC under pre-v4 protocol versions) — enforce it at
+   the read boundary: an active member whose on-chain `mpc_data`
+   record is missing or undecodable fails the WHOLE read (retried by
+   `must_get_epoch_start_system` / the next sync tick), never a silent
+   member skip. Chain state cannot legitimately lack the record (it is
+   written at candidate registration and never emptied; under v4 chain
+   writes remain), so absence is always a read defect — and each
+   validator reads through its own fullnode, so a tolerated local gap
+   would be an unagreed party-set exclusion: divergent MPC public
+   inputs across honest validators. Exclusion decisions belong
+   exclusively to the consensus-agreed freeze. The completeness check
+   lives at the read boundary, NOT on `Committee` construction — a
+   post-freeze assembled committee legitimately omits *excluded*
+   members, so a type-level "map covers all members" invariant would
+   be wrong.
 4. Post-freeze, all mpc-data decisions read the frozen set only.
 
 Code anchors: `crates/ika-types/src/validator_metadata.rs` (types),
@@ -210,4 +230,7 @@ Code anchors: `crates/ika-types/src/validator_metadata.rs` (types),
 `crates/ika-core/src/authority/authority_per_epoch_store.rs` (freeze
 decision, signal tables), `crates/ika-core/src/epoch_tasks/`
 (announcement sender, joiner announcements, peer blob fetcher),
-`crates/ika-network/src/mpc_artifacts/` (blob store + hash).
+`crates/ika-network/src/mpc_artifacts/` (blob store + hash),
+`crates/ika-sui-client/src/lib.rs` +
+`crates/ika-core/src/sui_connector/sui_syncer.rs` (chain-read
+completeness gates, invariant 3).
