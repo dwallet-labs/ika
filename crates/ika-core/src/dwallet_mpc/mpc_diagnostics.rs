@@ -14,6 +14,7 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::messages_dwallet_mpc::{DWalletMPCOutputKind, SessionType};
 use serde::{Serialize, Serializer};
+use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::{HashSet, VecDeque};
 use sui_types::base_types::ObjectID;
 
@@ -343,7 +344,10 @@ pub(crate) struct MpcErrorDiagnostic {
     pub(crate) backtrace_truncated: bool,
 }
 
-fn bounded_backtrace(backtrace: &std::backtrace::Backtrace) -> (Option<String>, bool) {
+fn bounded_backtrace(backtrace: &Backtrace) -> (Option<String>, bool) {
+    if backtrace.status() != BacktraceStatus::Captured {
+        return (None, false);
+    }
     bounded_backtrace_string(backtrace.to_string())
 }
 
@@ -474,7 +478,6 @@ impl BoundedSessionDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::backtrace::Backtrace;
     use std::sync::Arc;
 
     #[test]
@@ -554,5 +557,13 @@ mod tests {
 
         assert!(truncated);
         assert_eq!(backtrace.len(), MAX_MPC_ERROR_BACKTRACE_BYTES);
+    }
+
+    #[test]
+    fn disabled_mpc_error_backtrace_is_not_persisted_as_a_placeholder() {
+        let (backtrace, truncated) = bounded_backtrace(&Backtrace::disabled());
+
+        assert!(backtrace.is_none());
+        assert!(!truncated);
     }
 }

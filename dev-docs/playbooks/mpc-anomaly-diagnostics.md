@@ -152,12 +152,18 @@ positions. Enable newline-delimited JSON on the validator's systemd unit:
 [Service]
 Environment=RUST_LOG=info
 Environment=RUST_LOG_JSON=1
+Environment=RUST_BACKTRACE=1
 UMask=0027
 ```
 
 `WARN` and `ERROR` anomaly snapshots pass the normal `info` filter; enabling
-global debug logging is not required. Apply a drop-in with `systemctl edit
-ika-node`, then run:
+global debug logging is not required. `RUST_BACKTRACE=1` must be present when
+the crypto error is constructed; `std::backtrace::Backtrace::capture()` is
+environment-gated. When capture is disabled or unsupported, diagnostics leave
+`error_backtrace` unset instead of persisting the misleading `disabled
+backtrace` placeholder. The validator infrastructure sets this variable, but
+operators managing their own systemd unit must set it explicitly. Apply a
+drop-in with `systemctl edit ika-node`, then run:
 
 ```bash
 sudo systemctl daemon-reload
