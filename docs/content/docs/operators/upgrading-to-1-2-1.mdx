@@ -1,16 +1,16 @@
 ---
-id: upgrading-to-1-2-0
-title: Upgrading to 1.2.0
-description: Operator notes for upgrading an ika node from 1.1.8 to 1.2.0
+id: upgrading-to-1-2-1
+title: Upgrading to 1.2.1
+description: Operator notes for upgrading an ika node from 1.1.8 to 1.2.1
 sidebar_position: 2
-sidebar_label: Upgrading to 1.2.0
+sidebar_label: Upgrading to 1.2.1
 ---
 
-# Upgrading from 1.1.8 to 1.2.0
+# Upgrading from 1.1.8 to 1.2.1
 
-1.2.0 is a binary swap: replace the binary/image and restart. No data
+1.2.1 is a binary swap: replace the binary/image and restart. No data
 migration and no config rewrite. **Protocol version 4 activates
-automatically, roughly one epoch after enough stake runs 1.2.0** — the
+automatically, roughly one epoch after enough stake runs 1.2.1** — the
 binary advertises support for protocol versions 3–4, validators tally those
 capabilities at every epoch close, and the network moves to version 4 once a
 quorum (plus a buffer margin) of stake advertises it. There is no separate
@@ -23,13 +23,13 @@ Several operational surfaces did change. Read this before upgrading.
 
 `ika-node` was split into one binary (and one Docker image) per role:
 
-| Role      | Binary          | Image                                                                            |
-| --------- | --------------- | -------------------------------------------------------------------------------- |
-| Validator | `ika-validator` | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-validator`      |
-| Fullnode  | `ika-fullnode`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-fullnode`       |
-| Notifier  | `ika-notifier`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier`       |
+| Role      | Binary          | Image                                                                        |
+| --------- | --------------- | ---------------------------------------------------------------------------- |
+| Validator | `ika-validator` | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-validator` |
+| Fullnode  | `ika-fullnode`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-fullnode`  |
+| Notifier  | `ika-notifier`  | `us-docker.pkg.dev/common-449616/ika-common-public-containers/ika-notifier`  |
 
-Image tags follow `{network}-v{version}`, e.g. `mainnet-v1.2.0`. Update every
+Image tags follow `{network}-v{version}`, e.g. `testnet-v1.2.1`. Update every
 systemd unit, container spec, and pull reference — the `ika-node` name is no
 longer published.
 
@@ -88,15 +88,27 @@ release tarballs, Homebrew, and Docker images carry correct permissions.
 Mainnet and testnet **validators** still enforce the 16-core minimum at boot.
 The check no longer fires for fullnodes, notifiers, or dev/local networks.
 
-## 7. Upgrade as a coordinated swap, not a leisurely rollout
+## 7. Rolling, validator-by-validator upgrades are supported
 
-1.1.8 and 1.2.0 link different cryptography libraries, so their **MPC wire
-formats are not interchangeable**: a mixed 1.1.8/1.2.0 committee keeps
-consensus running but cannot exchange MPC messages, so signing sessions
-make no progress until enough stake is on the same side. This is why the
-project's own mainnet upgrade rehearsal swaps all validators **at once**
-(an atomic, coordinated restart), not one at a time. Treat the upgrade the
-same way: coordinate the fleet to restart onto 1.2.0 near-simultaneously in
-one announced window, keep the mixed-version window as close to zero as you
-can, and avoid scheduling it near an epoch boundary (an MPC session that
-can never complete on the running mix can hold up the epoch).
+1.1.8 and 1.2.1 link different cryptography libraries, and earlier guidance
+assumed their MPC wire formats were therefore not interchangeable,
+recommending an atomic coordinated fleet restart. That assumption was put
+to the test and disproved: every release tag is now blocked on a
+mixed-committee compatibility gate that runs the literal binaries with real
+cryptography — a committee of `mainnet-v1.1.8` validators with a single
+upgraded validator must complete two network-key reconfigurations (the
+deployment-critical MPC boundary) with every validator healthy, identical
+canonical outputs on every authority, zero reported malicious actors, and
+no stranded work. 1.2.1 passed that gate.
+
+So upgrade your validator on your own schedule, with two timing cares:
+
+- **Don't restart inside the mid-epoch reconfiguration window** (around the
+  50% mark of the epoch) **or right at an epoch boundary** — a swap whose
+  downtime overlaps the reconfiguration MPC can stall the epoch for
+  everyone.
+- **Keep the fleet-wide rollout reasonably brisk anyway**: protocol v4
+  activates only after a quorum of stake runs the new release, so a
+  dragged-out rollout delays activation — and the gate validates the
+  reconfiguration boundary specifically, not indefinite mixed-fleet
+  operation as a steady state.
