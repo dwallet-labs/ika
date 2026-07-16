@@ -231,6 +231,7 @@ pub(crate) fn session_input_from_request(
                     validator_mpc_keys_by_party_id.secp256k1_pvss,
                     validator_mpc_keys_by_party_id.secp256r1_pvss,
                     validator_mpc_keys_by_party_id.ristretto_pvss,
+                    protocol_config.is_network_encryption_key_version_v3(),
                 )?)
             } else {
                 PublicInput::NetworkEncryptionKeyDkgBwdCompat(network_dkg_bwd_compat_public_input(
@@ -278,6 +279,7 @@ pub(crate) fn session_input_from_request(
                         upcoming_validator_mpc_keys,
                         network_dkg_public_output,
                         latest_reconfiguration_public_output,
+                        protocol_config.is_reconfiguration_message_version_v3(),
                     )?,
                 )
             } else {

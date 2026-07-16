@@ -40,9 +40,8 @@
 //! exchanging consensus + MPC messages. The literal `mainnet-v1.1.8` binary
 //! also boots and runs in this harness (the harness registers the bare
 //! v1.1.8 class-groups key shape at genesis) — see `v118_upgrade.rs` for
-//! that rehearsal, which swaps *atomically* instead: mixed 1.1.8/local
-//! committees are not guaranteed MPC-wire-compatible, so the rolling-swap
-//! variant is only valid between builds of the same branch.
+//! that full-committee rehearsal. `v118_mixed_rollout.rs` separately tests
+//! the production one-current/three-literal-v1.1.8 topology through real MPC.
 //!
 //! Genesis writes an **empty** `GlobalPresignConfig` — a harness
 //! arrangement, *not* the mainnet state (mainnet's config is populated; the

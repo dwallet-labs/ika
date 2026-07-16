@@ -100,6 +100,14 @@ impl ValidatorProcess {
         self.metrics_port
     }
 
+    pub fn admin_endpoint(&self) -> String {
+        format!("http://{}", self.admin_addr)
+    }
+
+    pub fn metrics_endpoint(&self) -> String {
+        format!("http://127.0.0.1:{}/metrics", self.metrics_port)
+    }
+
     /// Spawn the process and block until its admin server answers, i.e. the
     /// node has booted far enough to serve `GET /node-config`.
     pub async fn start(&mut self) -> Result<()> {
@@ -277,6 +285,53 @@ impl ValidatorProcess {
 
     pub fn log_path(&self) -> &PathBuf {
         &self.log_path
+    }
+
+    /// Fail-closed liveness check for an already-started validator. Unlike the
+    /// startup poll, this is an assertion: a missing child or one unreachable
+    /// admin endpoint is an immediate failure with the validator index and
+    /// endpoint in the error.
+    pub async fn expect_healthy(&self) -> Result<()> {
+        if !self.is_running() {
+            bail!(
+                "validator {} is not running (admin endpoint {})",
+                self.index,
+                self.admin_endpoint()
+            );
+        }
+        self.admin_get("node-config").await.with_context(|| {
+            format!(
+                "validator {} unreachable at admin endpoint {}",
+                self.index,
+                self.admin_endpoint()
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Scrape this validator's Prometheus endpoint. Assertions use this
+    /// instead of open-coded reqwest calls so HTTP errors, non-2xx responses,
+    /// and body-read failures all retain the validator index and endpoint.
+    pub async fn metrics(&self) -> Result<String> {
+        let url = self.metrics_endpoint();
+        let response = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("validator {} metrics GET {url}", self.index))?;
+        if !response.status().is_success() {
+            bail!(
+                "validator {} metrics endpoint {} returned {}",
+                self.index,
+                url,
+                response.status()
+            );
+        }
+        response
+            .text()
+            .await
+            .with_context(|| format!("validator {} read metrics body from {url}", self.index))
     }
 
     async fn wait_until_healthy(&self, timeout: Duration) -> Result<()> {

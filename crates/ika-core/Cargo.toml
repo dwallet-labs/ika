@@ -112,8 +112,8 @@ twopc_mpc = { workspace = true, features = ["parallel"] }
 default = []
 test-utils = []
 enforce-minimum-cpu = []
-# INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks.
-# Never enable in production. See cryptography-private `unsafe_mock`.
+# INSECURE test-only mock: forwards to the deterministic inkrypto protocol mocks.
+# Never enable in production. See inkrypto `unsafe_mock`.
 dwallet-mpc-unsafe-mock = [
     "dwallet-mpc-types/dwallet-mpc-unsafe-mock",
     "dwallet-classgroups-types/dwallet-mpc-unsafe-mock",

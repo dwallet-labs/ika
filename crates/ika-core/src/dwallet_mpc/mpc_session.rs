@@ -37,6 +37,13 @@ pub(crate) struct DWalletMPCSessionOutput {
     pub(crate) malicious_authorities: Vec<AuthorityName>,
 }
 
+#[derive(Clone)]
+pub(crate) struct SessionOutputObservation {
+    pub(crate) digests: HashSet<[u8; 32]>,
+    pub(crate) malicious_actor_count: usize,
+    pub(crate) rejected: bool,
+}
+
 /// A dWallet session. Encapsulates computation done by validators,
 /// whose output is being agreed upon in consensus,
 /// then being transmitted onto the Sui chain as part of a checkpoint,
@@ -81,6 +88,11 @@ pub(crate) struct DWalletSession {
     /// Same idea — set to `Some(_)` once we've seen a request, preserved across transitions.
     pub(super) session_type: Option<SessionType>,
 
+    /// Stable protocol name from the session request. Outputs can arrive before
+    /// their request, so this remains `None` until the request is observed and
+    /// is then preserved across terminal status transitions.
+    pub(super) protocol_name: Option<String>,
+
     // -------- per-session timing/diagnostic counters --------
     // All of these are populated in this process's lifetime only — pre-restart events
     // do not contribute. They feed the `ika_dwallet_mpc_user_session_*` per-seq gauges.
@@ -113,6 +125,11 @@ pub(crate) struct DWalletSession {
     /// envelope excluded), so identical outputs from different validators collapse to one
     /// digest.
     pub(super) distinct_output_digests: HashSet<[u8; 32]>,
+
+    /// Canonical submitted output observed from each authority through
+    /// consensus. This is protocol-agnostic and preserves individual votes
+    /// that a later weighted majority would otherwise hide.
+    pub(super) output_observations: HashMap<AuthorityName, SessionOutputObservation>,
 }
 
 /// Possible statuses of a session:
@@ -189,11 +206,17 @@ impl DWalletSession {
     ) -> Self {
         // If the new session is created with an Active status the request is right there;
         // pull seq/type out of it so they survive any later transition to a unit variant.
-        let (session_sequence_number, session_type) = match &status {
-            SessionStatus::Active { request, .. } => {
-                (request.session_sequence_number, Some(request.session_type))
-            }
-            _ => (None, None),
+        let (session_sequence_number, session_type, protocol_name) = match &status {
+            SessionStatus::Active { request, .. } => (
+                request.session_sequence_number,
+                Some(request.session_type),
+                Some(
+                    DWalletSessionRequestMetricData::from(&request.protocol_data)
+                        .name()
+                        .to_owned(),
+                ),
+            ),
+            _ => (None, None, None),
         };
         Self {
             status,
@@ -206,12 +229,14 @@ impl DWalletSession {
             created_at: Instant::now(),
             session_sequence_number,
             session_type,
+            protocol_name,
             first_output_consensus_round: None,
             self_output_consensus_round: None,
             quorum_consensus_round: None,
             distinct_output_authorities: HashSet::new(),
             local_output_rejected: None,
             distinct_output_digests: HashSet::new(),
+            output_observations: HashMap::new(),
         }
     }
 
@@ -225,6 +250,12 @@ impl DWalletSession {
     ) {
         self.session_sequence_number = self.session_sequence_number.or(session_sequence_number);
         self.session_type = Some(session_type);
+    }
+
+    pub(crate) fn set_protocol_name(&mut self, protocol_name: String) {
+        if self.protocol_name.is_none() {
+            self.protocol_name = Some(protocol_name);
+        }
     }
 
     pub(crate) fn clear_data(&mut self) {
@@ -373,6 +404,8 @@ impl DWalletSession {
             .entry(consensus_round)
             .or_default();
 
+        let authority = output.authority();
+        let rejected = output.rejected();
         let malicious_authorities = output.malicious_authorities();
         if let Ok(output) = output.output() {
             // Hash the output content (sender + malicious-authorities envelope excluded) so
@@ -381,6 +414,20 @@ impl DWalletSession {
             if let Ok(output_bytes) = bcs::to_bytes(&output) {
                 let digest: [u8; 32] = DefaultHash::digest(&output_bytes).into();
                 self.distinct_output_digests.insert(digest);
+                self.output_observations
+                    .entry(authority)
+                    .and_modify(|observation| {
+                        observation.digests.insert(digest);
+                        observation.malicious_actor_count = observation
+                            .malicious_actor_count
+                            .max(malicious_authorities.len());
+                        observation.rejected |= rejected;
+                    })
+                    .or_insert_with(|| SessionOutputObservation {
+                        digests: HashSet::from([digest]),
+                        malicious_actor_count: malicious_authorities.len(),
+                        rejected,
+                    });
             }
             if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
                 e.insert(DWalletMPCSessionOutput {
@@ -786,6 +833,9 @@ impl DWalletMPCManager {
         }
 
         let status = self.session_status_from_request(request.clone(), false);
+        let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
+            .name()
+            .to_owned();
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
@@ -799,6 +849,7 @@ impl DWalletMPCManager {
             // unit-variant states (ComputationCompleted/Completed/Failed) which would
             // otherwise discard this information.
             session.set_request_metadata(request.session_sequence_number, request.session_type);
+            session.set_protocol_name(protocol_name.clone());
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -824,6 +875,7 @@ impl DWalletMPCManager {
             // explicit set covers the non-Active creation path (e.g. Failed).
             if let Some(session) = self.sessions.get_mut(&session_identifier) {
                 session.set_request_metadata(request.session_sequence_number, request.session_type);
+                session.set_protocol_name(protocol_name);
             }
         }
         Some(status)

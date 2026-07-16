@@ -73,6 +73,15 @@ use ika_types::noa_checkpoint::{
 };
 
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
+use crate::request_protocol_data::NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME;
+
+/// Protocols whose per-authority output observations are exported as
+/// `ika_dwallet_mpc_session_output_*` metrics. Restricted deliberately: those
+/// series are labeled by session id and authority, so exporting every protocol
+/// would add one series per sign/presign session on production validators.
+/// Extend this only when a compatibility scenario actually scrapes another
+/// protocol's per-authority outputs.
+const OUTPUT_OBSERVATION_EXPORT_PROTOCOLS: &[&str] = &[NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME];
 
 /// Compute the agreed chain context for any `CounterpartyChain` implementation.
 /// Updates `current_context` in place if a new context is agreed upon.
@@ -2022,6 +2031,9 @@ impl DWalletMPCManager {
             Ok((public_input, private_input)) => {
                 let session_sequence_number = request.session_sequence_number;
                 let session_type = request.session_type;
+                let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
+                    .name()
+                    .to_owned();
                 let status = SessionStatus::Active {
                     public_input,
                     private_input,
@@ -2037,6 +2049,7 @@ impl DWalletMPCManager {
                 if let Some(session) = self.sessions.get_mut(&session_identifier) {
                     session.status = status;
                     session.set_request_metadata(session_sequence_number, session_type);
+                    session.set_protocol_name(protocol_name);
                 } else {
                     self.new_session(
                         &session_identifier,
@@ -3460,6 +3473,7 @@ impl DWalletMPCManager {
         let mut state_counts: HashMap<&str, i64> = HashMap::new();
         let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
         let mut sessions_with_self_output_no_quorum = 0i64;
+        let mut protocol_sessions_pending: HashMap<String, i64> = HashMap::new();
         for session in self.sessions.values() {
             *state_counts
                 .entry(session_state_label(&session.status))
@@ -3483,6 +3497,62 @@ impl DWalletMPCManager {
             {
                 sessions_with_self_output_no_quorum += 1;
             }
+            if let Some(protocol_name) = &session.protocol_name {
+                let pending = protocol_sessions_pending
+                    .entry(protocol_name.clone())
+                    .or_default();
+                // `ComputationCompleted` means this validator finished the
+                // computation and submitted its output — no pending work. It
+                // isn't `Completed` (that awaits the quorum transition, tracked
+                // separately by `sessions_with_self_output_no_quorum`), and a
+                // session reloaded from the DB as already-computed
+                // (`complete_computation_mpc_session_and_create_if_not_exists`)
+                // lingers in this state until epoch-end pruning. Counting it as
+                // pending would keep this gauge from ever draining to zero.
+                if !matches!(
+                    session.status,
+                    SessionStatus::Completed
+                        | SessionStatus::Failed
+                        | SessionStatus::ComputationCompleted
+                ) {
+                    *pending += 1;
+                }
+                // The per-authority, per-session output digests are
+                // high-cardinality (session id x authority); only export them
+                // for the protocols a compatibility scenario scrapes.
+                if OUTPUT_OBSERVATION_EXPORT_PROTOCOLS.contains(&protocol_name.as_str()) {
+                    let session_id = hex::encode(session.session_identifier.as_ref());
+                    for (authority, observation) in &session.output_observations {
+                        let authority = authority.to_string();
+                        for digest in &observation.digests {
+                            let output_digest = hex::encode(digest);
+                            metrics
+                                .session_output_info
+                                .with_label_values(&[
+                                    protocol_name,
+                                    &session_id,
+                                    &authority,
+                                    &output_digest,
+                                ])
+                                .set(1);
+                        }
+                        metrics
+                            .session_reported_malicious_actors
+                            .with_label_values(&[protocol_name, &session_id, &authority])
+                            .set(observation.malicious_actor_count as i64);
+                        metrics
+                            .session_output_rejected
+                            .with_label_values(&[protocol_name, &session_id, &authority])
+                            .set(observation.rejected as i64);
+                    }
+                }
+            }
+        }
+        for (protocol_name, pending) in protocol_sessions_pending {
+            metrics
+                .protocol_sessions_pending
+                .with_label_values(&[&protocol_name])
+                .set(pending);
         }
         for state in ALL_SESSION_STATES.iter().copied() {
             metrics

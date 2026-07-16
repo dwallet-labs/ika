@@ -3,8 +3,8 @@
 
 //! Literal mainnet-v1.1.8 upgrade rehearsal: boot a 4-validator committee on
 //! the **actual `mainnet-v1.1.8` `ika-node` binary** (built from the tag),
-//! run the mainnet user flow at protocol v3, swap **all validators
-//! atomically** to the local build, and verify the network upgrades to v4
+//! run the mainnet user flow at protocol v3, sequentially swap **all
+//! validators** to the local build, and verify the network upgrades to v4
 //! and keeps serving — including through the rollout's presign stall window.
 //!
 //! ## The mainnet state this reproduces (verified on-chain at epoch 315)
@@ -60,10 +60,10 @@
 //! - global presigns requested at v3 on the local build are served via the
 //!   pre-activation fallback (no deadlock in the upgrade window).
 //!
-//! The swap is **atomic** (all validators at once), not rolling: this branch
-//! single-pins `cryptography-private`, and mixed 1.1.8/local committees
-//! cannot exchange MPC messages. The rehearsal mirrors a coordinated
-//! full-network restart.
+//! `stop_and_swap([0, 1, 2, 3])` is sequential: each validator restarts and
+//! passes its health check before the next is stopped. This scenario replaces
+//! the full committee before intentionally crossing the tested reshare; it
+//! does not verify that the transient mixed committee can run MPC.
 //!
 //! Per-component binary choices (each verified against the tag):
 //!
@@ -110,7 +110,7 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v118_atomic_upgrade_to_local_build() {
+async fn v118_full_committee_upgrade_to_local_build() {
     if std::env::var("RUN_V118_UPGRADE").is_err() {
         eprintln!(
             "skipping: set RUN_V118_UPGRADE=1 (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
@@ -240,7 +240,7 @@ async fn v118_atomic_upgrade_to_local_build() {
         .record_mpc_timings("local-v4-settled")
         .run()
         .await
-        .expect("v1.1.8 -> local atomic upgrade rehearsal");
+        .expect("v1.1.8 -> local full-committee upgrade rehearsal");
 
     tracing::info!(
         "v118 upgrade rehearsal PASSED: literal mainnet-v1.1.8 -> local build, v3 -> v4, \

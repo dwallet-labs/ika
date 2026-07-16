@@ -31,11 +31,15 @@ use crate::cluster::{ClusterBuilder, ClusterOfProcesses};
 use crate::mpc_timings::{self, TimingSnapshot};
 use crate::workload::WorkloadDriver;
 
+const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
 pub enum Step {
     StartAll(BinarySpec),
     WaitForEpoch(u64),
+    WaitForAllValidatorsLocalEpoch(u64),
+    ExpectAllValidatorsHealthy,
     StopAndSwap {
         validators: Vec<usize>,
         to: BinarySpec,
@@ -53,6 +57,10 @@ pub enum Step {
     /// and the workload degrades into an ordinary post-upgrade test while the
     /// run stays green.
     ExpectProtocolVersionAtMost(u64),
+    ExpectAllValidatorsProtocolVersionAtMost(u64),
+    ExpectNetworkKeyReconfigurationNotStarted(u64),
+    WaitForNetworkKeyReconfigurationStarted(u64),
+    WaitForNetworkKeyReconfigurationCompleted(u64),
     /// Poll until every running validator reports a canonical network DKG
     /// output version `>= at_least` (via its `/metrics`), or time out. Confirms
     /// the off-chain handoff migrated the DKG output (e.g. 2 -> 3 after the v4
@@ -96,13 +104,25 @@ pub enum Step {
     RunWorkload {
         label: String,
     },
-    /// Assert that at least one running validator's
-    /// `ika_dwallet_mpc_malicious_actors_count` gauge is `>= min_total` — i.e.
-    /// malicious detection actually fired. Scrapes metrics, no log grep.
+    /// Assert that at least one explicitly selected validator's
+    /// `ika_dwallet_mpc_malicious_actors_count` gauge is `>= min_total`.
+    /// Every selected scrape and metric is required; there is no skip path.
     ExpectMaliciousActorsAtLeast {
+        observer_indices: Vec<usize>,
         min_total: u64,
     },
-    /// Assert every running validator's `node.log` does (`present: true`) or
+    ExpectMaliciousActorsExactly {
+        observer_indices: Vec<usize>,
+        expected: u64,
+    },
+    ExpectNetworkKeyOutputConverged {
+        observer_indices: Vec<usize>,
+    },
+    ExpectNoPendingNetworkKeyReconfiguration {
+        epoch: u64,
+        observer_indices: Vec<usize>,
+    },
+    /// Assert every expected validator's `node.log` does (`present: true`) or
     /// does not (`present: false`) contain `needle`. Logs are truncated on
     /// each (re)start, so after a swap this sees only the new binary's
     /// output. For invariants observable only in logs (e.g. the one-time
@@ -119,6 +139,10 @@ impl std::fmt::Display for Step {
         match self {
             Step::StartAll(spec) => write!(f, "start_all({})", spec.label()),
             Step::WaitForEpoch(e) => write!(f, "wait_for_epoch({e})"),
+            Step::WaitForAllValidatorsLocalEpoch(e) => {
+                write!(f, "wait_for_all_validators_local_epoch({e})")
+            }
+            Step::ExpectAllValidatorsHealthy => write!(f, "expect_all_validators_healthy"),
             Step::StopAndSwap { validators, to } => {
                 write!(f, "stop_and_swap({validators:?} -> {})", to.label())
             }
@@ -128,6 +152,18 @@ impl std::fmt::Display for Step {
             }
             Step::ExpectProtocolVersionAtMost(v) => {
                 write!(f, "expect_protocol_version_at_most({v})")
+            }
+            Step::ExpectAllValidatorsProtocolVersionAtMost(v) => {
+                write!(f, "expect_all_validators_protocol_version_at_most({v})")
+            }
+            Step::ExpectNetworkKeyReconfigurationNotStarted(epoch) => {
+                write!(f, "expect_network_key_reconfiguration_not_started({epoch})")
+            }
+            Step::WaitForNetworkKeyReconfigurationStarted(epoch) => {
+                write!(f, "wait_for_network_key_reconfiguration_started({epoch})")
+            }
+            Step::WaitForNetworkKeyReconfigurationCompleted(epoch) => {
+                write!(f, "wait_for_network_key_reconfiguration_completed({epoch})")
             }
             Step::ExpectNetworkDkgOutputVersionAtLeast(v) => {
                 write!(f, "expect_network_dkg_output_version_at_least({v})")
@@ -142,9 +178,31 @@ impl std::fmt::Display for Step {
             Step::SetGlobalPresignConfig => write!(f, "set_global_presign_config"),
             Step::RecordMpcTimings { label } => write!(f, "record_mpc_timings({label:?})"),
             Step::RunWorkload { label } => write!(f, "run_workload({label:?})"),
-            Step::ExpectMaliciousActorsAtLeast { min_total } => {
-                write!(f, "expect_malicious_actors_at_least({min_total})")
-            }
+            Step::ExpectMaliciousActorsAtLeast {
+                observer_indices,
+                min_total,
+            } => write!(
+                f,
+                "expect_malicious_actors_at_least({observer_indices:?}, {min_total})"
+            ),
+            Step::ExpectMaliciousActorsExactly {
+                observer_indices,
+                expected,
+            } => write!(
+                f,
+                "expect_malicious_actors_exactly({observer_indices:?}, {expected})"
+            ),
+            Step::ExpectNetworkKeyOutputConverged { observer_indices } => write!(
+                f,
+                "expect_network_key_output_converged({observer_indices:?})"
+            ),
+            Step::ExpectNoPendingNetworkKeyReconfiguration {
+                epoch,
+                observer_indices,
+            } => write!(
+                f,
+                "expect_no_pending_network_key_reconfiguration({epoch}, {observer_indices:?})"
+            ),
             Step::ExpectLogLine { needle, present } => {
                 let polarity = if *present { "present" } else { "absent" };
                 write!(f, "expect_log_line_{polarity}({needle:?})")
@@ -263,7 +321,20 @@ impl Scenario {
         self
     }
 
+    pub fn wait_for_all_validators_local_epoch(mut self, epoch: u64) -> Self {
+        self.steps.push(Step::WaitForAllValidatorsLocalEpoch(epoch));
+        self
+    }
+
+    pub fn expect_all_validators_healthy(mut self) -> Self {
+        self.steps.push(Step::ExpectAllValidatorsHealthy);
+        self
+    }
+
     pub fn stop_and_swap(mut self, validators: &[usize], to: BinarySpec) -> Self {
+        // Intentionally sequential: each validator is stopped, restarted, and
+        // health-checked before the next index. Passing the full committee is
+        // a coordinated full-committee rollout, not an atomic restart.
         self.steps.push(Step::StopAndSwap {
             validators: validators.to_vec(),
             to,
@@ -289,6 +360,30 @@ impl Scenario {
     /// early fails loudly instead of silently voiding the workload's purpose.
     pub fn expect_protocol_version_at_most(mut self, version: u64) -> Self {
         self.steps.push(Step::ExpectProtocolVersionAtMost(version));
+        self
+    }
+
+    pub fn expect_all_validators_protocol_version_at_most(mut self, version: u64) -> Self {
+        self.steps
+            .push(Step::ExpectAllValidatorsProtocolVersionAtMost(version));
+        self
+    }
+
+    pub fn expect_network_key_reconfiguration_not_started(mut self, epoch: u64) -> Self {
+        self.steps
+            .push(Step::ExpectNetworkKeyReconfigurationNotStarted(epoch));
+        self
+    }
+
+    pub fn wait_for_network_key_reconfiguration_started(mut self, epoch: u64) -> Self {
+        self.steps
+            .push(Step::WaitForNetworkKeyReconfigurationStarted(epoch));
+        self
+    }
+
+    pub fn wait_for_network_key_reconfiguration_completed(mut self, epoch: u64) -> Self {
+        self.steps
+            .push(Step::WaitForNetworkKeyReconfigurationCompleted(epoch));
         self
     }
 
@@ -362,9 +457,47 @@ impl Scenario {
     /// Assert at least one running validator recorded `>= min_total` malicious
     /// actors this epoch (scrapes the `ika_dwallet_mpc_malicious_actors_count`
     /// gauge).
-    pub fn expect_malicious_actors_at_least(mut self, min_total: u64) -> Self {
+    pub fn expect_malicious_actors_at_least(
+        mut self,
+        observer_indices: &[usize],
+        min_total: u64,
+    ) -> Self {
+        self.steps.push(Step::ExpectMaliciousActorsAtLeast {
+            observer_indices: observer_indices.to_vec(),
+            min_total,
+        });
+        self
+    }
+
+    pub fn expect_malicious_actors_exactly(
+        mut self,
+        observer_indices: &[usize],
+        expected: u64,
+    ) -> Self {
+        self.steps.push(Step::ExpectMaliciousActorsExactly {
+            observer_indices: observer_indices.to_vec(),
+            expected,
+        });
+        self
+    }
+
+    pub fn expect_network_key_output_converged(mut self, observer_indices: &[usize]) -> Self {
+        self.steps.push(Step::ExpectNetworkKeyOutputConverged {
+            observer_indices: observer_indices.to_vec(),
+        });
+        self
+    }
+
+    pub fn expect_no_pending_network_key_reconfiguration(
+        mut self,
+        epoch: u64,
+        observer_indices: &[usize],
+    ) -> Self {
         self.steps
-            .push(Step::ExpectMaliciousActorsAtLeast { min_total });
+            .push(Step::ExpectNoPendingNetworkKeyReconfiguration {
+                epoch,
+                observer_indices: observer_indices.to_vec(),
+            });
         self
     }
 
@@ -456,6 +589,19 @@ impl Scenario {
                     let c = cluster.as_ref().context("WaitForEpoch before StartAll")?;
                     c.wait_for_epoch(*epoch, self.epoch_timeout).await?;
                 }
+                Step::WaitForAllValidatorsLocalEpoch(epoch) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("WaitForAllValidatorsLocalEpoch before StartAll")?;
+                    c.wait_for_all_validators_local_epoch(*epoch, self.epoch_timeout)
+                        .await?;
+                }
+                Step::ExpectAllValidatorsHealthy => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectAllValidatorsHealthy before StartAll")?;
+                    c.expect_all_validators_healthy().await?;
+                }
                 Step::StopAndSwap { validators, to } => {
                     let new_binary = resolve(&resolver, to).await?;
                     let split_configured = !self.direct_validators.is_empty();
@@ -544,6 +690,34 @@ impl Scenario {
                         "protocol version ceiling assertion passed"
                     );
                 }
+                Step::ExpectAllValidatorsProtocolVersionAtMost(version) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectAllValidatorsProtocolVersionAtMost before StartAll")?;
+                    c.expect_all_validators_protocol_version_at_most(*version)
+                        .await?;
+                }
+                Step::ExpectNetworkKeyReconfigurationNotStarted(epoch) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectNetworkKeyReconfigurationNotStarted before StartAll")?;
+                    c.expect_network_key_reconfiguration_not_started(*epoch)
+                        .await?;
+                }
+                Step::WaitForNetworkKeyReconfigurationStarted(epoch) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("WaitForNetworkKeyReconfigurationStarted before StartAll")?;
+                    c.wait_for_network_key_reconfiguration_started(*epoch, self.epoch_timeout)
+                        .await?;
+                }
+                Step::WaitForNetworkKeyReconfigurationCompleted(epoch) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("WaitForNetworkKeyReconfigurationCompleted before StartAll")?;
+                    c.wait_for_network_key_reconfiguration_completed(*epoch, self.epoch_timeout)
+                        .await?;
+                }
                 Step::ExpectNetworkDkgOutputVersionAtLeast(at_least) => {
                     let c = cluster
                         .as_ref()
@@ -624,26 +798,58 @@ impl Scenario {
                     let snapshot = mpc_timings::record_snapshot(c, label.clone()).await?;
                     timing_snapshots.push(snapshot);
                 }
-                Step::ExpectMaliciousActorsAtLeast { min_total } => {
+                Step::ExpectMaliciousActorsAtLeast {
+                    observer_indices,
+                    min_total,
+                } => {
                     let c = cluster
                         .as_ref()
                         .context("ExpectMaliciousActorsAtLeast before StartAll")?;
-                    let got = mpc_timings::max_malicious_actors_count(c).await?;
-                    if got < *min_total {
-                        bail!(
-                            "expected at least {min_total} malicious actor(s) recorded, \
-                             but the max across running validators was {got}"
-                        );
-                    }
-                    tracing::info!(
-                        got,
-                        expected = *min_total,
-                        "malicious-actors assertion passed (scraped from metrics)"
-                    );
+                    c.expect_malicious_actors_at_least(observer_indices, *min_total)
+                        .await?;
+                }
+                Step::ExpectMaliciousActorsExactly {
+                    observer_indices,
+                    expected,
+                } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectMaliciousActorsExactly before StartAll")?;
+                    c.expect_malicious_actors_exactly(observer_indices, *expected)
+                        .await?;
+                }
+                Step::ExpectNetworkKeyOutputConverged { observer_indices } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectNetworkKeyOutputConverged before StartAll")?;
+                    // The system session has already completed before normal
+                    // scenarios reach this assertion. Allow metrics propagation
+                    // some slack, but do not reuse a multi-minute epoch timeout:
+                    // a missing authority output is itself release-blocking.
+                    c.expect_network_key_output_converged(
+                        observer_indices,
+                        self.epoch_timeout
+                            .min(NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT),
+                    )
+                    .await?;
+                }
+                Step::ExpectNoPendingNetworkKeyReconfiguration {
+                    epoch,
+                    observer_indices,
+                } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectNoPendingNetworkKeyReconfiguration before StartAll")?;
+                    c.expect_no_pending_network_key_reconfiguration(
+                        *epoch,
+                        observer_indices,
+                        self.epoch_timeout,
+                    )
+                    .await?;
                 }
                 Step::ExpectLogLine { needle, present } => {
                     let c = cluster.as_ref().context("ExpectLogLine before StartAll")?;
-                    for proc in c.validators.iter().filter(|p| p.is_running()) {
+                    for proc in &c.validators {
                         let log = std::fs::read_to_string(proc.log_path()).with_context(|| {
                             format!("read validator log {}", proc.log_path().display())
                         })?;
@@ -660,7 +866,7 @@ impl Scenario {
                     tracing::info!(
                         needle = needle.as_str(),
                         present = *present,
-                        "log-line assertion passed on every running validator"
+                        "log-line assertion passed on every expected validator"
                     );
                 }
                 Step::RunWorkload { label } => {

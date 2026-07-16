@@ -3,7 +3,7 @@
 
 //! Literal mainnet-v1.1.8 upgrade rehearsal **with post-upgrade committee
 //! churn**: boot a 4-validator committee on the actual `mainnet-v1.1.8`
-//! `ika-node` binary at protocol v3, swap **all validators atomically** to the
+//! `ika-node` binary at protocol v3, sequentially swap **all validators** to the
 //! local build and confirm the upgrade to v4 — then, on the now all-local
 //! committee, **join a brand-new validator** (candidate → stake → activate) so
 //! the v4 reshare encrypts the network key (originally DKG'd by 1.1.8's crypto)
@@ -15,13 +15,10 @@
 //! (`cross_binary`'s `add_joiner_validator`, which seeds the joiner's
 //! `sui_unsafe_genesis_committee` so a v4/OCS validator boots).
 //!
-//! The churn runs **only after** the atomic swap, so every validator is the
-//! local build — there is never a mixed 1.1.8/local committee. That is
-//! required: this branch single-pins `cryptography-private`, so mixed
-//! committees can't exchange MPC messages; the swap must be atomic, and any
-//! churn must follow it. (A *rolling* 1.1.8 swap — `cross_binary` from 1.1.8 —
-//! is therefore invalid; this scenario is how to get churn from a 1.1.8
-//! origin.)
+//! The churn runs only after every validator has been replaced, so its tested
+//! reshare has no mixed 1.1.8/current committee. The sequential replacement
+//! has transient mixed states but intentionally avoids an MPC boundary; the
+//! separate `v118_mixed_rollout` scenario tests real MPC in that topology.
 //!
 //! Opt-in, via `RUN_V118_CHURN=1` (same binaries as `v118_upgrade`):
 //!
@@ -47,7 +44,7 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v118_atomic_upgrade_then_committee_churn() {
+async fn v118_full_committee_upgrade_then_churn() {
     if std::env::var("RUN_V118_CHURN").is_err() {
         eprintln!(
             "skipping: set RUN_V118_CHURN=1 (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
@@ -94,7 +91,7 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         .with_ika_cli(ika_cli)
         // OCS read topology: keep validators 0 and 1 on the direct gRPC path
         // (serving the SuiStateMirror relay); flip validators 2 and 3 to
-        // peer-only SuiStateMirrored at the atomic swap and bring the joiner up
+        // peer-only SuiStateMirrored during the full-committee swap and bring the joiner up
         // mirrored, all reading verified Sui state through 0 and 1. The split
         // materializes at the 1.1.8->local swap (the 1.1.8 phase stays direct on
         // legacy JSON-RPC), giving a stable 5-member committee of 2 direct + 3
@@ -106,9 +103,9 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         // network DKG (1.1.8 crypto) completed before the swap.
         .start_all(old)
         .wait_for_epoch(2)
-        // ATOMIC swap every validator to the local build (rolling is impossible
-        // on this branch's single crypto pin). The local v4 binaries inherit
-        // and reshare the completed 1.1.8-crypto network key.
+        // Sequentially swap every validator to the local build before the
+        // tested boundary. The local v4 binaries inherit and reshare the
+        // completed 1.1.8-crypto network key.
         .stop_and_swap(&[0, 1, 2, 3], new.clone())
         // n=4: drop the buffer to a bare quorum so the capability vote tallies.
         .set_buffer_stake(0)
@@ -137,7 +134,7 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         .record_mpc_timings("v4-with-joiner")
         .run()
         .await
-        .expect("v1.1.8 -> local atomic upgrade + committee churn");
+        .expect("v1.1.8 -> local full-committee upgrade + committee churn");
 
     tracing::info!(
         "v118 churn rehearsal PASSED: mainnet-v1.1.8 -> local, v3 -> v4, joiner added to a \

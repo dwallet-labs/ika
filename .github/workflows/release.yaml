@@ -119,6 +119,19 @@ jobs:
 
           echo "Version: $RAW  Docker tag: $DOCKER_TAG  Network: $NETWORK  Release: $IS_RELEASE"
 
+  # Release tags are blocked until the exact tagged commit survives a literal
+  # mainnet-v1.1.8/current mixed committee. This reusable call runs only the
+  # focused rollout scenario, not the expensive full upgrade matrix.
+  upgrade-compatibility-gate:
+    name: v1.1.8 mixed-rollout compatibility gate
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/upgrade-test.yaml
+    with:
+      test: v118_mixed_rollout
+      candidate_sha: ${{ github.sha }}
+      use_mocks: false
+    secrets: inherit
+
   # ---------------------------------------------------------------------------
   # Build Linux binaries in Docker (reproducible, glibc-compatible)
   # Both x64 and arm64 use the same Dockerfile with different TARGET args
@@ -411,7 +424,7 @@ jobs:
   release:
     name: Draft GitHub Release
     runs-on: ubuntu-latest
-    needs: [version, docker, upload-binaries]
+    needs: [version, docker, upload-binaries, upgrade-compatibility-gate]
     if: needs.version.outputs.is_release == 'true'
     permissions:
       contents: write

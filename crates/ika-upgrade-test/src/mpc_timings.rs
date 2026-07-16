@@ -4,8 +4,8 @@
 //! Rough MPC-protocol timing collection for the cross-binary tests.
 //!
 //! Scrapes each validator's Prometheus endpoint for the dwallet-MPC duration
-//! metrics (`dwallet_mpc_computation_duration_avg` /
-//! `dwallet_mpc_advance_completions`, both labeled by protocol + curve +
+//! metrics (`ika_dwallet_mpc_computation_duration_avg` /
+//! `ika_dwallet_mpc_advance_completions`, both labeled by protocol + curve +
 //! round) and aggregates them into per-protocol-round rows. Snapshots taken
 //! at different points of a scenario (e.g. before and after a binary swap)
 //! are compared at the end of the run; large ratios are flagged in the
@@ -96,46 +96,6 @@ pub async fn record_snapshot(
     let snapshot = TimingSnapshot { label, rows };
     println!("{}", render_snapshot(&snapshot));
     Ok(snapshot)
-}
-
-/// Scrape every running validator's `ika_dwallet_mpc_malicious_actors_count` gauge
-/// and return the maximum across the cluster. Used by the cross-binary
-/// malicious-detection test to assert programmatically that at least one honest
-/// validator recorded a malicious actor — instead of grepping node logs. A
-/// stopped/unreachable validator is skipped (it can't report, and the faulty
-/// one we want excluded anyway).
-pub async fn max_malicious_actors_count(cluster: &ClusterOfProcesses) -> Result<u64> {
-    let http = reqwest::Client::new();
-    let mut max_count = 0u64;
-    for proc in cluster.validators.iter().filter(|p| p.is_running()) {
-        let url = format!("http://127.0.0.1:{}/metrics", proc.metrics_port());
-        let body = match http.get(&url).send().await {
-            Ok(resp) => resp.text().await.context("read metrics body")?,
-            Err(e) => {
-                tracing::warn!(index = proc.index, error = %e, "metrics scrape failed; skipping validator");
-                continue;
-            }
-        };
-        if let Some(count) = parse_unlabeled_gauge(&body, "ika_dwallet_mpc_malicious_actors_count")
-        {
-            tracing::info!(index = proc.index, count, "scraped malicious-actors gauge");
-            max_count = max_count.max(count);
-        }
-    }
-    Ok(max_count)
-}
-
-/// Parse a single unlabeled gauge line (`<metric> <value>`) from Prometheus
-/// text-format exposition, ignoring `# HELP` / `# TYPE` comment lines.
-fn parse_unlabeled_gauge(body: &str, metric: &str) -> Option<u64> {
-    body.lines()
-        .filter(|line| !line.starts_with('#'))
-        .find_map(|line| {
-            let rest = line.strip_prefix(metric)?;
-            // Reject labeled samples (`metric{...}`) — this gauge has no labels.
-            let value = rest.strip_prefix(' ')?.trim();
-            value.parse::<f64>().ok().map(|v| v as u64)
-        })
 }
 
 /// Render one snapshot as a fixed-width table.
@@ -300,10 +260,10 @@ mod tests {
     #[test]
     fn parses_round_labeled_metric_lines() {
         let body = concat!(
-            "# HELP dwallet_mpc_computation_duration_avg Average duration of MPC computations in milliseconds\n",
-            "# TYPE dwallet_mpc_computation_duration_avg gauge\n",
-            "dwallet_mpc_computation_duration_avg{curve=\"Secp256k1\",hash_scheme=\"\",mpc_round=\"first_round\",protocol_name=\"Presign\",signature_algorithm=\"ECDSA\"} 321.5\n",
-            "dwallet_mpc_computation_duration_avg{curve=\"Secp256k1\",hash_scheme=\"\",mpc_round=\"second_round\",protocol_name=\"Presign\",signature_algorithm=\"ECDSA\"} 100\n",
+            "# HELP ika_dwallet_mpc_computation_duration_avg Average duration of MPC computations in milliseconds\n",
+            "# TYPE ika_dwallet_mpc_computation_duration_avg gauge\n",
+            "ika_dwallet_mpc_computation_duration_avg{curve=\"Secp256k1\",hash_scheme=\"\",mpc_round=\"first_round\",protocol_name=\"Presign\",signature_algorithm=\"ECDSA\"} 321.5\n",
+            "ika_dwallet_mpc_computation_duration_avg{curve=\"Secp256k1\",hash_scheme=\"\",mpc_round=\"second_round\",protocol_name=\"Presign\",signature_algorithm=\"ECDSA\"} 100\n",
             "other_metric{mpc_round=\"x\"} 5\n",
         );
         let parsed = parse_metric(body, "ika_dwallet_mpc_computation_duration_avg");
