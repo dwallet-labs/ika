@@ -237,10 +237,14 @@ only for an allow-listed set of protocols (`OUTPUT_OBSERVATION_EXPORT_PROTOCOLS`
 in `mpc_manager.rs`, currently just network-key reconfiguration) to keep their
 session-id/authority cardinality bounded on production validators; a future DKG,
 presign, sign, or verification compatibility scenario adds its protocol to that
-allow-list rather than adding protocol-specific node instrumentation. The
-late-output digest capture is scoped the same way (reconfiguration sessions
-only) and is observability-only: it never publishes the discarded output,
-delays finalization, or re-activates a completed session.
+allow-list rather than adding protocol-specific node instrumentation — and, if
+it also wants straggler evidence, must extend the late-output capture too: the
+quorum raw-digest stash and the discard-site recording are separately gated on
+the session being a network-key reconfiguration (the raw-bytes digest is
+computed from that protocol's output chunks), so an allow-list entry alone
+yields submitted-output observations but no late-computation evidence. The
+late-output digest capture is observability-only: it never publishes the
+discarded output, delays finalization, or re-activates a completed session.
 
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see

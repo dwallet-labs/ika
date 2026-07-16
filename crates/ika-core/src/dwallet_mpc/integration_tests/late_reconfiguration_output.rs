@@ -19,13 +19,16 @@
 //! digest is flagged as a match, and divergent bytes are flagged loudly.
 
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
+use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
+use crate::dwallet_mpc::integration_tests::utils::TestingSubmitToConsensus;
 use crate::dwallet_mpc::mpc_diagnostics::{
     MpcAnomalyKind, SessionDiagnosticEvent, raw_output_digest,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::{NetworkEncryptionKeyReconfigurationData, ProtocolData};
 use ika_types::crypto::AuthorityName;
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::message::{DWalletCheckpointMessageKind, MPCNetworkReconfigurationOutput};
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCOutput, DWalletMPCOutputReport, SessionIdentifier, SessionType,
@@ -33,37 +36,37 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::collections::HashMap;
+use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 
-/// A submitted network-key reconfiguration output report, chunked exactly the
-/// way production slices one output's bytes across checkpoint message kinds
-/// (`slice_public_output_into_messages` — in-order 5 KB chunks), so the
-/// raw-bytes digest of the reassembled envelope must equal the digest of the
-/// unsliced bytes.
+fn network_key_id() -> ObjectID {
+    ObjectID::from_single_byte(9)
+}
+
+/// A submitted network-key reconfiguration output report, chunked through the
+/// REAL production chunker (`slice_public_output_into_messages`), so the
+/// quorum-side raw-bytes digest is pinned against production's actual slicing
+/// rather than a test copy that could drift.
 fn reconfiguration_report(
     authority: AuthorityName,
     session_identifier: SessionIdentifier,
-    key_id: ObjectID,
     output_bytes: &[u8],
 ) -> DWalletMPCOutputReport {
-    let chunks: Vec<&[u8]> = output_bytes.chunks(5 * 1024).collect();
-    let chunk_count = chunks.len();
-    let output = chunks
-        .into_iter()
-        .enumerate()
-        .map(|(index, chunk)| {
+    let output = DWalletMPCService::slice_public_output_into_messages(
+        output_bytes.to_vec(),
+        |public_output, is_last| {
             DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
                 MPCNetworkReconfigurationOutput {
-                    dwallet_network_encryption_key_id: key_id.to_vec(),
-                    public_output: chunk.to_vec(),
+                    dwallet_network_encryption_key_id: network_key_id().to_vec(),
+                    public_output,
                     supported_curves: vec![],
-                    is_last: index == chunk_count - 1,
+                    is_last,
                     rejected: false,
                     session_sequence_number: 3,
                 },
             )
-        })
-        .collect();
+        },
+    );
     DWalletMPCOutputReport::External(DWalletMPCOutput {
         authority,
         session_identifier,
@@ -72,10 +75,7 @@ fn reconfiguration_report(
     })
 }
 
-fn reconfiguration_request(
-    session_identifier: SessionIdentifier,
-    key_id: ObjectID,
-) -> DWalletSessionRequest {
+fn reconfiguration_request(session_identifier: SessionIdentifier) -> DWalletSessionRequest {
     DWalletSessionRequest {
         counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: SessionType::System,
@@ -83,7 +83,7 @@ fn reconfiguration_request(
         session_sequence_number: Some(3),
         protocol_data: ProtocolData::NetworkEncryptionKeyReconfiguration {
             data: NetworkEncryptionKeyReconfigurationData {},
-            dwallet_network_encryption_key_id: key_id,
+            dwallet_network_encryption_key_id: network_key_id(),
         },
         epoch: 1,
         requires_network_key_data: true,
@@ -92,67 +92,104 @@ fn reconfiguration_request(
     }
 }
 
-fn late_finalize(
-    output_bytes: Vec<u8>,
-) -> Result<GuaranteedOutputDeliveryRoundResult, ika_types::dwallet_mpc_error::DwalletMPCError> {
-    Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-        malicious_parties: vec![],
-        private_output: vec![],
-        public_output_value: output_bytes,
-    })
+fn reconfiguration_protocol_name(request: &DWalletSessionRequest) -> String {
+    DWalletSessionRequestMetricData::from(&request.protocol_data)
+        .name()
+        .to_owned()
 }
 
-#[tokio::test]
-#[cfg(test)]
-async fn late_reconfiguration_finalize_after_quorum_records_digest_without_submitting() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (services, _, sent_consensus_messages_collectors, _, _, _, _) =
+/// Bring service 0 to the exact pre-straggler state: three peers finalized
+/// identical outputs at `quorum_round` and the quorum completed the session
+/// while this validator produced nothing. When `request_observed` the session
+/// carries the reconfiguration request metadata first (the same calls the
+/// real request-arrival path performs), which is what arms the late-output
+/// capture.
+fn setup_quorum_completed_session(
+    session_identifier: SessionIdentifier,
+    output_bytes: &[u8],
+    quorum_round: u64,
+    request_observed: bool,
+) -> (
+    Vec<DWalletMPCService>,
+    Vec<Arc<TestingSubmitToConsensus>>,
+    DWalletSessionRequest,
+) {
+    let (mut services, _, sent_consensus_messages_collectors, _, _, _, _) =
         utils::create_dwallet_mpc_services(4);
-    let mut services = services;
     let authorities: Vec<AuthorityName> = services[0].committee.names().copied().collect();
-    let session_identifier = SessionIdentifier::new(SessionType::System, [21; 32]);
-    let key_id = ObjectID::from_single_byte(9);
-    // Multiple chunks (>5 KB) so the quorum-side digest exercises in-order
-    // chunk reassembly, not just the single-chunk case.
-    let output_bytes: Vec<u8> = (0..12_000u32).map(|byte| (byte % 251) as u8).collect();
-
-    // The session request was observed earlier in the epoch — production
-    // stamps the reconfiguration metadata off it when the session is created.
-    // One below-quorum output creates the session entry; the metadata call is
-    // the same one the real request-arrival path performs.
-    services[0].dwallet_mpc_manager_mut().handle_output(
-        5_900,
-        reconfiguration_report(authorities[1], session_identifier, key_id, &output_bytes),
-    );
-    let request = reconfiguration_request(session_identifier, key_id);
-    {
+    let request = reconfiguration_request(session_identifier);
+    if request_observed {
+        // One below-quorum output creates the session entry to stamp.
+        services[0].dwallet_mpc_manager_mut().handle_output(
+            quorum_round - 2,
+            reconfiguration_report(authorities[1], session_identifier, output_bytes),
+        );
         let session = services[0]
             .dwallet_mpc_manager_mut()
             .sessions
             .get_mut(&session_identifier)
             .expect("session exists after the first output");
         session.set_request_diagnostic_metadata(&request);
-        session.set_protocol_name(
-            DWalletSessionRequestMetricData::from(&request.protocol_data)
-                .name()
-                .to_owned(),
-        );
+        session.set_protocol_name(reconfiguration_protocol_name(&request));
     }
-
-    // Three old authorities finalize with identical outputs; the quorum
-    // closes the session while this validator is still computing.
     let reports = authorities
         .iter()
         .skip(1)
         .take(3)
-        .map(|authority| {
-            reconfiguration_report(*authority, session_identifier, key_id, &output_bytes)
-        })
+        .map(|authority| reconfiguration_report(*authority, session_identifier, output_bytes))
         .collect();
     let (_, completed) = services[0]
         .dwallet_mpc_manager_mut()
-        .handle_consensus_round_outputs(5_902, reports);
+        .handle_consensus_round_outputs(quorum_round, reports);
     assert_eq!(completed, vec![session_identifier]);
+    (services, sent_consensus_messages_collectors, request)
+}
+
+/// Inject the straggler's late `Finalize` (~195ms after quorum in the
+/// observed CI failure) and assert the invariant every variant shares: a
+/// completed session's late result is never submitted to consensus.
+async fn submit_late_finalize(
+    service: &mut DWalletMPCService,
+    collector: &Arc<TestingSubmitToConsensus>,
+    session_identifier: SessionIdentifier,
+    quorum_round: u64,
+    output_bytes: Vec<u8>,
+) {
+    let result: DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> =
+        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+            malicious_parties: vec![],
+            private_output: vec![],
+            public_output_value: output_bytes,
+        });
+    collector.submitted_messages.lock().unwrap().clear();
+    service
+        .handle_computation_results_and_submit_to_consensus(HashMap::from([(
+            ComputationId {
+                session_identifier,
+                mpc_round: Some(3),
+                attempt_number: 1,
+                consensus_round: quorum_round,
+            },
+            result,
+        )]))
+        .await;
+    assert!(
+        collector.submitted_messages.lock().unwrap().is_empty(),
+        "a late finalize for a completed session must not submit anything to consensus"
+    );
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn late_reconfiguration_finalize_after_quorum_records_digest_without_submitting() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let session_identifier = SessionIdentifier::new(SessionType::System, [21; 32]);
+    // Multiple chunks (>5 KB) so the quorum-side digest exercises in-order
+    // chunk reassembly, not just the single-chunk case.
+    let output_bytes: Vec<u8> = (0..12_000u32).map(|byte| (byte % 251) as u8).collect();
+    let quorum_round = 5_902;
+    let (mut services, collectors, request) =
+        setup_quorum_completed_session(session_identifier, &output_bytes, quorum_round, true);
 
     let expected_digest = raw_output_digest(&output_bytes);
     {
@@ -167,41 +204,26 @@ async fn late_reconfiguration_finalize_after_quorum_records_digest_without_submi
             "quorum completion must stash the winning output's raw-bytes digest \
              (reassembled from the in-order chunks) before the session goes non-active"
         );
-        assert!(session.late_output_digest.is_none());
+        assert!(session.late_output.is_none());
     }
 
-    // ~195ms later: the local computation returns `Finalize` with the SAME
-    // bytes the quorum agreed on. The session is non-active, so the result is
-    // discarded — but its digest must be recorded and compared.
-    sent_consensus_messages_collectors[0]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .clear();
-    services[0]
-        .handle_computation_results_and_submit_to_consensus(HashMap::from([(
-            ComputationId {
-                session_identifier,
-                mpc_round: Some(3),
-                attempt_number: 1,
-                consensus_round: 5_902,
-            },
-            late_finalize(output_bytes.clone()),
-        )]))
-        .await;
+    // The local computation returns `Finalize` with the SAME bytes the quorum
+    // agreed on. The session is non-active, so the result is discarded — but
+    // its digest must be recorded and compared.
+    submit_late_finalize(
+        &mut services[0],
+        &collectors[0],
+        session_identifier,
+        quorum_round,
+        output_bytes.clone(),
+    )
+    .await;
 
-    assert!(
-        sent_consensus_messages_collectors[0]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .is_empty(),
-        "a late finalize for a completed session must not submit anything to consensus"
-    );
     let manager = services[0].dwallet_mpc_manager();
     let session = manager.sessions.get(&session_identifier).unwrap();
-    assert_eq!(session.late_output_digest, Some(expected_digest));
-    assert_eq!(session.late_output_reported_malicious_count, Some(0));
+    let late_output = session.late_output.as_ref().expect("late output recorded");
+    assert_eq!(late_output.digest, expected_digest);
+    assert_eq!(late_output.reported_malicious_count, 0);
     let snapshot = session
         .last_anomaly_snapshot()
         .expect("the discard site emits a ComputationUpdateAfterSessionCompletion snapshot");
@@ -231,9 +253,7 @@ async fn late_reconfiguration_finalize_after_quorum_records_digest_without_submi
         .dwallet_mpc_manager_mut()
         .refresh_observability_metrics();
     let manager = services[0].dwallet_mpc_manager();
-    let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
-        .name()
-        .to_owned();
+    let protocol_name = reconfiguration_protocol_name(&request);
     let session_id_label = hex::encode(session_identifier.as_ref());
     let authority_label = services[0].name.to_string();
     let digest_label = hex::encode(expected_digest);
@@ -271,78 +291,33 @@ async fn late_reconfiguration_finalize_after_quorum_records_digest_without_submi
 #[cfg(test)]
 async fn late_reconfiguration_finalize_with_divergent_bytes_is_flagged() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (services, _, sent_consensus_messages_collectors, _, _, _, _) =
-        utils::create_dwallet_mpc_services(4);
-    let mut services = services;
-    let authorities: Vec<AuthorityName> = services[0].committee.names().copied().collect();
     let session_identifier = SessionIdentifier::new(SessionType::System, [22; 32]);
-    let key_id = ObjectID::from_single_byte(9);
     let output_bytes = vec![7u8; 6_000];
+    let quorum_round = 6_002;
+    let (mut services, collectors, request) =
+        setup_quorum_completed_session(session_identifier, &output_bytes, quorum_round, true);
 
-    services[0].dwallet_mpc_manager_mut().handle_output(
-        6_000,
-        reconfiguration_report(authorities[1], session_identifier, key_id, &output_bytes),
-    );
-    let request = reconfiguration_request(session_identifier, key_id);
-    {
-        let session = services[0]
-            .dwallet_mpc_manager_mut()
-            .sessions
-            .get_mut(&session_identifier)
-            .unwrap();
-        session.set_request_diagnostic_metadata(&request);
-        session.set_protocol_name(
-            DWalletSessionRequestMetricData::from(&request.protocol_data)
-                .name()
-                .to_owned(),
-        );
-    }
-    let reports = authorities
-        .iter()
-        .skip(1)
-        .take(3)
-        .map(|authority| {
-            reconfiguration_report(*authority, session_identifier, key_id, &output_bytes)
-        })
-        .collect();
-    services[0]
-        .dwallet_mpc_manager_mut()
-        .handle_consensus_round_outputs(6_002, reports);
-
-    // The upgraded validator really computed different bytes.
+    // The upgraded validator really did compute different bytes.
     let mut divergent_bytes = output_bytes.clone();
     divergent_bytes[100] ^= 0xFF;
-    sent_consensus_messages_collectors[0]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .clear();
-    services[0]
-        .handle_computation_results_and_submit_to_consensus(HashMap::from([(
-            ComputationId {
-                session_identifier,
-                mpc_round: Some(3),
-                attempt_number: 1,
-                consensus_round: 6_002,
-            },
-            late_finalize(divergent_bytes.clone()),
-        )]))
-        .await;
+    submit_late_finalize(
+        &mut services[0],
+        &collectors[0],
+        session_identifier,
+        quorum_round,
+        divergent_bytes.clone(),
+    )
+    .await;
 
-    assert!(
-        sent_consensus_messages_collectors[0]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .is_empty(),
-        "even a divergent late output must never be submitted"
-    );
     let quorum_digest = raw_output_digest(&output_bytes);
     let divergent_digest = raw_output_digest(&divergent_bytes);
     assert_ne!(quorum_digest, divergent_digest);
     let manager = services[0].dwallet_mpc_manager();
     let session = manager.sessions.get(&session_identifier).unwrap();
-    assert_eq!(session.late_output_digest, Some(divergent_digest));
+    assert_eq!(
+        session.late_output.as_ref().map(|late| late.digest),
+        Some(divergent_digest)
+    );
     assert_eq!(session.quorum_raw_output_digest, Some(quorum_digest));
     let snapshot = session.last_anomaly_snapshot().unwrap();
     assert!(
@@ -366,15 +341,12 @@ async fn late_reconfiguration_finalize_with_divergent_bytes_is_flagged() {
         .dwallet_mpc_manager_mut()
         .refresh_observability_metrics();
     let manager = services[0].dwallet_mpc_manager();
-    let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
-        .name()
-        .to_owned();
     assert_eq!(
         manager
             .dwallet_mpc_metrics
             .session_late_output_info
             .with_label_values(&[
-                &protocol_name,
+                &reconfiguration_protocol_name(&request),
                 &hex::encode(session_identifier.as_ref()),
                 &services[0].name.to_string(),
                 &hex::encode(divergent_digest),
@@ -385,66 +357,33 @@ async fn late_reconfiguration_finalize_with_divergent_bytes_is_flagged() {
     );
 }
 
-/// A late finalize for a NON-reconfiguration session must not record or
-/// export anything — the capture is deliberately scoped to the network-key
-/// reconfiguration compatibility boundary to keep the per-session metric
-/// cardinality bounded.
+/// A late finalize for a session whose reconfiguration request was never
+/// observed must not record or export anything — the capture is deliberately
+/// scoped to the network-key reconfiguration compatibility boundary to keep
+/// the per-session metric cardinality bounded.
 #[tokio::test]
 #[cfg(test)]
 async fn late_finalize_for_non_reconfiguration_session_records_nothing() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (services, _, sent_consensus_messages_collectors, _, _, _, _) =
-        utils::create_dwallet_mpc_services(4);
-    let mut services = services;
-    let authorities: Vec<AuthorityName> = services[0].committee.names().copied().collect();
     let session_identifier = SessionIdentifier::new(SessionType::System, [23; 32]);
-    let key_id = ObjectID::from_single_byte(9);
     let output_bytes = vec![5u8; 64];
+    let quorum_round = 7_002;
+    let (mut services, collectors, _) =
+        setup_quorum_completed_session(session_identifier, &output_bytes, quorum_round, false);
 
-    // Quorum completes the session, but its request metadata was never
-    // observed — `network_key_reconfiguration` stays false, like any user
-    // protocol session would.
-    let reports = authorities
-        .iter()
-        .skip(1)
-        .take(3)
-        .map(|authority| {
-            reconfiguration_report(*authority, session_identifier, key_id, &output_bytes)
-        })
-        .collect();
-    services[0]
-        .dwallet_mpc_manager_mut()
-        .handle_consensus_round_outputs(7_002, reports);
-
-    sent_consensus_messages_collectors[0]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .clear();
-    services[0]
-        .handle_computation_results_and_submit_to_consensus(HashMap::from([(
-            ComputationId {
-                session_identifier,
-                mpc_round: Some(3),
-                attempt_number: 1,
-                consensus_round: 7_002,
-            },
-            late_finalize(output_bytes),
-        )]))
-        .await;
+    submit_late_finalize(
+        &mut services[0],
+        &collectors[0],
+        session_identifier,
+        quorum_round,
+        output_bytes,
+    )
+    .await;
 
     let session = services[0]
         .dwallet_mpc_manager()
         .sessions
         .get(&session_identifier)
         .unwrap();
-    assert!(session.late_output_digest.is_none());
-    assert!(session.late_output_reported_malicious_count.is_none());
-    assert!(
-        sent_consensus_messages_collectors[0]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .is_empty()
-    );
+    assert!(session.late_output.is_none());
 }

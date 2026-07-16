@@ -16,7 +16,7 @@
 //!     .run().await?;
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ use tokio::time::sleep;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
-use crate::cluster::{ClusterBuilder, ClusterOfProcesses, NetworkKeyCompatibilityEvidence};
+use crate::cluster::{ClusterBuilder, ClusterOfProcesses, NetworkKeyBoundaryEvidence};
 use crate::mpc_timings::{self, TimingSnapshot};
 use crate::workload::WorkloadDriver;
 
@@ -554,14 +554,14 @@ impl Scenario {
         // the direct path through a `stop_and_swap` (no point flipping a node
         // that's leaving) instead of being auto-mirrored.
         let mut removed_indices: HashSet<usize> = HashSet::new();
-        // Per-boundary outcome of every ExpectNetworkKeyOutputConverged step.
-        // Each boundary tolerates the legitimate straggler ordering (quorum
-        // finalizes, the validator under test's output is discarded, no
-        // comparable evidence appears in time) as inconclusive — but the
-        // scenario as a whole must witness byte-equality between the
-        // validator under test and a finalizing quorum on at least one
-        // boundary, enforced after the step loop.
-        let mut network_key_evidence: Vec<NetworkKeyCompatibilityEvidence> = Vec::new();
+        // Per-boundary, per-authority outcome of every
+        // ExpectNetworkKeyOutputConverged step. Each boundary tolerates the
+        // legitimate straggler ordering (quorum finalizes, the validator
+        // under test's output is discarded, no comparable evidence appears in
+        // time) — but the scenario as a whole must witness byte-equality
+        // between EVERY validator under test and a finalizing quorum on at
+        // least one boundary each, enforced after the step loop.
+        let mut network_key_evidence: Vec<NetworkKeyBoundaryEvidence> = Vec::new();
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -841,16 +841,16 @@ impl Scenario {
                                 .min(NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT),
                         )
                         .await?;
-                    match &evidence {
-                        NetworkKeyCompatibilityEvidence::Conclusive => tracing::info!(
+                    if evidence.is_conclusive() {
+                        tracing::info!(
+                            evidenced = ?evidence.evidenced_authorities,
                             "network-key output convergence: byte-level candidate evidence witnessed at this boundary"
-                        ),
-                        NetworkKeyCompatibilityEvidence::Inconclusive { reason } => {
-                            tracing::warn!(
-                                %reason,
-                                "network-key output convergence: quorum converged cleanly but the validator under test provided no byte-equality evidence at this boundary (production legitimately discarded its straggling output); at least one boundary in this scenario must be conclusive"
-                            )
-                        }
+                        );
+                    } else {
+                        tracing::warn!(
+                            unevidenced = ?evidence.unevidenced_authorities,
+                            "network-key output convergence: quorum converged cleanly but validator(s) under test provided no byte-equality evidence at this boundary (production legitimately discarded a straggling output); each must be evidenced at some boundary in this scenario"
+                        );
                     }
                     network_key_evidence.push(evidence);
                 }
@@ -946,36 +946,51 @@ impl Scenario {
     }
 }
 
-/// Scenario-level cross-version compatibility gate over the per-boundary
-/// outcomes of every `expect_network_key_output_converged` step.
+/// Scenario-level cross-version compatibility gate over the per-boundary,
+/// per-authority outcomes of every `expect_network_key_output_converged`
+/// step.
 ///
-/// A single boundary where the validator under test produced no comparable
-/// output is legitimate (production finalizes at a Byzantine quorum and
-/// discards a computation that finishes afterwards) — but quorum-only
-/// convergence proves nothing about the validator under test's bytes, so a
-/// scenario in which EVERY boundary ended that way has not demonstrated
-/// cross-version output compatibility and must fail rather than pass
-/// vacuously. Scenarios without convergence steps are unaffected.
-fn require_cross_version_output_evidence(
-    outcomes: &[NetworkKeyCompatibilityEvidence],
-) -> Result<()> {
-    if outcomes.is_empty() || outcomes.contains(&NetworkKeyCompatibilityEvidence::Conclusive) {
-        return Ok(());
-    }
-    let reasons: Vec<&str> = outcomes
+/// A boundary where a validator under test produced no comparable output is
+/// legitimate (production finalizes at a Byzantine quorum and discards a
+/// computation that finishes afterwards) — but quorum-only convergence proves
+/// nothing about that validator's bytes, so every validator that was ever
+/// under test must have demonstrated byte-equality with a finalizing quorum
+/// at SOME boundary, or the scenario has not demonstrated cross-version
+/// output compatibility for it and must fail rather than pass vacuously.
+/// Scenarios without convergence steps are unaffected.
+fn require_cross_version_output_evidence(boundaries: &[NetworkKeyBoundaryEvidence]) -> Result<()> {
+    let never_evidenced: Vec<String> = boundaries
         .iter()
-        .map(|outcome| match outcome {
-            NetworkKeyCompatibilityEvidence::Conclusive => unreachable!("filtered above"),
-            NetworkKeyCompatibilityEvidence::Inconclusive { reason } => reason.as_str(),
+        .flat_map(|boundary| boundary.unevidenced_authorities.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|authority| {
+            !boundaries
+                .iter()
+                .any(|boundary| boundary.evidenced_authorities.contains(*authority))
+        })
+        .map(|authority| {
+            let reasons: Vec<&str> = boundaries
+                .iter()
+                .filter_map(|boundary| {
+                    boundary
+                        .unevidenced_authorities
+                        .get(authority)
+                        .map(String::as_str)
+                })
+                .collect();
+            format!("{authority}: {}", reasons.join(" / "))
         })
         .collect();
-    bail!(
-        "insufficient cross-version compatibility evidence: every network-key reconfiguration \
-         boundary was inconclusive — the validator(s) under test never demonstrated \
-         byte-equality with a finalizing quorum (no submitted output inside the converged set \
-         and no matching late-computation digest at any boundary): {}",
-        reasons.join("; ")
-    )
+    ensure!(
+        never_evidenced.is_empty(),
+        "insufficient cross-version compatibility evidence: validator(s) under test never \
+         demonstrated byte-equality with a finalizing quorum at any network-key \
+         reconfiguration boundary (no submitted output inside the converged set and no \
+         matching late-computation digest): {}",
+        never_evidenced.join("; ")
+    );
+    Ok(())
 }
 
 /// Resolve a spec to a binary path on a blocking thread (a git-ref spec triggers
@@ -991,10 +1006,22 @@ async fn resolve(resolver: &BinaryResolver, spec: &BinarySpec) -> Result<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
-    fn inconclusive(reason: &str) -> NetworkKeyCompatibilityEvidence {
-        NetworkKeyCompatibilityEvidence::Inconclusive {
-            reason: reason.to_string(),
+    fn evidenced(authorities: &[&str]) -> NetworkKeyBoundaryEvidence {
+        NetworkKeyBoundaryEvidence {
+            evidenced_authorities: authorities.iter().map(|a| a.to_string()).collect(),
+            unevidenced_authorities: BTreeMap::new(),
+        }
+    }
+
+    fn unevidenced(authorities_and_reasons: &[(&str, &str)]) -> NetworkKeyBoundaryEvidence {
+        NetworkKeyBoundaryEvidence {
+            evidenced_authorities: BTreeSet::new(),
+            unevidenced_authorities: authorities_and_reasons
+                .iter()
+                .map(|(authority, reason)| (authority.to_string(), reason.to_string()))
+                .collect(),
         }
     }
 
@@ -1004,31 +1031,48 @@ mod tests {
     }
 
     #[test]
-    fn one_conclusive_boundary_satisfies_the_scenario() {
+    fn one_evidenced_boundary_per_validator_satisfies_the_scenario() {
         // The straggler ordering at one boundary is legitimate as long as the
         // other boundary witnessed byte-equality — in either order.
         require_cross_version_output_evidence(&[
-            NetworkKeyCompatibilityEvidence::Conclusive,
-            inconclusive("validator 0: session s (no submitted output)"),
+            evidenced(&["a"]),
+            unevidenced(&[("a", "session s (no submitted output)")]),
         ])
         .unwrap();
         require_cross_version_output_evidence(&[
-            inconclusive("validator 0: session s (no submitted output)"),
-            NetworkKeyCompatibilityEvidence::Conclusive,
+            unevidenced(&[("a", "session s (no submitted output)")]),
+            evidenced(&["a"]),
         ])
         .unwrap();
     }
 
     #[test]
-    fn all_inconclusive_boundaries_fail_the_scenario() {
+    fn all_boundaries_unevidenced_fail_the_scenario() {
         let error = require_cross_version_output_evidence(&[
-            inconclusive("validator 0: session s1 (no submitted output)"),
-            inconclusive("validator 0: session s2 (no submitted output)"),
+            unevidenced(&[("a", "validator 0: session s1 (no submitted output)")]),
+            unevidenced(&[("a", "validator 0: session s2 (no submitted output)")]),
         ])
         .expect_err("quorum-only convergence at every boundary must not pass the gate");
         let error = error.to_string();
         assert!(error.contains("insufficient cross-version compatibility evidence"));
         assert!(error.contains("session s1"));
         assert!(error.contains("session s2"));
+    }
+
+    #[test]
+    fn a_validator_only_ever_unevidenced_fails_even_if_another_is_conclusive() {
+        // Evidence is per validator under test, not per boundary: a rolling
+        // scenario whose observer set grows must still byte-check every
+        // upgraded validator somewhere.
+        let mut second_boundary = evidenced(&["a"]);
+        second_boundary.unevidenced_authorities.insert(
+            "b".to_string(),
+            "session s (no submitted output)".to_string(),
+        );
+        let error = require_cross_version_output_evidence(&[evidenced(&["a"]), second_boundary])
+            .expect_err("an upgraded validator that was never byte-checked must fail the gate");
+        let error = error.to_string();
+        assert!(error.contains("b:"));
+        assert!(!error.contains("a:"));
     }
 }

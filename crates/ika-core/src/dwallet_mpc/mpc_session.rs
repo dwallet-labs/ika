@@ -174,14 +174,22 @@ pub(crate) struct DWalletSession {
     /// compared against the agreed bytes. `None` for other protocols.
     pub(super) quorum_raw_output_digest: Option<[u8; 32]>,
 
-    /// Raw-output-bytes digest of a locally computed network-key
-    /// reconfiguration output that returned after the session left `Active`
-    /// and was therefore discarded without submission. Observability only —
-    /// recording it never publishes the output or re-activates the session.
-    pub(super) late_output_digest: Option<[u8; 32]>,
-    pub(super) late_output_reported_malicious_count: Option<usize>,
+    /// A locally computed network-key reconfiguration output that returned
+    /// after the session left `Active` and was therefore discarded without
+    /// submission. Observability only — recording it never publishes the
+    /// output or re-activates the session.
+    pub(super) late_output: Option<LateLocalOutput>,
     #[cfg(test)]
     last_anomaly_snapshot: Option<MpcAnomalySnapshot>,
+}
+
+/// Raw-bytes digest and malicious report of a discarded late local
+/// computation result; one struct so the digest can never exist without its
+/// malicious count.
+#[derive(Clone, Copy)]
+pub(crate) struct LateLocalOutput {
+    pub(crate) digest: [u8; 32],
+    pub(crate) reported_malicious_count: usize,
 }
 
 /// Possible statuses of a session:
@@ -306,8 +314,7 @@ impl DWalletSession {
             local_output_submission_round: None,
             local_output_digest: None,
             quorum_raw_output_digest: None,
-            late_output_digest: None,
-            late_output_reported_malicious_count: None,
+            late_output: None,
             #[cfg(test)]
             last_anomaly_snapshot: None,
         };
@@ -778,9 +785,11 @@ impl DWalletSession {
     /// Record a locally computed output that returned after this session left
     /// `Active` and was discarded without submission. Returns whether the
     /// discarded bytes match the quorum-agreed output (`None` when no quorum
-    /// digest was recorded to compare against). Last write wins so a retried
-    /// computation attempt updates the comparison; every attempt is preserved
-    /// in the diagnostics trace.
+    /// digest was recorded to compare against). The field holds the latest
+    /// attempt, but every attempt stays visible: each is preserved in the
+    /// diagnostics trace, and superseded metric children survive until the
+    /// per-epoch reset — the release-gate harness fails closed if attempts
+    /// ever disagree on the computed bytes.
     pub(crate) fn record_late_output(
         &mut self,
         output_digest: [u8; 32],
@@ -789,8 +798,10 @@ impl DWalletSession {
         let matches_quorum = self
             .quorum_raw_output_digest
             .map(|quorum_digest| quorum_digest == output_digest);
-        self.late_output_digest = Some(output_digest);
-        self.late_output_reported_malicious_count = Some(reported_malicious_count);
+        self.late_output = Some(LateLocalOutput {
+            digest: output_digest,
+            reported_malicious_count,
+        });
         self.diagnostics
             .record(SessionDiagnosticEvent::LateOutputAfterCompletion {
                 output_digest,

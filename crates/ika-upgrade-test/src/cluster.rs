@@ -687,23 +687,31 @@ enum NetworkKeyOutputConvergence {
     },
 }
 
-/// Whether one `expect_network_key_output_converged` boundary produced
-/// byte-level cross-version compatibility evidence for the validator(s)
-/// under test.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NetworkKeyCompatibilityEvidence {
-    /// Every validator under test either submitted an output inside the
-    /// converged quorum or recorded a discarded late computation whose raw
-    /// output bytes match the quorum-agreed output.
-    Conclusive,
-    /// The quorum converged cleanly (correct committee, single digest, zero
-    /// malicious, zero rejected) but at least one validator under test
-    /// provided no comparable output within the window — the legitimate
-    /// straggler case: production finalizes at a Byzantine quorum and
-    /// discards a computation finishing afterwards. Not a failure of this
-    /// boundary, but it proves nothing about output compatibility, so the
-    /// scenario requires another boundary to be conclusive.
-    Inconclusive { reason: String },
+/// Per-authority byte-equality evidence from one
+/// `expect_network_key_output_converged` boundary. Tracked per validator
+/// under test (not as a boundary-wide verdict) so a scenario whose observer
+/// set changes across boundaries can still require that EVERY validator
+/// under test demonstrated byte-equality somewhere.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NetworkKeyBoundaryEvidence {
+    /// Validators under test that demonstrated byte-equality at this
+    /// boundary: a submitted output inside the converged quorum, or a
+    /// discarded late computation whose raw output bytes match the
+    /// quorum-agreed output.
+    pub evidenced_authorities: BTreeSet<String>,
+    /// Validators under test with no comparable output at this boundary,
+    /// with the sessions/reasons. Legitimate per boundary — production
+    /// finalizes at a Byzantine quorum and discards a computation finishing
+    /// afterwards — but it proves nothing about output compatibility, so
+    /// the scenario requires each such validator to be evidenced at some
+    /// other boundary.
+    pub unevidenced_authorities: BTreeMap<String, String>,
+}
+
+impl NetworkKeyBoundaryEvidence {
+    pub fn is_conclusive(&self) -> bool {
+        self.unevidenced_authorities.is_empty()
+    }
 }
 
 fn canonical_network_key_outputs(
@@ -782,7 +790,13 @@ fn canonical_network_key_outputs(
         NETWORK_KEY_RECONFIGURATION_PROTOCOL,
     )?;
     let late_malicious = envelope_values("ika_dwallet_mpc_session_late_output_malicious_actors")?;
-    let mut late_outputs: BTreeMap<(String, String), (String, String)> = BTreeMap::new();
+    // Accumulated per (session, authority): the locally computed digest all
+    // samples must agree on, and whether any sample carries a known (and,
+    // enforced below, equal) quorum digest. Superseded gauge children survive
+    // in the registry until the epoch reset, so one key can legitimately
+    // expose an early `unknown`-quorum pair next to the later compared pair —
+    // samples only conflict when their locally computed digests differ.
+    let mut late_outputs: BTreeMap<(String, String), (String, bool)> = BTreeMap::new();
     for sample in late_samples {
         ensure!(
             sample.value == 1.0,
@@ -823,15 +837,14 @@ fn canonical_network_key_outputs(
                 "{observer}: authority {authority}'s late network-key output for session {session} reported {count} malicious actors"
             ),
         }
+        let (recorded_output_digest, matched_quorum) = late_outputs
+            .entry((session.clone(), authority.clone()))
+            .or_insert_with(|| (output_digest.clone(), false));
         ensure!(
-            late_outputs
-                .insert(
-                    (session.clone(), authority.clone()),
-                    (output_digest, quorum_output_digest),
-                )
-                .is_none(),
-            "{observer} has conflicting late-output samples for session {session} authority {authority}"
+            *recorded_output_digest == output_digest,
+            "{observer} has conflicting late-output samples for session {session} authority {authority}: the validator computed {recorded_output_digest} and {output_digest} across attempts"
         );
+        *matched_quorum |= quorum_output_digest != "unknown";
     }
 
     let mut outputs_by_session: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
@@ -919,7 +932,7 @@ fn canonical_network_key_outputs(
                 // Validated above: digest equals the quorum digest and the
                 // late malicious count is zero — byte-level evidence that the
                 // candidate computed the same output the quorum agreed on.
-                Some((_, quorum_output_digest)) if quorum_output_digest != "unknown" => {}
+                Some((_, matched_quorum)) if *matched_quorum => {}
                 Some(_) => sessions_without_candidate_evidence.push(format!(
                     "{session} (late output recorded without a quorum digest to compare against)"
                 )),
@@ -1282,7 +1295,7 @@ impl ClusterOfProcesses {
         &self,
         observer_indices: &[usize],
         timeout: Duration,
-    ) -> Result<NetworkKeyCompatibilityEvidence> {
+    ) -> Result<NetworkKeyBoundaryEvidence> {
         ensure!(
             !observer_indices.is_empty(),
             "no output-convergence observers supplied"
@@ -1303,14 +1316,24 @@ impl ClusterOfProcesses {
         // observed; success requires it to survive unchanged for the whole
         // stabilization window below.
         let mut stable: Option<(BTreeMap<String, String>, tokio::time::Instant)> = None;
+        // The last evidence observed AFTER the converged result already held
+        // through the full stabilization window. Once set, an epoch advance
+        // is normal scenario progress ending the observation window (the
+        // next epoch's metrics reset wipes these series), not a failure —
+        // return this evidence instead of racing the boundary.
+        let mut stabilized_evidence: Option<NetworkKeyBoundaryEvidence> = None;
         loop {
-            ensure!(
-                self.current_epoch().await? == expected_epoch,
-                "coordinator advanced beyond epoch {expected_epoch} before network-key output observations converged"
-            );
+            if self.current_epoch().await? != expected_epoch {
+                if let Some(evidence) = stabilized_evidence {
+                    return Ok(evidence);
+                }
+                bail!(
+                    "coordinator advanced beyond epoch {expected_epoch} before network-key output observations converged"
+                );
+            }
             let mut canonical_by_session: Option<BTreeMap<String, String>> = None;
             let mut incomplete = Vec::new();
-            let mut missing_candidate_evidence = Vec::new();
+            let mut evidence = NetworkKeyBoundaryEvidence::default();
             for index in observer_indices {
                 let validator = self
                     .validators
@@ -1349,11 +1372,20 @@ impl ClusterOfProcesses {
                         continue;
                     }
                 };
-                missing_candidate_evidence.extend(
-                    observer_missing
-                        .into_iter()
-                        .map(|session| format!("validator {}: session {session}", validator.index)),
-                );
+                if observer_missing.is_empty() {
+                    evidence
+                        .evidenced_authorities
+                        .insert(candidate_authority.clone());
+                } else {
+                    evidence.unevidenced_authorities.insert(
+                        candidate_authority.clone(),
+                        format!(
+                            "validator {}: {}",
+                            validator.index,
+                            observer_missing.join(", ")
+                        ),
+                    );
+                }
 
                 if let Some(expected) = &canonical_by_session {
                     ensure!(
@@ -1382,21 +1414,20 @@ impl ClusterOfProcesses {
                             "canonical network-key outputs changed during the stabilization window: first {expected:?}, now {canonical:?}"
                         );
                         if since.elapsed() >= NETWORK_KEY_OUTPUT_STABILIZATION {
-                            if missing_candidate_evidence.is_empty() {
-                                return Ok(NetworkKeyCompatibilityEvidence::Conclusive);
+                            if evidence.is_conclusive() {
+                                return Ok(evidence);
                             }
                             // Candidate evidence can still arrive — the
                             // straggler's computation may still be running
                             // and its discarded-output digest is recorded the
                             // moment it finishes. Keep polling (re-validating
                             // the converged result each scrape) until the
-                            // deadline before declaring the boundary
-                            // inconclusive.
+                            // deadline before returning the boundary with
+                            // unevidenced validators.
                             if tokio::time::Instant::now() >= deadline {
-                                return Ok(NetworkKeyCompatibilityEvidence::Inconclusive {
-                                    reason: missing_candidate_evidence.join("; "),
-                                });
+                                return Ok(evidence);
                             }
+                            stabilized_evidence = Some(evidence);
                         }
                     }
                     None => stable = Some((canonical, tokio::time::Instant::now())),
@@ -1404,8 +1435,10 @@ impl ClusterOfProcesses {
             } else {
                 // A fresh incomplete observation after convergence means a new
                 // network-key session surfaced; its outputs must converge and
-                // stabilize too.
+                // stabilize too — the previously stabilized evidence no longer
+                // covers the full session set.
                 stable = None;
+                stabilized_evidence = None;
                 if tokio::time::Instant::now() >= deadline {
                     bail!(
                         "network-key output observations did not become complete within {timeout:?}: {}",
@@ -2068,10 +2101,20 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
-    /// Late-computation evidence samples: the validator under test computed
-    /// its output after the quorum completed the session, production
-    /// discarded it, and exported the raw-bytes digest pair plus the
-    /// late-output malicious gauge.
+    /// One late-output info sample: the digest pair production exports when a
+    /// local computation returned after the quorum completed the session.
+    fn late_output_info_sample(
+        authority: &str,
+        output_digest: &str,
+        quorum_output_digest: &str,
+    ) -> String {
+        format!(
+            "ika_dwallet_mpc_session_late_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\",output_digest=\"{output_digest}\",quorum_output_digest=\"{quorum_output_digest}\"}} 1\n"
+        )
+    }
+
+    /// Late-computation evidence samples: the info digest pair plus the
+    /// late-output malicious gauge (one series per session/authority).
     fn late_output_metrics(
         authority: &str,
         output_digest: &str,
@@ -2079,7 +2122,8 @@ mod tests {
         malicious: u64,
     ) -> String {
         format!(
-            "ika_dwallet_mpc_session_late_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\",output_digest=\"{output_digest}\",quorum_output_digest=\"{quorum_output_digest}\"}} 1\nika_dwallet_mpc_session_late_output_malicious_actors{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\"}} {malicious}\n"
+            "{}ika_dwallet_mpc_session_late_output_malicious_actors{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\"}} {malicious}\n",
+            late_output_info_sample(authority, output_digest, quorum_output_digest)
         )
     }
 
@@ -2194,6 +2238,40 @@ mod tests {
         let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
             .expect_err("a late output reporting malicious actors must fail closed");
         assert!(error.to_string().contains("2 malicious actors"));
+    }
+
+    #[test]
+    fn superseded_unknown_quorum_sample_next_to_compared_sample_is_conclusive() {
+        // A late output recorded before the quorum digest was stashed leaves
+        // a superseded `unknown`-quorum gauge child in the registry until the
+        // epoch reset; the later compared pair for the SAME locally computed
+        // bytes lands as a second child. That is one honest validator, not a
+        // conflict — evidence comes from the compared pair.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_info_sample("a", "rawdigest", "unknown"));
+        body.push_str(&late_output_metrics("a", "rawdigest", "rawdigest", 0));
+        let NetworkKeyOutputConvergence::Converged {
+            sessions_without_candidate_evidence,
+            ..
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        else {
+            panic!("a superseded unknown-quorum child must not block convergence");
+        };
+        assert!(sessions_without_candidate_evidence.is_empty());
+    }
+
+    #[test]
+    fn late_samples_with_conflicting_local_digests_fail_closed() {
+        // Two attempts of the same computation produced DIFFERENT bytes —
+        // nondeterministic output is release-blocking however it surfaces.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_info_sample("a", "firstdigest", "unknown"));
+        body.push_str(&late_output_metrics("a", "seconddigest", "seconddigest", 0));
+        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
+            .expect_err("cross-attempt output disagreement must fail closed");
+        assert!(error.to_string().contains("across attempts"));
     }
 
     #[test]

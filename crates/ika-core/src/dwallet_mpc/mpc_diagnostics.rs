@@ -57,18 +57,22 @@ pub(crate) fn network_key_reconfiguration_raw_output_digest(
     let DWalletMPCOutputKind::External { output: kinds } = output else {
         return None;
     };
-    let mut hasher = DefaultHash::default();
-    let mut chunk_found = false;
-    for kind in kinds {
-        if let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(chunk) =
-            kind
-            && !chunk.rejected
-        {
-            hasher.update(&chunk.public_output);
-            chunk_found = true;
-        }
-    }
-    chunk_found.then(|| hasher.finalize().into())
+    let mut chunks =
+        kinds
+            .iter()
+            .filter_map(|kind| match kind {
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
+                    chunk,
+                ) if !chunk.rejected => Some(&chunk.public_output),
+                _ => None,
+            })
+            .peekable();
+    chunks.peek()?;
+    let hasher = chunks.fold(DefaultHash::default(), |mut hasher, chunk| {
+        hasher.update(chunk);
+        hasher
+    });
+    Some(hasher.finalize().into())
 }
 
 /// Digest the exact value voted on by `weighted_majority_vote`: public output

@@ -2688,7 +2688,9 @@ impl DWalletMPCService {
 
     /// Break down the key to slices because of chain transaction size limits.
     /// Limit 16 KB per Tx `pure` argument.
-    fn slice_public_output_into_messages<T>(
+    /// `pub(crate)` so compatibility tests build their fabricated output
+    /// envelopes through the real chunker instead of a copy that could drift.
+    pub(crate) fn slice_public_output_into_messages<T>(
         public_output: Vec<u8>,
         func: impl Fn(Vec<u8>, bool) -> T,
     ) -> Vec<T> {

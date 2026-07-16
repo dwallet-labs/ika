@@ -171,6 +171,19 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .expect_all_validators_healthy()
         .expect_protocol_version_at_most(3)
         .expect_all_validators_protocol_version_at_most(3)
+        // Whole-run backstop for the late-output comparison: a discarded
+        // straggler output whose bytes diverge from the quorum is logged at
+        // error level the moment it is recorded, even if it lands after a
+        // boundary's observation window closed (its metric series would be
+        // wiped at the next epoch's reset). The upgraded validator's log
+        // persists across epochs (no restart after the swap), so this catches
+        // a divergence anywhere in the run.
+        .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
+        // Late-computation evidence proves the upgraded validator COMPUTES
+        // the same bytes, not that it can get an output into consensus. When
+        // it does win the race and submits, a submission failure must not
+        // hide behind the peers' quorum completing the session anyway.
+        .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()
         .await
         .expect(

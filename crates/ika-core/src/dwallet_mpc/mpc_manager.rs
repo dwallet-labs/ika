@@ -708,8 +708,12 @@ impl DWalletMPCManager {
                         // finishing after that point is discarded without
                         // submission, and this digest is the only way its
                         // bytes can still be compared against the agreed
-                        // output. Returns `None` for every other protocol.
+                        // output. Gated on the session's reconfiguration flag
+                        // (set at request arrival, which necessarily precedes
+                        // any local computation) so the envelope walk never
+                        // runs for the common sign/presign outputs.
                         if !rejected
+                            && session.network_key_reconfiguration
                             && let Some(raw_digest) =
                                 network_key_reconfiguration_raw_output_digest(&output_result)
                         {
@@ -4135,9 +4139,9 @@ impl DWalletMPCManager {
                     // scenario can still check byte-equality. Both digests
                     // are over raw output bytes — NOT comparable with the
                     // `output_digest` envelope labels above.
-                    if let Some(late_output_digest) = session.late_output_digest {
+                    if let Some(late_output) = &session.late_output {
                         let authority = self.validator_name.to_string();
-                        let late_output_digest = hex::encode(late_output_digest);
+                        let output_digest = hex::encode(late_output.digest);
                         let quorum_output_digest = session
                             .quorum_raw_output_digest
                             .map(hex::encode)
@@ -4148,14 +4152,14 @@ impl DWalletMPCManager {
                                 protocol_name,
                                 &session_id,
                                 &authority,
-                                &late_output_digest,
+                                &output_digest,
                                 &quorum_output_digest,
                             ])
                             .set(1);
                         metrics
                             .session_late_output_malicious_actors
                             .with_label_values(&[protocol_name, &session_id, &authority])
-                            .set(session.late_output_reported_malicious_count.unwrap_or(0) as i64);
+                            .set(late_output.reported_malicious_count as i64);
                     }
                 }
             }
