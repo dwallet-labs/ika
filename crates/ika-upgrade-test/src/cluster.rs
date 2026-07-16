@@ -1143,7 +1143,8 @@ impl ClusterOfProcesses {
         // Byzantine quorum of the committee. These scenarios run an
         // equal-weight committee, so a plain member count matches the
         // access-structure threshold (n - floor((n-1)/3)).
-        let quorum = committee_authorities.len() - committee_authorities.len().saturating_sub(1) / 3;
+        let quorum =
+            committee_authorities.len() - committee_authorities.len().saturating_sub(1) / 3;
         let expected_epoch = self.current_epoch().await?;
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -1186,12 +1187,12 @@ impl ClusterOfProcesses {
                 )
                 .with_context(|| format!("validate network-key convergence from {observer}"))?
                 {
-                        NetworkKeyOutputConvergence::Converged(canonical) => canonical,
-                        NetworkKeyOutputConvergence::Incomplete(reason) => {
-                            incomplete.push(reason);
-                            continue;
-                        }
-                    };
+                    NetworkKeyOutputConvergence::Converged(canonical) => canonical,
+                    NetworkKeyOutputConvergence::Incomplete(reason) => {
+                        incomplete.push(reason);
+                        continue;
+                    }
+                };
 
                 if let Some(expected) = &canonical_by_session {
                     ensure!(
@@ -1935,8 +1936,12 @@ mod tests {
         // propagation delay.
         let committee = committee_of(&["a", "b", "c"]);
         let required = committee_of(&["a"]);
-        let body =
-            network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("rogue", "same")]);
+        let body = network_key_metrics(&[
+            ("a", "same"),
+            ("b", "same"),
+            ("c", "same"),
+            ("rogue", "same"),
+        ]);
         let error = canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0")
             .expect_err("an out-of-committee authority must fail closed");
         assert!(error.to_string().contains("out-of-committee"));
