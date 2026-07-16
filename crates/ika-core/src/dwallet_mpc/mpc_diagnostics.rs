@@ -259,6 +259,7 @@ pub(crate) struct MpcAnomalyContext {
     pub(crate) error_party_ids: Vec<PartyID>,
     pub(crate) running_computation_count: usize,
     pub(crate) vote: Option<OutputVoteDiagnostics>,
+    pub(crate) local_authority_malicious: bool,
     pub(crate) quorum_output_cached_without_local_output: bool,
     pub(crate) service_loop_termination_reason: Option<&'static str>,
 }
@@ -302,6 +303,10 @@ pub(crate) struct MpcAnomalySnapshot {
     pub(crate) network_key_reconfiguration: bool,
     pub(crate) network_encryption_key_id: Option<ObjectID>,
     pub(crate) vote: Option<OutputVoteDiagnostics>,
+    /// Whether this anomaly identifies the local validator as malicious. For quorum
+    /// snapshots, this is membership in `vote.final_malicious_authorities`.
+    /// It stays explicit so operators do not need to compare authority encodings.
+    pub(crate) local_authority_malicious: bool,
     pub(crate) quorum_output_cached_without_local_output: bool,
     pub(crate) trigger_conditions: Vec<&'static str>,
     pub(crate) error_code: Option<&'static str>,

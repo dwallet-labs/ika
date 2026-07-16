@@ -280,6 +280,51 @@ fn winning_report_blame_is_separate_from_disagreeing_voters() {
 }
 
 #[test]
+fn malicious_other_authority_emits_snapshot_with_self_flag_false() {
+    let (authorities, mut services) = authorities(0);
+    let session_identifier = SessionIdentifier::new(SessionType::System, [19; 32]);
+    let malicious_authority = authorities[3];
+    let reports = authorities
+        .iter()
+        .take(3)
+        .map(|authority| {
+            internal_report(
+                *authority,
+                session_identifier,
+                vec![5],
+                vec![malicious_authority],
+            )
+        })
+        .collect();
+
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(33, reports);
+
+    let snapshot = services[0]
+        .dwallet_mpc_manager()
+        .sessions
+        .get(&session_identifier)
+        .unwrap()
+        .last_anomaly_snapshot()
+        .unwrap();
+    assert!(!snapshot.local_authority_malicious);
+    assert!(
+        snapshot
+            .vote
+            .as_ref()
+            .unwrap()
+            .final_malicious_authorities
+            .contains(&malicious_authority)
+    );
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"malicious_authority_identified")
+    );
+}
+
+#[test]
 fn self_malicious_service_exit_records_termination_reason() {
     let (authorities, mut services) = authorities(0);
     let local_authority = services[0].name;
@@ -318,6 +363,11 @@ fn self_malicious_service_exit_records_termination_reason() {
     assert_eq!(
         snapshot.service_loop_termination_reason,
         Some("local_validator_recognized_as_malicious")
+    );
+    assert!(snapshot.local_authority_malicious);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&snapshot.to_json().unwrap()).unwrap()["local_authority_malicious"],
+        true
     );
     assert!(
         snapshot

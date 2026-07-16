@@ -813,6 +813,7 @@ impl DWalletSession {
             network_key_reconfiguration: self.network_key_reconfiguration,
             network_encryption_key_id: self.network_encryption_key_id,
             vote: context.vote,
+            local_authority_malicious: context.local_authority_malicious,
             quorum_output_cached_without_local_output: context
                 .quorum_output_cached_without_local_output,
             trigger_conditions: context.trigger_conditions,

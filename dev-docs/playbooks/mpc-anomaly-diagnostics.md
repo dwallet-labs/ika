@@ -81,6 +81,9 @@ separately:
 - `local_authority_malicious_reason`: `malicious_voter`,
   `reported_by_majority_output`, `both`, or `unknown` when attribution is no
   longer available.
+- `local_authority_malicious`: an explicit boolean indicating whether the local
+  validator is in the final union. A snapshot is still emitted when this is
+  `false` if another authority was identified as malicious.
 
 The vote candidate is the public MPC output plus its embedded malicious list.
 `report_digest` hashes that exact candidate. `output_digest` hashes only the
@@ -115,7 +118,8 @@ The emitted line has stable top-level fields for filtering:
 `event`, `schema_version`, `anomaly_kind`, `severity`, `session_id`,
 `session_type`, `epoch`, `local_party_id`, `tracked_session`,
 `local_output_observed`, `quorum_reached_without_local_output`, `error_code`,
-and `recent_trace_dropped_events`. `diagnostic_json` contains the complete
+`local_authority_malicious`, and `recent_trace_dropped_events`.
+`diagnostic_json` contains the complete
 versioned, privacy-safe snapshot as one JSON value. This remains one physical
 log line in both text and JSON logging modes.
 
@@ -368,6 +372,7 @@ diagnostic_json={"schema_version":1,"local_output_produced":true,
 ```text
 WARN event="mpc_session_anomaly" anomaly_kind="quorum_anomaly"
 diagnostic_json={"schema_version":1,"local_output_observed":false,
+  "local_authority_malicious":true,
   "vote":{"malicious_voters":[],
     "reported_malicious_authorities":["<local authority>"],
     "final_malicious_authorities":["<local authority>"],

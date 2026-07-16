@@ -746,6 +746,8 @@ impl DWalletMPCManager {
                                 trigger_conditions,
                                 running_computation_count,
                                 vote: Some(vote_diagnostics.clone()),
+                                local_authority_malicious: final_malicious_authorities
+                                    .contains(&self.validator_name),
                                 quorum_output_cached_without_local_output: quorum_output_cached
                                     && !local_output_observed,
                                 ..Default::default()
@@ -3617,6 +3619,7 @@ impl DWalletMPCManager {
                 tracked_session = true,
                 diagnostic_serialization_succeeded,
                 local_output_observed = snapshot.local_output_observed,
+                local_authority_malicious = snapshot.local_authority_malicious,
                 quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
                 local_output_rejected = ?snapshot.local_output_rejected,
                 error_code = snapshot.error_code.unwrap_or("none"),
@@ -3638,6 +3641,7 @@ impl DWalletMPCManager {
                 tracked_session = true,
                 diagnostic_serialization_succeeded,
                 local_output_observed = snapshot.local_output_observed,
+                local_authority_malicious = snapshot.local_authority_malicious,
                 quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
                 local_output_rejected = ?snapshot.local_output_rejected,
                 error_code = snapshot.error_code.unwrap_or("none"),
@@ -3693,6 +3697,7 @@ impl DWalletMPCManager {
                 local_authority = ?self.validator_name,
                 local_party_id = self.party_id,
                 tracked_session = false,
+                local_authority_malicious = true,
                 trigger,
                 service_loop_termination_reason = "local_validator_recognized_as_malicious",
                 "MPC service exited after local malicious recognition without a source session"
@@ -3705,6 +3710,7 @@ impl DWalletMPCManager {
             MpcAnomalyContext {
                 current_consensus_round,
                 trigger_conditions: vec!["mpc_service_exit_after_self_malicious_recognition"],
+                local_authority_malicious: true,
                 service_loop_termination_reason: Some("local_validator_recognized_as_malicious"),
                 ..Default::default()
             },
