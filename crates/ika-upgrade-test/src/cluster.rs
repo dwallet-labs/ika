@@ -55,6 +55,16 @@ use crate::{DEFAULT_EPOCH_DURATION_MS, DEFAULT_NUM_VALIDATORS};
 // `NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME` constant and trips if it drifts.
 const NETWORK_KEY_RECONFIGURATION_PROTOCOL: &str = "Network Encryption Key Reconfiguration";
 
+/// How long a fully-converged network-key output observation must hold
+/// unchanged before `expect_network_key_output_converged` accepts it. The
+/// observation set is open at first convergence (an output submitted to
+/// consensus just before its author saw the quorum can still be propagating),
+/// and no production watermark proves the set closed; the drain bounds that
+/// propagation window with repeated re-validation instead. Consensus commit
+/// latency in these clusters is well under a second, so ten seconds of
+/// repeated scrapes is orders of magnitude past the in-flight window.
+const NETWORK_KEY_OUTPUT_STABILIZATION: Duration = Duration::from_secs(10);
+
 /// A running out-of-process cluster. Owns the Sui localnet, the validator
 /// processes, and the notifier; tears everything down on `Drop` (each child has
 /// `kill_on_drop`).
@@ -1126,6 +1136,15 @@ impl ClusterOfProcesses {
     /// observer records individual consensus reports from all committee
     /// members, including literal historical binaries; this catches a 3-vs-1
     /// split even when the majority result lets the chain keep advancing.
+    ///
+    /// The observation set is open when convergence is first reached:
+    /// finalization happens at a Byzantine quorum, so a validator's output
+    /// submitted to consensus just before it saw the quorum can still be
+    /// propagating. Observers keep recording (and exporting) such late
+    /// outputs after session completion, so instead of returning on the
+    /// first converged scrape this holds the converged result through a
+    /// stabilization window, re-validating every scrape — a late-arriving
+    /// divergent output fails the run instead of landing after success.
     pub async fn expect_network_key_output_converged(
         &self,
         observer_indices: &[usize],
@@ -1147,6 +1166,10 @@ impl ClusterOfProcesses {
             committee_authorities.len() - committee_authorities.len().saturating_sub(1) / 3;
         let expected_epoch = self.current_epoch().await?;
         let deadline = tokio::time::Instant::now() + timeout;
+        // First fully-converged canonical result and when it was first
+        // observed; success requires it to survive unchanged for the whole
+        // stabilization window below.
+        let mut stable: Option<(BTreeMap<String, String>, tokio::time::Instant)> = None;
         loop {
             ensure!(
                 self.current_epoch().await? == expected_epoch,
@@ -1206,13 +1229,37 @@ impl ClusterOfProcesses {
                 }
             }
             if incomplete.is_empty() {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= deadline {
-                bail!(
-                    "network-key output observations did not become complete within {timeout:?}: {}",
-                    incomplete.join("; ")
-                );
+                let canonical = canonical_by_session
+                    .context("converged with no observers — observer list cannot be empty here")?;
+                match &stable {
+                    Some((expected, since)) => {
+                        // Late outputs that agree grow the observed set without
+                        // changing the canonical digests; a late divergent
+                        // output already failed hard inside
+                        // `canonical_network_key_outputs` (digest-equality is a
+                        // hard error). A changed canonical map here means a
+                        // session appeared or changed mid-drain — fail closed.
+                        ensure!(
+                            expected == &canonical,
+                            "canonical network-key outputs changed during the stabilization window: first {expected:?}, now {canonical:?}"
+                        );
+                        if since.elapsed() >= NETWORK_KEY_OUTPUT_STABILIZATION {
+                            return Ok(());
+                        }
+                    }
+                    None => stable = Some((canonical, tokio::time::Instant::now())),
+                }
+            } else {
+                // A fresh incomplete observation after convergence means a new
+                // network-key session surfaced; its outputs must converge and
+                // stabilize too.
+                stable = None;
+                if tokio::time::Instant::now() >= deadline {
+                    bail!(
+                        "network-key output observations did not become complete within {timeout:?}: {}",
+                        incomplete.join("; ")
+                    );
+                }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
