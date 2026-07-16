@@ -18,7 +18,7 @@ twopc_mpc.workspace = true
 default = []
 # INSECURE test-only mock: replaces the expensive validator class-groups/PVSS
 # keygen (`from_seed`) with neutral keys + default proofs — consumed only by the
-# mocked protocol rounds. Never enable in production. See cryptography-private
+# mocked protocol rounds. Never enable in production. See inkrypto
 # `unsafe_mock`.
 dwallet-mpc-unsafe-mock = ["class_groups/unsafe_mock", "twopc_mpc/unsafe_mock"]
 

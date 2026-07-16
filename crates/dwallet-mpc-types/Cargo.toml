@@ -24,8 +24,8 @@ curve25519-dalek.workspace = true
 [features]
 # No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
 default = []
-# INSECURE test-only mock: enable the deterministic protocol mocks in the cryptography-private
-# crates. Must never be enabled in production builds. See cryptography-private `unsafe_mock`.
+# INSECURE test-only mock: enable the deterministic protocol mocks in the inkrypto
+# crates. Must never be enabled in production builds. See inkrypto `unsafe_mock`.
 dwallet-mpc-unsafe-mock = ["twopc_mpc/unsafe_mock"]
 
 [lints]

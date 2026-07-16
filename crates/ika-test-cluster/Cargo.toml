@@ -9,7 +9,7 @@ edition = "2024"
 [features]
 # No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
 default = []
-# INSECURE test-only mock: forwards to the deterministic cryptography-private protocol mocks so
+# INSECURE test-only mock: forwards to the deterministic inkrypto protocol mocks so
 # dwallet-mpc integration tests run without real class-group crypto. Never enable in production.
 # Run e.g. `cargo test -p ika-test-cluster --features dwallet-mpc-unsafe-mock`.
 dwallet-mpc-unsafe-mock = [
