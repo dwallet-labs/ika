@@ -478,6 +478,77 @@ jobs:
             tar -czvf "ika-${ASSET_STEM}-${platform}.tar.gz" -C "$dir" .
           done
 
+      - name: Compose release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ needs.version.outputs.version }}"
+          NETWORK="${{ needs.version.outputs.network }}"
+          # The auto-generated changelog goes into a collapsed section at the
+          # bottom; the curated sections above it are a scaffold the release
+          # manager fills in before publishing. Fetched via the API (instead
+          # of --generate-notes) so it can be embedded inside the template.
+          NOTES=$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq '.body')
+          {
+            sed -e "s|__VERSION__|${VERSION}|g" \
+                -e "s|__NETWORK__|${NETWORK}|g" \
+                -e "s|__SHA__|${GITHUB_SHA}|g" \
+                -e "s|__SHA_SHORT__|${GITHUB_SHA:0:10}|g" \
+                -e "s|__REPO__|${GITHUB_REPOSITORY}|g" <<'SCAFFOLD'
+          # Ika __VERSION__ (__NETWORK__)
+
+          > **⚠️ Scaffold — the release manager fills this in before
+          > publishing.** Each section says what belongs in it; write for the
+          > reader named in its heading, delete sections that don't apply,
+          > then delete this banner. Style reference: the testnet-v1.2.1
+          > release.
+
+          ## Protocol
+
+          <!-- The protocol version this release runs and/or advertises. If a
+          new version activates after the rollout, spell out the activation
+          mechanism and timing (e.g. automatic capability tally, ~1 epoch
+          after quorum of stake upgrades) and list what the new version
+          brings, in operator-visible terms. -->
+
+          ## ⚠️ dApp developers
+
+          <!-- Client compatibility: minimum @ika.xyz/sdk version, what
+          breaks without it, and the action deadline relative to the
+          rollout/activation. Delete this section if nothing changes for
+          dApps. -->
+
+          ## Operators: read before upgrading
+
+          <!-- Link the operators upgrade guide on docs.ika.xyz, then the
+          essentials as bullets: binary/image changes, config edges, metric
+          renames, resource-profile changes, the supported rollout strategy
+          (rolling vs coordinated, and what validated it), rollback caveats.
+          Delete what doesn't apply. -->
+
+          ## Validation
+
+          Built at [`__SHA_SHORT__`](https://github.com/__REPO__/commit/__SHA__).
+          This tag passed the release-blocking v1.1.8 mixed-rollout
+          compatibility gate before this draft was created.
+
+          <!-- Add further validation evidence for this exact commit (full
+          suite runs, upgrade matrix) — only what actually ran against it. -->
+
+          <details>
+          <summary>Full changelog (auto-generated)</summary>
+
+          SCAFFOLD
+            printf '%s\n' "$NOTES"
+            cat <<'SCAFFOLD'
+
+          </details>
+          SCAFFOLD
+          } > release-body.md
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -491,7 +562,7 @@ jobs:
             --draft \
             --title "$ASSET_STEM" \
             --target "${{ github.sha }}" \
-            --generate-notes \
+            --notes-file release-body.md \
             ika-${ASSET_STEM}-*.tar.gz
 
   # ---------------------------------------------------------------------------
