@@ -122,6 +122,21 @@ rule, not the instance.
   inside it WITH margin for CI contention; don't tune to "passes alone".
   (`epoch_scaled_poll_interval` compresses poll cadences but cannot
   compress the crypto.)
+  Follow-up (issue #1772): window-sizing alone is NOT sufficient — the
+  same test later flaked at 240s epochs (a 60s window) when the localnet
+  fullnode went transiently unreachable. No window width is sound
+  against environmental stalls; assert eventual consistency with a
+  bounded grace (present at the boundary, or present one epoch later)
+  instead of lucky-timing first-window capture. AND: before reasoning
+  about an assertion's timing semantics, verify WHICH object it reads —
+  fault-injecting the fix (joiner P2P fan-out disabled entirely)
+  revealed this test's `epoch_store.committee()` map is built from
+  CHAIN state (`EpochStartSystem::get_ika_committee`), not from the
+  off-chain mpc_data freeze everyone (test docs, issue #1772's own
+  diagnosis) believed it measured — the off-chain freeze deterministically
+  excluded the joiner and the assertion still passed. Two same-shaped
+  committee objects with different provenance (chain read vs off-chain
+  assembly) is exactly the setup for this trap.
 - **Test-harness state that production syncs from chain must be set
   explicitly.** The in-process harness never syncs the epoch-close lock
   target, so it stays 0 and (correctly) gates everything; tests set it

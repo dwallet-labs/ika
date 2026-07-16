@@ -80,6 +80,39 @@ async fn test_joiner_added_at_epoch_2() {
 /// but overrun that window in a short test epoch; `epoch_scaled_poll_interval`
 /// scales every cadence on this path to ~1% of the epoch (a no-op at
 /// production epoch lengths), so the path fits a bounded test epoch.
+///
+/// WHAT THIS TEST ACTUALLY MEASURES (established by fault injection
+/// while fixing the issue-#1772 flake): `epoch_store.committee()` is
+/// built by `EpochStartSystem::get_ika_committee` from CHAIN state —
+/// its `class_groups_public_keys_and_proofs` decodes each member's
+/// on-chain `mpc_data` record and silently `filter_map`-skips a member
+/// whose record is missing. It is NOT the off-chain assembled
+/// committee: disabling the joiner P2P fan-out entirely (so the
+/// mpc_data freeze deterministically excluded the joiner) still left
+/// the joiner present in this map, because its class-groups key went
+/// on-chain at candidate registration. So this assertion covers the
+/// CHAIN view — the map `class_groups_keys_by_party_id` seeds the MPC
+/// manager's validator keys from at epoch start — while capture by the
+/// off-chain freeze (which feeds the reconfiguration MPC and the
+/// handoff cert) is only indirectly exercised here and deserves its own
+/// handoff-cert-based assertion (follow-up).
+///
+/// Assertion semantics (issue #1772): whether the joiner's on-chain
+/// mpc_data record is visible in the epoch-2 `EpochStartSystem` read is
+/// a per-run chain-timing race under load (the #1772 flake reproduced
+/// even at 240s epochs, correlated with transient fullnode outages), so
+/// a strict epoch-2 assertion is unsound at any epoch length. Assert
+/// eventual consistency with a bounded grace instead:
+///   1. Continuing members are NEVER missing from the committee's
+///      class-groups map — their records have been on chain since
+///      genesis, so a gap is a real chain-read defect: fail
+///      immediately, the joiner grace below must not mask it.
+///   2. The joiner is present in the epoch-2 committee's map (normal
+///      path), OR its record was transiently invisible at the epoch-2
+///      boundary and MUST be present in the epoch-3 committee — the
+///      record is durably on chain, so the next boundary read has no
+///      excuse. Still absent at epoch 3 = the record never became
+///      readable (registration/lifecycle bug): red.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_joiner_lands_in_next_committee_class_groups() {
     telemetry_subscribers::init_for_testing();
@@ -119,38 +152,117 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
         .expect("add_joiner_validator failed");
 
     cluster.wait_for_epoch(2).await;
-    // Fail fast instead of hanging: an excluded joiner never enters the
-    // epoch-2 working set, so it would never reach epoch 2. The cluster
-    // is already at epoch 2 here, so an in-committee joiner reaches it
-    // promptly.
+    // The joiner node must follow the cluster to epoch 2 regardless of
+    // the class-groups checks below — its committee seat comes from the
+    // chain committee, and even a joiner the off-chain freeze excluded
+    // advances epochs normally (CI failure runs of this test showed
+    // exactly that). This wait only fails fast on a dead joiner node.
     tokio::time::timeout(
         std::time::Duration::from_secs(60),
         wait_for_node_epoch(&joiner.node_handle, 2),
     )
     .await
     .expect(
-        "joiner did not reach epoch 2 within 60s of the cluster — \
-         likely excluded from the freeze (its mpc_data never propagated)",
+        "joiner node did not reach epoch 2 within 60s of the cluster — \
+         node dead or not following the chain",
     );
 
     let joiner_name = joiner.authority_name();
 
-    // Read the epoch-2 committee from the joiner's own node and assert
-    // its class-groups material is present — i.e. the freeze captured
-    // the joiner and the off-chain assembler resolved its mpc_data.
-    let in_class_groups = joiner.node_handle.with(|node| {
+    // Read the epoch-2 committee from the joiner's own node: is the
+    // joiner's on-chain mpc_data record visible in this node's epoch-2
+    // `EpochStartSystem` read, and is every continuing member covered?
+    let (joiner_captured, joiner_in_voting_rights, members_missing_class_groups) =
+        joiner.node_handle.with(|node| {
+            let epoch_store = node.state().epoch_store_for_testing();
+            let committee = epoch_store.committee();
+            assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
+            let joiner_captured = committee
+                .class_groups_public_keys_and_proofs
+                .contains_key(&joiner_name);
+            let joiner_in_voting_rights = committee
+                .voting_rights
+                .iter()
+                .any(|(name, _)| *name == joiner_name);
+            let members_missing_class_groups: Vec<_> = committee
+                .voting_rights
+                .iter()
+                .map(|(name, _)| *name)
+                .filter(|name| {
+                    *name != joiner_name
+                        && !committee
+                            .class_groups_public_keys_and_proofs
+                            .contains_key(name)
+                })
+                .collect();
+            (
+                joiner_captured,
+                joiner_in_voting_rights,
+                members_missing_class_groups,
+            )
+        });
+
+    // Continuing members' mpc_data records have been on chain since
+    // genesis, so a class-groups gap for any of them is a real
+    // chain-read defect in a map the MPC manager seeds its validator
+    // keys from (`class_groups_keys_by_party_id`). Fail immediately;
+    // the joiner grace below must not mask it.
+    assert!(
+        members_missing_class_groups.is_empty(),
+        "epoch-2 committee class_groups_public_keys_and_proofs is missing \
+         continuing members {members_missing_class_groups:?} — their \
+         on-chain mpc_data records predate the epoch and must decode in \
+         every EpochStartSystem read"
+    );
+
+    if joiner_captured {
+        return;
+    }
+
+    // The joiner's mpc_data record wasn't visible in this node's
+    // epoch-2 chain read — the #1772 race. The record is durable, so
+    // the epoch-3 boundary read must see it. `joiner_in_voting_rights`
+    // disambiguates the miss in logs: true = selected into the epoch-2
+    // committee but its mpc_data didn't decode out of the chain read;
+    // false = registration landed after the mid-epoch committee
+    // selection, so the joiner only activates at epoch 3. Both resolve
+    // by the epoch-3 read.
+    tracing::warn!(
+        ?joiner_name,
+        joiner_in_voting_rights,
+        "joiner missing from the epoch-2 committee class-groups map \
+         (transient chain-read gap, tolerated once); asserting it is \
+         present in the epoch-3 committee"
+    );
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        cluster.wait_for_epoch(3),
+    )
+    .await
+    .expect("cluster did not reach epoch 3 within 300s during the joiner grace window");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for_node_epoch(&joiner.node_handle, 3),
+    )
+    .await
+    .expect("joiner node did not reach epoch 3 within 60s of the cluster during the grace window");
+
+    let joiner_captured_at_epoch_3 = joiner.node_handle.with(|node| {
         let epoch_store = node.state().epoch_store_for_testing();
         let committee = epoch_store.committee();
-        assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
+        assert_eq!(committee.epoch(), 3, "joiner node should be at epoch 3");
         committee
             .class_groups_public_keys_and_proofs
             .contains_key(&joiner_name)
     });
     assert!(
-        in_class_groups,
-        "joiner {joiner_name:?} must appear in epoch-2 committee \
-         class_groups_public_keys_and_proofs (freeze must capture \
-         the mid-epoch joiner)"
+        joiner_captured_at_epoch_3,
+        "joiner {joiner_name:?} was missing from the epoch-2 committee \
+         class_groups_public_keys_and_proofs (tolerated once — a \
+         transient chain-read gap under load) and is STILL absent at \
+         epoch 3: its on-chain mpc_data record never became readable — \
+         a registration/lifecycle bug, not a timing race"
     );
 }
 
