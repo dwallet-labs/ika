@@ -81,10 +81,14 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/release/}"
           NETWORK="${TAG%%-*}"
+          # Tag convention: release/{network}-v{version} (the "v" is
+          # stripped here; bare release/{network}-{version} tags from before
+          # the convention change still parse).
           VERSION="${TAG#*-}"
+          VERSION="${VERSION#v}"
 
           if [[ "$NETWORK" != "mainnet" && "$NETWORK" != "testnet" && "$NETWORK" != "devnet" ]]; then
-            echo "::error::Invalid network '$NETWORK' in tag. Must be mainnet, testnet, or devnet. Tag format: release/{network}-{version}"
+            echo "::error::Invalid network '$NETWORK' in tag. Must be mainnet, testnet, or devnet. Tag format: release/{network}-v{version}"
             exit 1
           fi
 
@@ -451,7 +455,7 @@ jobs:
           VERSION="v${{ needs.version.outputs.version }}"
           # Mainnet mints the bare v-tag: the Homebrew formula's download URL
           # and asset glob interpolate it. Other networks attach the release
-          # to the TRIGGER tag itself (release/<network>-<version>, already
+          # to the TRIGGER tag itself (release/<network>-v<version>, already
           # pointing at this run's commit) — publishing a release on an
           # existing tag creates no tag and fires no push event, so it cannot
           # re-trigger this workflow. Asset filenames use the network-qualified
