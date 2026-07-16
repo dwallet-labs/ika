@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - "release/*-*"
-      # Exclude the minted release tags (release/<network>-v<version>, note
-      # the "v") so publishing a draft release does not re-trigger this
-      # workflow. Only the bare-version trigger tags
-      # (release/<network>-<version>) start a build.
-      - "!release/*-v*"
   workflow_dispatch:
     inputs:
       network:
@@ -454,20 +449,20 @@ jobs:
       - name: Package release assets
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
-          # Mainnet keeps the bare v-name everywhere: the Homebrew formula's
-          # download URL and asset glob interpolate it. Other networks get a
-          # network-qualified asset stem and mint their release tag inside the
-          # release/ namespace (release/<network>-v<version>); the on.push.tags
-          # filter excludes "-v" tags so publishing the draft does not
-          # re-trigger this workflow. Asset filenames always use the slash-free
-          # stem — GitHub asset names cannot contain '/'.
+          # Mainnet mints the bare v-tag: the Homebrew formula's download URL
+          # and asset glob interpolate it. Other networks attach the release
+          # to the TRIGGER tag itself (release/<network>-<version>, already
+          # pointing at this run's commit) — publishing a release on an
+          # existing tag creates no tag and fires no push event, so it cannot
+          # re-trigger this workflow. Asset filenames use the network-qualified
+          # slash-free stem — GitHub asset names cannot contain '/'.
           NETWORK="${{ needs.version.outputs.network }}"
           if [ "$NETWORK" = "mainnet" ]; then
             ASSET_STEM="$VERSION"
             RELEASE_TAG="$VERSION"
           else
             ASSET_STEM="${NETWORK}-${VERSION}"
-            RELEASE_TAG="release/${NETWORK}-${VERSION}"
+            RELEASE_TAG="${{ github.ref_name }}"
           fi
           echo "ASSET_STEM=${ASSET_STEM}" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
@@ -483,10 +478,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # --target pins the publish-time tag: a draft's tag is minted only
-          # when the draft is published, and without --target it would point
-          # at the default branch's HEAD at publish time — not the tagged
-          # release commit this run built.
+          # --target pins mainnet's publish-time tag mint: a draft's tag is
+          # created only when the draft is published, and without --target it
+          # would point at the default branch's HEAD at publish time — not the
+          # tagged release commit this run built. For non-mainnet the trigger
+          # tag already exists, so --target is ignored.
           gh release create "$RELEASE_TAG" \
             --draft \
             --title "$ASSET_STEM" \
