@@ -3501,9 +3501,19 @@ impl DWalletMPCManager {
                 let pending = protocol_sessions_pending
                     .entry(protocol_name.clone())
                     .or_default();
+                // `ComputationCompleted` means this validator finished the
+                // computation and submitted its output — no pending work. It
+                // isn't `Completed` (that awaits the quorum transition, tracked
+                // separately by `sessions_with_self_output_no_quorum`), and a
+                // session reloaded from the DB as already-computed
+                // (`complete_computation_mpc_session_and_create_if_not_exists`)
+                // lingers in this state until epoch-end pruning. Counting it as
+                // pending would keep this gauge from ever draining to zero.
                 if !matches!(
                     session.status,
-                    SessionStatus::Completed | SessionStatus::Failed
+                    SessionStatus::Completed
+                        | SessionStatus::Failed
+                        | SessionStatus::ComputationCompleted
                 ) {
                     *pending += 1;
                 }

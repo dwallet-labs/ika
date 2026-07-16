@@ -850,6 +850,12 @@ pub(crate) fn network_dkg_v2_public_input(
         PartyID,
         ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
     >,
+    // Selects the equality-of-coefficients discrete-log bound: `true` picks the
+    // `-10` relaxed (+519) bound the deployed network transcribes, `false` the
+    // strict (+529) bound reserved for a future, not-yet-deployed format. Derived
+    // from the protocol version (`is_network_encryption_key_version_v3()`) at the
+    // call site; TEMPORARY until the network migrates off the relaxed bound.
+    backward_compatible: bool,
 ) -> DwalletMPCResult<<dkg::Party as mpc::Party>::PublicInput> {
     let public_input = <dkg::Party as mpc::Party>::PublicInput::new(
         access_structure,
@@ -857,6 +863,7 @@ pub(crate) fn network_dkg_v2_public_input(
         secp256k1_pvss_encryption_keys_and_proofs,
         ristretto_pvss_encryption_keys_and_proofs,
         secp256r1_pvss_encryption_keys_and_proofs,
+        backward_compatible,
     )
     .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
 

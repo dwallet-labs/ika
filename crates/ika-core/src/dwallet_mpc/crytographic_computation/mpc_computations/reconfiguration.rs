@@ -52,6 +52,11 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
         upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
+        // Equality-of-coefficients discrete-log bound selector: `true` = `-10`
+        // relaxed (+519) bound the deployed network transcribes, `false` = strict
+        // (+529) reserved for a future format. Derived from the protocol version
+        // (`is_reconfiguration_message_version_v3()`) at the call site.
+        backward_compatible: bool,
     ) -> DwalletMPCResult<<ReconfigurationParty as mpc::Party>::PublicInput>;
 }
 
@@ -63,6 +68,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
+        backward_compatible: bool,
     ) -> DwalletMPCResult<<ReconfigurationParty as Party>::PublicInput> {
         let current_committee = current_committee.clone();
         // Committees supply ONLY the access structures (voting weights /
@@ -192,6 +198,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
+                                backward_compatible,
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -235,6 +242,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
+                                backward_compatible,
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -261,6 +269,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
+                                backward_compatible,
                             )
                                 .map_err(DwalletMPCError::from)?;
 

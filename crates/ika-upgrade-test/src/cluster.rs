@@ -669,7 +669,9 @@ enum NetworkKeyOutputConvergence {
 
 fn canonical_network_key_outputs(
     body: &str,
-    expected_authorities: &BTreeSet<String>,
+    committee_authorities: &BTreeSet<String>,
+    required_authorities: &BTreeSet<String>,
+    quorum: usize,
     observer: &str,
 ) -> Result<NetworkKeyOutputConvergence> {
     let output_samples = metric_samples_for_protocol(
@@ -761,9 +763,25 @@ fn canonical_network_key_outputs(
     let mut canonical = BTreeMap::new();
     for (session, outputs) in outputs_by_session {
         let observed_authorities = outputs.keys().cloned().collect::<BTreeSet<_>>();
-        if &observed_authorities != expected_authorities {
+        // A validator submitting a network-key output for a session whose
+        // committee it isn't in is a real fault, not a propagation delay.
+        ensure!(
+            observed_authorities.is_subset(committee_authorities),
+            "{observer} observed out-of-committee authorities for network-key session {session}: observed={observed_authorities:?}, committee={committee_authorities:?}"
+        );
+        // Reconfiguration finalizes at a Byzantine quorum and does not wait: a
+        // validator still computing when quorum forms marks its session
+        // complete (on seeing the quorum in consensus) and discards its own
+        // still-in-flight output, so an honest straggler legitimately never
+        // submits. Requiring the whole committee here would race that
+        // finalization. Require instead every validator under test (the
+        // upgraded observers) plus a finalizing quorum — enough to prove the
+        // upgraded node's output agrees with a quorum of peers.
+        if !required_authorities.is_subset(&observed_authorities)
+            || observed_authorities.len() < quorum
+        {
             return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
-                "{observer} observed the wrong authority set for network-key session {session}: observed={observed_authorities:?}, expected={expected_authorities:?}"
+                "{observer} has not yet observed a quorum including every validator under test for network-key session {session}: observed={observed_authorities:?}, required={required_authorities:?}, quorum={quorum}"
             )));
         }
         let digests: BTreeSet<_> = outputs.values().cloned().collect();
@@ -1117,11 +1135,15 @@ impl ClusterOfProcesses {
             !observer_indices.is_empty(),
             "no output-convergence observers supplied"
         );
-        let expected_authorities: BTreeSet<_> = self
+        let committee_authorities: BTreeSet<_> = self
             .validator_authorities
             .iter()
             .map(ToString::to_string)
             .collect();
+        // Byzantine quorum of the committee. These scenarios run an
+        // equal-weight committee, so a plain member count matches the
+        // access-structure threshold (n - floor((n-1)/3)).
+        let quorum = committee_authorities.len() - committee_authorities.len().saturating_sub(1) / 3;
         let expected_epoch = self.current_epoch().await?;
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -1142,11 +1164,28 @@ impl ClusterOfProcesses {
                     validator.index,
                     validator.metrics_endpoint()
                 );
-                let observer_canonical =
-                    match canonical_network_key_outputs(&body, &expected_authorities, &observer)
-                        .with_context(|| {
-                            format!("validate network-key convergence from {observer}")
-                        })? {
+                // Each observer is a validator under test (the upgraded
+                // binary); require it to have observed its own output within a
+                // converged quorum. That is the compatibility signal — the
+                // upgraded node's reconfiguration output matching a quorum of
+                // v1.1.8 peers — without racing the straggler that finalization
+                // legitimately drops.
+                let required_authorities: BTreeSet<String> = std::iter::once(
+                    self.validator_authorities
+                        .get(*index)
+                        .with_context(|| format!("validator index {index} out of range"))?
+                        .to_string(),
+                )
+                .collect();
+                let observer_canonical = match canonical_network_key_outputs(
+                    &body,
+                    &committee_authorities,
+                    &required_authorities,
+                    quorum,
+                    &observer,
+                )
+                .with_context(|| format!("validate network-key convergence from {observer}"))?
+                {
                         NetworkKeyOutputConvergence::Converged(canonical) => canonical,
                         NetworkKeyOutputConvergence::Incomplete(reason) => {
                             incomplete.push(reason);
@@ -1225,11 +1264,6 @@ impl ClusterOfProcesses {
 
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let current_epoch = self.current_epoch().await?;
-            ensure!(
-                current_epoch == epoch,
-                "coordinator advanced to epoch {current_epoch} before epoch {epoch} local network-key work drained"
-            );
             let mut pending = Vec::new();
             for index in observer_indices {
                 let validator = self
@@ -1267,6 +1301,14 @@ impl ClusterOfProcesses {
             if pending.is_empty() {
                 return Ok(());
             }
+            // Check the epoch guard AFTER computing pending so the diagnostic
+            // names the gauge that never drained, not just "advanced".
+            let current_epoch = self.current_epoch().await?;
+            ensure!(
+                current_epoch == epoch,
+                "coordinator advanced to epoch {current_epoch} before epoch {epoch} local network-key work drained; still pending: {}",
+                pending.join("; ")
+            );
             if tokio::time::Instant::now() >= deadline {
                 bail!(
                     "network-key reconfiguration remained pending within {timeout:?}: {}",
@@ -1822,19 +1864,21 @@ mod tests {
         assert_eq!(parse_labelless_gauge(body, "ika_current_epoch"), Some(4));
     }
 
+    fn committee_of(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
     #[test]
     fn accepts_four_authority_network_key_output_convergence() {
-        let expected = ["a", "b", "c", "d"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let required = committee_of(&["a"]);
         let mut body =
             network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("d", "same")]);
         body.push_str(
             "ika_dwallet_mpc_session_output_info{protocol_name=\"Sign\",session_id=\"unrelated\",authority=\"a\",output_digest=\"different\"} 1\n",
         );
         let NetworkKeyOutputConvergence::Converged(canonical) =
-            canonical_network_key_outputs(&body, &expected, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
         else {
             panic!("four matching authorities must converge");
         };
@@ -1842,18 +1886,73 @@ mod tests {
     }
 
     #[test]
+    fn accepts_quorum_when_straggler_absent() {
+        // The 4th validator finalized on quorum before its own output was
+        // submitted (it discards a post-quorum result). A 3-of-4 converged
+        // quorum that includes the validator under test still passes — the
+        // full-committee requirement would race that finalization.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let required = committee_of(&["a"]);
+        let body = network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same")]);
+        let NetworkKeyOutputConvergence::Converged(canonical) =
+            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        else {
+            panic!("a converged quorum including the validator under test must pass");
+        };
+        assert_eq!(canonical["session"], "same");
+    }
+
+    #[test]
+    fn incomplete_when_validator_under_test_absent() {
+        // A quorum that excludes the upgraded validator proves nothing about
+        // its compatibility — keep polling (fail-closed on the caller timeout).
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let required = committee_of(&["a"]);
+        let body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        let NetworkKeyOutputConvergence::Incomplete(reason) =
+            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        else {
+            panic!("a quorum missing the validator under test must be incomplete");
+        };
+        assert!(reason.contains("validator under test"));
+    }
+
+    #[test]
+    fn incomplete_below_quorum() {
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let required = committee_of(&["a"]);
+        let body = network_key_metrics(&[("a", "same"), ("b", "same")]);
+        let NetworkKeyOutputConvergence::Incomplete(_) =
+            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        else {
+            panic!("a below-quorum observation must be incomplete");
+        };
+    }
+
+    #[test]
+    fn rejects_out_of_committee_authority() {
+        // A non-member submitting a network-key output is a hard fault, not a
+        // propagation delay.
+        let committee = committee_of(&["a", "b", "c"]);
+        let required = committee_of(&["a"]);
+        let body =
+            network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("rogue", "same")]);
+        let error = canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0")
+            .expect_err("an out-of-committee authority must fail closed");
+        assert!(error.to_string().contains("out-of-committee"));
+    }
+
+    #[test]
     fn rejects_one_divergent_network_key_output() {
-        let expected = ["a", "b", "c", "d"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[
             ("a", "different"),
             ("b", "majority"),
             ("c", "majority"),
             ("d", "majority"),
         ]);
-        let error = canonical_network_key_outputs(&body, &expected, "validator 0")
+        let error = canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0")
             .expect_err("3-vs-1 output split must fail closed");
         assert!(
             error
@@ -1864,7 +1963,8 @@ mod tests {
 
     #[test]
     fn missing_network_key_envelope_metric_is_incomplete_not_converged() {
-        let expected = ["a"].into_iter().map(str::to_string).collect();
+        let committee = committee_of(&["a"]);
+        let required = committee_of(&["a"]);
         let body = format!(
             "ika_dwallet_mpc_session_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"same\"}} 1\nika_dwallet_mpc_session_output_rejected{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\"}} 0\n"
         );
@@ -1872,7 +1972,7 @@ mod tests {
         // the observer keeps polling (and the caller ultimately times out —
         // still fail-closed), rather than declaring a hard divergence.
         let NetworkKeyOutputConvergence::Incomplete(reason) =
-            canonical_network_key_outputs(&body, &expected, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, &required, 1, "validator 0").unwrap()
         else {
             panic!("a missing envelope metric must be reported as incomplete");
         };
