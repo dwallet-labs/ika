@@ -15,6 +15,17 @@
 //! states and checks local epoch, liveness, malicious reporting, pending work,
 //! logs, and per-authority output digests before allowing the next boundary.
 //!
+//! The upgraded validator's own output is weighed without racing production:
+//! reconfiguration finalizes at a Byzantine quorum, and a validator whose
+//! computation finishes afterwards — legitimately including the upgraded one —
+//! has its result discarded without submission. A boundary is conclusive when
+//! the upgraded validator either submitted its output inside the converged
+//! quorum or recorded a discarded late computation whose raw-bytes digest
+//! matches the quorum output; divergent bytes fail hard either way. A boundary
+//! where it produced nothing comparable is inconclusive (not a failure, not
+//! proof), and the scenario fails unless at least one of the two
+//! reconfiguration boundaries is conclusive.
+//!
 //! Beyond the reshare itself, each reconfiguration is followed by a full user
 //! **DKG → Presign → ECDSA Sign → Taproot Sign** lifecycle driven through the
 //! `ika` CLI, so the gate also proves the mixed committee keeps *serving users*

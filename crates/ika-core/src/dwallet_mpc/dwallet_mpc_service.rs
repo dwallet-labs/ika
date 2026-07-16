@@ -18,6 +18,7 @@ use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_diagnostics::{
     MpcAnomalyContext, MpcAnomalyKind, dwallet_mpc_error_diagnostic, output_digest,
+    raw_output_digest,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{
@@ -1732,14 +1733,72 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "received a computation update for a non-active session"
                 );
+                let mut trigger_conditions =
+                    vec!["local_computation_update_received_after_session_became_non_active"];
+                // An honest straggler: the session completed via the peers'
+                // output quorum while this validator was still computing, so
+                // this Finalize result is correctly discarded without
+                // submission. For a network-key reconfiguration, digest the
+                // discarded raw output bytes and compare them against the
+                // quorum-agreed output recorded at quorum time — this is the
+                // only remaining byte-level cross-version compatibility
+                // evidence for this validator. Observability only: nothing
+                // is submitted and the session stays non-active.
+                if let Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                    public_output_value,
+                    malicious_parties,
+                    ..
+                }) = &computation_result
+                    && let Some(session) = self
+                        .dwallet_mpc_manager
+                        .sessions
+                        .get_mut(&session_identifier)
+                    && session.network_key_reconfiguration
+                {
+                    let late_output_digest = raw_output_digest(public_output_value);
+                    let matches_quorum =
+                        session.record_late_output(late_output_digest, malicious_parties.len());
+                    let quorum_output_digest = session.quorum_raw_output_digest.map(hex::encode);
+                    match matches_quorum {
+                        Some(true) => {
+                            info!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                late_output_digest = %hex::encode(late_output_digest),
+                                reported_malicious_count = malicious_parties.len(),
+                                "late network-key reconfiguration output matches the quorum-agreed output; session already completed, output not submitted"
+                            );
+                            trigger_conditions.push("late_network_key_output_matched_quorum");
+                        }
+                        Some(false) => {
+                            error!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                late_output_digest = %hex::encode(late_output_digest),
+                                quorum_output_digest = ?quorum_output_digest,
+                                reported_malicious_count = malicious_parties.len(),
+                                "late network-key reconfiguration output DIVERGES from the quorum-agreed output"
+                            );
+                            trigger_conditions.push("late_network_key_output_diverged_from_quorum");
+                        }
+                        None => {
+                            warn!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                late_output_digest = %hex::encode(late_output_digest),
+                                reported_malicious_count = malicious_parties.len(),
+                                "late network-key reconfiguration output recorded without a quorum digest to compare against"
+                            );
+                            trigger_conditions.push("late_network_key_output_unverified");
+                        }
+                    }
+                }
                 self.dwallet_mpc_manager.emit_session_anomaly(
                     session_identifier,
                     MpcAnomalyKind::ComputationUpdateAfterSessionCompletion,
                     MpcAnomalyContext {
                         current_consensus_round: self.last_read_consensus_round,
-                        trigger_conditions: vec![
-                            "local_computation_update_received_after_session_became_non_active",
-                        ],
+                        trigger_conditions,
                         ..Default::default()
                     },
                 );

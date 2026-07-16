@@ -674,13 +674,42 @@ fn metric_samples_for_protocol(
 #[derive(Debug)]
 enum NetworkKeyOutputConvergence {
     Incomplete(String),
-    Converged(BTreeMap<String, String>),
+    Converged {
+        /// Canonical (converged) submitted-output digest per session.
+        canonical: BTreeMap<String, String>,
+        /// Sessions where the validator under test neither appeared in the
+        /// converged submitted-output set nor recorded matching
+        /// late-computation evidence. Quorum convergence alone cannot prove
+        /// this validator's cross-version compatibility, so the caller keeps
+        /// polling for evidence and, failing that, reports the boundary
+        /// inconclusive rather than passing it silently.
+        sessions_without_candidate_evidence: Vec<String>,
+    },
+}
+
+/// Whether one `expect_network_key_output_converged` boundary produced
+/// byte-level cross-version compatibility evidence for the validator(s)
+/// under test.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NetworkKeyCompatibilityEvidence {
+    /// Every validator under test either submitted an output inside the
+    /// converged quorum or recorded a discarded late computation whose raw
+    /// output bytes match the quorum-agreed output.
+    Conclusive,
+    /// The quorum converged cleanly (correct committee, single digest, zero
+    /// malicious, zero rejected) but at least one validator under test
+    /// provided no comparable output within the window — the legitimate
+    /// straggler case: production finalizes at a Byzantine quorum and
+    /// discards a computation finishing afterwards. Not a failure of this
+    /// boundary, but it proves nothing about output compatibility, so the
+    /// scenario requires another boundary to be conclusive.
+    Inconclusive { reason: String },
 }
 
 fn canonical_network_key_outputs(
     body: &str,
     committee_authorities: &BTreeSet<String>,
-    required_authorities: &BTreeSet<String>,
+    candidate_authority: &str,
     quorum: usize,
     observer: &str,
 ) -> Result<NetworkKeyOutputConvergence> {
@@ -738,6 +767,73 @@ fn canonical_network_key_outputs(
         )));
     };
 
+    // Late-computation evidence: a local output the observer computed after
+    // the quorum already completed the session. Production discards it
+    // without submission and exports its raw-output-bytes digest next to the
+    // quorum output's raw-output-bytes digest. Both label values live in the
+    // raw-bytes domain — comparable with each other, deliberately NOT with
+    // the envelope `output_digest` labels parsed above. Every sample is
+    // validated fail-closed regardless of whether it ends up used as
+    // evidence: a divergent or malicious-reporting late output is
+    // release-blocking information wherever it appears.
+    let late_samples = metric_samples_for_protocol(
+        body,
+        "ika_dwallet_mpc_session_late_output_info",
+        NETWORK_KEY_RECONFIGURATION_PROTOCOL,
+    )?;
+    let late_malicious = envelope_values("ika_dwallet_mpc_session_late_output_malicious_actors")?;
+    let mut late_outputs: BTreeMap<(String, String), (String, String)> = BTreeMap::new();
+    for sample in late_samples {
+        ensure!(
+            sample.value == 1.0,
+            "{observer} late-output sample has value {}, expected 1",
+            sample.value
+        );
+        let label = |name: &str| -> Result<String> {
+            sample
+                .labels
+                .get(name)
+                .cloned()
+                .with_context(|| format!("late-output sample missing {name} label"))
+        };
+        let session = label("session_id")?;
+        let authority = label("authority")?;
+        let output_digest = label("output_digest")?;
+        let quorum_output_digest = label("quorum_output_digest")?;
+        if quorum_output_digest != "unknown" {
+            ensure!(
+                output_digest == quorum_output_digest,
+                "{observer}: authority {authority} computed a late network-key output for session {session} that DIVERGES from the quorum-agreed output: local raw-output digest {output_digest} vs quorum raw-output digest {quorum_output_digest}"
+            );
+        }
+        let malicious_count = late_malicious
+            .as_ref()
+            .and_then(|values| values.get(&(session.clone(), authority.clone())))
+            .copied();
+        match malicious_count {
+            // The info and malicious gauges are exported together; a scrape
+            // can only race the refresh, so retry rather than failing.
+            None => {
+                return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
+                    "{observer} has a late-output sample for session {session} authority {authority} without its malicious-actor gauge yet"
+                )));
+            }
+            Some(0) => {}
+            Some(count) => bail!(
+                "{observer}: authority {authority}'s late network-key output for session {session} reported {count} malicious actors"
+            ),
+        }
+        ensure!(
+            late_outputs
+                .insert(
+                    (session.clone(), authority.clone()),
+                    (output_digest, quorum_output_digest),
+                )
+                .is_none(),
+            "{observer} has conflicting late-output samples for session {session} authority {authority}"
+        );
+    }
+
     let mut outputs_by_session: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for sample in output_samples {
         ensure!(
@@ -770,7 +866,13 @@ fn canonical_network_key_outputs(
         );
     }
 
+    ensure!(
+        committee_authorities.contains(candidate_authority),
+        "validator under test {candidate_authority} is not a committee member: {committee_authorities:?}"
+    );
+
     let mut canonical = BTreeMap::new();
+    let mut sessions_without_candidate_evidence = Vec::new();
     for (session, outputs) in outputs_by_session {
         let observed_authorities = outputs.keys().cloned().collect::<BTreeSet<_>>();
         // A validator submitting a network-key output for a session whose
@@ -779,19 +881,19 @@ fn canonical_network_key_outputs(
             observed_authorities.is_subset(committee_authorities),
             "{observer} observed out-of-committee authorities for network-key session {session}: observed={observed_authorities:?}, committee={committee_authorities:?}"
         );
-        // Reconfiguration finalizes at a Byzantine quorum and does not wait: a
-        // validator still computing when quorum forms marks its session
+        // Reconfiguration finalizes at a Byzantine quorum and does not wait:
+        // a validator still computing when quorum forms marks its session
         // complete (on seeing the quorum in consensus) and discards its own
-        // still-in-flight output, so an honest straggler legitimately never
-        // submits. Requiring the whole committee here would race that
-        // finalization. Require instead every validator under test (the
-        // upgraded observers) plus a finalizing quorum — enough to prove the
-        // upgraded node's output agrees with a quorum of peers.
-        if !required_authorities.is_subset(&observed_authorities)
-            || observed_authorities.len() < quorum
-        {
+        // still-in-flight output, so ANY honest validator — including the
+        // one under test — legitimately never submits. Completeness therefore
+        // requires only a finalizing quorum; the validator under test's
+        // byte-equality is tracked separately below, via its submitted
+        // output when present or its discarded late computation's digest
+        // otherwise, and the boundary is reported inconclusive (never
+        // silently passed, never failed) when neither exists.
+        if observed_authorities.len() < quorum {
             return Ok(NetworkKeyOutputConvergence::Incomplete(format!(
-                "{observer} has not yet observed a quorum including every validator under test for network-key session {session}: observed={observed_authorities:?}, required={required_authorities:?}, quorum={quorum}"
+                "{observer} has not yet observed a finalizing quorum for network-key session {session}: observed={observed_authorities:?}, quorum={quorum}"
             )));
         }
         let digests: BTreeSet<_> = outputs.values().cloned().collect();
@@ -812,6 +914,20 @@ fn canonical_network_key_outputs(
                 rejected.get(&key)
             );
         }
+        if !outputs.contains_key(candidate_authority) {
+            match late_outputs.get(&(session.clone(), candidate_authority.to_string())) {
+                // Validated above: digest equals the quorum digest and the
+                // late malicious count is zero — byte-level evidence that the
+                // candidate computed the same output the quorum agreed on.
+                Some((_, quorum_output_digest)) if quorum_output_digest != "unknown" => {}
+                Some(_) => sessions_without_candidate_evidence.push(format!(
+                    "{session} (late output recorded without a quorum digest to compare against)"
+                )),
+                None => sessions_without_candidate_evidence.push(format!(
+                    "{session} (no submitted output and no late-computation digest yet)"
+                )),
+            }
+        }
         canonical.insert(
             session,
             digests
@@ -820,7 +936,10 @@ fn canonical_network_key_outputs(
                 .expect("one digest after length check"),
         );
     }
-    Ok(NetworkKeyOutputConvergence::Converged(canonical))
+    Ok(NetworkKeyOutputConvergence::Converged {
+        canonical,
+        sessions_without_candidate_evidence,
+    })
 }
 
 impl ClusterOfProcesses {
@@ -1131,11 +1250,25 @@ impl ClusterOfProcesses {
         Ok(())
     }
 
-    /// Assert every authority submitted the same canonical network-key
-    /// reconfiguration output for every observed session. The current-binary
-    /// observer records individual consensus reports from all committee
-    /// members, including literal historical binaries; this catches a 3-vs-1
-    /// split even when the majority result lets the chain keep advancing.
+    /// Assert every authority that submitted a network-key reconfiguration
+    /// output submitted the same canonical bytes for every observed session.
+    /// The current-binary observer records individual consensus reports from
+    /// all committee members, including literal historical binaries; this
+    /// catches a 3-vs-1 split even when the majority result lets the chain
+    /// keep advancing.
+    ///
+    /// Completeness requires a finalizing quorum, not the whole committee:
+    /// production finalizes at a Byzantine quorum and discards a local
+    /// computation that finishes afterwards, so ANY honest validator —
+    /// including the one under test — can legitimately end a session with no
+    /// submitted output. The validator under test's byte-equality is
+    /// therefore evidenced either by its submitted output inside the
+    /// converged set, or by the raw-bytes digest production records when it
+    /// discards that validator's late `Finalize` result. When neither exists
+    /// by the deadline the boundary returns
+    /// [`NetworkKeyCompatibilityEvidence::Inconclusive`] — it neither fails
+    /// (the ordering is legitimate) nor counts as compatibility proof (the
+    /// scenario requires at least one conclusive boundary).
     ///
     /// The observation set is open when convergence is first reached:
     /// finalization happens at a Byzantine quorum, so a validator's output
@@ -1149,7 +1282,7 @@ impl ClusterOfProcesses {
         &self,
         observer_indices: &[usize],
         timeout: Duration,
-    ) -> Result<()> {
+    ) -> Result<NetworkKeyCompatibilityEvidence> {
         ensure!(
             !observer_indices.is_empty(),
             "no output-convergence observers supplied"
@@ -1177,6 +1310,7 @@ impl ClusterOfProcesses {
             );
             let mut canonical_by_session: Option<BTreeMap<String, String>> = None;
             let mut incomplete = Vec::new();
+            let mut missing_candidate_evidence = Vec::new();
             for index in observer_indices {
                 let validator = self
                     .validators
@@ -1189,33 +1323,37 @@ impl ClusterOfProcesses {
                     validator.metrics_endpoint()
                 );
                 // Each observer is a validator under test (the upgraded
-                // binary); require it to have observed its own output within a
-                // converged quorum. That is the compatibility signal — the
-                // upgraded node's reconfiguration output matching a quorum of
-                // v1.1.8 peers — without racing the straggler that finalization
-                // legitimately drops.
-                let required_authorities: BTreeSet<String> = std::iter::once(
-                    self.validator_authorities
-                        .get(*index)
-                        .with_context(|| format!("validator index {index} out of range"))?
-                        .to_string(),
-                )
-                .collect();
-                let observer_canonical = match canonical_network_key_outputs(
+                // binary); its own authority is the candidate whose
+                // byte-equality with the v1.1.8 quorum this boundary tries
+                // to witness.
+                let candidate_authority = self
+                    .validator_authorities
+                    .get(*index)
+                    .with_context(|| format!("validator index {index} out of range"))?
+                    .to_string();
+                let (observer_canonical, observer_missing) = match canonical_network_key_outputs(
                     &body,
                     &committee_authorities,
-                    &required_authorities,
+                    &candidate_authority,
                     quorum,
                     &observer,
                 )
                 .with_context(|| format!("validate network-key convergence from {observer}"))?
                 {
-                    NetworkKeyOutputConvergence::Converged(canonical) => canonical,
+                    NetworkKeyOutputConvergence::Converged {
+                        canonical,
+                        sessions_without_candidate_evidence,
+                    } => (canonical, sessions_without_candidate_evidence),
                     NetworkKeyOutputConvergence::Incomplete(reason) => {
                         incomplete.push(reason);
                         continue;
                     }
                 };
+                missing_candidate_evidence.extend(
+                    observer_missing
+                        .into_iter()
+                        .map(|session| format!("validator {}: session {session}", validator.index)),
+                );
 
                 if let Some(expected) = &canonical_by_session {
                     ensure!(
@@ -1244,7 +1382,21 @@ impl ClusterOfProcesses {
                             "canonical network-key outputs changed during the stabilization window: first {expected:?}, now {canonical:?}"
                         );
                         if since.elapsed() >= NETWORK_KEY_OUTPUT_STABILIZATION {
-                            return Ok(());
+                            if missing_candidate_evidence.is_empty() {
+                                return Ok(NetworkKeyCompatibilityEvidence::Conclusive);
+                            }
+                            // Candidate evidence can still arrive — the
+                            // straggler's computation may still be running
+                            // and its discarded-output digest is recorded the
+                            // moment it finishes. Keep polling (re-validating
+                            // the converged result each scrape) until the
+                            // deadline before declaring the boundary
+                            // inconclusive.
+                            if tokio::time::Instant::now() >= deadline {
+                                return Ok(NetworkKeyCompatibilityEvidence::Inconclusive {
+                                    reason: missing_candidate_evidence.join("; "),
+                                });
+                            }
                         }
                     }
                     None => stable = Some((canonical, tokio::time::Instant::now())),
@@ -1916,62 +2068,178 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
+    /// Late-computation evidence samples: the validator under test computed
+    /// its output after the quorum completed the session, production
+    /// discarded it, and exported the raw-bytes digest pair plus the
+    /// late-output malicious gauge.
+    fn late_output_metrics(
+        authority: &str,
+        output_digest: &str,
+        quorum_output_digest: &str,
+        malicious: u64,
+    ) -> String {
+        format!(
+            "ika_dwallet_mpc_session_late_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\",output_digest=\"{output_digest}\",quorum_output_digest=\"{quorum_output_digest}\"}} 1\nika_dwallet_mpc_session_late_output_malicious_actors{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"{authority}\"}} {malicious}\n"
+        )
+    }
+
     #[test]
     fn accepts_four_authority_network_key_output_convergence() {
         let committee = committee_of(&["a", "b", "c", "d"]);
-        let required = committee_of(&["a"]);
         let mut body =
             network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same"), ("d", "same")]);
         body.push_str(
             "ika_dwallet_mpc_session_output_info{protocol_name=\"Sign\",session_id=\"unrelated\",authority=\"a\",output_digest=\"different\"} 1\n",
         );
-        let NetworkKeyOutputConvergence::Converged(canonical) =
-            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        let NetworkKeyOutputConvergence::Converged {
+            canonical,
+            sessions_without_candidate_evidence,
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
         else {
             panic!("four matching authorities must converge");
         };
         assert_eq!(canonical["session"], "same");
+        assert!(
+            sessions_without_candidate_evidence.is_empty(),
+            "a submitted candidate output is conclusive evidence"
+        );
     }
 
     #[test]
-    fn accepts_quorum_when_straggler_absent() {
+    fn accepts_quorum_when_non_candidate_straggler_absent() {
         // The 4th validator finalized on quorum before its own output was
         // submitted (it discards a post-quorum result). A 3-of-4 converged
         // quorum that includes the validator under test still passes — the
         // full-committee requirement would race that finalization.
         let committee = committee_of(&["a", "b", "c", "d"]);
-        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[("a", "same"), ("b", "same"), ("c", "same")]);
-        let NetworkKeyOutputConvergence::Converged(canonical) =
-            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        let NetworkKeyOutputConvergence::Converged {
+            canonical,
+            sessions_without_candidate_evidence,
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
         else {
             panic!("a converged quorum including the validator under test must pass");
         };
         assert_eq!(canonical["session"], "same");
+        assert!(sessions_without_candidate_evidence.is_empty());
     }
 
     #[test]
-    fn incomplete_when_validator_under_test_absent() {
-        // A quorum that excludes the upgraded validator proves nothing about
-        // its compatibility — keep polling (fail-closed on the caller timeout).
+    fn candidate_straggler_without_late_evidence_converges_but_is_flagged() {
+        // The exact release-gate flake ordering: three v1.1.8 authorities
+        // finalize with identical outputs, the quorum closes the session, and
+        // the upgraded validator's own computation has produced nothing
+        // comparable yet. The quorum itself converged (this must NOT fail),
+        // but the session is flagged so the boundary can only be conclusive
+        // once evidence arrives — or reported inconclusive, never silently
+        // passed as compatibility proof.
         let committee = committee_of(&["a", "b", "c", "d"]);
-        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
-        let NetworkKeyOutputConvergence::Incomplete(reason) =
-            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+        let NetworkKeyOutputConvergence::Converged {
+            canonical,
+            sessions_without_candidate_evidence,
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
         else {
-            panic!("a quorum missing the validator under test must be incomplete");
+            panic!("a clean 3-of-4 quorum without the candidate must still converge");
         };
-        assert!(reason.contains("validator under test"));
+        assert_eq!(canonical["session"], "same");
+        assert_eq!(sessions_without_candidate_evidence.len(), 1);
+        assert!(sessions_without_candidate_evidence[0].contains("no submitted output"));
+    }
+
+    #[test]
+    fn candidate_straggler_with_matching_late_evidence_is_conclusive() {
+        // Same ordering, ~200ms later: the upgraded validator's computation
+        // returned `finalize` after the session completed; production
+        // discarded the output but recorded its raw-bytes digest, which
+        // matches the quorum's raw-bytes digest. That is byte-level
+        // compatibility evidence — the boundary is conclusive.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_metrics("a", "rawdigest", "rawdigest", 0));
+        let NetworkKeyOutputConvergence::Converged {
+            canonical,
+            sessions_without_candidate_evidence,
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        else {
+            panic!("matching late-computation evidence must converge");
+        };
+        assert_eq!(canonical["session"], "same");
+        assert!(
+            sessions_without_candidate_evidence.is_empty(),
+            "a matching late-output digest is conclusive candidate evidence"
+        );
+    }
+
+    #[test]
+    fn candidate_late_evidence_with_divergent_bytes_fails_closed() {
+        // The upgraded validator really did compute different bytes — the
+        // quorum discarding its output must not hide the divergence.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_metrics("a", "localdigest", "quorumdigest", 0));
+        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
+            .expect_err("a divergent late output must fail closed");
+        let error = error.to_string();
+        assert!(error.contains("DIVERGES"));
+        assert!(error.contains("localdigest"));
+        assert!(error.contains("quorumdigest"));
+    }
+
+    #[test]
+    fn candidate_late_evidence_reporting_malicious_actors_fails_closed() {
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_metrics("a", "rawdigest", "rawdigest", 2));
+        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
+            .expect_err("a late output reporting malicious actors must fail closed");
+        assert!(error.to_string().contains("2 malicious actors"));
+    }
+
+    #[test]
+    fn candidate_late_evidence_without_quorum_digest_is_not_evidence() {
+        // "unknown" means production had no quorum digest to compare against
+        // (the session left Active through a non-quorum path). The digest
+        // alone proves nothing — the session stays flagged, the boundary can
+        // at best be inconclusive, and nothing fails.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&late_output_metrics("a", "rawdigest", "unknown", 0));
+        let NetworkKeyOutputConvergence::Converged {
+            sessions_without_candidate_evidence,
+            ..
+        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        else {
+            panic!("an unverifiable late output must not block convergence");
+        };
+        assert_eq!(sessions_without_candidate_evidence.len(), 1);
+        assert!(sessions_without_candidate_evidence[0].contains("without a quorum digest"));
+    }
+
+    #[test]
+    fn late_evidence_missing_malicious_gauge_is_incomplete() {
+        // The info sample and the malicious gauge are exported in the same
+        // refresh; only a scrape racing that refresh can see one without the
+        // other — retry, don't fail and don't accept.
+        let committee = committee_of(&["a", "b", "c", "d"]);
+        let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
+        body.push_str(&format!(
+            "ika_dwallet_mpc_session_late_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"rawdigest\",quorum_output_digest=\"rawdigest\"}} 1\n"
+        ));
+        let NetworkKeyOutputConvergence::Incomplete(reason) =
+            canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        else {
+            panic!("a late-output sample without its malicious gauge must be incomplete");
+        };
+        assert!(reason.contains("malicious-actor gauge"));
     }
 
     #[test]
     fn incomplete_below_quorum() {
         let committee = committee_of(&["a", "b", "c", "d"]);
-        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[("a", "same"), ("b", "same")]);
         let NetworkKeyOutputConvergence::Incomplete(_) =
-            canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
         else {
             panic!("a below-quorum observation must be incomplete");
         };
@@ -1982,14 +2250,13 @@ mod tests {
         // A non-member submitting a network-key output is a hard fault, not a
         // propagation delay.
         let committee = committee_of(&["a", "b", "c"]);
-        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[
             ("a", "same"),
             ("b", "same"),
             ("c", "same"),
             ("rogue", "same"),
         ]);
-        let error = canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0")
+        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
             .expect_err("an out-of-committee authority must fail closed");
         assert!(error.to_string().contains("out-of-committee"));
     }
@@ -1997,14 +2264,13 @@ mod tests {
     #[test]
     fn rejects_one_divergent_network_key_output() {
         let committee = committee_of(&["a", "b", "c", "d"]);
-        let required = committee_of(&["a"]);
         let body = network_key_metrics(&[
             ("a", "different"),
             ("b", "majority"),
             ("c", "majority"),
             ("d", "majority"),
         ]);
-        let error = canonical_network_key_outputs(&body, &committee, &required, 3, "validator 0")
+        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
             .expect_err("3-vs-1 output split must fail closed");
         assert!(
             error
@@ -2016,7 +2282,6 @@ mod tests {
     #[test]
     fn missing_network_key_envelope_metric_is_incomplete_not_converged() {
         let committee = committee_of(&["a"]);
-        let required = committee_of(&["a"]);
         let body = format!(
             "ika_dwallet_mpc_session_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"same\"}} 1\nika_dwallet_mpc_session_output_rejected{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\"}} 0\n"
         );
@@ -2024,7 +2289,7 @@ mod tests {
         // the observer keeps polling (and the caller ultimately times out —
         // still fail-closed), rather than declaring a hard divergence.
         let NetworkKeyOutputConvergence::Incomplete(reason) =
-            canonical_network_key_outputs(&body, &committee, &required, 1, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, "a", 1, "validator 0").unwrap()
         else {
             panic!("a missing envelope metric must be reported as incomplete");
         };

@@ -199,6 +199,36 @@ drives them across epochs:
   with every validator healthy and locally current, zero reported malicious
   actors, no stranded work, and identical canonical per-authority outputs.
 
+How the mixed-rollout gate weighs the upgraded validator's output: production
+finalizes a reconfiguration at a Byzantine quorum and does not wait for
+stragglers — a validator whose computation finishes after it processed the
+quorum discards its own result without submitting it, and ANY honest
+validator (including the upgraded one) can be that straggler. Requiring the
+upgraded validator's submitted output at every boundary therefore made the
+gate nondeterministic (the same candidate SHA passed or failed on a
+scheduling race). The gate instead classifies each boundary:
+
+- the upgraded validator's output appears inside the converged quorum set →
+  conclusive byte-level evidence;
+- the quorum discarded its late `Finalize`, but the node recorded the
+  discarded output's raw-bytes digest equal to the quorum output's raw-bytes
+  digest (`ika_dwallet_mpc_session_late_output_info`, zero late malicious
+  actors) → equally conclusive;
+- the digests differ, the late output reports malicious actors, or any
+  submitted output diverges / is rejected / reports malicious actors → hard
+  release-blocking failure;
+- clean quorum convergence with no comparable candidate output at all →
+  the boundary is *inconclusive*: it does not fail (the ordering is
+  legitimate), but quorum-only progress is never accepted as compatibility
+  proof.
+
+The scenario as a whole must witness conclusive candidate byte-equality on at
+least one reconfiguration boundary or it fails with "insufficient
+cross-version compatibility evidence". Every boundary still requires healthy
+validators, correct local epochs, protocol v3, quorum output convergence,
+zero malicious actors, zero rejected envelopes, no self-malicious logs, and
+no stranded sessions.
+
 The current validator's per-authority output observations and pending-session
 counts are collected protocol-generically and labeled by protocol name. This
 scenario filters that data to network-key reconfiguration because that is the
@@ -207,7 +237,10 @@ only for an allow-listed set of protocols (`OUTPUT_OBSERVATION_EXPORT_PROTOCOLS`
 in `mpc_manager.rs`, currently just network-key reconfiguration) to keep their
 session-id/authority cardinality bounded on production validators; a future DKG,
 presign, sign, or verification compatibility scenario adds its protocol to that
-allow-list rather than adding protocol-specific node instrumentation.
+allow-list rather than adding protocol-specific node instrumentation. The
+late-output digest capture is scoped the same way (reconfiguration sessions
+only) and is observability-only: it never publishes the discarded output,
+delays finalization, or re-activates a completed session.
 
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see
