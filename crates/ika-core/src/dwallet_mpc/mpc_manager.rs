@@ -3558,8 +3558,14 @@ impl DWalletMPCManager {
             if self
                 .untracked_anomalies
                 .contains(&(session_identifier, anomaly_kind))
-                || self.untracked_anomalies.len() >= MAX_UNTRACKED_ANOMALIES
             {
+                return;
+            }
+            if self.untracked_anomalies.len() >= MAX_UNTRACKED_ANOMALIES {
+                self.dwallet_mpc_metrics
+                    .anomaly_snapshots_dropped_total
+                    .with_label_values(&["untracked_capacity"])
+                    .inc();
                 return;
             }
             self.untracked_anomalies
@@ -3574,22 +3580,51 @@ impl DWalletMPCManager {
             let diagnostic_serialization_succeeded = diagnostic_json.is_ok();
             let diagnostic_json = diagnostic_json
                 .unwrap_or_else(|_| r#"{"diagnostic_serialization_failed":true}"#.to_owned());
-            error!(
-                target: "ika_mpc_diagnostics",
-                event = "mpc_session_anomaly",
-                schema_version = MPC_ANOMALY_SCHEMA_VERSION,
-                anomaly_kind = anomaly_kind.label(),
-                severity = anomaly_kind.severity(),
-                session_id = %hex::encode(session_identifier.into_bytes()),
-                session_type = session_type_label(session_type),
-                epoch = self.epoch_id,
-                local_authority = ?self.validator_name,
-                local_party_id = self.party_id,
-                tracked_session = false,
-                diagnostic_serialization_succeeded,
-                diagnostic_json = %diagnostic_json,
-                "MPC anomaly occurred after session state was unavailable"
-            );
+            if anomaly_kind.severity() == "error" {
+                error!(
+                    target: "ika_mpc_diagnostics",
+                    event = "mpc_session_anomaly",
+                    schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                    diagnostic_shape = "context",
+                    anomaly_kind = anomaly_kind.label(),
+                    severity = anomaly_kind.severity(),
+                    session_id = %hex::encode(session_identifier.into_bytes()),
+                    session_type = session_type_label(session_type),
+                    epoch = self.epoch_id,
+                    local_authority = ?self.validator_name,
+                    local_party_id = self.party_id,
+                    tracked_session = false,
+                    diagnostic_serialization_succeeded,
+                    error_code = context.error_code.unwrap_or("none"),
+                    error_backtrace_present = context.error_backtrace.is_some(),
+                    error_backtrace_truncated = context.error_backtrace_truncated,
+                    local_authority_malicious = context.local_authority_malicious,
+                    diagnostic_json = %diagnostic_json,
+                    "MPC anomaly occurred after session state was unavailable"
+                );
+            } else {
+                warn!(
+                    target: "ika_mpc_diagnostics",
+                    event = "mpc_session_anomaly",
+                    schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                    diagnostic_shape = "context",
+                    anomaly_kind = anomaly_kind.label(),
+                    severity = anomaly_kind.severity(),
+                    session_id = %hex::encode(session_identifier.into_bytes()),
+                    session_type = session_type_label(session_type),
+                    epoch = self.epoch_id,
+                    local_authority = ?self.validator_name,
+                    local_party_id = self.party_id,
+                    tracked_session = false,
+                    diagnostic_serialization_succeeded,
+                    error_code = context.error_code.unwrap_or("none"),
+                    error_backtrace_present = context.error_backtrace.is_some(),
+                    error_backtrace_truncated = context.error_backtrace_truncated,
+                    local_authority_malicious = context.local_authority_malicious,
+                    diagnostic_json = %diagnostic_json,
+                    "MPC anomaly occurred after session state was unavailable"
+                );
+            }
             return;
         };
         let Some(snapshot) = session.anomaly_snapshot(anomaly_kind, self.epoch_id, context) else {
@@ -3610,6 +3645,7 @@ impl DWalletMPCManager {
                 target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
                 schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                diagnostic_shape = "snapshot",
                 anomaly_kind = anomaly_kind.label(),
                 severity = anomaly_kind.severity(),
                 session_id = %hex::encode(snapshot.session_id),
@@ -3634,6 +3670,7 @@ impl DWalletMPCManager {
                 target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
                 schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                diagnostic_shape = "snapshot",
                 anomaly_kind = anomaly_kind.label(),
                 severity = anomaly_kind.severity(),
                 session_id = %hex::encode(snapshot.session_id),
@@ -3682,6 +3719,17 @@ impl DWalletMPCManager {
         let Some(session_identifier) = self.recognized_self_as_malicious_session else {
             let anomaly_kind = MpcAnomalyKind::ServiceExitSelfMalicious;
             let trigger = "mpc_service_exit_after_self_malicious_recognition";
+            let context = MpcAnomalyContext {
+                current_consensus_round,
+                trigger_conditions: vec![trigger],
+                local_authority_malicious: true,
+                service_loop_termination_reason: Some("local_validator_recognized_as_malicious"),
+                ..Default::default()
+            };
+            let diagnostic_json = serde_json::to_string(&context);
+            let diagnostic_serialization_succeeded = diagnostic_json.is_ok();
+            let diagnostic_json = diagnostic_json
+                .unwrap_or_else(|_| r#"{"diagnostic_serialization_failed":true}"#.to_owned());
             self.dwallet_mpc_metrics
                 .anomaly_snapshots_total
                 .with_label_values(&[anomaly_kind.label(), "unknown", anomaly_kind.severity()])
@@ -3694,6 +3742,7 @@ impl DWalletMPCManager {
                 target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
                 schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                diagnostic_shape = "context",
                 anomaly_kind = anomaly_kind.label(),
                 severity = anomaly_kind.severity(),
                 session_type = "unknown",
@@ -3702,7 +3751,8 @@ impl DWalletMPCManager {
                 local_party_id = self.party_id,
                 tracked_session = false,
                 local_authority_malicious = true,
-                trigger,
+                diagnostic_serialization_succeeded,
+                diagnostic_json = %diagnostic_json,
                 service_loop_termination_reason = "local_validator_recognized_as_malicious",
                 "MPC service exited after local malicious recognition without a source session"
             );
@@ -3770,11 +3820,6 @@ impl DWalletMPCManager {
                     ),
                     (true, false) => Some(LocalAuthorityMaliciousReason::MaliciousVoter),
                     (false, true) => Some(LocalAuthorityMaliciousReason::ReportedByMajorityOutput),
-                    (false, false)
-                        if final_malicious_authorities.contains(&self.validator_name) =>
-                    {
-                        Some(LocalAuthorityMaliciousReason::Unknown)
-                    }
                     (false, false) => None,
                 };
 
@@ -4290,7 +4335,7 @@ impl DWalletMPCManager {
 /// Minimum interval between observability-gauge refreshes; the caller (the
 /// dwallet MPC service loop) ticks every ~20ms, far faster than gauges need.
 const OBSERVABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
-const MAX_UNTRACKED_ANOMALIES: usize = 1024;
+pub(crate) const MAX_UNTRACKED_ANOMALIES: usize = 1024;
 
 fn session_state_label(status: &SessionStatus) -> &'static str {
     match status {

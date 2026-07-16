@@ -16,7 +16,10 @@ The snapshot is a metadata-only reconstruction aid implemented by
 at most 64 recent events. Once the buffer is full, the oldest event is dropped
 and `recent_trace_dropped_events` is incremented. Each anomaly kind is emitted
 at most once per session. Anomalies for sessions that have no local state are
-also deduplicated and capped per epoch.
+also deduplicated and capped per epoch. Once that store reaches 1,024 entries,
+further snapshots are suppressed and
+`ika_dwallet_mpc_anomaly_snapshots_dropped_total{reason="untracked_capacity"}`
+increments, so the volume guard cannot silently blind operators.
 
 ## Triggers
 
@@ -79,8 +82,8 @@ separately:
 - `final_malicious_authorities`: the union used by the existing protocol
   behavior;
 - `local_authority_malicious_reason`: `malicious_voter`,
-  `reported_by_majority_output`, `both`, or `unknown` when attribution is no
-  longer available.
+  `reported_by_majority_output`, or
+  `malicious_voter_and_reported_by_majority_output`;
 - `local_authority_malicious`: an explicit boolean indicating whether the local
   validator is in the final union. A snapshot is still emitted when this is
   `false` if another authority was identified as malicious.
@@ -119,7 +122,15 @@ exposes party IDs for unresponsive, invalid-message, or malicious-message
 errors, only those IDs are retained in `error_party_ids`. Non-crypto error
 variants do not expose backtraces and leave `error_backtrace` unset.
 
-The emitted line has stable top-level fields for filtering:
+Tracked-session lines use `diagnostic_shape="snapshot"`, and
+`diagnostic_json` contains the complete `MpcAnomalySnapshot`. Untracked lines
+use `diagnostic_shape="context"`; their JSON contains only the smaller
+`MpcAnomalyContext` because session lifecycle state is unavailable. A
+self-malicious service exit without a source session also has no `session_id`.
+Parsers must branch on `diagnostic_shape` rather than assuming both JSON values
+have the same fields.
+
+The emitted line otherwise has stable top-level fields for filtering:
 `event`, `schema_version`, `anomaly_kind`, `severity`, `session_id`,
 `session_type`, `epoch`, `local_party_id`, `tracked_session`,
 `local_output_observed`, `quorum_reached_without_local_output`, `error_code`,
@@ -365,12 +376,12 @@ diagnostic_json={"schema_version":1,"session_id":"c30d...94a7",
 ERROR event="mpc_session_anomaly" anomaly_kind="local_computation_failed"
 diagnostic_json={"schema_version":1,"session_id":"...",
   "local_computation_state":"failed","local_computation_attempts_failed":1,
-  "error_code":"invalid_mpc_output",
-  "trigger_conditions":["local_computation_returned_error"]}
+  "error_code":"serialization",
+  "trigger_conditions":["local_mpc_computation_returned_error"]}
 WARN event="mpc_session_anomaly" anomaly_kind="local_rejected_output"
 diagnostic_json={"schema_version":1,"local_output_produced":true,
   "local_output_submitted":true,"local_output_rejected":true,
-  "trigger_conditions":["local_validator_submitted_rejected_output"]}
+  "trigger_conditions":["local_validator_submitting_rejected_output"]}
 ```
 
 ### Self recognized as malicious

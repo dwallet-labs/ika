@@ -5,6 +5,7 @@ use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, LocalComputationState, MpcAnomalyContext, MpcAnomalyKind,
     output_digest, report_digest,
 };
+use crate::dwallet_mpc::mpc_manager::MAX_UNTRACKED_ANOMALIES;
 use crate::dwallet_mpc::mpc_session::DWalletMPCSessionOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
@@ -15,6 +16,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletMPCOutputReport, SessionIdentifier, SessionType,
 };
 use std::collections::{BTreeMap, HashMap};
+use std::mem::size_of;
 
 fn internal_output_kind(
     session_identifier: SessionIdentifier,
@@ -504,5 +506,62 @@ fn invalid_output_is_deduplicated_and_submission_error_keeps_session_context() {
             .to_json()
             .unwrap()
             .contains("test consensus failure")
+    );
+}
+
+#[test]
+fn untracked_anomaly_capacity_reports_drops_without_growing_state() {
+    let (_, mut services) = authorities(0);
+    let manager = services[0].dwallet_mpc_manager_mut();
+    let session_identifier = |index: usize| {
+        let mut preimage = [0; 32];
+        preimage[..size_of::<usize>()].copy_from_slice(&index.to_le_bytes());
+        SessionIdentifier::new(SessionType::System, preimage)
+    };
+
+    for index in 0..MAX_UNTRACKED_ANOMALIES {
+        manager.emit_session_anomaly(
+            session_identifier(index),
+            MpcAnomalyKind::InvalidOutputReceived,
+            MpcAnomalyContext::default(),
+        );
+    }
+    assert_eq!(manager.untracked_anomaly_count(), MAX_UNTRACKED_ANOMALIES);
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_dropped_total
+            .with_label_values(&["untracked_capacity"])
+            .get(),
+        0
+    );
+
+    manager.emit_session_anomaly(
+        session_identifier(MAX_UNTRACKED_ANOMALIES),
+        MpcAnomalyKind::InvalidOutputReceived,
+        MpcAnomalyContext::default(),
+    );
+    assert_eq!(manager.untracked_anomaly_count(), MAX_UNTRACKED_ANOMALIES);
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_dropped_total
+            .with_label_values(&["untracked_capacity"])
+            .get(),
+        1
+    );
+
+    manager.emit_session_anomaly(
+        session_identifier(0),
+        MpcAnomalyKind::InvalidOutputReceived,
+        MpcAnomalyContext::default(),
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_dropped_total
+            .with_label_values(&["untracked_capacity"])
+            .get(),
+        1
     );
 }

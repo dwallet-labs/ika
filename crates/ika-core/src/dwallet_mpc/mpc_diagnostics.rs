@@ -127,7 +127,6 @@ pub(crate) enum LocalAuthorityMaliciousReason {
     MaliciousVoter,
     ReportedByMajorityOutput,
     MaliciousVoterAndReportedByMajorityOutput,
-    Unknown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

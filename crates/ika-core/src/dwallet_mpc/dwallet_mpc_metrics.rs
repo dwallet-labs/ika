@@ -182,6 +182,10 @@ pub struct DWalletMPCMetrics {
     /// increment several triggers. Trigger values are compile-time static strings.
     pub(crate) anomaly_triggers_total: IntCounterVec,
 
+    /// Anomaly snapshots intentionally not emitted after a bounded diagnostic
+    /// store reaches capacity. Labels: fixed `reason` values only.
+    pub(crate) anomaly_snapshots_dropped_total: IntCounterVec,
+
     /// Histogram-by-bucket of how long each currently-Active session has been
     /// tracked for. Labels: `session_type` (`user` / `system` /
     /// `internal_presign` / `noa_sign`), `age_bucket` (`<30s`, `<5m`, `<30m`,
@@ -512,6 +516,13 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_anomaly_triggers_total",
                 "Trigger conditions included in emitted privacy-safe MPC anomaly snapshots",
                 &["trigger", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            anomaly_snapshots_dropped_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_anomaly_snapshots_dropped_total",
+                "Privacy-safe MPC anomaly snapshots not emitted due to a bounded diagnostic capacity",
+                &["reason"],
                 registry,
             )
             .unwrap(),
