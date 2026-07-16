@@ -113,6 +113,15 @@ fn normal_quorum_emits_no_anomaly_snapshot() {
         .unwrap();
     assert_eq!(session.emitted_anomaly_count(), 0);
     assert!(session.last_anomaly_snapshot().is_none());
+    assert_eq!(
+        services[0]
+            .dwallet_mpc_manager()
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&["quorum_anomaly", "system", "warn"])
+            .get(),
+        0
+    );
 }
 
 #[test]
@@ -146,7 +155,7 @@ fn quorum_rejection_is_explicit_in_snapshot() {
 }
 
 #[test]
-fn local_rejected_output_snapshot_includes_sanitized_error() {
+fn local_rejected_output_snapshot_includes_safe_error_code_and_metrics() {
     let (authorities, mut services) = authorities(0);
     let session_identifier = SessionIdentifier::new(SessionType::System, [17; 32]);
     services[0].dwallet_mpc_manager_mut().handle_output(
@@ -165,8 +174,7 @@ fn local_rejected_output_snapshot_includes_sanitized_error() {
         MpcAnomalyContext {
             current_consensus_round: Some(23),
             trigger_conditions: vec!["local_validator_submitting_rejected_output"],
-            error: Some("MPCError; details remain in originating log".to_string()),
-            error_kind: Some("MPCError".to_string()),
+            error_code: Some("mpc_error"),
             ..Default::default()
         },
     );
@@ -179,11 +187,37 @@ fn local_rejected_output_snapshot_includes_sanitized_error() {
         .last_anomaly_snapshot()
         .unwrap();
     assert_eq!(snapshot.local_output_rejected, Some(true));
-    assert_eq!(snapshot.error_kind.as_deref(), Some("MPCError"));
+    assert_eq!(snapshot.error_code, Some("mpc_error"));
     assert!(
         snapshot
             .trigger_conditions
             .contains(&"local_validator_submitting_rejected_output")
+    );
+    let snapshot_json = snapshot.to_json().unwrap();
+    let snapshot_value: serde_json::Value = serde_json::from_str(&snapshot_json).unwrap();
+    assert_eq!(snapshot_value["schema_version"], 1);
+    assert_eq!(snapshot_value["anomaly_kind"], "local_rejected_output");
+    assert_eq!(
+        snapshot_value["session_id"],
+        hex::encode(session_identifier.into_bytes())
+    );
+    assert!(!snapshot_json.contains(&hex::encode([17; 32])));
+    let manager = services[0].dwallet_mpc_manager();
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&["local_rejected_output", "system", "warn"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_triggers_total
+            .with_label_values(&["local_validator_submitting_rejected_output", "system"])
+            .get(),
+        1
     );
 }
 
@@ -343,7 +377,7 @@ fn quorum_without_local_output_captures_running_computation_and_redacts_payload(
             .trigger_conditions
             .contains(&"local_computation_pending_at_session_completion")
     );
-    let rendered = format!("{snapshot:?}");
+    let rendered = snapshot.to_json().unwrap();
     assert!(!rendered.contains(&format!("{:?}", secret_marker)));
     assert!(!rendered.contains("PRIVATE_OUTPUT_MUST_NOT_APPEAR"));
 }
@@ -400,8 +434,7 @@ fn invalid_output_is_deduplicated_and_submission_error_keeps_session_context() {
         MpcAnomalyContext {
             current_consensus_round: Some(52),
             trigger_conditions: vec!["mpc_output_submission_to_consensus_failed"],
-            error: Some("test consensus failure".to_string()),
-            error_kind: Some("consensus_submission".to_string()),
+            error_code: Some("consensus_submission"),
             ..Default::default()
         },
     );
@@ -412,8 +445,14 @@ fn invalid_output_is_deduplicated_and_submission_error_keeps_session_context() {
         .unwrap()
         .last_anomaly_snapshot()
         .unwrap();
-    assert_eq!(snapshot.session_identifier, valid_session);
+    assert_eq!(snapshot.session_id, valid_session.into_bytes());
     assert_eq!(snapshot.local_authority, services[0].name);
     assert_eq!(snapshot.current_consensus_round, Some(52));
-    assert_eq!(snapshot.error.as_deref(), Some("test consensus failure"));
+    assert_eq!(snapshot.error_code, Some("consensus_submission"));
+    assert!(
+        !snapshot
+            .to_json()
+            .unwrap()
+            .contains("test consensus failure")
+    );
 }

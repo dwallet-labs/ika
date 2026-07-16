@@ -13,8 +13,8 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::{
     SESSION_STATE_WAITING_FOR_REQUEST, session_type_label,
 };
 use crate::dwallet_mpc::mpc_diagnostics::{
-    LocalAuthorityMaliciousReason, MpcAnomalyContext, MpcAnomalyKind, OutputReportDiagnostic,
-    OutputVoteDiagnostics, OutputVoteGroupDiagnostic,
+    LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
+    OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, mpc_error_diagnostic,
 };
 use crate::dwallet_mpc::mpc_session::{
     AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput, SessionComputationType,
@@ -3134,8 +3134,7 @@ impl DWalletMPCManager {
                     current_consensus_round: Some(consensus_round),
                     source_authority: Some(sender_authority),
                     trigger_conditions: vec!["output_sender_not_in_committee"],
-                    error: Some("output authority has no committee party ID".to_string()),
-                    error_kind: Some("unknown_authority".to_string()),
+                    error_code: Some("unknown_authority"),
                     ..Default::default()
                 },
             );
@@ -3174,8 +3173,7 @@ impl DWalletMPCManager {
                             source_authority: Some(sender_authority),
                             source_party_id: Some(sender_party_id),
                             trigger_conditions: vec!["invalid_output_computation_type"],
-                            error: Some(e.to_string()),
-                            error_kind: Some("invalid_output".to_string()),
+                            error_code: Some("invalid_output_computation_type"),
                             ..Default::default()
                         },
                     );
@@ -3201,7 +3199,7 @@ impl DWalletMPCManager {
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
         match add_output_result {
-            AddOutputResult::Invalid { error } => {
+            AddOutputResult::Invalid { error_code } => {
                 self.emit_session_anomaly(
                     session_identifier,
                     MpcAnomalyKind::InvalidOutputReceived,
@@ -3210,7 +3208,7 @@ impl DWalletMPCManager {
                         source_authority: Some(sender_authority),
                         source_party_id: Some(sender_party_id),
                         trigger_conditions: vec!["invalid_mpc_output_received"],
-                        error: Some(error),
+                        error_code: Some(error_code),
                         ..Default::default()
                     },
                 );
@@ -3564,14 +3562,30 @@ impl DWalletMPCManager {
             }
             self.untracked_anomalies
                 .insert((session_identifier, anomaly_kind));
+            let session_type = session_identifier.session_type();
+            self.record_session_anomaly_metrics(
+                anomaly_kind,
+                session_type,
+                &context.trigger_conditions,
+            );
+            let diagnostic_json = serde_json::to_string(&context);
+            let diagnostic_serialization_succeeded = diagnostic_json.is_ok();
+            let diagnostic_json = diagnostic_json
+                .unwrap_or_else(|_| r#"{"diagnostic_serialization_failed":true}"#.to_owned());
             error!(
+                target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
-                ?anomaly_kind,
-                ?session_identifier,
+                schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                anomaly_kind = anomaly_kind.label(),
+                severity = anomaly_kind.severity(),
+                session_id = %hex::encode(session_identifier.into_bytes()),
+                session_type = session_type_label(session_type),
                 epoch = self.epoch_id,
                 local_authority = ?self.validator_name,
                 local_party_id = self.party_id,
-                ?context,
+                tracked_session = false,
+                diagnostic_serialization_succeeded,
+                diagnostic_json = %diagnostic_json,
                 "MPC anomaly occurred after session state was unavailable"
             );
             return;
@@ -3579,26 +3593,77 @@ impl DWalletMPCManager {
         let Some(snapshot) = session.anomaly_snapshot(anomaly_kind, self.epoch_id, context) else {
             return;
         };
-
-        if matches!(
+        self.record_session_anomaly_metrics(
             anomaly_kind,
-            MpcAnomalyKind::LocalComputationFailed
-                | MpcAnomalyKind::RejectedOutputSubmissionFailed
-                | MpcAnomalyKind::ServiceExitSelfMalicious
-        ) {
+            snapshot.session_type,
+            &snapshot.trigger_conditions,
+        );
+        let diagnostic_json = snapshot.to_json();
+        let diagnostic_serialization_succeeded = diagnostic_json.is_ok();
+        let diagnostic_json = diagnostic_json
+            .unwrap_or_else(|_| r#"{"diagnostic_serialization_failed":true}"#.to_owned());
+
+        if anomaly_kind.severity() == "error" {
             error!(
+                target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
-                ?anomaly_kind,
-                anomaly_snapshot = ?snapshot,
+                schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                anomaly_kind = anomaly_kind.label(),
+                severity = anomaly_kind.severity(),
+                session_id = %hex::encode(snapshot.session_id),
+                session_type = session_type_label(snapshot.session_type),
+                epoch = snapshot.epoch,
+                local_party_id = snapshot.local_party_id,
+                tracked_session = true,
+                diagnostic_serialization_succeeded,
+                local_output_observed = snapshot.local_output_observed,
+                quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
+                local_output_rejected = ?snapshot.local_output_rejected,
+                error_code = snapshot.error_code.unwrap_or("none"),
+                recent_trace_dropped_events = snapshot.recent_trace_dropped_events,
+                diagnostic_json = %diagnostic_json,
                 "abnormal MPC session diagnostic snapshot"
             );
         } else {
             warn!(
+                target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
-                ?anomaly_kind,
-                anomaly_snapshot = ?snapshot,
+                schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                anomaly_kind = anomaly_kind.label(),
+                severity = anomaly_kind.severity(),
+                session_id = %hex::encode(snapshot.session_id),
+                session_type = session_type_label(snapshot.session_type),
+                epoch = snapshot.epoch,
+                local_party_id = snapshot.local_party_id,
+                tracked_session = true,
+                diagnostic_serialization_succeeded,
+                local_output_observed = snapshot.local_output_observed,
+                quorum_reached_without_local_output = snapshot.quorum_reached_without_local_output,
+                local_output_rejected = ?snapshot.local_output_rejected,
+                error_code = snapshot.error_code.unwrap_or("none"),
+                recent_trace_dropped_events = snapshot.recent_trace_dropped_events,
+                diagnostic_json = %diagnostic_json,
                 "abnormal MPC session diagnostic snapshot"
             );
+        }
+    }
+
+    fn record_session_anomaly_metrics(
+        &self,
+        anomaly_kind: MpcAnomalyKind,
+        session_type: SessionType,
+        trigger_conditions: &[&'static str],
+    ) {
+        let session_type = session_type_label(session_type);
+        self.dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&[anomaly_kind.label(), session_type, anomaly_kind.severity()])
+            .inc();
+        for trigger in trigger_conditions {
+            self.dwallet_mpc_metrics
+                .anomaly_triggers_total
+                .with_label_values(&[*trigger, session_type])
+                .inc();
         }
     }
 
@@ -3607,12 +3672,28 @@ impl DWalletMPCManager {
         current_consensus_round: Option<u64>,
     ) {
         let Some(session_identifier) = self.recognized_self_as_malicious_session else {
+            let anomaly_kind = MpcAnomalyKind::ServiceExitSelfMalicious;
+            let trigger = "mpc_service_exit_after_self_malicious_recognition";
+            self.dwallet_mpc_metrics
+                .anomaly_snapshots_total
+                .with_label_values(&[anomaly_kind.label(), "unknown", anomaly_kind.severity()])
+                .inc();
+            self.dwallet_mpc_metrics
+                .anomaly_triggers_total
+                .with_label_values(&[trigger, "unknown"])
+                .inc();
             error!(
+                target: "ika_mpc_diagnostics",
                 event = "mpc_session_anomaly",
-                anomaly_kind = ?MpcAnomalyKind::ServiceExitSelfMalicious,
+                schema_version = MPC_ANOMALY_SCHEMA_VERSION,
+                anomaly_kind = anomaly_kind.label(),
+                severity = anomaly_kind.severity(),
+                session_type = "unknown",
                 epoch = self.epoch_id,
                 local_authority = ?self.validator_name,
                 local_party_id = self.party_id,
+                tracked_session = false,
+                trigger,
                 service_loop_termination_reason = "local_validator_recognized_as_malicious",
                 "MPC service exited after local malicious recognition without a source session"
             );
@@ -3798,13 +3879,14 @@ impl DWalletMPCManager {
             }
             Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => None,
             Err(e) => {
+                let (error_code, error_party_ids) = mpc_error_diagnostic(&e);
                 self.emit_session_anomaly(
                     *session_identifier,
                     MpcAnomalyKind::VotingFailure,
                     MpcAnomalyContext {
                         trigger_conditions: vec!["weighted_majority_vote_failed"],
-                        error: Some(e.to_string()),
-                        error_kind: Some(format!("{:?}", e.kind)),
+                        error_code: Some(error_code),
+                        error_party_ids,
                         ..Default::default()
                     },
                 );

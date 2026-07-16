@@ -22,8 +22,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_diagnostics::{
-    BoundedSessionDiagnostics, LocalComputationState, MpcAnomalyContext, MpcAnomalyKind,
-    MpcAnomalySnapshot, SessionDiagnosticEvent, output_digest, report_digest,
+    BoundedSessionDiagnostics, LocalComputationState, MPC_ANOMALY_SCHEMA_VERSION,
+    MpcAnomalyContext, MpcAnomalyKind, MpcAnomalySnapshot, SessionDiagnosticEvent, output_digest,
+    report_digest,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
@@ -50,7 +51,7 @@ pub(crate) enum AddOutputResult {
         own_rejected_output: bool,
     },
     Invalid {
-        error: String,
+        error_code: &'static str,
     },
 }
 
@@ -495,7 +496,7 @@ impl DWalletSession {
         let malicious_authorities = output.malicious_authorities();
         let output = match output.output() {
             Ok(output) => output,
-            Err(error) => {
+            Err(_) => {
                 self.diagnostics
                     .record(SessionDiagnosticEvent::OutputObserved {
                         consensus_round,
@@ -507,7 +508,7 @@ impl DWalletSession {
                         valid: false,
                     });
                 return AddOutputResult::Invalid {
-                    error: error.to_string(),
+                    error_code: "invalid_output_envelope",
                 };
             }
         };
@@ -523,7 +524,7 @@ impl DWalletSession {
                     valid: false,
                 });
             return AddOutputResult::Invalid {
-                error: "failed to digest MPC output".to_string(),
+                error_code: "output_digest_failed",
             };
         };
         let Some(report_digest) = report_digest(&output, &malicious_authorities) else {
@@ -538,7 +539,7 @@ impl DWalletSession {
                     valid: false,
                 });
             return AddOutputResult::Invalid {
-                error: "failed to digest MPC output report".to_string(),
+                error_code: "report_digest_failed",
             };
         };
         self.distinct_output_digests.insert(output_digest);
@@ -646,11 +647,12 @@ impl DWalletSession {
         mpc_round: Option<u64>,
         attempt_number: u64,
         result: &'static str,
-        error_kind: Option<String>,
+        error_code: Option<&'static str>,
+        error_party_ids: Vec<PartyID>,
     ) {
         self.local_computation_attempts_completed =
             self.local_computation_attempts_completed.saturating_add(1);
-        if error_kind.is_some() {
+        if error_code.is_some() {
             self.local_computation_attempts_failed =
                 self.local_computation_attempts_failed.saturating_add(1);
             self.local_computation_last_failed = true;
@@ -661,7 +663,8 @@ impl DWalletSession {
                 mpc_round,
                 attempt_number,
                 result,
-                error_kind,
+                error_code,
+                error_party_ids,
             });
     }
 
@@ -707,20 +710,21 @@ impl DWalletSession {
         consensus_round: Option<u64>,
         output_digest: Option<[u8; 32]>,
         rejected: bool,
-        result: Result<(), String>,
+        succeeded: bool,
+        error_code: Option<&'static str>,
     ) {
         self.local_output_submitted = true;
         self.local_output_submission_round = self.local_output_submission_round.or(consensus_round);
         self.local_output_digest = self.local_output_digest.or(output_digest);
         self.local_output_rejected = Some(rejected);
-        self.local_output_submission_succeeded = Some(result.is_ok());
+        self.local_output_submission_succeeded = Some(succeeded);
         self.diagnostics
             .record(SessionDiagnosticEvent::OutputSubmissionFinished {
                 consensus_round,
                 output_digest,
                 rejected,
-                succeeded: result.is_ok(),
-                error_kind: result.err(),
+                succeeded,
+                error_code,
             });
     }
 
@@ -770,7 +774,9 @@ impl DWalletSession {
         };
 
         let snapshot = MpcAnomalySnapshot {
-            session_identifier: self.session_identifier,
+            schema_version: MPC_ANOMALY_SCHEMA_VERSION,
+            anomaly_kind: anomaly,
+            session_id: self.session_identifier.into_bytes(),
             session_type: self
                 .session_type
                 .unwrap_or_else(|| self.session_identifier.session_type()),
@@ -810,8 +816,8 @@ impl DWalletSession {
             quorum_output_cached_without_local_output: context
                 .quorum_output_cached_without_local_output,
             trigger_conditions: context.trigger_conditions,
-            error: context.error,
-            error_kind: context.error_kind,
+            error_code: context.error_code,
+            error_party_ids: context.error_party_ids,
             service_loop_termination_reason: context.service_loop_termination_reason,
             recent_trace_dropped_events: self.diagnostics.dropped_events(),
             recent_trace: self.diagnostics.events(),

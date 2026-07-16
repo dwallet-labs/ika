@@ -6692,6 +6692,7 @@ dependencies = [
  "rayon",
  "roaring",
  "serde",
+ "serde_json",
  "shared-crypto",
  "static_assertions",
  "strum_macros 0.27.1",

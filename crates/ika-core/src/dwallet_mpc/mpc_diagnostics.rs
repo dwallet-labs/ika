@@ -10,7 +10,9 @@
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, DefaultHash};
-use ika_types::messages_dwallet_mpc::{DWalletMPCOutputKind, SessionIdentifier, SessionType};
+use ika_types::dwallet_mpc_error::DwalletMPCError;
+use ika_types::messages_dwallet_mpc::{DWalletMPCOutputKind, SessionType};
+use serde::{Serialize, Serializer};
 use std::collections::{HashSet, VecDeque};
 use sui_types::base_types::ObjectID;
 
@@ -37,7 +39,27 @@ pub(crate) fn report_digest(
         .map(|bytes| DefaultHash::digest(&bytes).into())
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) const MPC_ANOMALY_SCHEMA_VERSION: u64 = 1;
+
+fn serialize_digest<S>(digest: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&hex::encode(digest))
+}
+
+fn serialize_optional_digest<S>(digest: &Option<[u8; 32]>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match digest {
+        Some(digest) => serializer.serialize_some(&hex::encode(digest)),
+        None => serializer.serialize_none(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum MpcAnomalyKind {
     LocalComputationFailed,
     LocalRejectedOutput,
@@ -53,7 +75,38 @@ pub(crate) enum MpcAnomalyKind {
     ServiceExitSelfMalicious,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+impl MpcAnomalyKind {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::LocalComputationFailed => "local_computation_failed",
+            Self::LocalRejectedOutput => "local_rejected_output",
+            Self::OwnRejectedOutputObserved => "own_rejected_output_observed",
+            Self::ConflictingOutputDigests => "conflicting_output_digests",
+            Self::InvalidOutputReceived => "invalid_output_received",
+            Self::ProtocolMessageSubmissionFailed => "protocol_message_submission_failed",
+            Self::OutputSubmissionFailed => "output_submission_failed",
+            Self::RejectedOutputSubmissionFailed => "rejected_output_submission_failed",
+            Self::ComputationUpdateAfterSessionCompletion => {
+                "computation_update_after_session_completion"
+            }
+            Self::VotingFailure => "voting_failure",
+            Self::QuorumAnomaly => "quorum_anomaly",
+            Self::ServiceExitSelfMalicious => "service_exit_self_malicious",
+        }
+    }
+
+    pub(crate) const fn severity(self) -> &'static str {
+        match self {
+            Self::LocalComputationFailed
+            | Self::RejectedOutputSubmissionFailed
+            | Self::ServiceExitSelfMalicious => "error",
+            _ => "warn",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum LocalComputationState {
     NotStarted,
     Running,
@@ -62,7 +115,8 @@ pub(crate) enum LocalComputationState {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum LocalAuthorityMaliciousReason {
     MaliciousVoter,
     ReportedByMajorityOutput,
@@ -70,7 +124,8 @@ pub(crate) enum LocalAuthorityMaliciousReason {
     Unknown,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub(crate) enum SessionDiagnosticEvent {
     SessionCreated {
         status: String,
@@ -104,24 +159,29 @@ pub(crate) enum SessionDiagnosticEvent {
         mpc_round: Option<u64>,
         attempt_number: u64,
         result: &'static str,
-        error_kind: Option<String>,
+        error_code: Option<&'static str>,
+        error_party_ids: Vec<PartyID>,
     },
     OutputProduced {
         consensus_round: Option<u64>,
+        #[serde(serialize_with = "serialize_optional_digest")]
         output_digest: Option<[u8; 32]>,
         rejected: bool,
     },
     OutputSubmissionFinished {
         consensus_round: Option<u64>,
+        #[serde(serialize_with = "serialize_optional_digest")]
         output_digest: Option<[u8; 32]>,
         rejected: bool,
         succeeded: bool,
-        error_kind: Option<String>,
+        error_code: Option<&'static str>,
     },
     OutputObserved {
         consensus_round: u64,
         sender_party_id: PartyID,
+        #[serde(serialize_with = "serialize_optional_digest")]
         output_digest: Option<[u8; 32]>,
+        #[serde(serialize_with = "serialize_optional_digest")]
         report_digest: Option<[u8; 32]>,
         rejected: bool,
         reported_malicious_count: usize,
@@ -129,6 +189,7 @@ pub(crate) enum SessionDiagnosticEvent {
     },
     QuorumReached {
         consensus_round: u64,
+        #[serde(serialize_with = "serialize_digest")]
         winning_output_digest: [u8; 32],
         rejected: bool,
         local_output_observed: bool,
@@ -142,36 +203,43 @@ pub(crate) enum SessionDiagnosticEvent {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct OutputReportDiagnostic {
     pub(crate) sender_party_id: PartyID,
     pub(crate) sender_authority: AuthorityName,
     pub(crate) consensus_round: u64,
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) output_digest: [u8; 32],
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) report_digest: [u8; 32],
     pub(crate) rejected: bool,
     pub(crate) voting_weight: PartyID,
     pub(crate) reported_malicious_authorities: Vec<AuthorityName>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct OutputVoteGroupDiagnostic {
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) report_digest: [u8; 32],
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) output_digest: [u8; 32],
     pub(crate) voter_party_ids: Vec<PartyID>,
     pub(crate) voter_authorities: Vec<AuthorityName>,
     pub(crate) voting_weight: PartyID,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct OutputVoteDiagnostics {
     pub(crate) reports: Vec<OutputReportDiagnostic>,
     pub(crate) vote_groups: Vec<OutputVoteGroupDiagnostic>,
     pub(crate) threshold_required: PartyID,
     pub(crate) total_observed_weight: PartyID,
     pub(crate) winning_weight: PartyID,
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) winning_output_digest: [u8; 32],
+    #[serde(serialize_with = "serialize_digest")]
     pub(crate) winning_report_digest: [u8; 32],
+    #[serde(serialize_with = "serialize_optional_digest")]
     pub(crate) local_output_digest: Option<[u8; 32]>,
     pub(crate) local_output_matches_winner: Option<bool>,
     pub(crate) rejected: bool,
@@ -181,23 +249,28 @@ pub(crate) struct OutputVoteDiagnostics {
     pub(crate) local_authority_malicious_reason: Option<LocalAuthorityMaliciousReason>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub(crate) struct MpcAnomalyContext {
     pub(crate) current_consensus_round: Option<u64>,
     pub(crate) source_authority: Option<AuthorityName>,
     pub(crate) source_party_id: Option<PartyID>,
     pub(crate) trigger_conditions: Vec<&'static str>,
-    pub(crate) error: Option<String>,
-    pub(crate) error_kind: Option<String>,
+    pub(crate) error_code: Option<&'static str>,
+    pub(crate) error_party_ids: Vec<PartyID>,
     pub(crate) running_computation_count: usize,
     pub(crate) vote: Option<OutputVoteDiagnostics>,
     pub(crate) quorum_output_cached_without_local_output: bool,
     pub(crate) service_loop_termination_reason: Option<&'static str>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct MpcAnomalySnapshot {
-    pub(crate) session_identifier: SessionIdentifier,
+    pub(crate) schema_version: u64,
+    pub(crate) anomaly_kind: MpcAnomalyKind,
+    /// The derived session ID only. The `SessionIdentifier` preimage is deliberately
+    /// excluded from the locally persisted diagnostic representation.
+    #[serde(serialize_with = "serialize_digest")]
+    pub(crate) session_id: [u8; 32],
     pub(crate) session_type: SessionType,
     pub(crate) computation_type: &'static str,
     pub(crate) protocol: Option<String>,
@@ -223,6 +296,7 @@ pub(crate) struct MpcAnomalySnapshot {
     pub(crate) local_output_submission_succeeded: Option<bool>,
     pub(crate) local_output_observed: bool,
     pub(crate) local_output_rejected: Option<bool>,
+    #[serde(serialize_with = "serialize_optional_digest")]
     pub(crate) local_output_digest: Option<[u8; 32]>,
     pub(crate) quorum_reached_without_local_output: bool,
     pub(crate) network_key_reconfiguration: bool,
@@ -230,11 +304,58 @@ pub(crate) struct MpcAnomalySnapshot {
     pub(crate) vote: Option<OutputVoteDiagnostics>,
     pub(crate) quorum_output_cached_without_local_output: bool,
     pub(crate) trigger_conditions: Vec<&'static str>,
-    pub(crate) error: Option<String>,
-    pub(crate) error_kind: Option<String>,
+    pub(crate) error_code: Option<&'static str>,
+    pub(crate) error_party_ids: Vec<PartyID>,
     pub(crate) service_loop_termination_reason: Option<&'static str>,
     pub(crate) recent_trace_dropped_events: u64,
     pub(crate) recent_trace: Vec<SessionDiagnosticEvent>,
+}
+
+impl MpcAnomalySnapshot {
+    /// Serialize the privacy-safe schema as one bounded JSON value. `tracing` records
+    /// this as a single field, so JSON and text log sinks both keep one line per anomaly.
+    pub(crate) fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+}
+
+/// Convert an MPC error into allow-listed diagnostic metadata. Never format the
+/// complete error: `Serialization` and `Consumer` can contain arbitrary strings.
+pub(crate) fn mpc_error_diagnostic(error: &mpc::Error) -> (&'static str, Vec<PartyID>) {
+    match &error.kind {
+        mpc::ErrorKind::InvalidParameters => ("invalid_parameters", vec![]),
+        mpc::ErrorKind::DecryptionFailed => ("decryption_failed", vec![]),
+        mpc::ErrorKind::IdentityEphemeralKey => ("identity_ephemeral_key", vec![]),
+        mpc::ErrorKind::TorsionEphemeralKey => ("torsion_ephemeral_key", vec![]),
+        mpc::ErrorKind::ThresholdNotReached => ("threshold_not_reached", vec![]),
+        mpc::ErrorKind::NonParticipatingParty => ("non_participating_party", vec![]),
+        mpc::ErrorKind::UnresponsiveParties(party_ids) => {
+            ("unresponsive_parties", party_ids.clone())
+        }
+        mpc::ErrorKind::InvalidMessage(party_ids) => ("invalid_message", party_ids.clone()),
+        mpc::ErrorKind::MaliciousMessage(party_ids) => ("malicious_message", party_ids.clone()),
+        mpc::ErrorKind::MaliciousMessageAsync => ("malicious_message_async", vec![]),
+        mpc::ErrorKind::MaliciousMessagePreventsAdvance => {
+            ("malicious_message_prevents_advance", vec![])
+        }
+        mpc::ErrorKind::InactiveSession => ("inactive_session", vec![]),
+        mpc::ErrorKind::Group(_) => ("group", vec![]),
+        mpc::ErrorKind::InternalError => ("internal_error", vec![]),
+        mpc::ErrorKind::Bcs(_) => ("bcs", vec![]),
+        mpc::ErrorKind::Serialization(_) => ("serialization", vec![]),
+        mpc::ErrorKind::Consumer(_) => ("consumer", vec![]),
+    }
+}
+
+pub(crate) fn dwallet_mpc_error_diagnostic(
+    error: &DwalletMPCError,
+) -> (&'static str, Vec<PartyID>) {
+    match error {
+        DwalletMPCError::MPCError(error) | DwalletMPCError::FailedToAdvanceMPC(error) => {
+            mpc_error_diagnostic(error)
+        }
+        _ => (error.kind(), vec![]),
+    }
 }
 
 #[derive(Clone)]
@@ -327,5 +448,27 @@ mod tests {
 
         assert_eq!(diagnostics.event_count(), 0);
         assert_eq!(diagnostics.dropped_events(), 0);
+    }
+
+    #[test]
+    fn mpc_error_diagnostics_do_not_format_arbitrary_error_content() {
+        let secret_marker = "PRIVATE_MPC_VALUE_MUST_NOT_APPEAR";
+        let error = mpc::Error::from(mpc::ErrorKind::Serialization(secret_marker.to_string()));
+
+        let (error_code, party_ids) = mpc_error_diagnostic(&error);
+
+        assert_eq!(error_code, "serialization");
+        assert!(party_ids.is_empty());
+        assert!(!error_code.contains(secret_marker));
+    }
+
+    #[test]
+    fn mpc_error_diagnostics_preserve_only_exposed_party_ids() {
+        let error = mpc::Error::from(mpc::ErrorKind::InvalidMessage(vec![2, 5]));
+
+        let (error_code, party_ids) = mpc_error_diagnostic(&error);
+
+        assert_eq!(error_code, "invalid_message");
+        assert_eq!(party_ids, vec![2, 5]);
     }
 }

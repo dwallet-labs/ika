@@ -16,7 +16,9 @@ use crate::dwallet_checkpoints::{
 };
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use crate::dwallet_mpc::mpc_diagnostics::{MpcAnomalyContext, MpcAnomalyKind, output_digest};
+use crate::dwallet_mpc::mpc_diagnostics::{
+    MpcAnomalyContext, MpcAnomalyKind, dwallet_mpc_error_diagnostic, output_digest,
+};
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
@@ -1665,10 +1667,10 @@ impl DWalletMPCService {
             } else {
                 ComputationResultData::Native
             };
-            let (computation_result_name, computation_error_kind) = match &computation_result {
+            let (computation_result_name, computation_error) = match &computation_result {
                 Ok(GuaranteedOutputDeliveryRoundResult::Advance { .. }) => ("advance", None),
                 Ok(GuaranteedOutputDeliveryRoundResult::Finalize { .. }) => ("finalize", None),
-                Err(error) => ("error", Some(error.kind().to_string())),
+                Err(error) => ("error", Some(dwallet_mpc_error_diagnostic(error))),
             };
             if let Some(session) = self
                 .dwallet_mpc_manager
@@ -1680,20 +1682,21 @@ impl DWalletMPCService {
                     computation_id.mpc_round,
                     computation_id.attempt_number,
                     computation_result_name,
-                    computation_error_kind.clone(),
+                    computation_error.as_ref().map(|(code, _)| *code),
+                    computation_error
+                        .as_ref()
+                        .map_or_else(Vec::new, |(_, party_ids)| party_ids.clone()),
                 );
             }
-            if let Some(error_kind) = computation_error_kind.clone() {
+            if let Some((error_code, error_party_ids)) = computation_error {
                 self.dwallet_mpc_manager.emit_session_anomaly(
                     session_identifier,
                     MpcAnomalyKind::LocalComputationFailed,
                     MpcAnomalyContext {
                         current_consensus_round: self.last_read_consensus_round,
                         trigger_conditions: vec!["local_mpc_computation_returned_error"],
-                        error: Some(format!(
-                            "{error_kind}; detailed value remains in the originating error log"
-                        )),
-                        error_kind: Some(error_kind),
+                        error_code: Some(error_code),
+                        error_party_ids,
                         ..Default::default()
                     },
                 );
@@ -1778,8 +1781,7 @@ impl DWalletMPCService {
                                 trigger_conditions: vec![
                                     "mpc_protocol_message_submission_to_consensus_failed",
                                 ],
-                                error: Some(err.to_string()),
-                                error_kind: Some("consensus_submission".to_string()),
+                                error_code: Some("consensus_submission"),
                                 ..Default::default()
                             },
                         );
@@ -1914,10 +1916,11 @@ impl DWalletMPCService {
                                 self.last_read_consensus_round,
                                 output_digest,
                                 rejected,
+                                submission_result.is_ok(),
                                 submission_result
                                     .as_ref()
-                                    .map(|_| ())
-                                    .map_err(|error| error.to_string()),
+                                    .err()
+                                    .map(|_| "consensus_submission"),
                             );
                         }
                         if let Err(err) = submission_result {
@@ -1935,8 +1938,7 @@ impl DWalletMPCService {
                                     trigger_conditions: vec![
                                         "mpc_output_submission_to_consensus_failed",
                                     ],
-                                    error: Some(err.to_string()),
-                                    error_kind: Some("consensus_submission".to_string()),
+                                    error_code: Some("consensus_submission"),
                                     ..Default::default()
                                 },
                             );
@@ -2036,7 +2038,7 @@ impl DWalletMPCService {
     ) {
         let validator_name = self.name.to_string();
         let party_id = self.dwallet_mpc_manager.party_id;
-        let error_kind = error.kind().to_string();
+        let (error_code, error_party_ids) = dwallet_mpc_error_diagnostic(&error);
         let protocol_metric_data = DWalletSessionRequestMetricData::from(&request.protocol_data);
         error!(
             ?session_identifier,
@@ -2046,7 +2048,7 @@ impl DWalletMPCService {
             session_sequence_number=?request.session_sequence_number,
             protocol_data=?protocol_metric_data.to_string(),
             error=?error,
-            error_kind=%error_kind,
+            error_kind=%error_code,
             "rejecting session."
         );
 
@@ -2079,10 +2081,8 @@ impl DWalletMPCService {
                 MpcAnomalyContext {
                     current_consensus_round: self.last_read_consensus_round,
                     trigger_conditions: vec!["local_validator_submitting_rejected_output"],
-                    error: Some(format!(
-                        "{error_kind}; detailed value remains in the originating error log"
-                    )),
-                    error_kind: Some(error_kind.clone()),
+                    error_code: Some(error_code),
+                    error_party_ids,
                     ..Default::default()
                 },
             );
@@ -2098,10 +2098,11 @@ impl DWalletMPCService {
                     self.last_read_consensus_round,
                     output_digest,
                     rejected,
+                    submission_result.is_ok(),
                     submission_result
                         .as_ref()
-                        .map(|_| ())
-                        .map_err(|error| error.to_string()),
+                        .err()
+                        .map(|_| "consensus_submission"),
                 );
             }
             if let Err(err) = submission_result {
@@ -2117,8 +2118,7 @@ impl DWalletMPCService {
                     MpcAnomalyContext {
                         current_consensus_round: self.last_read_consensus_round,
                         trigger_conditions: vec!["rejected_output_submission_to_consensus_failed"],
-                        error: Some(err.to_string()),
-                        error_kind: Some("consensus_submission".to_string()),
+                        error_code: Some("consensus_submission"),
                         ..Default::default()
                     },
                 );
