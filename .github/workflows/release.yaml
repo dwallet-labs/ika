@@ -474,9 +474,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # --target pins the publish-time tag: a draft's tag is minted only
+          # when the draft is published, and without --target it would point
+          # at the default branch's HEAD at publish time — not the tagged
+          # release commit this run built.
           gh release create "$RELEASE_TAG" \
             --draft \
             --title "$RELEASE_TAG" \
+            --target "${{ github.sha }}" \
             --generate-notes \
             ika-${RELEASE_TAG}-*.tar.gz
 
