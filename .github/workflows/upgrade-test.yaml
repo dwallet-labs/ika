@@ -183,7 +183,14 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Literal prefix, NOT ${{ github.workflow }}: inside a workflow_call,
+  # github.workflow resolves to the CALLER's name, so the release gate
+  # computed the same group its caller was holding ("Release-<tag-ref>")
+  # and GitHub killed it at startup as a self-deadlock — silently skipping
+  # the release Draft job (first hit: release/testnet-1.2.1). A literal
+  # prefix keeps per-ref dedup for dispatches while never colliding with
+  # a caller's group.
+  group: upgrade-test-${{ github.ref }}
   cancel-in-progress: false
 
 env:
