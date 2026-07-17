@@ -775,36 +775,49 @@ where
         // arrives via the off-chain validator-metadata pipeline (see PR #1721)
         // and is overlaid onto Committee through a separate path. No
         // try-then-fallback decode — one shape per path.
+        //
+        // A member's record is written at candidate registration and never
+        // emptied on chain, so a missing or undecodable record is always a
+        // read defect. Dropping the member would hand the reconfiguration MPC
+        // a locally-shrunken party set that peers with healthier reads don't
+        // agree on — divergent public inputs; exclusion decisions belong to
+        // the consensus-agreed freeze, never to a local read. Error instead;
+        // the sync loop retries on the next tick.
         let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
             .iter()
-            .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id);
-
-                mpc_data.and_then(|mpc_data| {
-                    let class_groups_public_key_and_proof =
-                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.mpc_data_bytes(),
-                        );
-
-                    match class_groups_public_key_and_proof {
-                        Ok(key_and_proof) => Some((*name, key_and_proof)),
-                        Err(e) => {
-                            // Handled, recoverable anomaly: this validator is
-                            // dropped from the committee and construction
-                            // proceeds, so this is `warn!`, not `error!` — and
-                            // it re-runs every poll tick in legacy mode.
-                            warn!(
+            .map(|(id, (name, _))| {
+                let mpc_data = committee_mpc_data.get(id).ok_or_else(|| {
+                    error!(
+                        should_never_happen = true,
+                        authority = ?name,
+                        validator_id = ?id,
+                        "committee member has no decodable on-chain mpc_data record; \
+                         failing the chain-fallback committee build for retry"
+                    );
+                    DwalletMPCError::MissingOnChainMpcData {
+                        epoch,
+                        authority: *name,
+                    }
+                })?;
+                let key_and_proof =
+                    bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes())
+                        .map_err(|e| {
+                            error!(
+                                should_never_happen = true,
                                 authority = ?name,
+                                validator_id = ?id,
                                 error = ?e,
                                 "failed to decode on-chain class-groups encryption key and proof; \
-                                 dropping this validator from the committee",
+                                 failing the chain-fallback committee build for retry"
                             );
-                            None
-                        }
-                    }
-                })
+                            DwalletMPCError::MissingOnChainMpcData {
+                                epoch,
+                                authority: *name,
+                            }
+                        })?;
+                Ok((*name, key_and_proof))
             })
-            .collect();
+            .collect::<DwalletMPCResult<HashMap<_, _>>>()?;
 
         // Chain fallback (legacy mode): only the bare class-groups key is on
         // chain, so there are no off-chain PVSS/VSS bundles to deliver.

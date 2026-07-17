@@ -149,6 +149,14 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                         bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
                             &mpc_data.mpc_data_bytes(),
                         )
+                        .map_err(|e| {
+                            error!(
+                                authority = ?validator.authority_name(),
+                                error = ?e,
+                                "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof \
+                                 from Move-side mpc_data"
+                            );
+                        })
                         .ok()
                     });
 
@@ -186,7 +194,23 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .filter_map(|validator| {
-                let mpc_data = validator.mpc_data.as_ref()?;
+                let Some(mpc_data) = validator.mpc_data.as_ref() else {
+                    // The fetch (`get_epoch_start_system`) fails the whole read
+                    // when an active member's record is missing, so this arm is
+                    // reachable only from a degraded `EpochStartSystem` persisted
+                    // before that gate existed. Loud because the built committee
+                    // then silently drops this member from every MPC public input
+                    // seeded from it (the class-groups map must never be partial
+                    // for a non-excluded member).
+                    error!(
+                        should_never_happen = true,
+                        authority = ?validator.authority_name(),
+                        "active committee member has no mpc_data record in the \
+                         persisted EpochStartSystem; its class-groups key is \
+                         missing from the committee"
+                    );
+                    return None;
+                };
                 match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
                     &mpc_data.mpc_data_bytes(),
                 ) {

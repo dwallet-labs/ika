@@ -529,13 +529,41 @@ where
                                 ))
                             })?;
                         let info = validator.verified_validator_info();
+                        // An active member's mpc_data record is written at candidate
+                        // registration and never emptied on chain, so a gap here is
+                        // always a read defect (fullnode lag, table-walk race, or a
+                        // decode failure the fetch already logged). Skipping the
+                        // member would install a committee whose class-groups map
+                        // silently diverges from peers with healthier reads — an
+                        // unagreed party-set exclusion in MPC public inputs — and
+                        // the degraded `EpochStartSystem` would be persisted and
+                        // rebuilt on every restart. Fail the whole read instead;
+                        // `must_get_epoch_start_system` retries until it completes.
+                        let Some(mpc_data) = validators_mpc_data.get(&validator.id) else {
+                            self.sui_client_metrics
+                                .sui_rpc_errors
+                                .with_label_values(&["epoch_start_missing_mpc_data"])
+                                .inc();
+                            error!(
+                                should_never_happen = true,
+                                validator_id = ?validator.id,
+                                validator_name = %info.name,
+                                "active committee member has no decodable on-chain \
+                                 mpc_data record at epoch start; failing the read for retry"
+                            );
+                            return Err(IkaError::InvalidCommittee(format!(
+                                "missing on-chain mpc_data record for active committee \
+                                 member {} ({})",
+                                info.name, validator.id
+                            )));
+                        };
                         Ok(EpochStartValidatorInfoV1 {
                             name: info.name.clone(),
                             validator_id: validator.id,
                             protocol_pubkey: info.protocol_pubkey.clone(),
                             network_pubkey: info.network_pubkey.clone(),
                             consensus_pubkey: info.consensus_pubkey.clone(),
-                            mpc_data: validators_mpc_data.get(&validator.id).cloned(),
+                            mpc_data: Some(mpc_data.clone()),
                             network_address: info.network_address.clone(),
                             p2p_address: info.p2p_address.clone(),
                             consensus_address: info.consensus_address.clone(),
