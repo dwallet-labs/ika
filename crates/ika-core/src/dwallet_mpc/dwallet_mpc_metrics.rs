@@ -173,6 +173,19 @@ pub struct DWalletMPCMetrics {
     /// (0 = canonical output, 1 = rejected output).
     pub(crate) session_output_rejected: IntGaugeVec,
 
+    /// A locally computed network-key reconfiguration output that returned
+    /// after the session completed via the peers' quorum, so production
+    /// discarded it without submission. The `output_digest` and
+    /// `quorum_output_digest` labels are both over RAW output bytes (before
+    /// any consensus envelope) — comparable with each other but NOT with
+    /// `session_output_info`'s envelope digests. Label equality proves the
+    /// discarded local bytes match the quorum-agreed output.
+    pub(crate) session_late_output_info: IntGaugeVec,
+
+    /// Malicious-actor count reported by the discarded late local computation
+    /// recorded in `session_late_output_info`.
+    pub(crate) session_late_output_malicious_actors: IntGaugeVec,
+
     /// Privacy-safe anomaly snapshots emitted to the validator's local log sink.
     /// Labels are fixed enums: `anomaly_kind`, `session_type` (or `unknown` when
     /// service termination has no source session), and `severity`.
@@ -505,6 +518,26 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
+            session_late_output_info: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_session_late_output_info",
+                "Raw-bytes digest of a locally computed session output discarded after the quorum completed the session, next to the quorum output's raw-bytes digest",
+                &[
+                    "protocol_name",
+                    "session_id",
+                    "authority",
+                    "output_digest",
+                    "quorum_output_digest"
+                ],
+                registry,
+            )
+            .unwrap(),
+            session_late_output_malicious_actors: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_session_late_output_malicious_actors",
+                "Malicious-actor count reported by the discarded late local computation",
+                &["protocol_name", "session_id", "authority"],
+                registry,
+            )
+            .unwrap(),
             anomaly_snapshots_total: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_anomaly_snapshots_total",
                 "Privacy-safe MPC anomaly snapshots emitted to the local log sink",
@@ -692,6 +725,8 @@ impl DWalletMPCMetrics {
         self.session_output_info.reset();
         self.session_reported_malicious_actors.reset();
         self.session_output_rejected.reset();
+        self.session_late_output_info.reset();
+        self.session_late_output_malicious_actors.reset();
     }
 }
 

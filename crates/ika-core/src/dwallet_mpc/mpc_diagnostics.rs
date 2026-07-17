@@ -12,6 +12,7 @@ use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
+use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{DWalletMPCOutputKind, SessionType};
 use serde::{Serialize, Serializer};
 use std::backtrace::{Backtrace, BacktraceStatus};
@@ -32,6 +33,46 @@ pub(crate) fn output_digest(output: &DWalletMPCOutputKind) -> Option<[u8; 32]> {
     bcs::to_bytes(output)
         .ok()
         .map(|bytes| DefaultHash::digest(&bytes).into())
+}
+
+/// Digest of raw output bytes as produced by a local computation
+/// (`GuaranteedOutputDeliveryRoundResult::Finalize::public_output_value`),
+/// before any consensus envelope is built around them. Comparable only with
+/// [`network_key_reconfiguration_raw_output_digest`] — deliberately NOT with
+/// [`output_digest`], which hashes the `DWalletMPCOutputKind` envelope.
+pub(crate) fn raw_output_digest(output: &[u8]) -> [u8; 32] {
+    DefaultHash::digest(output).into()
+}
+
+/// Digest of the raw network-key reconfiguration output bytes carried by a
+/// quorum-agreed output envelope. Non-rejected reconfiguration chunks are
+/// hashed in envelope order; chunking (`slice_public_output_into_messages`)
+/// splits one output's bytes in order, so this equals
+/// [`raw_output_digest`] of the original unsliced output. Returns `None` for
+/// envelopes carrying no non-rejected network-key reconfiguration chunk
+/// (other protocols, rejection envelopes, internal outputs).
+pub(crate) fn network_key_reconfiguration_raw_output_digest(
+    output: &DWalletMPCOutputKind,
+) -> Option<[u8; 32]> {
+    let DWalletMPCOutputKind::External { output: kinds } = output else {
+        return None;
+    };
+    let mut chunks =
+        kinds
+            .iter()
+            .filter_map(|kind| match kind {
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
+                    chunk,
+                ) if !chunk.rejected => Some(&chunk.public_output),
+                _ => None,
+            })
+            .peekable();
+    chunks.peek()?;
+    let hasher = chunks.fold(DefaultHash::default(), |mut hasher, chunk| {
+        hasher.update(chunk);
+        hasher
+    });
+    Some(hasher.finalize().into())
 }
 
 /// Digest the exact value voted on by `weighted_majority_vote`: public output
@@ -206,6 +247,19 @@ pub(crate) enum SessionDiagnosticEvent {
     },
     QuorumOutputCached {
         without_local_output: bool,
+    },
+    /// A local network-key reconfiguration computation returned `Finalize`
+    /// after the session had already completed via the peers' output quorum.
+    /// Production correctly discards the result without submitting it; this
+    /// event preserves the raw-output digest so the discarded bytes can still
+    /// be compared against the quorum-agreed output.
+    LateOutputAfterCompletion {
+        #[serde(serialize_with = "serialize_digest")]
+        output_digest: [u8; 32],
+        #[serde(serialize_with = "serialize_optional_digest")]
+        quorum_output_digest: Option<[u8; 32]>,
+        reported_malicious_count: usize,
+        matches_quorum: Option<bool>,
     },
 }
 
@@ -478,7 +532,60 @@ impl BoundedSessionDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ika_types::message::MPCNetworkReconfigurationOutput;
     use std::sync::Arc;
+
+    fn reconfiguration_chunk(
+        public_output: Vec<u8>,
+        rejected: bool,
+    ) -> DWalletCheckpointMessageKind {
+        DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
+            MPCNetworkReconfigurationOutput {
+                dwallet_network_encryption_key_id: vec![9; 32],
+                public_output,
+                supported_curves: vec![],
+                is_last: false,
+                rejected,
+                session_sequence_number: 3,
+            },
+        )
+    }
+
+    /// The whole point of the raw-bytes digest domain: hashing the winning
+    /// envelope's in-order chunks must equal hashing the unsliced
+    /// `public_output_value` a local computation returns, or the late-output
+    /// comparison would report false divergence.
+    #[test]
+    fn chunked_reconfiguration_digest_equals_unsliced_raw_digest() {
+        let output_bytes: Vec<u8> = (0..12_000u32).map(|byte| (byte % 251) as u8).collect();
+        let envelope = DWalletMPCOutputKind::External {
+            output: output_bytes
+                .chunks(5 * 1024)
+                .map(|chunk| reconfiguration_chunk(chunk.to_vec(), false))
+                .collect(),
+        };
+
+        assert_eq!(
+            network_key_reconfiguration_raw_output_digest(&envelope),
+            Some(raw_output_digest(&output_bytes))
+        );
+    }
+
+    #[test]
+    fn rejected_chunks_and_foreign_envelopes_produce_no_digest() {
+        let rejected_only = DWalletMPCOutputKind::External {
+            output: vec![reconfiguration_chunk(vec![1, 2, 3], true)],
+        };
+        assert_eq!(
+            network_key_reconfiguration_raw_output_digest(&rejected_only),
+            None
+        );
+        let no_reconfiguration_chunks = DWalletMPCOutputKind::External { output: vec![] };
+        assert_eq!(
+            network_key_reconfiguration_raw_output_digest(&no_reconfiguration_chunks),
+            None
+        );
+    }
 
     #[test]
     fn trace_is_bounded_and_anomalies_are_deduplicated() {

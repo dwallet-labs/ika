@@ -166,8 +166,30 @@ pub(crate) struct DWalletSession {
     pub(super) local_output_submission_succeeded: Option<bool>,
     pub(super) local_output_submission_round: Option<u64>,
     pub(super) local_output_digest: Option<[u8; 32]>,
+
+    /// Raw-output-bytes digest of the quorum-agreed network-key
+    /// reconfiguration output (`mpc_diagnostics::raw_output_digest` domain,
+    /// not the `output_digest` envelope domain). Recorded at quorum so a
+    /// local computation finishing after the session completed can still be
+    /// compared against the agreed bytes. `None` for other protocols.
+    pub(super) quorum_raw_output_digest: Option<[u8; 32]>,
+
+    /// A locally computed network-key reconfiguration output that returned
+    /// after the session left `Active` and was therefore discarded without
+    /// submission. Observability only — recording it never publishes the
+    /// output or re-activates the session.
+    pub(super) late_output: Option<LateLocalOutput>,
     #[cfg(test)]
     last_anomaly_snapshot: Option<MpcAnomalySnapshot>,
+}
+
+/// Raw-bytes digest and malicious report of a discarded late local
+/// computation result; one struct so the digest can never exist without its
+/// malicious count.
+#[derive(Clone, Copy)]
+pub(crate) struct LateLocalOutput {
+    pub(crate) digest: [u8; 32],
+    pub(crate) reported_malicious_count: usize,
 }
 
 /// Possible statuses of a session:
@@ -291,6 +313,8 @@ impl DWalletSession {
             local_output_submission_succeeded: None,
             local_output_submission_round: None,
             local_output_digest: None,
+            quorum_raw_output_digest: None,
+            late_output: None,
             #[cfg(test)]
             last_anomaly_snapshot: None,
         };
@@ -749,6 +773,43 @@ impl DWalletSession {
             .record(SessionDiagnosticEvent::QuorumOutputCached {
                 without_local_output: self.self_output_consensus_round.is_none(),
             });
+    }
+
+    /// Stash the raw-output-bytes digest of the quorum-agreed network-key
+    /// reconfiguration output. First quorum wins, matching
+    /// `quorum_consensus_round` semantics.
+    pub(crate) fn record_quorum_raw_output_digest(&mut self, digest: [u8; 32]) {
+        self.quorum_raw_output_digest.get_or_insert(digest);
+    }
+
+    /// Record a locally computed output that returned after this session left
+    /// `Active` and was discarded without submission. Returns whether the
+    /// discarded bytes match the quorum-agreed output (`None` when no quorum
+    /// digest was recorded to compare against). The field holds the latest
+    /// attempt, but every attempt stays visible: each is preserved in the
+    /// diagnostics trace, and superseded metric children survive until the
+    /// per-epoch reset — the release-gate harness fails closed if attempts
+    /// ever disagree on the computed bytes.
+    pub(crate) fn record_late_output(
+        &mut self,
+        output_digest: [u8; 32],
+        reported_malicious_count: usize,
+    ) -> Option<bool> {
+        let matches_quorum = self
+            .quorum_raw_output_digest
+            .map(|quorum_digest| quorum_digest == output_digest);
+        self.late_output = Some(LateLocalOutput {
+            digest: output_digest,
+            reported_malicious_count,
+        });
+        self.diagnostics
+            .record(SessionDiagnosticEvent::LateOutputAfterCompletion {
+                output_digest,
+                quorum_output_digest: self.quorum_raw_output_digest,
+                reported_malicious_count,
+                matches_quorum,
+            });
+        matches_quorum
     }
 
     pub(crate) fn anomaly_snapshot(

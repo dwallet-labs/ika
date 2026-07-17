@@ -15,6 +15,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::{
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
     OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, mpc_error_diagnostic,
+    network_key_reconfiguration_raw_output_digest,
 };
 use crate::dwallet_mpc::mpc_session::{
     AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput, SessionComputationType,
@@ -700,6 +701,23 @@ impl DWalletMPCManager {
                             self.dwallet_mpc_metrics
                                 .self_output_to_quorum_consensus_rounds
                                 .observe(consensus_round.saturating_sub(self_output_round) as f64);
+                        }
+                        // Stash the winning network-key reconfiguration
+                        // output's raw-bytes digest before `complete_mpc_session`
+                        // makes the session non-active: a local computation
+                        // finishing after that point is discarded without
+                        // submission, and this digest is the only way its
+                        // bytes can still be compared against the agreed
+                        // output. Gated on the session's reconfiguration flag
+                        // (set at request arrival, which necessarily precedes
+                        // any local computation) so the envelope walk never
+                        // runs for the common sign/presign outputs.
+                        if !rejected
+                            && session.network_key_reconfiguration
+                            && let Some(raw_digest) =
+                                network_key_reconfiguration_raw_output_digest(&output_result)
+                        {
+                            session.record_quorum_raw_output_digest(raw_digest);
                         }
                     }
                     // Recovery net: cache quorum-agreed network-key outputs
@@ -4112,6 +4130,36 @@ impl DWalletMPCManager {
                             .session_output_rejected
                             .with_label_values(&[protocol_name, &session_id, &authority])
                             .set(observation.rejected as i64);
+                    }
+                    // A locally computed output that returned after the
+                    // session completed via the peers' quorum is discarded
+                    // without submission, so it never appears in
+                    // `output_observations`. Export its raw-bytes digest next
+                    // to the quorum's raw-bytes digest so a compatibility
+                    // scenario can still check byte-equality. Both digests
+                    // are over raw output bytes — NOT comparable with the
+                    // `output_digest` envelope labels above.
+                    if let Some(late_output) = &session.late_output {
+                        let authority = self.validator_name.to_string();
+                        let output_digest = hex::encode(late_output.digest);
+                        let quorum_output_digest = session
+                            .quorum_raw_output_digest
+                            .map(hex::encode)
+                            .unwrap_or_else(|| "unknown".to_string());
+                        metrics
+                            .session_late_output_info
+                            .with_label_values(&[
+                                protocol_name,
+                                &session_id,
+                                &authority,
+                                &output_digest,
+                                &quorum_output_digest,
+                            ])
+                            .set(1);
+                        metrics
+                            .session_late_output_malicious_actors
+                            .with_label_values(&[protocol_name, &session_id, &authority])
+                            .set(late_output.reported_malicious_count as i64);
                     }
                 }
             }

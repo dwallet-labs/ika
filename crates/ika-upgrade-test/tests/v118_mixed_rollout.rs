@@ -15,6 +15,17 @@
 //! states and checks local epoch, liveness, malicious reporting, pending work,
 //! logs, and per-authority output digests before allowing the next boundary.
 //!
+//! The upgraded validator's own output is weighed without racing production:
+//! reconfiguration finalizes at a Byzantine quorum, and a validator whose
+//! computation finishes afterwards — legitimately including the upgraded one —
+//! has its result discarded without submission. A boundary is conclusive when
+//! the upgraded validator either submitted its output inside the converged
+//! quorum or recorded a discarded late computation whose raw-bytes digest
+//! matches the quorum output; divergent bytes fail hard either way. A boundary
+//! where it produced nothing comparable is inconclusive (not a failure, not
+//! proof), and the scenario fails unless at least one of the two
+//! reconfiguration boundaries is conclusive.
+//!
 //! Beyond the reshare itself, each reconfiguration is followed by a full user
 //! **DKG → Presign → ECDSA Sign → Taproot Sign** lifecycle driven through the
 //! `ika` CLI, so the gate also proves the mixed committee keeps *serving users*
@@ -160,6 +171,19 @@ async fn v118_single_validator_rollout_survives_v3_network_key_resharing() {
         .expect_all_validators_healthy()
         .expect_protocol_version_at_most(3)
         .expect_all_validators_protocol_version_at_most(3)
+        // Whole-run backstop for the late-output comparison: a discarded
+        // straggler output whose bytes diverge from the quorum is logged at
+        // error level the moment it is recorded, even if it lands after a
+        // boundary's observation window closed (its metric series would be
+        // wiped at the next epoch's reset). The upgraded validator's log
+        // persists across epochs (no restart after the swap), so this catches
+        // a divergence anywhere in the run.
+        .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
+        // Late-computation evidence proves the upgraded validator COMPUTES
+        // the same bytes, not that it can get an output into consensus. When
+        // it does win the race and submits, a submission failure must not
+        // hide behind the peers' quorum completing the session anyway.
+        .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()
         .await
         .expect(
