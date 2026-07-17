@@ -23,8 +23,10 @@
 //! coordination tests, not scheduling-dependent. Real parallel crypto + no
 //! msim slowdown.
 
+use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
-use ika_test_cluster::{IkaTestClusterBuilder, wait_for_node_epoch};
+use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, wait_for_node_epoch};
+use ika_types::crypto::AuthorityName;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_joiner_added_at_epoch_2() {
@@ -92,10 +94,18 @@ async fn test_joiner_added_at_epoch_2() {
 /// the joiner present in this map, because its class-groups key went
 /// on-chain at candidate registration. So this assertion covers the
 /// CHAIN view — the map `class_groups_keys_by_party_id` seeds the MPC
-/// manager's validator keys from at epoch start — while capture by the
+/// manager's validator keys from at epoch start. Capture by the
 /// off-chain freeze (which feeds the reconfiguration MPC and the
-/// handoff cert) is only indirectly exercised here and deserves its own
-/// handoff-cert-based assertion (follow-up).
+/// handoff cert) is asserted separately below, against the handoff
+/// certificate's `ValidatorMpcData` items — the durable,
+/// consensus-anchored record of the frozen set (kept forever in the
+/// perpetual tables): the joiner must appear in the epoch-1 cert
+/// (captured by the first freeze) or, tolerated with a warning, in
+/// the epoch-2 cert — the self-heal path where a joiner that
+/// legitimately missed the freeze (per the spec it is excluded, not
+/// waited for; dev-docs/specs/validator-mpc-data-announcements.md) is
+/// seated by the chain committee anyway and self-announces into
+/// consensus as an epoch-2 member.
 ///
 /// Assertion semantics (issue #1772): whether the joiner's on-chain
 /// mpc_data record is visible in the epoch-2 `EpochStartSystem` read is
@@ -146,6 +156,15 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
         .expect("IkaTestClusterBuilder::build() failed");
 
     cluster.wait_for_epoch(1).await;
+    // Cert-read probe, captured BEFORE the joiner spawns so it is
+    // guaranteed to be an original committee member (the swarm's
+    // handle order is unspecified once the joiner node is in).
+    let probe = cluster
+        .swarm
+        .validator_node_handles()
+        .into_iter()
+        .next()
+        .expect("swarm has at least one validator");
     let joiner = cluster
         .add_joiner_validator()
         .await
@@ -215,55 +234,124 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
          every EpochStartSystem read"
     );
 
-    if joiner_captured {
-        return;
+    if !joiner_captured {
+        // The joiner's mpc_data record wasn't visible in this node's
+        // epoch-2 chain read — the #1772 race. The record is durable, so
+        // the epoch-3 boundary read must see it. `joiner_in_voting_rights`
+        // disambiguates the miss in logs: true = selected into the epoch-2
+        // committee but its mpc_data didn't decode out of the chain read;
+        // false = registration landed after the mid-epoch committee
+        // selection, so the joiner only activates at epoch 3. Both resolve
+        // by the epoch-3 read.
+        tracing::warn!(
+            ?joiner_name,
+            joiner_in_voting_rights,
+            "joiner missing from the epoch-2 committee class-groups map \
+             (transient chain-read gap, tolerated once); asserting it is \
+             present in the epoch-3 committee"
+        );
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            cluster.wait_for_epoch(3),
+        )
+        .await
+        .expect("cluster did not reach epoch 3 within 300s during the joiner grace window");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            wait_for_node_epoch(&joiner.node_handle, 3),
+        )
+        .await
+        .expect(
+            "joiner node did not reach epoch 3 within 60s of the cluster during the grace window",
+        );
+
+        let joiner_captured_at_epoch_3 = joiner.node_handle.with(|node| {
+            let epoch_store = node.state().epoch_store_for_testing();
+            let committee = epoch_store.committee();
+            assert_eq!(committee.epoch(), 3, "joiner node should be at epoch 3");
+            committee
+                .class_groups_public_keys_and_proofs
+                .contains_key(&joiner_name)
+        });
+        assert!(
+            joiner_captured_at_epoch_3,
+            "joiner {joiner_name:?} was missing from the epoch-2 committee \
+             class_groups_public_keys_and_proofs (tolerated once — a \
+             transient chain-read gap under load) and is STILL absent at \
+             epoch 3: its on-chain mpc_data record never became readable — \
+             a registration/lifecycle bug, not a timing race"
+        );
     }
 
-    // The joiner's mpc_data record wasn't visible in this node's
-    // epoch-2 chain read — the #1772 race. The record is durable, so
-    // the epoch-3 boundary read must see it. `joiner_in_voting_rights`
-    // disambiguates the miss in logs: true = selected into the epoch-2
-    // committee but its mpc_data didn't decode out of the chain read;
-    // false = registration landed after the mid-epoch committee
-    // selection, so the joiner only activates at epoch 3. Both resolve
-    // by the epoch-3 read.
-    tracing::warn!(
-        ?joiner_name,
-        joiner_in_voting_rights,
-        "joiner missing from the epoch-2 committee class-groups map \
-         (transient chain-read gap, tolerated once); asserting it is \
-         present in the epoch-3 committee"
-    );
+    // The chain-view checks above cannot see a freeze miss (see the
+    // test doc) — the off-chain frozen set's durable record is the
+    // handoff cert's `ValidatorMpcData` items. Assert the joiner is in
+    // the epoch-1 cert.
+    let epoch_1_cert_validators = wait_for_handoff_cert_mpc_data(&cluster, &probe, 1).await;
+    // Original members reach the frozen set by consensus
+    // self-submission — no P2P fan-out or propagation race involved —
+    // so their absence means the freeze/handoff pipeline is broken
+    // outright and must never fall into the joiner-tolerance path
+    // below.
+    for original in &cluster.validator_names {
+        assert!(
+            epoch_1_cert_validators.contains(original),
+            "original validator {original:?} missing from the epoch-1 handoff cert's \
+             ValidatorMpcData items ({epoch_1_cert_validators:?})"
+        );
+    }
+    if !epoch_1_cert_validators.contains(&joiner_name) {
+        // Legitimate per the spec: a joiner whose announcement loses
+        // the propagation race with the freeze is excluded, not waited
+        // for. The network must then self-heal — seated in epoch 2,
+        // the joiner self-announces into consensus, so the epoch-2
+        // freeze (and therefore the epoch-2 cert) must capture it.
+        tracing::warn!(
+            ?joiner_name,
+            "joiner missing from the epoch-1 handoff cert (excluded by the first freeze); \
+             falling back to the epoch-2 cert via the member self-announcement path"
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            cluster.wait_for_epoch(3),
+        )
+        .await
+        .expect("epoch 3 did not arrive within 120s while waiting for the self-heal cert");
+        let epoch_2_cert_validators = wait_for_handoff_cert_mpc_data(&cluster, &probe, 2).await;
+        assert!(
+            epoch_2_cert_validators.contains(&joiner_name),
+            "joiner {joiner_name:?} missing from BOTH the epoch-1 and the epoch-2 handoff \
+             certs' ValidatorMpcData items (epoch-2: {epoch_2_cert_validators:?}) — the \
+             off-chain frozen set never captured the joiner's mpc_data"
+        );
+    }
+}
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(300),
-        cluster.wait_for_epoch(3),
-    )
-    .await
-    .expect("cluster did not reach epoch 3 within 300s during the joiner grace window");
-    tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        wait_for_node_epoch(&joiner.node_handle, 3),
-    )
-    .await
-    .expect("joiner node did not reach epoch 3 within 60s of the cluster during the grace window");
-
-    let joiner_captured_at_epoch_3 = joiner.node_handle.with(|node| {
-        let epoch_store = node.state().epoch_store_for_testing();
-        let committee = epoch_store.committee();
-        assert_eq!(committee.epoch(), 3, "joiner node should be at epoch 3");
-        committee
-            .class_groups_public_keys_and_proofs
-            .contains_key(&joiner_name)
-    });
-    assert!(
-        joiner_captured_at_epoch_3,
-        "joiner {joiner_name:?} was missing from the epoch-2 committee \
-         class_groups_public_keys_and_proofs (tolerated once — a \
-         transient chain-read gap under load) and is STILL absent at \
-         epoch 3: its on-chain mpc_data record never became readable — \
-         a registration/lifecycle bug, not a timing race"
-    );
+/// Poll `node_handle`'s perpetual tables until its handoff cert for
+/// `source_epoch` is persisted, then return the authority names pinned
+/// by the cert's `ValidatorMpcData` items. Cert persistence trails the
+/// epoch switch (quorum aggregation of the consensus-ordered handoff
+/// signatures runs at the boundary), hence the eventual semantics.
+async fn wait_for_handoff_cert_mpc_data(
+    cluster: &IkaTestCluster,
+    node_handle: &IkaNodeHandle,
+    source_epoch: u64,
+) -> Vec<AuthorityName> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if let Some(validators) =
+            cluster.handoff_cert_mpc_data_validators_for_node(node_handle, source_epoch)
+        {
+            return validators;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no handoff cert for source epoch {source_epoch} persisted on the probe \
+             validator within 60s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
