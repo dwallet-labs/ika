@@ -581,16 +581,29 @@ where
         // gauges.
         let mid_epoch_done_on_chain = system_inner_v1.validator_set.next_epoch_committee.is_some();
         let keys_total = coordinator_inner.dwallet_network_encryption_keys.size;
-        // Requested (every key parked awaiting reconfiguration) or already fully
-        // completed this epoch (keys leave the awaiting state on completion).
+        // Every key is either not-yet-requested, parked awaiting reconfiguration
+        // (requested, incomplete), or counted in the per-epoch completed counter
+        // (keys leave the awaiting state on completion; `advance_epoch` asserts
+        // completed == total before zeroing, so the counter cannot leak across
+        // epochs). completed + awaiting == total therefore holds exactly when
+        // every key has been requested this epoch — including the mixed window
+        // where some completions already landed while others are still awaiting.
+        let awaiting_keys = network_encryption_keys
+            .values()
+            .filter(|key| {
+                key.state == DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration
+            })
+            .count() as u64;
+        // The bare completed-counter arm stays independent of the local key map
+        // so a lagging map read cannot suppress a fully-completed epoch.
         let reconfig_done_on_chain = keys_total > 0
             && (coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed
                 == keys_total
                 || (network_encryption_keys.len() as u64 == keys_total
-                    && network_encryption_keys.values().all(|key| {
-                        key.state
-                            == DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration
-                    })));
+                    && coordinator_inner
+                        .epoch_dwallet_network_encryption_keys_reconfiguration_completed
+                        + awaiting_keys
+                        == keys_total));
         // Votes are opened at mid-epoch (alongside the next active committee) and
         // consumed by the pricing calculation, so Some(committee) + no open votes
         // means the calculation already ran this epoch.
