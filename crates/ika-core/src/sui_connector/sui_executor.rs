@@ -569,6 +569,62 @@ where
                  holding advance_epoch this tick",
             );
         }
+
+        // The per-step assignments above are process-local memos: each is set when
+        // THIS process performs a step, and all of them zero on restart. During a
+        // rolling upgrade every validator restarts and the whole fleet reports 0
+        // even for steps long completed on chain. Re-derive every step with an
+        // on-chain "done" predicate (the negation of the guard that triggers it)
+        // and OR it with the memo each tick, so a restarted validator converges on
+        // its next tick. `request_advance_epoch` stays memo-only: its chain effect
+        // is the epoch switch itself, which replaces this state and re-zeros the
+        // gauges.
+        let mid_epoch_done_on_chain = system_inner_v1.validator_set.next_epoch_committee.is_some();
+        let keys_total = coordinator_inner.dwallet_network_encryption_keys.size;
+        // Requested (every key parked awaiting reconfiguration) or already fully
+        // completed this epoch (keys leave the awaiting state on completion).
+        let reconfig_done_on_chain = keys_total > 0
+            && (coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed
+                == keys_total
+                || (network_encryption_keys.len() as u64 == keys_total
+                    && network_encryption_keys.values().all(|key| {
+                        key.state
+                            == DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration
+                    })));
+        // Votes are opened at mid-epoch (alongside the next active committee) and
+        // consumed by the pricing calculation, so Some(committee) + no open votes
+        // means the calculation already ran this epoch.
+        let pricing_done_on_chain = coordinator_inner.next_epoch_active_committee.is_some()
+            && coordinator_inner
+                .pricing_and_fee_management
+                .calculation_votes
+                .is_none();
+        let lock_done_on_chain =
+            sessions_manager.locked_last_user_initiated_session_to_complete_in_current_epoch;
+        for (step, done) in [
+            (
+                EPOCH_SWITCH_STEP_MID_EPOCH,
+                epoch_switch_state.ran_mid_epoch || mid_epoch_done_on_chain,
+            ),
+            (
+                EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG,
+                epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration
+                    || reconfig_done_on_chain,
+            ),
+            (
+                EPOCH_SWITCH_STEP_CALC_PRICING,
+                epoch_switch_state.calculated_protocol_pricing || pricing_done_on_chain,
+            ),
+            (
+                EPOCH_SWITCH_STEP_LOCK_LAST_SESSION,
+                epoch_switch_state.ran_lock_last_session || lock_done_on_chain,
+            ),
+        ] {
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[step])
+                .set(i64::from(done));
+        }
     }
 
     pub async fn run_epoch(

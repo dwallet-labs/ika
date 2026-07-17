@@ -209,7 +209,7 @@ impl SuiConnectorMetrics {
             .unwrap(),
             epoch_switch_step_done: register_int_gauge_vec_with_registry!(
                 "ika_sui_connector_epoch_switch_step_done",
-                "Per-step gauge (0/1) for epoch-switch progress within the current epoch",
+                "Per-step gauge (0/1) for epoch-switch progress within the current epoch, re-derived from chain state each tick (restart-proof for all steps except request_advance_epoch)",
                 &["step"],
                 registry,
             )
