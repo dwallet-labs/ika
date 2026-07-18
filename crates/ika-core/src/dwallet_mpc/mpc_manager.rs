@@ -2469,12 +2469,13 @@ impl DWalletMPCManager {
         );
 
         let session_identifier = request.session_identifier;
+        let session_sequence_number = request.session_sequence_number;
+        let session_type = request.session_type;
+        let protocol_name = DWalletSessionRequestMetricData::from(&request.protocol_data)
+            .name()
+            .to_owned();
 
         let status = self.session_status_from_request(request, true);
-
-        let session_computation_type = SessionComputationType::MPC {
-            messages_by_consensus_round: HashMap::new(),
-        };
 
         info!(
             ?curve,
@@ -2484,7 +2485,37 @@ impl DWalletMPCManager {
             "instantiating network-owned-address sign session",
         );
 
-        self.new_session(&session_identifier, status, None, session_computation_type);
+        // Upgrade an existing `WaitingForSessionRequest` placeholder in place
+        // rather than overwriting it with a fresh session. When this validator
+        // instantiates the sign late — it restarted, or its signing key /
+        // presign became available only after peers had already started the
+        // round — the message-receipt path may have created a placeholder that
+        // holds peers' buffered round messages. A blind `new_session` replaces
+        // that placeholder with an empty message buffer, dropping those
+        // messages; the late validator then can never advance (peers' earlier
+        // rounds arrived in consensus rounds it has already processed and are
+        // never redelivered), leaving the threshold sign permanently below
+        // quorum and wedging the epoch on NOA-checkpoint finalization. The
+        // event and internal-presign activation paths already upgrade in place
+        // for this exact reason (`handle_mpc_request`,
+        // `try_activate_internal_presign_request`).
+        if let Some(session) = self.sessions.get_mut(&session_identifier) {
+            if let SessionStatus::Active { request, .. } = &status {
+                session.set_request_diagnostic_metadata(request);
+            }
+            session.set_status(status);
+            session.set_request_metadata(session_sequence_number, session_type);
+            session.set_protocol_name(protocol_name);
+        } else {
+            self.new_session(
+                &session_identifier,
+                status,
+                None,
+                SessionComputationType::MPC {
+                    messages_by_consensus_round: HashMap::new(),
+                },
+            );
+        }
         true
     }
 

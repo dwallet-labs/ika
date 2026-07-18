@@ -13,6 +13,7 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::network_owned_address_sign_dkg_session_identifier;
+use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_mpc::integration_tests::network_dkg::{
     create_network_key_test, create_reconfigured_network_key_test,
 };
@@ -565,6 +566,140 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
     info!(
         "Test passed: presign pool exhaustion correctly buffers and later processes excess requests"
     );
+}
+
+/// A validator that instantiates a NOA sign *after* its peers have already
+/// broadcast their first-round messages must keep those buffered messages when
+/// it activates the session.
+///
+/// This reproduces the migration-rehearsal epoch wedge: during a staggered
+/// (rolling-restart) sign, some validators reach the sign later than others —
+/// their signing key / presign becomes available only after peers have started
+/// the round. The message-receipt path buffers peers' first-round messages in a
+/// `WaitingForSessionRequest` placeholder; if instantiation overwrites that
+/// placeholder with an empty message buffer, those messages are lost (the
+/// consensus rounds that carried them have already been processed and are never
+/// redelivered). The late validators are then stranded below the sign
+/// threshold, the sign never completes, and the epoch hard-wedges on
+/// NOA-checkpoint finalization.
+///
+/// Without the in-place placeholder upgrade in
+/// `instantiate_network_owned_address_sign_session`, the sign here never yields
+/// an output and `wait_for_network_owned_address_sign_output` times out.
+#[tokio::test]
+#[cfg(test)]
+async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let curve = DWalletCurve::Curve25519;
+    let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
+    let hash_scheme = DWalletHashScheme::SHA512;
+
+    let mut test_state = build_test_state(4);
+
+    // Create a network key and fill the EdDSA presign pool so every validator
+    // is able to instantiate the sign.
+    let (consensus_round, _network_key_bytes, encryption_key) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+    let start_round = test_state.consensus_round as u64;
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        signature_algorithm,
+        encryption_key,
+        start_round,
+    )
+    .await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // The threshold for a 4-validator committee is 3, so two "early" and two
+    // "late" validators means the sign can only complete if the late ones keep
+    // the early ones' first-round messages across instantiation.
+    let early_parties = [2usize, 3usize];
+    let late_parties = [0usize, 1usize];
+    let test_message = b"staggered-restart committee-freeze sign".to_vec();
+
+    // Phase 1: only the early validators receive the request. They instantiate
+    // and compute their first-round messages.
+    for &i in &early_parties {
+        test_state.network_owned_address_sign_request_senders[i]
+            .send(NetworkOwnedAddressSignRequest {
+                message: test_message.clone(),
+                curve,
+                signature_algorithm,
+                hash_scheme,
+            })
+            .await
+            .expect("failed to send early network-owned-address sign request");
+    }
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration().await;
+    }
+    utils::wait_for_computations(&mut test_state).await;
+
+    // Deliver the early validators' first-round messages to everyone. This is
+    // the only time these messages are on the wire — the collectors are cleared
+    // after distribution, exactly as a consensus round is processed once.
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        test_state.consensus_round as u64,
+    );
+    test_state.consensus_round += 1;
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration().await;
+    }
+
+    // Each late validator now holds a placeholder NOA-sign session buffering the
+    // early validators' messages, without having instantiated the sign itself.
+    for &i in &late_parties {
+        let has_buffering_placeholder = test_state.dwallet_mpc_services[i]
+            .dwallet_mpc_manager()
+            .sessions
+            .iter()
+            .any(|(id, session)| {
+                id.session_type() == SessionType::NetworkOwnedAddressSign
+                    && matches!(session.status, SessionStatus::WaitingForSessionRequest)
+            });
+        assert!(
+            has_buffering_placeholder,
+            "late validator {} should hold a WaitingForSessionRequest NOA-sign \
+             placeholder buffering the early validators' first-round messages",
+            i
+        );
+    }
+
+    // Phase 2: the late validators finally receive the request and instantiate.
+    for &i in &late_parties {
+        test_state.network_owned_address_sign_request_senders[i]
+            .send(NetworkOwnedAddressSignRequest {
+                message: test_message.clone(),
+                curve,
+                signature_algorithm,
+                hash_scheme,
+            })
+            .await
+            .expect("failed to send late network-owned-address sign request");
+    }
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration().await;
+    }
+    utils::wait_for_computations(&mut test_state).await;
+
+    // The sign completes only if the late validators preserved the buffered
+    // messages: all four then reach threshold and drive the sign to an output.
+    let sign_output = wait_for_network_owned_address_sign_output(&mut test_state).await;
+    assert_eq!(
+        sign_output.message, test_message,
+        "output message should match the request"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "signature should not be empty"
+    );
+    info!("Late-instantiation NOA sign completed — buffered messages survived");
 }
 
 // === Fast Schnorr (VSS) NOA sign E2E tests ===
