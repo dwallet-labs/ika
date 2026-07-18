@@ -90,6 +90,72 @@ is exported for every protocol (it is bounded — one series per protocol name)
 and emits zero for a completed protocol while its session remains tracked, so
 tests can distinguish a clean zero from a missing protocol observation.
 
+## Validator host telemetry
+
+Validator processes register host telemetry in the default registry, so the
+existing authenticated metrics-push task sends it through `ika-proxy`. Fullnodes
+and notifiers do not register these metrics. Collection refreshes every 15
+seconds; `metrics.push-interval-seconds` still determines the remote-write
+cadence.
+
+`ika_validator_up` is the inventory/heartbeat series. Its value is `1` while the
+process is running. A stopped validator cannot push a zero, so alerts must treat
+an absent or stale series as down. The series carries bounded labels for binary
+version and git revision, OS/kernel/architecture/hostname, deployment and cloud
+placement/identity, memory technology, and container/Kubernetes identity.
+`ika-proxy` adds the authenticated on-chain validator `host`, configured
+`network`, and socket-observed `public_ip`; node-provided values cannot override
+those labels.
+
+The remaining families cover:
+
+- binary SHA-256 and size;
+- CPU hardware/frequency and logical/physical count, system CPU ratio, load
+  averages, thermal sensors, and process CPU cores;
+- host memory/swap, process resident/virtual memory, and Linux cgroup CPU and
+  memory limits;
+- DMI machine, motherboard, BIOS, virtualization, and hashed machine identity;
+- database-volume identity/capacity and validator-process read/write bytes;
+- aggregate interface receive/transmit bytes and errors;
+- host boot time/uptime, process uptime/thread/file-descriptor pressure,
+  collection freshness, and categorized collection errors.
+
+The collector never exports arbitrary environment variables. They frequently
+contain credentials and their unconstrained values would create unbounded
+series. Operators can supply the following allow-listed metadata; values are
+trimmed and limited to 128 characters:
+
+| Variable | `ika_validator_up` label |
+|---|---|
+| `IKA_METRICS_ENVIRONMENT` | `deployment_environment` |
+| `IKA_METRICS_CLOUD_PROVIDER` | `cloud_provider` |
+| `IKA_METRICS_REGION` | `region` |
+| `IKA_METRICS_ZONE` | `zone` |
+| `IKA_METRICS_LOCATION` | `location` |
+| `IKA_METRICS_INSTANCE_TYPE` | `instance_type` |
+| `IKA_METRICS_CLOUD_INSTANCE_ID` | `cloud_instance_id` |
+| `IKA_METRICS_CLOUD_IMAGE_ID` | `cloud_image_id` |
+| `IKA_METRICS_PRIVATE_IP` | `private_ip` |
+| `IKA_METRICS_MEMORY_TYPE` | `memory_type` |
+| `IKA_METRICS_CONTAINER_RUNTIME` | `container_runtime` |
+| `IKA_METRICS_CONTAINER_ID` | `container_id` |
+| `IKA_METRICS_CONTAINER_IMAGE` | `container_image` |
+| `IKA_METRICS_K8S_CLUSTER` | `kubernetes_cluster` |
+| `IKA_METRICS_K8S_NAMESPACE` | `kubernetes_namespace` |
+| `IKA_METRICS_K8S_POD` | `kubernetes_pod` |
+| `IKA_METRICS_K8S_NODE` | `kubernetes_node` |
+
+Common AWS region, generic region/zone/instance, and Kubernetes downward-API
+variables are used as fallbacks. Container/runtime/ID, DMI/SMBIOS memory type,
+virtualization, and cgroup limits are also detected locally when the platform
+exposes them. The background collector requests only identity/placement fields
+from the AWS, GCP, or Azure hardcoded link-local metadata endpoints with a
+one-second timeout and proxying disabled; when DMI or environment data identifies
+the provider, only that endpoint is queried. It never requests credentials,
+tokens other than the short-lived AWS IMDSv2 request token, tags, or user data.
+Set `IKA_DISABLE_CLOUD_METADATA=1` to disable these requests. Location is never
+derived through a third-party IP-geolocation service.
+
 ## Inventory (generated)
 
 Regenerate with: `./scripts/check-metric-names.sh --list`
@@ -313,6 +379,49 @@ ika_system_checkpoint_errors
 ika_system_checkpoint_participation
 ika_system_checkpoint_roots_count
 ika_system_checkpoint_signatures_verified
+ika_validator_binary_info
+ika_validator_binary_size_bytes
+ika_validator_cgroup_cpu_limit_cores
+ika_validator_cgroup_memory_available_bytes
+ika_validator_cgroup_memory_limit_bytes
+ika_validator_cgroup_memory_rss_bytes
+ika_validator_cloud_metadata_available
+ika_validator_cpu_frequency_mhz
+ika_validator_cpu_info
+ika_validator_cpu_logical_count
+ika_validator_cpu_physical_count
+ika_validator_load_average_fifteen_minutes
+ika_validator_load_average_five_minutes
+ika_validator_load_average_one_minute
+ika_validator_machine_info
+ika_validator_memory_available_bytes
+ika_validator_memory_total_bytes
+ika_validator_memory_used_bytes
+ika_validator_network_receive_bytes_total
+ika_validator_network_receive_errors_total
+ika_validator_network_transmit_bytes_total
+ika_validator_network_transmit_errors_total
+ika_validator_process_cpu_cores
+ika_validator_process_disk_read_bytes_total
+ika_validator_process_disk_written_bytes_total
+ika_validator_process_open_file_descriptors
+ika_validator_process_resident_memory_bytes
+ika_validator_process_thread_count
+ika_validator_process_uptime_seconds
+ika_validator_process_virtual_memory_bytes
+ika_validator_storage_available_bytes
+ika_validator_storage_info
+ika_validator_storage_total_bytes
+ika_validator_swap_total_bytes
+ika_validator_swap_used_bytes
+ika_validator_system_boot_unixtime
+ika_validator_system_cpu_usage_ratio
+ika_validator_system_uptime_seconds
+ika_validator_telemetry_collection_errors_total
+ika_validator_telemetry_last_refresh_unixtime
+ika_validator_temperature_celsius
+ika_validator_temperature_critical_celsius
+ika_validator_up
 ```
 
 ## 1.2.0 rename table (legacy → current)

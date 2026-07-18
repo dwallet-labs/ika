@@ -25,5 +25,5 @@ bin_version::bin_version!();
 
 fn main() {
     // Run as validator with explicit mode validation
-    ika_node::run_node(Some(NodeMode::Validator), VERSION);
+    ika_node::run_node(Some(NodeMode::Validator), VERSION, GIT_REVISION);
 }

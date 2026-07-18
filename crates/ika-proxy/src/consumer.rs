@@ -110,41 +110,39 @@ pub fn populate_labels(
     name: String,               // host field for grafana agent (from chain data)
     network: String,            // network name from ansible (via config)
     inventory_hostname: String, // inventory_name from ansible (via config)
+    source_ip: String,          // request source observed by ika-proxy
     data: Vec<MetricFamily>,
 ) -> Vec<MetricFamily> {
     let timer = CONSUMER_OPERATION_DURATION
         .with_label_values(&["populate_labels"])
         .start_timer();
     debug!("received metrics from {name} on {inventory_hostname}");
-    let network_label = proto::LabelPair {
-        name: Some("network".into()),
-        value: Some(network),
-        ..Default::default()
-    };
-
-    let host_label = proto::LabelPair {
-        name: Some("host".into()),
-        value: Some(name),
-        ..Default::default()
-    };
-
-    let source_label = proto::LabelPair {
-        name: Some("metrics_source".into()),
-        value: Some("ika-proxy".into()),
-        ..Default::default()
-    };
-
-    let labels = vec![network_label, host_label, source_label];
-
     let mut data = data;
-    // add our extra labels to our incoming metric data
+    // These labels come from proxy configuration, authenticated chain data,
+    // and the accepted socket. Replace node-supplied values rather than
+    // creating duplicate labels that remote_write would reject.
     for mf in data.iter_mut() {
+        let validator_up = mf.name() == "ika_validator_up";
         for m in mf.mut_metric() {
-            m.label.extend(labels.clone());
+            upsert_label(m, "network", &network);
+            upsert_label(m, "host", &name);
+            upsert_label(m, "metrics_source", "ika-proxy");
+            if validator_up {
+                upsert_label(m, "public_ip", &source_ip);
+            }
         }
     }
     timer.observe_duration();
     data
+}
+
+fn upsert_label(metric: &mut proto::Metric, name: &str, value: &str) {
+    metric.label.retain(|label| label.name() != name);
+    metric.label.push(proto::LabelPair {
+        name: Some(name.to_owned()),
+        value: Some(value.to_owned()),
+        ..Default::default()
+    });
 }
 
 fn encode_compress(request: &WriteRequest) -> Result<Vec<u8>, (StatusCode, &'static str)> {
@@ -374,6 +372,7 @@ mod tests {
             "validator-0".into(),
             "unittest-network".into(),
             "inventory-hostname".into(),
+            "203.0.113.10".into(),
             vec![mf],
         );
         let metric = &labeled_mf[0].get_metric()[0];
@@ -384,6 +383,61 @@ mod tests {
                 ("host", "validator-0"),
                 ("metrics_source", "ika-proxy"),
             ])
+        );
+    }
+
+    #[test]
+    fn test_populate_labels_adds_observed_ip_only_to_validator_up() {
+        let up = create_metric_family(
+            "ika_validator_up",
+            "validator up",
+            Some(proto::MetricType::GAUGE),
+            vec![create_metric_histogram(
+                create_labels(vec![("host", "spoofed-host"), ("host", "duplicate-host")]),
+                create_histogram(),
+            )],
+        );
+        let other = create_metric_family(
+            "ika_other_metric",
+            "other",
+            Some(proto::MetricType::GAUGE),
+            vec![create_metric_histogram(
+                create_labels(vec![]),
+                create_histogram(),
+            )],
+        );
+
+        let labeled = populate_labels(
+            "validator-0".into(),
+            "unittest-network".into(),
+            "inventory-hostname".into(),
+            "203.0.113.10".into(),
+            vec![up, other],
+        );
+        let up_labels = labeled[0].get_metric()[0].get_label();
+
+        assert_eq!(
+            up_labels
+                .iter()
+                .filter(|label| label.name() == "host")
+                .count(),
+            1
+        );
+        assert!(
+            up_labels
+                .iter()
+                .any(|label| label.name() == "host" && label.value() == "validator-0")
+        );
+        assert!(
+            up_labels
+                .iter()
+                .any(|label| label.name() == "public_ip" && label.value() == "203.0.113.10")
+        );
+        assert!(
+            labeled[1].get_metric()[0]
+                .get_label()
+                .iter()
+                .all(|label| label.name() != "public_ip")
         );
     }
 }

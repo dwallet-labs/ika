@@ -47,7 +47,10 @@ tower.workspace = true
 reqwest.workspace = true
 tap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 humantime.workspace = true
+sha2.workspace = true
+sysinfo.workspace = true
 
 sui-macros.workspace = true
 ika-config.workspace = true

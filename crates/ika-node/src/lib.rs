@@ -93,6 +93,7 @@ pub mod admin;
 mod handle;
 pub mod metrics;
 mod node_runner;
+mod validator_metrics;
 
 pub use node_runner::{NodeArgs, run_node, run_node_with_name};
 

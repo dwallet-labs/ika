@@ -215,6 +215,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
+sha2 = "0.10.9"
+sysinfo = "0.35.2"
 roaring = "0.11.1"
 rstest = "0.25.0"
 rustls-pemfile = "2"
