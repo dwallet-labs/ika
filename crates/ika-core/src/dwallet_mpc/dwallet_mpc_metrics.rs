@@ -191,6 +191,16 @@ pub struct DWalletMPCMetrics {
     /// service termination has no source session), and `severity`.
     pub(crate) anomaly_snapshots_total: IntCounterVec,
 
+    /// Expected completion races: the session completed via the peers' output
+    /// quorum before this validator's own output returned through consensus,
+    /// while its local computation was still running, or before that
+    /// computation's late result arrived. This is how threshold cryptography
+    /// behaves for any validator outside the fastest two-thirds of a session,
+    /// so these are counted here — NOT in the anomaly taxonomy — to keep
+    /// `anomaly_snapshots_total` meaningful. Labels: `race` (fixed condition
+    /// strings), `session_type`.
+    pub(crate) completion_races_total: IntCounterVec,
+
     /// Individual reasons present in emitted anomaly snapshots. One snapshot can
     /// increment several triggers. Trigger values are compile-time static strings.
     pub(crate) anomaly_triggers_total: IntCounterVec,
@@ -549,6 +559,13 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_anomaly_triggers_total",
                 "Trigger conditions included in emitted privacy-safe MPC anomaly snapshots",
                 &["trigger", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            completion_races_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_completion_races_total",
+                "Expected races where a session completed via the peers' output quorum before the local validator caught up",
+                &["race", "session_type"],
                 registry,
             )
             .unwrap(),

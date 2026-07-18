@@ -26,30 +26,57 @@ increments, so the volume guard cannot silently blind operators.
 `DWalletMPCManager::emit_session_anomaly` flushes a snapshot when the node
 observes any of these conditions:
 
-- local computation failure or an update arriving after session completion;
+- local computation failure;
 - a locally produced rejected output, or the node's rejected output returning
   through consensus;
 - invalid output, output conflict, protocol-message submission failure, or
   final-output submission failure;
 - a non-threshold voting error;
 - rejected quorum;
-- quorum before the node's output returns through consensus;
-- quorum while a local computation is still running;
 - more than one report digest, a disagreeing voter, or malicious authorities
   embedded in the winning output report;
 - any final malicious authority, especially the local authority;
+- a network-key reconfiguration computation finishing after the session
+  completed via the peers' output quorum (the late-output comparison below);
 - MPC service termination after the node recognizes itself as malicious.
 
 The ordinary `ThresholdNotReached` result is not anomalous. It remains silent
 because it is the expected state while reports accumulate.
 
-One update-after-completion case carries extra evidence: when a network-key
-reconfiguration computation returns `Finalize` after the session already
-completed via the peers' output quorum, production still discards the result
-(nothing is submitted, the session stays completed), but it digests the
-discarded raw output bytes and compares them against the quorum-agreed
-output's raw-bytes digest recorded at quorum time. The comparison lands in the
-snapshot trigger (`late_network_key_output_matched_quorum` /
+### Benign completion races are counted, not snapshotted
+
+Quorum forming before a given validator's own output loops back through
+consensus, quorum arriving while that validator's computation is still
+running, and a computation update arriving after the session completed are
+how threshold cryptography behaves for any validator outside the fastest
+two-thirds of a session. They are deliberately NOT anomalies: with one
+emission per session per kind, high internal-presign churn turned them into a
+network-wide snapshot firehose (~9/sec observed on testnet) that buried the
+defect-correlated kinds. They increment
+`ika_dwallet_mpc_completion_races_total{race,session_type}` instead, where
+`race` is one of:
+
+- `quorum_reached_before_local_output_observed`
+- `local_computation_pending_at_session_completion`
+- `local_computation_update_received_after_session_became_non_active`
+
+When a defect trigger fires for the same quorum (rejection, conflicting
+reports, malicious attribution), the first two conditions are still attached
+to that snapshot's `trigger_conditions` as context, and the snapshot fields
+(`local_output_observed`, `quorum_reached_without_local_output`,
+`running_computation_count`) carry the race state either way.
+
+### Late network-key reconfiguration outputs
+
+One update-after-completion case carries extra evidence and is the only one
+that still emits a `computation_update_after_session_completion` snapshot:
+when a network-key reconfiguration computation returns `Finalize` after the
+session already completed via the peers' output quorum, production still
+discards the result (nothing is submitted, the session stays completed), but
+it digests the discarded raw output bytes and compares them against the
+quorum-agreed output's raw-bytes digest recorded at quorum time. The
+comparison lands in the snapshot trigger
+(`late_network_key_output_matched_quorum` /
 `late_network_key_output_diverged_from_quorum` /
 `late_network_key_output_unverified`), in the session trace as a
 late-output-after-completion event, and in two scrapeable gauges:
@@ -348,13 +375,23 @@ filter the stored JSON line instead:
 
 ## Alerting metrics
 
-Two low-cardinality counters accompany the local log:
+Three low-cardinality counters accompany the local log:
 
 - `ika_dwallet_mpc_anomaly_snapshots_total{anomaly_kind,session_type,severity}`
   increments once per deduplicated snapshot (`session_type="unknown"` is used
   only when a service-exit event has no recoverable source session);
 - `ika_dwallet_mpc_anomaly_triggers_total{trigger,session_type}` increments once
-  for every reason contained in a snapshot.
+  for every reason contained in a snapshot;
+- `ika_dwallet_mpc_completion_races_total{race,session_type}` counts the benign
+  completion races described above, once per occurrence (no per-session
+  dedup). A healthy validator under load grows this steadily; it is a trend
+  panel, not an alert.
+
+Because the benign races no longer emit snapshots, any increase of
+`anomaly_snapshots_total` on a healthy network is worth investigating.
+`anomaly_triggers_total{trigger="quorum_reached_before_local_output_observed"}`
+now counts only races that co-occurred with a defect trigger; raw race volume
+lives in `completion_races_total`.
 
 Example PromQL:
 
@@ -362,12 +399,10 @@ Example PromQL:
 increase(ika_dwallet_mpc_anomaly_snapshots_total[5m]) > 0
 
 increase(ika_dwallet_mpc_anomaly_triggers_total{
-  trigger="quorum_reached_before_local_output_observed"
-}[5m]) > 0
-
-increase(ika_dwallet_mpc_anomaly_triggers_total{
   trigger="local_authority_in_final_malicious_set"
 }[5m]) > 0
+
+sum by (race) (rate(ika_dwallet_mpc_completion_races_total[5m]))
 ```
 
 Metrics intentionally omit session IDs and authority sets. They alert an
@@ -377,7 +412,10 @@ operator; the local Loki snapshot supplies session-level evidence.
 
 Field order is not stable; examples omit unrelated `None` and empty fields.
 
-### Quorum without local output
+### Quorum defect while the local validator lags
+
+A quorum snapshot only exists when a defect trigger fired; the race
+conditions then appear as context alongside it:
 
 ```text
 WARN event="mpc_session_anomaly" anomaly_kind="quorum_anomaly"
@@ -388,7 +426,8 @@ diagnostic_json={"schema_version":1,"session_id":"c30d...94a7",
   "local_output_submitted":false,"local_output_observed":false,
   "quorum_reached_without_local_output":true,
   "quorum_output_cached_without_local_output":true,
-  "trigger_conditions":["quorum_reached_before_local_output_observed",
+  "trigger_conditions":["conflicting_output_reports_observed",
+    "quorum_reached_before_local_output_observed",
     "local_computation_pending_at_session_completion"],
   "vote":{"threshold_required":3,"winning_weight":3,
     "reports":[...],"vote_groups":[...]}}
@@ -427,8 +466,11 @@ diagnostic_json={"schema_version":1,
 
 ## Diagnosing quorum without the local validator
 
-For the observed System session at round 844172, the quorum snapshot answers
-the previously ambiguous questions directly:
+Quorum forming before the local validator's output loops back is, on its own,
+only a completion-race counter increment — no snapshot exists for it. When it
+co-occurred with a defect trigger, the quorum snapshot answers the previously
+ambiguous questions directly (for the observed System session at round
+844172):
 
 1. `local_output_observed=false` and
    `quorum_reached_without_local_output=true` establish that quorum preceded
@@ -469,8 +511,11 @@ malicious.” No voting, finalization, cache, or lifecycle decision is changed.
 
 The flows in `.github/workflows/upgrade-test.yaml` do not deliberately inject
 an MPC anomaly. Rolling-restart and churn flows can legitimately reach quorum
-before a restarted validator reproduces and observes its local output, so a
-blanket assertion that these workflows contain no anomaly snapshots would be
-incorrect. Diagnostic behavior is covered by focused manager tests; no upgrade
-workflow log assertion is warranted unless a future flow injects a specific
-anomaly and asserts its expected fields.
+before a restarted validator reproduces and observes its local output; that
+race no longer emits a snapshot, but an honest network-key reconfiguration
+straggler still emits the matched-case
+`computation_update_after_session_completion` snapshot, so a blanket
+assertion that these workflows contain no anomaly snapshots would still be
+incorrect. Diagnostic behavior is covered by focused manager tests; no
+upgrade workflow log assertion is warranted unless a future flow injects a
+specific anomaly and asserts its expected fields.

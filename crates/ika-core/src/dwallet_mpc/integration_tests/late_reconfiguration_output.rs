@@ -360,7 +360,9 @@ async fn late_reconfiguration_finalize_with_divergent_bytes_is_flagged() {
 /// A late finalize for a session whose reconfiguration request was never
 /// observed must not record or export anything — the capture is deliberately
 /// scoped to the network-key reconfiguration compatibility boundary to keep
-/// the per-session metric cardinality bounded.
+/// the per-session metric cardinality bounded. It is also the expected
+/// honest-straggler race, so no anomaly snapshot may be emitted for it; the
+/// occurrence lands on the plain completion-race counter instead.
 #[tokio::test]
 #[cfg(test)]
 async fn late_finalize_for_non_reconfiguration_session_records_nothing() {
@@ -380,10 +382,20 @@ async fn late_finalize_for_non_reconfiguration_session_records_nothing() {
     )
     .await;
 
-    let session = services[0]
-        .dwallet_mpc_manager()
-        .sessions
-        .get(&session_identifier)
-        .unwrap();
+    let manager = services[0].dwallet_mpc_manager();
+    let session = manager.sessions.get(&session_identifier).unwrap();
     assert!(session.late_output.is_none());
+    assert_eq!(session.emitted_anomaly_count(), 0);
+    assert!(session.last_anomaly_snapshot().is_none());
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&[
+                "local_computation_update_received_after_session_became_non_active",
+                "system",
+            ])
+            .get(),
+        1
+    );
 }

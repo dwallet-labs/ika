@@ -378,10 +378,74 @@ fn self_malicious_service_exit_records_termination_reason() {
     );
 }
 
+/// Quorum forming before this validator's own output or computation catches
+/// up is normal threshold-MPC behavior, not a defect: no anomaly snapshot may
+/// be emitted, and the races land on the plain completion-race counter
+/// instead (per-session dedup times high session churn flooded the anomaly
+/// taxonomy otherwise).
 #[test]
-fn quorum_without_local_output_captures_running_computation_and_redacts_payload() {
+fn benign_quorum_race_counts_without_anomaly_snapshot() {
     let (authorities, mut services) = authorities(0);
     let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .cryptographic_computations_orchestrator
+        .currently_running_cryptographic_computations
+        .insert(ComputationId {
+            session_identifier,
+            consensus_round: 40,
+            mpc_round: Some(3),
+            attempt_number: 0,
+        });
+    let reports = authorities
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|authority| internal_report(*authority, session_identifier, vec![3], vec![]))
+        .collect();
+
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(41, reports);
+
+    let manager = services[0].dwallet_mpc_manager();
+    let session = manager.sessions.get(&session_identifier).unwrap();
+    assert_eq!(session.emitted_anomaly_count(), 0);
+    assert!(session.last_anomaly_snapshot().is_none());
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&["quorum_anomaly", "system", "warn"])
+            .get(),
+        0
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&["quorum_reached_before_local_output_observed", "system"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&["local_computation_pending_at_session_completion", "system"])
+            .get(),
+        1
+    );
+}
+
+/// When a defect trigger fires for the same quorum, the snapshot is emitted
+/// and carries the benign race conditions as context, the running-computation
+/// state, and no protocol payload.
+#[test]
+fn defect_quorum_snapshot_keeps_race_context_and_redacts_payload() {
+    let (authorities, mut services) = authorities(0);
+    let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    let malicious_authority = authorities[3];
     let secret_marker = b"PRIVATE_OUTPUT_MUST_NOT_APPEAR".to_vec();
     services[0]
         .dwallet_mpc_manager_mut()
@@ -402,7 +466,7 @@ fn quorum_without_local_output_captures_running_computation_and_redacts_payload(
                 *authority,
                 session_identifier,
                 secret_marker.clone(),
-                vec![],
+                vec![malicious_authority],
             )
         })
         .collect();
@@ -418,16 +482,26 @@ fn quorum_without_local_output_captures_running_computation_and_redacts_payload(
         .unwrap()
         .last_anomaly_snapshot()
         .unwrap();
-    assert!(!snapshot.local_output_observed);
-    assert!(snapshot.quorum_reached_without_local_output);
-    assert_eq!(
-        snapshot.local_computation_state,
-        LocalComputationState::Running
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"malicious_authority_identified")
+    );
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"quorum_reached_before_local_output_observed")
     );
     assert!(
         snapshot
             .trigger_conditions
             .contains(&"local_computation_pending_at_session_completion")
+    );
+    assert!(!snapshot.local_output_observed);
+    assert!(snapshot.quorum_reached_without_local_output);
+    assert_eq!(
+        snapshot.local_computation_state,
+        LocalComputationState::Running
     );
     let rendered = snapshot.to_json().unwrap();
     assert!(!rendered.contains(&format!("{:?}", secret_marker)));

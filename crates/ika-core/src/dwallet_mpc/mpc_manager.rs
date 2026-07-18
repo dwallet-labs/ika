@@ -734,12 +734,6 @@ impl DWalletMPCManager {
                     if rejected {
                         trigger_conditions.push("rejected_output_reached_quorum");
                     }
-                    if !local_output_observed {
-                        trigger_conditions.push("quorum_reached_before_local_output_observed");
-                    }
-                    if running_computation_count > 0 {
-                        trigger_conditions.push("local_computation_pending_at_session_completion");
-                    }
                     if !malicious_voters.is_empty() {
                         trigger_conditions.push("weighted_majority_identified_malicious_voters");
                     }
@@ -755,7 +749,39 @@ impl DWalletMPCManager {
                     if vote_diagnostics.local_authority_malicious_reason.is_some() {
                         trigger_conditions.push("local_authority_in_final_malicious_set");
                     }
+                    // Quorum forming before this validator's own output or
+                    // computation catches up is the expected state for any
+                    // validator outside the fastest two-thirds of a session,
+                    // not a defect: count it on a plain counter, and attach
+                    // it to the snapshot only as context when one of the
+                    // defect triggers above fired for the same session.
+                    let session_type = session_type_label(session_identifier.session_type());
+                    if !local_output_observed {
+                        self.dwallet_mpc_metrics
+                            .completion_races_total
+                            .with_label_values(&[
+                                "quorum_reached_before_local_output_observed",
+                                session_type,
+                            ])
+                            .inc();
+                    }
+                    if running_computation_count > 0 {
+                        self.dwallet_mpc_metrics
+                            .completion_races_total
+                            .with_label_values(&[
+                                "local_computation_pending_at_session_completion",
+                                session_type,
+                            ])
+                            .inc();
+                    }
                     if !trigger_conditions.is_empty() {
+                        if !local_output_observed {
+                            trigger_conditions.push("quorum_reached_before_local_output_observed");
+                        }
+                        if running_computation_count > 0 {
+                            trigger_conditions
+                                .push("local_computation_pending_at_session_completion");
+                        }
                         self.emit_session_anomaly(
                             session_identifier,
                             MpcAnomalyKind::QuorumAnomaly,
