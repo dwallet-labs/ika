@@ -23,7 +23,10 @@ use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
 use mysten_metrics::spawn_logged_monitored_task;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
 use tokio::sync::watch::{Receiver, Sender};
@@ -105,6 +108,12 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        // Set of network keys the MPC manager has actually instantiated (it
+        // writes here post-instantiation). Read by `sync_dwallet_network_keys`
+        // to distinguish a running validator (key present → keep serving the
+        // off-chain reconfiguration output) from a fresh/restart validator (key
+        // absent → source the current-epoch output from chain instead).
+        instantiated_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
         off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
@@ -123,6 +132,7 @@ where
             dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
             network_key_blob_source,
+            instantiated_network_keys,
             mode,
             self.metrics.clone(),
         ));
@@ -850,6 +860,7 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        instantiated_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
         mode: NodeMode,
         metrics: Arc<SuiConnectorMetrics>,
     ) {
@@ -874,7 +885,7 @@ where
         // validator stuck incomplete escalates to warn every 60th
         // consecutive tick (~5 min).
         let mut consecutive_overlay_incomplete_ticks: HashMap<ObjectID, u64> = HashMap::new();
-        'sync_network_keys: loop {
+        loop {
             time::sleep(Duration::from_secs(5)).await;
 
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -979,9 +990,14 @@ where
                 // TODO(v3->v4 migration): once all keys are off-chain, delete this
                 // whole `key_blobs_already_cached` branch and collapse
                 // `chain_fetched` back to the unconditional `off_chain_on`
-                // synthesize-empty fast path — a v4-native key carries empty
-                // on-chain blobs, so the import would read empty and the cache
-                // path already covers it.
+                // synthesize-empty fast path — in steady-state v4 the off-chain
+                // overlay always fills a v4-native key's blobs, so the fast path
+                // covers it. (The chain still HOLDS the real DKG/reconfiguration
+                // blobs — they are written on-chain at DKG/reconfiguration
+                // regardless of protocol version — but no steady-state chain read
+                // is needed once every key is off-chain. This is also why the
+                // un-instantiated fresh/restart chain read below reliably yields
+                // the real current-epoch output rather than empty bytes.)
                 // ===================================================================
                 let dkg_in_handoff = network_key_blob_source
                     .load_full()
@@ -998,8 +1014,27 @@ where
                 // DKG'd in a PRIOR epoch whose DKG output is absent from the
                 // handoff is a genuine not-yet-migrated pre-v4 key.
                 let freshly_dkgd_this_epoch = network_dec_key_shares.dkg_at_epoch == current_epoch;
-                let key_blobs_already_cached =
-                    off_chain_on && (dkg_in_handoff || freshly_dkgd_this_epoch);
+                // Whether the MPC manager has already instantiated this key.
+                // A fresh/restart validator holds nothing instantiated yet: for
+                // such a key the off-chain overlay serves this epoch's
+                // just-produced reconfiguration output R(M) (encrypted to the
+                // NEXT committee, undecryptable here), which the adoption
+                // pass's produced-this-epoch guard then skips forever — the key
+                // is never instantiated and every session parks on it. An
+                // un-instantiated key must therefore NOT take the cached fast
+                // path: it falls through to the full chain read and installs
+                // the canonical current-epoch output R(M-1). A running
+                // validator that already holds the key is byte-unchanged: it
+                // keeps the off-chain fast path. Non-validator modes never
+                // instantiate keys, so they keep the fast path unconditionally
+                // (their overlay is legitimately blob-empty by design).
+                let key_is_instantiated = !mode.is_validator()
+                    || instantiated_network_keys
+                        .load()
+                        .contains(&network_dec_key_shares.id);
+                let key_blobs_already_cached = off_chain_on
+                    && key_is_instantiated
+                    && (dkg_in_handoff || freshly_dkgd_this_epoch);
                 let chain_fetched = if off_chain_on && key_blobs_already_cached {
                     Ok(
                         ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
@@ -1030,15 +1065,12 @@ where
                         // installed or the source has neither blob,
                         // the merged value equals the chain copy
                         // byte-for-byte.
-                        let merged = match network_key_blob_source.load_full() {
-                            Some(source) => {
-                                crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(
-                                    key_full_data,
-                                    source.as_ref().as_ref(),
-                                )
-                            }
-                            None => key_full_data,
-                        };
+                        let source_snapshot = network_key_blob_source.load_full();
+                        let merged = overlay_network_key_data(
+                            key_is_instantiated,
+                            key_full_data,
+                            source_snapshot.as_deref().map(|source| source.as_ref()),
+                        );
                         // Under off-chain mode the chain copy carries
                         // empty blob bytes; the overlay above fills them
                         // from the local producer cache. A usable entry
@@ -1129,7 +1161,18 @@ where
                             error=?err,
                             "failed to get network decryption key data, retrying...",
                         );
-                        continue 'sync_network_keys;
+                        // Skip only THIS key: it stays out of
+                        // `last_fetched_network_keys`, so the next tick
+                        // re-selects it. Aborting the whole outer pass would
+                        // also skip the channel send below — and a sibling key
+                        // that merged COMPLETE earlier in this same pass was
+                        // already recorded as fetched, so its data would never
+                        // be published: absent from the overlay, never
+                        // adopted, never instantiated until the next epoch's
+                        // refetch. The un-instantiated restart-recovery chain
+                        // read makes this arm hot on exactly that recovery
+                        // path.
+                        continue;
                     }
                 }
             }
@@ -1479,6 +1522,115 @@ where
                     "Observed {len} new events from Sui network"
                 );
             }
+        }
+    }
+}
+
+/// Chooses how to overlay locally-cached off-chain blobs onto chain-fetched
+/// network-key data, based on whether the MPC manager has already
+/// instantiated the key on this node.
+///
+/// - **Instantiated** (running validator): prefer the off-chain source for
+///   both blobs — the steady-state v4 read path (the chain copy may even be
+///   metadata-only with empty blobs, synthesized by the fast path).
+/// - **Un-instantiated** (fresh/restart validator): keep the chain's
+///   canonical current-epoch reconfiguration output. Overlaying the
+///   off-chain source's reconfiguration blob would re-override it with the
+///   output this epoch's reconfiguration just produced — encrypted to the
+///   NEXT committee, which the adoption pass's produced-this-epoch guard
+///   then skips forever, stranding the key un-instantiated for the rest of
+///   the epoch (every session parks on it). The DKG blob is the one field
+///   still preferred from the off-chain source: it is the stable per-key
+///   anchor, and the locally-mirrored copy is the CANONICAL representation
+///   whose digest the prior epoch's handoff cert pins — after the V2→V3
+///   canonical migration the chain's original anchor no longer matches the
+///   cert, and adoption would reject the key on the DKG-digest gate.
+///
+/// With no source installed the chain copy flows through unchanged.
+fn overlay_network_key_data(
+    key_is_instantiated: bool,
+    chain_data: DWalletNetworkEncryptionKeyData,
+    source: Option<&dyn crate::validator_metadata::NetworkKeyBlobSource>,
+) -> DWalletNetworkEncryptionKeyData {
+    let Some(source) = source else {
+        return chain_data;
+    };
+    if key_is_instantiated {
+        crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(chain_data, source)
+    } else {
+        let network_dkg_public_output = source
+            .network_dkg_output_blob(&chain_data.id)
+            .unwrap_or(chain_data.network_dkg_public_output);
+        DWalletNetworkEncryptionKeyData {
+            network_dkg_public_output,
+            ..chain_data
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validator_metadata::StaticNetworkKeyBlobSource;
+
+    fn chain_data(key_id: ObjectID) -> DWalletNetworkEncryptionKeyData {
+        DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: 7,
+            dkg_at_epoch: 0,
+            network_dkg_public_output: b"chain dkg anchor".to_vec(),
+            current_reconfiguration_public_output: b"chain current-epoch reconfiguration output"
+                .to_vec(),
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        }
+    }
+
+    /// The restart-recovery contract (#1852): for a key the manager has NOT
+    /// instantiated, the off-chain source must never override the chain's
+    /// current-epoch reconfiguration output (the source serves the output
+    /// this epoch's reconfiguration just produced, encrypted to the next
+    /// committee), while the DKG blob still prefers the source's canonical
+    /// mirror (the digest the handoff cert pins).
+    #[test]
+    fn un_instantiated_key_keeps_chain_reconfiguration_output_and_canonical_dkg() {
+        let key_id = ObjectID::random();
+        let mut source = StaticNetworkKeyBlobSource::new();
+        source.insert_dkg(key_id, b"canonical mirrored dkg output".to_vec());
+        source.insert_reconfig(
+            key_id,
+            b"this epoch's output for the next committee".to_vec(),
+        );
+
+        let merged = overlay_network_key_data(false, chain_data(key_id), Some(&source));
+        assert_eq!(
+            merged.current_reconfiguration_public_output,
+            b"chain current-epoch reconfiguration output".to_vec(),
+            "an un-instantiated key must keep the chain's current-epoch output"
+        );
+        assert_eq!(
+            merged.network_dkg_public_output,
+            b"canonical mirrored dkg output".to_vec(),
+            "the DKG blob must still prefer the canonical off-chain mirror"
+        );
+
+        // An instantiated key keeps the steady-state behavior: both blobs
+        // prefer the off-chain source.
+        let merged = overlay_network_key_data(true, chain_data(key_id), Some(&source));
+        assert_eq!(
+            merged.current_reconfiguration_public_output,
+            b"this epoch's output for the next committee".to_vec(),
+            "an instantiated key keeps the off-chain overlay for the reconfiguration output"
+        );
+        assert_eq!(
+            merged.network_dkg_public_output,
+            b"canonical mirrored dkg output".to_vec(),
+        );
+
+        // No source installed: the chain copy flows through unchanged for
+        // both instantiation states.
+        for key_is_instantiated in [false, true] {
+            let merged = overlay_network_key_data(key_is_instantiated, chain_data(key_id), None);
+            assert_eq!(merged, chain_data(key_id));
         }
     }
 }

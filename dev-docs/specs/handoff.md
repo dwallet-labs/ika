@@ -209,10 +209,11 @@ next epoch inherits.
    not be conflated with the genuinely-absent-certificate case, which
    exists only at the v3→v4 boundary and falls back to the chain copy.
    Chain reads here are deprecated: v4 keeps chain writes for
-   compatibility, but the certificate-gated off-chain copy is the only
-   sanctioned read path.
+   compatibility, and the certificate-gated off-chain copy is the
+   sanctioned steady-state read path — the one exception is the
+   un-instantiated restart-recovery read (third guard below).
 
-   Two adoption guards keep the installed parameter set identical
+   Three adoption guards keep the installed parameter set identical
    across the committee (a validator that installs anything else
    honestly computes byte-divergent MPC outputs and is convicted
    malicious by the output-quorum byte-equality tally — silently
@@ -229,6 +230,36 @@ next epoch inherits.
      otherwise burns the instantiation and blocks the same key's
      correct data behind the in-flight entry, widening the
      epoch-entry key gap during which sessions park.
+   - The overlay the sync task publishes is instantiation-aware
+     (mid-epoch-restart recovery, issue #1852). Once this epoch's
+     reconfiguration completes, the off-chain copy of a key's
+     reconfiguration output is the just-produced NEXT-committee output;
+     adoption's produced-this-epoch guard correctly skips it (a running
+     validator already holds this epoch's parameters and is only
+     pre-staging the boundary flip), but for a validator holding
+     nothing — restarted or freshly booted after that completion — the
+     skip would strand the key un-instantiated all epoch, parking every
+     session on it. For a key the MPC manager has NOT instantiated, the
+     sync task therefore serves the CHAIN's canonical current-epoch
+     reconfiguration output (skipping both the synthesize-empty fast
+     path and the off-chain reconfiguration overlay) so adoption and
+     instantiation proceed; the DKG blob still prefers the canonical
+     off-chain mirror — the digest the certificate pins — because the
+     chain's pre-V3 anchor would fail the DKG-digest gate and, via the
+     handoff hydration path, file a divergent DKG digest for this
+     epoch's attestation. The instantiated-key set is node-lifetime
+     state written only on confirmed instantiation, so a running
+     validator's read path is byte-unchanged, and both paths install
+     the identical canonical output for the epoch (no fork surface).
+     Non-validator modes never instantiate keys and keep the
+     blob-empty overlay unconditionally. KNOWN RESIDUAL: a mid-epoch
+     restart during the single V2→V3 canonical-migration epoch is NOT
+     recovered — the prior cert pins the V2 DKG digest while the
+     restarted validator's mirror already flipped to V3 (the V2 bytes
+     no longer exist locally), so adoption warns and skips until the
+     next epoch's cert pins V3. Fail-closed, bounded to that one
+     epoch, identical to pre-recovery behavior; epoch close is
+     unaffected (the validator still votes EndOfPublish).
 
 ## Key invariants
 

@@ -32,6 +32,7 @@ use crate::dwallet_mpc::{
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::network_key_id_mapping::network_key_id_for;
+use arc_swap::ArcSwap;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, MPCPrivateInput,
@@ -323,6 +324,16 @@ pub(crate) struct DWalletMPCManager {
     /// in the process-global mapping, short-circuiting before this gate.
     pub(crate) network_key_id_derivations_spawned: HashMap<ObjectID, [u8; 32]>,
 
+    /// Set of network keys this validator has actually instantiated, shared by
+    /// `Arc` with the sui-connector network-keys sync task. A key is inserted
+    /// here (and only here) once `update_network_key` confirms it is
+    /// instantiated — never on a decrypt/epoch-mismatch failure — so the set
+    /// never claims an un-instantiated key. The syncer reads it to keep serving
+    /// the off-chain reconfiguration output for an instantiated key while
+    /// sourcing the current-epoch output from chain for a key a fresh/restart
+    /// validator has not instantiated yet (see `sync_dwallet_network_keys`).
+    pub(crate) instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+
     /// Sessions whose protocol-cryptographic-data generation already
     /// failed and was logged. The generation re-runs every 20ms service
     /// iteration, so a stuck session would otherwise emit ~50 identical
@@ -463,6 +474,7 @@ impl DWalletMPCManager {
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
         max_computation_cores: Option<usize>,
+        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -478,6 +490,7 @@ impl DWalletMPCManager {
             epoch_store,
             network_owned_address_sign_output_sender,
             max_computation_cores,
+            instantiated_network_keys,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -500,6 +513,7 @@ impl DWalletMPCManager {
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
         max_computation_cores: Option<usize>,
+        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -601,6 +615,7 @@ impl DWalletMPCManager {
             last_cert_read_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
             network_key_id_derivations_spawned: HashMap::new(),
+            instantiated_network_keys,
             warned_cryptographic_data_generation_failures: HashSet::new(),
             untracked_anomalies: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
@@ -1233,6 +1248,22 @@ impl DWalletMPCManager {
                     })
                     .is_some_and(|digest| digest == reconfiguration_digest);
                 if produced_this_epoch {
+                    // `already_instantiated = true` is the healthy shape (the
+                    // running validator holds the current epoch's parameters
+                    // and is only pre-staging this output for the boundary
+                    // flip). `false` means this validator holds NOTHING for
+                    // the key while the overlay serves only the next
+                    // committee's output — the mid-epoch-restart strand the
+                    // syncer's un-instantiated chain read exists to resolve.
+                    info!(
+                        ?key_id,
+                        already_instantiated = self
+                            .network_keys
+                            .network_encryption_keys
+                            .contains_key(key_id),
+                        "adoption skipping network key: the overlay's reconfiguration output \
+                         was produced this epoch (encrypted to the next committee)"
+                    );
                     continue;
                 }
             }
@@ -2982,6 +3013,17 @@ impl DWalletMPCManager {
                         }
                         // Succeeded — drop any prior failure record.
                         self.last_failed_network_key_data.remove(&key_id);
+                        // Mark the key instantiated for the sui-connector
+                        // network-keys sync task: from here it keeps serving this
+                        // key's off-chain reconfiguration output instead of
+                        // re-importing the current-epoch output from chain.
+                        // Written ONLY here (confirmed-instantiated), never on the
+                        // decrypt-fail / epoch-mismatch branches above.
+                        self.instantiated_network_keys.rcu(|keys| {
+                            let mut keys = (**keys).clone();
+                            keys.insert(key_id);
+                            Arc::new(keys)
+                        });
                     }
                 }
                 Err(err) => {

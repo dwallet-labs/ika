@@ -20,7 +20,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
 use shared_crypto::intent::{Intent, IntentMessage};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
@@ -103,6 +103,12 @@ impl SuiConnectorService {
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
+        // Shared set of network keys the MPC manager has instantiated. Created
+        // once at the node seam and shared with the MPC manager (the writer);
+        // the network-keys sync task reads it to decide, per key, whether to
+        // serve the off-chain reconfiguration output (instantiated) or source
+        // the current-epoch output from chain (un-instantiated fresh/restart).
+        instantiated_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
         // OCS verified-read surface. `Some` when the OCS stack was built
         // (a trust anchor is configured); `None` otherwise. Its presence is
         // the node-level switch between the OCS `BagEventPump` and the legacy
@@ -190,6 +196,7 @@ impl SuiConnectorService {
             syncer_uncompleted,
             noa_checkpoints_finalized,
             network_key_blob_source.clone(),
+            instantiated_network_keys,
             off_chain_mpc_data_source.clone(),
         )
         .await

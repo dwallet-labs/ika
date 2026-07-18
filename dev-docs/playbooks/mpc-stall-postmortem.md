@@ -99,6 +99,21 @@ four fixed; kept for the diagnostic shapes):
   at 3-of-4 quorum). TWO at one boundary = quorum death for internal
   presigns = pool starvation = the wedge. Check whether sessions created
   during a validator's key gap ever compute afterwards.
+- **mid-epoch-restart strand (issue #1852): sessions parked, zero
+  instantiation attempts.** Signature (per wedged validator):
+  `ika_dwallet_mpc_requests_pending_for_network_key` climbing while
+  `network_key_instantiations_in_flight` stays 0,
+  `network_key_instantiation_failures_total` shows no increase (never
+  attempted, not failing), and `network_key_loaded_epoch` cut off
+  exactly at process restart. Mechanism: the validator restarted after
+  this epoch's reconfiguration completed; the overlay served only the
+  just-produced next-committee output, which adoption skips
+  (`adoption skipping network key` log with
+  `already_instantiated=false` — that field value IS the strand).
+  Fixed by the instantiation-aware overlay (the syncer chain-reads the
+  current-epoch output for an un-instantiated key — see the third
+  adoption guard in `../specs/handoff.md`); if the shape recurs, check
+  that read path first.
 - **`all_epoch_sessions_finished=false` — a locked user session that is
   never re-pulled (WAS the open core of #1736; root-caused and fixed in
   PR #1809).** All other gate conditions read true; the epoch locked its

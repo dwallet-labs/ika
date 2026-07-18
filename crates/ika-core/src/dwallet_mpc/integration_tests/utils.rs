@@ -84,6 +84,12 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// "cert absent"); tests for the cert-digest gate insert one here.
     pub(crate) certified_handoff_attestations:
         Arc<Mutex<HashMap<EpochId, CertifiedHandoffAttestation>>>,
+    /// Configurable perpetual-tables handle. `None` by default (matching
+    /// "nothing recorded"); tests for the produced-this-epoch adoption
+    /// guard open real tables in a tempdir and install them here.
+    pub(crate) perpetual_tables: Arc<
+        Mutex<Option<Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>>>,
+    >,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -150,6 +156,7 @@ impl TestingAuthorityPerEpochStore {
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
+            perpetual_tables: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -519,12 +526,14 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     ) -> Option<
         std::sync::Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
     > {
-        // Tests don't install a perpetual tables handle; returning
-        // None is consistent with "freeze hasn't been populated
+        // `None` unless a test installs real tables (tempdir-backed): the
+        // default is consistent with "freeze hasn't been populated
         // either," and `local_mpc_data_ready_for_frozen_set`
         // short-circuits to `true` on an empty frozen set before
-        // it would touch this.
-        None
+        // it would touch this. The produced-this-epoch adoption-guard
+        // tests install tables here to record an epoch-keyed
+        // reconfiguration-output digest.
+        self.perpetual_tables.lock().unwrap().clone()
     }
 }
 

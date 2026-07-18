@@ -30,6 +30,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
+use arc_swap::ArcSwap;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
@@ -72,6 +73,7 @@ use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
@@ -191,6 +193,10 @@ impl DWalletMPCService {
         system_checkpoint_handler: Option<
             NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>,
         >,
+        // Shared set of instantiated network keys (created once at the node
+        // seam, also handed to the sui-connector syncer). The manager writes
+        // here on confirmed instantiation; the syncer reads it.
+        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -227,6 +233,7 @@ impl DWalletMPCService {
             epoch_store.clone(),
             network_owned_address_sign_output_sender,
             max_mpc_computation_cores,
+            instantiated_network_keys,
         );
 
         Self {
@@ -315,6 +322,7 @@ impl DWalletMPCService {
                 epoch_store,
                 network_owned_address_sign_output_sender,
                 None,
+                Arc::new(ArcSwap::from_pointee(HashSet::new())),
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,

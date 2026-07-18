@@ -10,7 +10,7 @@ use anemo_tower::trace::TraceLayer;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -228,6 +228,14 @@ pub struct IkaNode {
     /// Per-kind flags for NOA checkpoint finalization epoch gate.
     noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
     noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Set of network keys the MPC manager has instantiated, shared with the
+    /// sui-connector network-keys sync task (the reader) and every per-epoch
+    /// MPC manager (the writer). Created once at node start and threaded to
+    /// both services so the syncer and manager agree, across reconfigurations,
+    /// on which keys are instantiated (drives serve-off-chain-output vs
+    /// read-current-epoch-output-from-chain for a fresh/restart validator).
+    instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
 
     /// Prunes per-epoch authority store directories
     /// (`<db-path>/live/store/epoch_<N>/`); the `perpetual/` sibling never
@@ -1061,6 +1069,12 @@ impl IkaNode {
                 && noa_system_finalized_clone.load(std::sync::atomic::Ordering::Acquire)
         });
 
+        // Shared instantiated-network-keys set: created once here, handed to
+        // both the sui-connector syncer (reader) and every per-epoch MPC
+        // manager (writer). Must be the SAME `Arc` across reconfigurations, so
+        // it is stored on the node and re-cloned each epoch.
+        let instantiated_network_keys = Arc::new(ArcSwap::from_pointee(HashSet::new()));
+
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),
@@ -1077,6 +1091,7 @@ impl IkaNode {
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
             noa_checkpoints_finalized,
+            instantiated_network_keys.clone(),
             reader_opt.clone(),
             ocs_metrics.clone(),
         )
@@ -1146,6 +1161,7 @@ impl IkaNode {
                 sui_data_receivers.clone(),
                 noa_dwallet_finalized.clone(),
                 noa_system_finalized.clone(),
+                instantiated_network_keys.clone(),
             )
             .await?;
             // This is only needed during cold start.
@@ -1202,6 +1218,7 @@ impl IkaNode {
             shutdown_channel_tx: shutdown_channel,
             noa_dwallet_finalized,
             noa_system_finalized,
+            instantiated_network_keys,
             authority_store_pruner,
         };
 
@@ -1690,6 +1707,7 @@ impl IkaNode {
         sui_data_receivers: SuiDataReceivers,
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
+        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> Result<ValidatorComponents> {
         let mut config_clone = config.clone();
         let consensus_config = config_clone
@@ -1750,6 +1768,7 @@ impl IkaNode {
             sui_data_receivers,
             noa_dwallet_finalized,
             noa_system_finalized,
+            instantiated_network_keys,
         )
         .await
     }
@@ -1774,6 +1793,7 @@ impl IkaNode {
         sui_data_receivers: SuiDataReceivers,
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
+        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> Result<ValidatorComponents> {
         // Channel for network-owned-address sign requests (sender unused after
         // pipeline→handler migration; receiver still drained by service loop).
@@ -1905,6 +1925,7 @@ impl IkaNode {
             network_owned_address_sign_output_receiver,
             dwallet_checkpoint_handler,
             system_checkpoint_handler,
+            instantiated_network_keys,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -2856,6 +2877,7 @@ impl IkaNode {
                             sui_data_receivers.clone(),
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
+                            self.instantiated_network_keys.clone(),
                         )
                         .await?,
                     )
@@ -2893,6 +2915,7 @@ impl IkaNode {
                             sui_data_receivers.clone(),
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
+                            self.instantiated_network_keys.clone(),
                         )
                         .await?,
                     )
