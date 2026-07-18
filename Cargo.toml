@@ -79,18 +79,18 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987"}
 # NOTE: the `parallel` (rayon) feature on class_groups/twopc_mpc is enabled per
 # crate under `[target.'cfg(not(msim))'.dependencies]` (see dwallet-classgroups-types
 # and ika-core), NOT here — workspace-dependency features are inherited regardless of
 # cfg, so enabling `parallel` here would leak rayon into `cargo simtest` (cfg msim),
 # whose rayon workers have no msim node context and break determinism / panic.
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "c3c20ac6"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "c3c20ac6"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "d8138987"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "d8138987"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -377,3 +377,4 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+
