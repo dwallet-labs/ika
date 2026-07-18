@@ -717,9 +717,11 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
 /// holds this epoch's parameters; adopting would fail decryption), and that
 /// skip is exactly what strands a validator that restarted mid-epoch with an
 /// empty instantiation map: nothing else re-delivers an instantiable output.
-/// The recovery contract this test pins: an overlay carrying the CURRENT
-/// epoch's output — what the syncer now sources from chain for a key the
-/// manager hasn't instantiated — must be adopted and spawn instantiation.
+/// The contracts this test pins: the manager flags such a key as stranded
+/// (the syncer's trigger to source the current epoch's output from chain),
+/// and an overlay carrying the CURRENT epoch's output — what that
+/// chain-sourced recovery read delivers — is adopted and spawns
+/// instantiation.
 #[tokio::test]
 async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_recovers() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
@@ -816,9 +818,17 @@ async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_r
         "an overlay serving the reconfiguration output produced THIS epoch (for \
          the next committee) must be skipped by the produced-this-epoch guard"
     );
+    // Holding nothing for the skipped key (not instantiated, nothing in
+    // flight, nothing adopted) is the restart strand: the manager must flag
+    // the key so the syncer sources the current epoch's output from chain.
+    assert!(
+        manager.stranded_network_keys.load().contains(&key_id),
+        "the skipped key must be flagged as stranded for the syncer's \
+         chain-sourced recovery read"
+    );
 
     // Phase 2 — the recovery contract. The realistic prior-epoch cert pins
-    // R(M-1); the overlay now carries R(M-1) (the syncer's un-instantiated
+    // R(M-1); the overlay now carries R(M-1) (the syncer's stranded-key
     // chain read). The recorded R(M) digest must not match it, so adoption
     // proceeds and instantiation spawns.
     epoch_stores

@@ -193,10 +193,11 @@ impl DWalletMPCService {
         system_checkpoint_handler: Option<
             NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>,
         >,
-        // Shared set of instantiated network keys (created once at the node
-        // seam, also handed to the sui-connector syncer). The manager writes
-        // here on confirmed instantiation; the syncer reads it.
-        instantiated_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+        // Shared set of restart-stranded network keys (created once at the
+        // node seam, also handed to the sui-connector syncer). The manager
+        // flags a stranded key at adoption and un-flags it on confirmed
+        // instantiation; the syncer chain-reads flagged keys.
+        stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -233,7 +234,7 @@ impl DWalletMPCService {
             epoch_store.clone(),
             network_owned_address_sign_output_sender,
             max_mpc_computation_cores,
-            instantiated_network_keys,
+            stranded_network_keys,
         );
 
         Self {

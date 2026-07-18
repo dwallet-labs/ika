@@ -230,29 +230,33 @@ next epoch inherits.
      otherwise burns the instantiation and blocks the same key's
      correct data behind the in-flight entry, widening the
      epoch-entry key gap during which sessions park.
-   - The overlay the sync task publishes is instantiation-aware
-     (mid-epoch-restart recovery, issue #1852). Once this epoch's
-     reconfiguration completes, the off-chain copy of a key's
+   - Stranded-key recovery (mid-epoch restart, issue #1852). Once this
+     epoch's reconfiguration completes, the off-chain copy of a key's
      reconfiguration output is the just-produced NEXT-committee output;
      adoption's produced-this-epoch guard correctly skips it (a running
      validator already holds this epoch's parameters and is only
      pre-staging the boundary flip), but for a validator holding
      nothing — restarted or freshly booted after that completion — the
      skip would strand the key un-instantiated all epoch, parking every
-     session on it. For a key the MPC manager has NOT instantiated, the
-     sync task therefore serves the CHAIN's canonical current-epoch
-     reconfiguration output (skipping both the synthesize-empty fast
-     path and the off-chain reconfiguration overlay) so adoption and
-     instantiation proceed; the DKG blob still prefers the canonical
-     off-chain mirror — the digest the certificate pins — because the
-     chain's pre-V3 anchor would fail the DKG-digest gate and, via the
-     handoff hydration path, file a divergent DKG digest for this
-     epoch's attestation. The instantiated-key set is node-lifetime
-     state written only on confirmed instantiation, so a running
-     validator's read path is byte-unchanged, and both paths install
-     the identical canonical output for the epoch (no fork surface).
-     Non-validator modes never instantiate keys and keep the
-     blob-empty overlay unconditionally. KNOWN RESIDUAL: a mid-epoch
+     session on it. When the guard skips a key the validator holds
+     NOTHING for (not instantiated, no instantiation in flight, nothing
+     adopted — the in-flight/adopted checks keep the healthy
+     first-instantiation window out of the set), adoption flags it in a
+     shared stranded-key set, and the sync task chain-reads exactly the
+     flagged keys: a full read instead of the synthesize-empty fast
+     path, serving the CHAIN's canonical current-epoch reconfiguration
+     output (never overlaid by the off-chain copy) so adoption and
+     instantiation proceed; a confirmed instantiation un-flags the key.
+     The DKG blob still prefers the canonical off-chain mirror — the
+     digest the certificate pins — because the chain's pre-V3 anchor
+     would fail the DKG-digest gate and, via the handoff hydration
+     path, file a divergent DKG digest for this epoch's attestation.
+     The set is empty in every healthy flow — non-validators never run
+     adoption at all — so the v4 no-steady-state-chain-read invariant
+     holds exactly (asserted by the
+     `off_chain_metadata_v4_does_not_read_blobs_from_chain` cluster
+     test), and both paths install the identical canonical output for
+     the epoch (no fork surface). KNOWN RESIDUAL: a mid-epoch
      restart during the single V2→V3 canonical-migration epoch is NOT
      recovered — the prior cert pins the V2 DKG digest while the
      restarted validator's mirror already flipped to V3 (the V2 bytes

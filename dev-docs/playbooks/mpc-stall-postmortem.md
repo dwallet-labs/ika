@@ -110,10 +110,11 @@ four fixed; kept for the diagnostic shapes):
   just-produced next-committee output, which adoption skips
   (`adoption skipping network key` log with
   `already_instantiated=false` — that field value IS the strand).
-  Fixed by the instantiation-aware overlay (the syncer chain-reads the
-  current-epoch output for an un-instantiated key — see the third
+  Fixed by stranded-key recovery (adoption flags the key; the syncer
+  chain-reads the current-epoch output for flagged keys — see the third
   adoption guard in `../specs/handoff.md`); if the shape recurs, check
-  that read path first.
+  for the "network key stranded after a mid-epoch restart" log and that
+  read path first.
 - **`all_epoch_sessions_finished=false` — a locked user session that is
   never re-pulled (WAS the open core of #1736; root-caused and fixed in
   PR #1809).** All other gate conditions read true; the epoch locked its
