@@ -2522,8 +2522,10 @@ impl DWalletMPCService {
                             unreachable!("V1 network DKG outputs are no longer produced")
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_))
-                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V3(_)) => {
-                            // V2 (bwd-compat) and V3 (current main) both support all curves.
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V3(_))
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V4(_)) => {
+                            // V2 (bwd-compat), V3 (pre-aggregation) and V4 (aggregated)
+                            // all support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2590,8 +2592,10 @@ impl DWalletMPCService {
                             unreachable!("V1 reconfiguration outputs are no longer produced")
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_))
-                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
-                            // V2 (bwd-compat) and V3 (current main) both support all curves.
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V3(_))
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V4(_)) => {
+                            // V2 (bwd-compat), V3 (pre-aggregation) and V4 (aggregated)
+                            // all support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,

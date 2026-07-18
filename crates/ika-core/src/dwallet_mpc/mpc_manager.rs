@@ -2704,6 +2704,9 @@ impl DWalletMPCManager {
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
                         protocol_cryptographic_data,
+                        aggregated_network_key_public_outputs: self
+                            .protocol_config
+                            .aggregated_network_key_public_outputs(),
                     };
 
                     (computation_id, computation_request)

@@ -206,17 +206,25 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                     }
                 }
             }
-            // V2 and V3 DKG outputs differ only in whether the trailing Protocol-0.1
-            // `threshold_encryption_to_sharing_output` is present. Decode either shape to a
-            // `dkg::PublicOutputCore` and feed it into the same main constructor — covers
-            // both the steady-state v3-DKG path and the v2→v3 migration path (including the
+            // V2, V3 and V4 DKG outputs differ only in the trailing Protocol-0.1
+            // `threshold_encryption_to_sharing_output` (absent / pre-aggregation /
+            // aggregated). Decode any shape to a `dkg::PublicOutputCore` (their shared
+            // bcs prefix) and feed it into the same main constructor — covers both the
+            // steady-state v3-DKG path and the v2→v3 migration path (including the
             // epoch-1 edge case where there is no prior reconfig output yet).
-            v2_or_v3 @ (VersionedNetworkDkgOutput::V2(_) | VersionedNetworkDkgOutput::V3(_)) => {
+            versioned @ (VersionedNetworkDkgOutput::V2(_)
+            | VersionedNetworkDkgOutput::V3(_)
+            | VersionedNetworkDkgOutput::V4(_)) => {
                 let dkg_public_output_core: twopc_mpc::decentralized_party::dkg::PublicOutputCore =
-                    match &v2_or_v3 {
+                    match &versioned {
                         VersionedNetworkDkgOutput::V2(bytes) => bcs::from_bytes(bytes)?,
                         VersionedNetworkDkgOutput::V3(bytes) => {
                             let full: twopc_mpc::decentralized_party::dkg::PublicOutput =
+                                bcs::from_bytes(bytes)?;
+                            full.core
+                        }
+                        VersionedNetworkDkgOutput::V4(bytes) => {
+                            let full: twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput =
                                 bcs::from_bytes(bytes)?;
                             full.core
                         }
@@ -281,11 +289,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
     }
 }
 
-/// Decodes a prior (V2 or V3) reconfiguration output to its
+/// Decodes a prior (V2, V3 or V4) reconfiguration output to its
 /// `reconfiguration::PublicOutputCore` for the main reconfiguration
-/// constructors. V2 bytes are the core itself; V3 bytes are the full output,
-/// whose trailing threshold-encryption-to-sharing field the constructor
-/// re-derives. V1 outputs predate the core shape and are unsupported.
+/// constructors. V2 bytes are the core itself; V3 (pre-aggregation) and V4
+/// (aggregated) bytes are full outputs, whose trailing
+/// threshold-encryption-to-sharing field the constructor re-derives. V1
+/// outputs predate the core shape and are unsupported.
 fn decode_prior_reconfiguration_output_core(
     prior: &VersionedDecryptionKeyReconfigurationOutput,
 ) -> DwalletMPCResult<twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore> {
@@ -293,6 +302,11 @@ fn decode_prior_reconfiguration_output_core(
         VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => Ok(bcs::from_bytes(bytes)?),
         VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => {
             let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+                bcs::from_bytes(bytes)?;
+            Ok(full.core)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V4(bytes) => {
+            let full: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
                 bcs::from_bytes(bytes)?;
             Ok(full.core)
         }
@@ -379,13 +393,14 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
                         "V1 reconfiguration outputs are no longer supported.".to_string(),
                     ))
                 }
-                Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
-                    Err(DwalletMPCError::InternalError(
-                        "Bwd-compat reconfig requires a prior V2-tagged reconfiguration \
-                         output; got V3."
-                            .to_string(),
-                    ))
-                }
+                Some(
+                    VersionedDecryptionKeyReconfigurationOutput::V3(_)
+                    | VersionedDecryptionKeyReconfigurationOutput::V4(_),
+                ) => Err(DwalletMPCError::InternalError(
+                    "Bwd-compat reconfig requires a prior V2-tagged reconfiguration \
+                     output; got V3/V4."
+                        .to_string(),
+                )),
             }
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output_bytes) => {
@@ -423,18 +438,22 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
                         "V1 reconfiguration outputs are no longer supported.".to_string(),
                     ))
                 }
-                Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => Err(
-                    DwalletMPCError::InternalError(
-                        "Bwd-compat reconfig requires a prior V2-tagged reconfiguration output."
-                            .to_string(),
-                    ),
-                ),
+                Some(
+                    VersionedDecryptionKeyReconfigurationOutput::V3(_)
+                    | VersionedDecryptionKeyReconfigurationOutput::V4(_),
+                ) => Err(DwalletMPCError::InternalError(
+                    "Bwd-compat reconfig requires a prior V2-tagged reconfiguration output."
+                        .to_string(),
+                )),
             }
         }
-        VersionedNetworkDkgOutput::V3(_) => Err(DwalletMPCError::InternalError(
-            "Bwd-compat Reconfig dispatch saw a V3 DKG output — protocol_config / wire-tag mismatch."
-                .to_string(),
-        )),
+        VersionedNetworkDkgOutput::V3(_) | VersionedNetworkDkgOutput::V4(_) => {
+            Err(DwalletMPCError::InternalError(
+                "Bwd-compat Reconfig dispatch saw a V3/V4 DKG output — protocol_config / wire-tag \
+                 mismatch."
+                    .to_string(),
+            ))
+        }
     }
 }
 
@@ -643,6 +662,11 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
         }
         VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            build_from_reconfig_output!(public_output)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V4(public_output_bytes) => {
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
             build_from_reconfig_output!(public_output)
         }

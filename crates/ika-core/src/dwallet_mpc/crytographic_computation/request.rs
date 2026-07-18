@@ -19,6 +19,12 @@ pub(crate) struct Request {
     pub(crate) validator_name: AuthorityPublicKeyBytes,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) protocol_cryptographic_data: ProtocolCryptographicData,
+    /// `ProtocolConfig::aggregated_network_key_public_outputs()` — when true,
+    /// network DKG / reconfiguration outputs are persisted V4-tagged in the
+    /// aggregated wire format; when false, V3-tagged in the pre-aggregation
+    /// format. Protocol-gated so the whole committee flips together (MPC
+    /// outputs must reach byte-identical quorum).
+    pub(crate) aggregated_network_key_public_outputs: bool,
 }
 
 impl Request {
@@ -50,6 +56,7 @@ impl Request {
                 root_seed,
                 vss_hpke_secret_key,
                 dwallet_mpc_metrics,
+                self.aggregated_network_key_public_outputs,
             )
         } else {
             self.protocol_cryptographic_data

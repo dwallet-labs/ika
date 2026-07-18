@@ -490,28 +490,42 @@ pub enum VersionedSignOutput {
 ///   `twopc_mpc::decentralized_party::dkg::Party::PublicOutput`. The full
 ///   output wraps `PublicOutputCore` with the trailing
 ///   `threshold_encryption_to_sharing_output` field — so V3 BCS bytes are the
-///   V2 BCS bytes plus the trailing field. Written by `advance_network_dkg_v2`
-///   when `is_network_encryption_key_version_v3()` is `true`.
+///   V2 BCS bytes plus the trailing field (in the pre-aggregation shape:
+///   every dealer's full PVSS dealing). Written by `advance_network_dkg_v2`
+///   when `is_network_encryption_key_version_v3()` is `true` and
+///   `aggregated_network_key_public_outputs()` is `false`. Testnet persists
+///   V3 outputs, so this variant stays readable forever.
+/// - `V4` — bytes from
+///   `twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput`: the same
+///   `PublicOutputCore` prefix, with the trailing sharing output in the
+///   aggregated shape (one summed randomizer-share ciphertext per receiver
+///   instead of every dealer's full PVSS dealing — O(n) instead of O(n²)).
+///   Written when `aggregated_network_key_public_outputs()` is `true`
+///   (protocol v5). The producer upgrades the protocol's pre-aggregation
+///   output via `PublicOutput::upgrade()`. The flip is protocol-gated because
+///   MPC outputs must reach byte-identical quorum across the committee.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
     V3(MPCPublicOutput),
+    V4(MPCPublicOutput),
 }
 
 impl VersionedNetworkDkgOutput {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::V1(bytes) | Self::V2(bytes) | Self::V3(bytes) => bytes,
+            Self::V1(bytes) | Self::V2(bytes) | Self::V3(bytes) | Self::V4(bytes) => bytes,
         }
     }
 
-    /// The wire version tag (1, 2, or 3).
+    /// The wire version tag (1, 2, 3, or 4).
     pub fn version(&self) -> u64 {
         match self {
             Self::V1(_) => 1,
             Self::V2(_) => 2,
             Self::V3(_) => 3,
+            Self::V4(_) => 4,
         }
     }
 }
@@ -527,12 +541,21 @@ impl VersionedNetworkDkgOutput {
 /// - `V3` — bytes from
 ///   `twopc_mpc::decentralized_party::reconfiguration::Party::PublicOutput`,
 ///   the `PublicOutputCore` plus the trailing
-///   `threshold_encryption_to_sharing_output` field.
+///   `threshold_encryption_to_sharing_output` field (pre-aggregation shape).
+///   Testnet persists V3 outputs, so this variant stays readable forever.
+/// - `V4` — bytes from
+///   `twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput`:
+///   the same `PublicOutputCore` prefix with the trailing sharing output in
+///   the aggregated shape (one summed randomizer-share ciphertext per
+///   receiver). Written when `aggregated_network_key_public_outputs()` is
+///   `true` (protocol v5); the producer upgrades the protocol's
+///   pre-aggregation output via `PublicOutput::upgrade()`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
     V3(MPCPublicOutput),
+    V4(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

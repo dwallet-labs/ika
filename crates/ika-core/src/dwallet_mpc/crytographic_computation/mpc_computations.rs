@@ -472,6 +472,7 @@ impl ProtocolCryptographicData {
         root_seed: RootSeed,
         vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        aggregated_network_key_public_outputs: bool,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -1603,6 +1604,7 @@ impl ProtocolCryptographicData {
                 advance_request,
                 class_groups_decryption_key,
                 &mut rng,
+                aggregated_network_key_public_outputs,
             ),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
                 public_input,
@@ -1644,12 +1646,22 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         // Wrap the public output with its version. Main
-                        // Reconfig writes V3 (version-3 shape); the
-                        // bwd-compat path in `advance_network_reconfiguration_bwd_compat`
+                        // Reconfig writes V3 (pre-aggregation shape) below the
+                        // aggregated-outputs protocol gate and V4 (aggregated
+                        // shape, via upgrade()) above it; the bwd-compat path
+                        // in `advance_network_reconfiguration_bwd_compat`
                         // writes V2.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDecryptionKeyReconfigurationOutput::V3(public_output_value),
-                        )?;
+                        let public_output_value = if aggregated_network_key_public_outputs {
+                            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+                                bcs::from_bytes(&public_output_value)?;
+                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
+                                bcs::to_bytes(&public_output.upgrade()?)?,
+                            ))?
+                        } else {
+                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V3(
+                                public_output_value,
+                            ))?
+                        };
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
