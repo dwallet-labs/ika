@@ -2496,10 +2496,37 @@ impl DWalletMPCManager {
         // rounds arrived in consensus rounds it has already processed and are
         // never redelivered), leaving the threshold sign permanently below
         // quorum and wedging the epoch on NOA-checkpoint finalization. The
-        // event and internal-presign activation paths already upgrade in place
-        // for this exact reason (`handle_mpc_request`,
-        // `try_activate_internal_presign_request`).
+        // event and internal-presign activation paths handle the same race
+        // (`handle_mpc_request`, `try_activate_internal_presign_request`); the
+        // two guards below match their short-circuit and type-normalization.
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
+            // A quorum of peers may have completed this sign 3-of-4 while our
+            // own request was still parked (key/presign not yet local). Don't
+            // flip an already-resolved session back to `Active` — that would
+            // strand it `Active` forever and pin this validator's idle status.
+            // The presign was popped above (and stays popped) so our pop order
+            // remains network-uniform with the peers that ran the session.
+            // Mirrors the non-`WaitingForSessionRequest` short-circuit in
+            // `try_activate_internal_presign_request`.
+            if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
+                return true;
+            }
+            // Normalize a non-MPC placeholder type before activating. A
+            // placeholder can be created with `SessionComputationType::Native`
+            // by an output report that arrives before the request: the
+            // output-receipt path derives the type from the sender-controlled
+            // `is_native()` flag and the NOA session id is predictable from
+            // public inputs. Left as-is, `add_message` would drop every real
+            // round message and the sign would route to the native path and
+            // fail `InvalidDWalletProtocolType` on every honest validator — one
+            // byzantine message wedging the epoch unattributably. Resetting to a
+            // fresh MPC buffer discards the poison; a legitimate MPC placeholder
+            // keeps its buffered messages. Mirrors `handle_mpc_request`.
+            if !matches!(session.computation_type, SessionComputationType::MPC { .. }) {
+                session.computation_type = SessionComputationType::MPC {
+                    messages_by_consensus_round: HashMap::new(),
+                };
+            }
             if let SessionStatus::Active { request, .. } = &status {
                 session.set_request_diagnostic_metadata(request);
             }

@@ -13,7 +13,7 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::network_owned_address_sign_dkg_session_identifier;
-use crate::dwallet_mpc::mpc_session::SessionStatus;
+use crate::dwallet_mpc::mpc_session::{SessionComputationType, SessionStatus};
 use crate::dwallet_mpc::integration_tests::network_dkg::{
     create_network_key_test, create_reconfigured_network_key_test,
 };
@@ -24,7 +24,10 @@ use crate::dwallet_mpc::integration_tests::utils::{
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
 };
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::message::{DWalletCheckpointMessageKind, MakeDWalletUserSecretKeySharesPublicOutput};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCOutput, DWalletMPCOutputReport, SessionIdentifier, SessionType,
+};
 use std::collections::HashSet;
 use itertools::Itertools;
 use tracing::info;
@@ -700,6 +703,145 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
         "signature should not be empty"
     );
     info!("Late-instantiation NOA sign completed — buffered messages survived");
+}
+
+/// A byzantine peer must not be able to wedge a NOA sign with a single message.
+///
+/// The NOA sign session id is predictable from public inputs, and the
+/// output-receipt path derives a placeholder's computation type from the
+/// *sender-controlled* `is_native()` flag. A peer that sends a "native" output
+/// for the id before this validator instantiates creates a `Native`-typed
+/// `WaitingForSessionRequest` placeholder. If instantiation preserved that type
+/// (the in-place upgrade this fix introduced), `add_message` would drop every
+/// real round message and the sign would route to the native path and fail
+/// `InvalidDWalletProtocolType` on every honest validator — a permanent,
+/// unattributed epoch wedge from one message. Instantiation must normalize the
+/// poisoned placeholder back to an MPC buffer.
+///
+/// Fault-check for that normalization guard: without it, the final assertion
+/// (session typed MPC after instantiation) fails — the placeholder stays Native.
+#[tokio::test]
+#[cfg(test)]
+async fn test_instantiation_normalizes_byzantine_native_placeholder() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let curve = DWalletCurve::Curve25519;
+    let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
+    let hash_scheme = DWalletHashScheme::SHA512;
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, encryption_key) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+    let start_round = test_state.consensus_round as u64;
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        signature_algorithm,
+        encryption_key,
+        start_round,
+    )
+    .await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let test_message = b"byzantine-native-placeholder sign".to_vec();
+
+    // Learn the (validator-independent) NOA sign session id by instantiating on
+    // one validator and reading it back.
+    let id_source = 1usize;
+    test_state.network_owned_address_sign_request_senders[id_source]
+        .send(NetworkOwnedAddressSignRequest {
+            message: test_message.clone(),
+            curve,
+            signature_algorithm,
+            hash_scheme,
+        })
+        .await
+        .expect("failed to send id-source sign request");
+    test_state.dwallet_mpc_services[id_source]
+        .run_service_loop_iteration()
+        .await;
+    let noa_session_id = *test_state.dwallet_mpc_services[id_source]
+        .dwallet_mpc_manager()
+        .sessions
+        .keys()
+        .find(|id| id.session_type() == SessionType::NetworkOwnedAddressSign)
+        .expect("id-source validator should have instantiated a NOA sign session");
+
+    // A byzantine peer sends a "native" output for that id to the target
+    // validator, which has not yet instantiated — creating a Native-typed
+    // placeholder via the output-receipt path.
+    let target = 0usize;
+    let byzantine_authority = test_state
+        .committee
+        .names()
+        .nth(1)
+        .copied()
+        .expect("committee has a second member");
+    let poison = DWalletMPCOutputReport::External(DWalletMPCOutput {
+        authority: byzantine_authority,
+        session_identifier: noa_session_id,
+        output: vec![
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
+                MakeDWalletUserSecretKeySharesPublicOutput {
+                    dwallet_id: vec![1u8; 32],
+                    public_user_secret_key_shares: vec![],
+                    rejected: false,
+                    session_sequence_number: 0,
+                },
+            ),
+        ],
+        malicious_authorities: vec![],
+    });
+    let _ = test_state.dwallet_mpc_services[target]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(test_state.consensus_round as u64, vec![poison]);
+
+    // Attack precondition: the target now holds a Native-typed placeholder.
+    {
+        let session = test_state.dwallet_mpc_services[target]
+            .dwallet_mpc_manager()
+            .sessions
+            .get(&noa_session_id)
+            .expect("poison output should have created a placeholder on the target");
+        assert!(
+            matches!(session.status, SessionStatus::WaitingForSessionRequest),
+            "poisoned placeholder should be WaitingForSessionRequest"
+        );
+        assert!(
+            !matches!(session.computation_type, SessionComputationType::MPC { .. }),
+            "poisoned placeholder should be typed Native (the attack precondition)"
+        );
+    }
+
+    // The target instantiates the sign; normalization must reset the type.
+    test_state.network_owned_address_sign_request_senders[target]
+        .send(NetworkOwnedAddressSignRequest {
+            message: test_message.clone(),
+            curve,
+            signature_algorithm,
+            hash_scheme,
+        })
+        .await
+        .expect("failed to send target sign request");
+    test_state.dwallet_mpc_services[target]
+        .run_service_loop_iteration()
+        .await;
+
+    let session = test_state.dwallet_mpc_services[target]
+        .dwallet_mpc_manager()
+        .sessions
+        .get(&noa_session_id)
+        .expect("target should still have the NOA session after instantiation");
+    assert!(
+        matches!(session.status, SessionStatus::Active { .. }),
+        "instantiation should activate the NOA sign session"
+    );
+    assert!(
+        matches!(session.computation_type, SessionComputationType::MPC { .. }),
+        "instantiation must normalize the byzantine Native placeholder back to an MPC buffer"
+    );
+    info!("Byzantine Native placeholder normalized to MPC on instantiation");
 }
 
 // === Fast Schnorr (VSS) NOA sign E2E tests ===
