@@ -153,6 +153,31 @@ impl MpcAnomalyKind {
     }
 }
 
+/// How this validator first learned of a session. `LocalRequest` means the
+/// session request itself was processed locally (at creation, or by
+/// activating a `WaitingForSessionRequest` entry later);
+/// `ReconstructedFromConsensus` means the session exists only because peer
+/// artifacts (messages, outputs, a replayed completion) arrived through
+/// consensus — dominant after a restart, when pre-restart sessions are
+/// rebuilt from consensus outputs this validator can never have local
+/// output for. Missing local output is definitional for a reconstructed
+/// session, never a completion race.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionOrigin {
+    LocalRequest,
+    ReconstructedFromConsensus,
+}
+
+impl SessionOrigin {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::LocalRequest => "local_request",
+            Self::ReconstructedFromConsensus => "reconstructed_from_consensus",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LocalComputationState {
@@ -335,6 +360,7 @@ pub(crate) struct MpcAnomalySnapshot {
     #[serde(serialize_with = "serialize_digest")]
     pub(crate) session_id: [u8; 32],
     pub(crate) session_type: SessionType,
+    pub(crate) session_origin: SessionOrigin,
     pub(crate) computation_type: &'static str,
     pub(crate) protocol: Option<String>,
     pub(crate) session_sequence_number: Option<u64>,

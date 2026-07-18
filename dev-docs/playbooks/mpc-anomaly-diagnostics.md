@@ -66,6 +66,28 @@ to that snapshot's `trigger_conditions` as context, and the snapshot fields
 (`local_output_observed`, `quorum_reached_without_local_output`,
 `running_computation_count`) carry the race state either way.
 
+### Session origin: reconstructed sessions are not racing
+
+Every session carries a provenance tag, `session_origin`:
+`local_request` when the session request itself was processed locally
+(at creation, or by activating a waiting entry later), or
+`reconstructed_from_consensus` when the entry exists only because peer
+artifacts (a stray message or output, a completion replayed at restart)
+arrived through consensus. After a restart, reconstruction is the dominant
+path — the node rebuilds pre-restart sessions it can never have local
+output for.
+
+Missing local output on a still-reconstructed session is definitional, not
+a completion race: it does not increment the
+`quorum_reached_before_local_output_observed` race counter and is not
+attached as trigger context on defect snapshots. Instead, each
+reconstructed session increments
+`ika_dwallet_mpc_sessions_reconstructed_total{session_type}` once at
+creation (a later upgrade to `local_request` does not retract it), and
+`session_origin` appears both as a top-level field on snapshot log lines
+and inside `diagnostic_json`, so forensic triage can split the two
+populations directly.
+
 ### Late network-key reconfiguration outputs
 
 One update-after-completion case carries extra evidence and is the only one
@@ -177,7 +199,8 @@ have the same fields.
 
 The emitted line otherwise has stable top-level fields for filtering:
 `event`, `schema_version`, `anomaly_kind`, `severity`, `session_id`,
-`session_type`, `epoch`, `local_party_id`, `tracked_session`,
+`session_type`, `session_origin` (tracked sessions only), `epoch`,
+`local_party_id`, `tracked_session`,
 `local_output_observed`, `quorum_reached_without_local_output`, `error_code`,
 `error_backtrace_present`, `error_backtrace_truncated`,
 `local_authority_malicious`, and `recent_trace_dropped_events`.
@@ -375,7 +398,7 @@ filter the stored JSON line instead:
 
 ## Alerting metrics
 
-Three low-cardinality counters accompany the local log:
+Four low-cardinality counters accompany the local log:
 
 - `ika_dwallet_mpc_anomaly_snapshots_total{anomaly_kind,session_type,severity}`
   increments once per deduplicated snapshot (`session_type="unknown"` is used
@@ -385,7 +408,14 @@ Three low-cardinality counters accompany the local log:
 - `ika_dwallet_mpc_completion_races_total{race,session_type}` counts the benign
   completion races described above, once per occurrence (no per-session
   dedup). A healthy validator under load grows this steadily; it is a trend
-  panel, not an alert.
+  panel, not an alert;
+- `ika_dwallet_mpc_sessions_reconstructed_total{session_type}` counts sessions
+  created from peer artifacts instead of a locally processed request. A
+  bounded spike at restart that then flattens is healthy recovery. Still
+  climbing at the network's session rate long after a restart while
+  `ika_dwallet_mpc_advance_completions` stays flat is a validator that is
+  not participating at all (the mid-epoch-restart wedge class) — this pair
+  is directly alertable.
 
 Because the benign races no longer emit snapshots, any increase of
 `anomaly_snapshots_total` on a healthy network is worth investigating.

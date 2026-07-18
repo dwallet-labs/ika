@@ -1,5 +1,6 @@
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::send_start_network_dkg_event_to_some_parties;
+use crate::dwallet_mpc::mpc_diagnostics::SessionOrigin;
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use ika_types::committee::Committee;
 use sui_types::base_types::ObjectID;
@@ -66,6 +67,34 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
             pending_event_session.status,
             SessionStatus::WaitingForSessionRequest
         ));
+        // A session known only from a peer's message is a reconstruction —
+        // it counts on the reconstruction counter at creation.
+        assert_eq!(
+            pending_event_session.origin,
+            SessionOrigin::ReconstructedFromConsensus
+        );
+        assert_eq!(
+            dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .dwallet_mpc_metrics
+                .sessions_reconstructed_total
+                .with_label_values(&["system"])
+                .get(),
+            1
+        );
+    }
+    for i in &parties_that_receive_session_message_after_start_event {
+        // Parties that processed the request first created their session
+        // from it — nothing was reconstructed.
+        assert_eq!(
+            dwallet_mpc_services[*i]
+                .dwallet_mpc_manager()
+                .dwallet_mpc_metrics
+                .sessions_reconstructed_total
+                .with_label_values(&["system"])
+                .get(),
+            0
+        );
     }
     send_start_network_dkg_event_to_some_parties(
         epoch_id,
@@ -82,6 +111,28 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         &parties_that_receive_session_message_before_start_event,
     )
     .await;
+    for i in &parties_that_receive_session_message_before_start_event {
+        // Receiving the request and activating upgrades the entry to a
+        // locally requested session; the creation-time reconstruction count
+        // is deliberately not retracted.
+        let dwallet_mpc_service = &dwallet_mpc_services[*i];
+        let activated_session = dwallet_mpc_service
+            .dwallet_mpc_manager()
+            .sessions
+            .values()
+            .next()
+            .unwrap();
+        assert_eq!(activated_session.origin, SessionOrigin::LocalRequest);
+        assert_eq!(
+            dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .dwallet_mpc_metrics
+                .sessions_reconstructed_total
+                .with_label_values(&["system"])
+                .get(),
+            1
+        );
+    }
     utils::send_advance_results_between_parties(
         &committee,
         &mut sent_consensus_messages_collectors,

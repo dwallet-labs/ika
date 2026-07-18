@@ -44,9 +44,12 @@ family (`last_pruned_{consensus,authority}_db_epoch`,
   `register_int_counter*` — e.g. `dwallet_mpc_global_presigns_served_total`,
   `dwallet_mpc_network_key_instantiation_failures_total`.
 - **Gauges** (a current value) are a plain noun, often `_count` / `_size`
-  / `_in_flight` — e.g. `dwallet_mpc_session_start_count`,
-  `dwallet_mpc_internal_presign_pool_size`,
+  / `_in_flight` — e.g. `dwallet_mpc_internal_presign_pool_size`,
   `ika_dwallet_mpc_malicious_actors_count`. Never give a gauge `_total`.
+  One legacy exception: `ika_dwallet_mpc_session_start_count` is a genuine
+  counter (converted from a gauge that was only ever incremented) whose
+  `_count` name predates the suffix convention and is kept so existing
+  dashboards keep working.
 - **Per-protocol metrics are LABELLED, not duplicated per protocol.** The
   MPC computation gauges are `*_vec` keyed by
   `["curve", "signature_algorithm", "key_role"]`; the label values come
@@ -178,6 +181,7 @@ ika_dwallet_mpc_session_output_rejected
 ika_dwallet_mpc_session_reported_malicious_actors
 ika_dwallet_mpc_session_start_count
 ika_dwallet_mpc_session_state_count
+ika_dwallet_mpc_sessions_reconstructed_total
 ika_dwallet_mpc_sessions_rejected_total
 ika_dwallet_mpc_sessions_with_self_output_no_quorum
 ika_dwallet_mpc_user_session_distinct_output_authorities
