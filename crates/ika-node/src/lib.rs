@@ -10,7 +10,7 @@ use anemo_tower::trace::TraceLayer;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -3208,15 +3208,20 @@ impl IkaNode {
     ///   1. The cross-epoch trust anchor (the `cur_epoch` handoff cert) is
     ///      locally present + verified — `prepare_handoff_anchor` returns it,
     ///      fetching it inline if missing.
-    ///   2. Every `NetworkReconfigurationOutput` item the cert certifies is
-    ///      held locally with a digest matching the cert. The cert's single
+    ///   2. Every network-key output item the cert certifies —
+    ///      `NetworkReconfigurationOutput` AND `NetworkDkgOutput` — is held
+    ///      locally with a digest matching the cert. The cert's single
     ///      `epoch` field scopes the whole handoff, so there is no per-key
-    ///      epoch to check — only per-key presence in this validator's
-    ///      reconfiguration-output digest slice (keyed by `cur_epoch`, the
-    ///      reconfiguration session's epoch). A continuing validator caches
-    ///      its own MPC output there; a joiner has `prepare_handoff_anchor`
-    ///      fetch + cache the cert's outputs into the same slice. See
-    ///      `all_cert_reconfiguration_outputs_held_locally`.
+    ///      epoch to check — only per-key presence: reconfiguration outputs
+    ///      in this validator's epoch-keyed digest slice (keyed by
+    ///      `cur_epoch`, the reconfiguration session's epoch), DKG outputs in
+    ///      the NEW epoch store's merged view (empty per-epoch table → the
+    ///      perpetual canonical mirror — the value the installer repairs; the
+    ///      outgoing store's per-epoch table is exactly what the end-of-epoch
+    ///      hydration may have poisoned, issue #1852). A continuing validator
+    ///      caches its own MPC output; `prepare_handoff_anchor` and the
+    ///      per-retry installer fetch + cache missing/mismatching outputs
+    ///      from peers. See `all_cert_network_key_outputs_held_locally`.
     async fn wait_for_handoff_data_ready(
         &self,
         next_epoch: EpochId,
@@ -3263,20 +3268,37 @@ impl IkaNode {
             }
             let cert = anchor_cert.as_ref();
 
-            // Condition 2: every network-key reconfiguration output the cert
-            // certifies is held locally with a digest matching the cert.
-            // Grounded entirely in the verified cert (the off-chain anchor)
-            // and this validator's own reconfiguration-output digest slice,
-            // keyed by the reconfiguration session's epoch (`cur_epoch`) — no
+            // Condition 2: every network-key output the cert certifies —
+            // reconfiguration AND DKG — is held locally with a digest
+            // matching the cert. Grounded entirely in the verified cert (the
+            // off-chain anchor) and this validator's own digest slices — no
             // chain state, and no per-key epoch (the cert's single epoch
-            // scopes the whole handoff). A read error is treated as not-ready
-            // (empty slice); the periodic WARN below surfaces a persistent
-            // failure.
+            // scopes the whole handoff). A read error is treated as
+            // not-ready (empty slice); the periodic WARN below surfaces a
+            // persistent failure.
+            //
+            // The reconfiguration slice is keyed by the reconfiguration
+            // session's epoch (`cur_epoch`) on the outgoing store. The DKG
+            // digests are read from the NEW epoch store deliberately: its
+            // per-epoch table is empty at entry, so the merged view is the
+            // perpetual canonical mirror — the exact value the installer
+            // repairs. Reading them from the outgoing store would consult
+            // its per-epoch table first, which is precisely what the
+            // end-of-epoch hydration pass may have poisoned (the issue
+            // #1852 clobber variant), and the repaired perpetual value
+            // would never win — deadlocking this barrier.
             let local_reconfiguration_digests = cur_epoch_store
                 .get_network_reconfiguration_output_digests_for_epoch(cur_epoch)
                 .unwrap_or_default();
+            let local_dkg_digests = new_epoch_store
+                .get_network_dkg_output_digests()
+                .unwrap_or_default();
             let ready = cert.is_some_and(|cert| {
-                all_cert_reconfiguration_outputs_held_locally(cert, &local_reconfiguration_digests)
+                all_cert_network_key_outputs_held_locally(
+                    cert,
+                    &local_dkg_digests,
+                    &local_reconfiguration_digests,
+                )
             });
 
             if ready {
@@ -3319,31 +3341,39 @@ impl IkaNode {
             // Surface the breakdown roughly every 10s so a hang is never
             // silent on a dashboard or in the logs.
             if retries.is_multiple_of(10) {
-                let (cert_reconfiguration_items, missing_key_ids, unmapped_cert_keys) = match &cert
-                {
+                let (cert_network_key_items, missing_key_ids, unmapped_cert_keys) = match &cert {
                     Some(cert) => {
                         let total = cert
                             .attestation
                             .items
                             .iter()
                             .filter(|(item, _)| {
-                                matches!(item, HandoffItemKey::NetworkReconfigurationOutput { .. })
+                                matches!(
+                                    item,
+                                    HandoffItemKey::NetworkReconfigurationOutput { .. }
+                                        | HandoffItemKey::NetworkDkgOutput { .. }
+                                )
                             })
                             .count();
                         let missing: Vec<ObjectID> = cert
                             .attestation
                             .items
                             .iter()
-                            .filter_map(|(item, digest)| match item {
-                                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                                    // Cert keys by NetworkKeyId; local digests by
-                                    // ObjectID — translate via the temporary map.
-                                    let object_id =
-                                        ika_core::network_key_id_mapping::object_id_for(key_id)?;
-                                    (local_reconfiguration_digests.get(&object_id) != Some(digest))
-                                        .then_some(object_id)
-                                }
-                                _ => None,
+                            .filter_map(|(item, digest)| {
+                                // Cert keys by NetworkKeyId; local digests by
+                                // ObjectID — translate via the temporary map.
+                                let (key_id, local_digests) = match item {
+                                    HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                                        (key_id, &local_reconfiguration_digests)
+                                    }
+                                    HandoffItemKey::NetworkDkgOutput { key_id } => {
+                                        (key_id, &local_dkg_digests)
+                                    }
+                                    HandoffItemKey::ValidatorMpcData { .. } => return None,
+                                };
+                                let object_id =
+                                    ika_core::network_key_id_mapping::object_id_for(key_id)?;
+                                (local_digests.get(&object_id) != Some(digest)).then_some(object_id)
                             })
                             .collect();
                         // Cert keys with NO ObjectID mapping (this validator
@@ -3355,12 +3385,15 @@ impl IkaNode {
                         // `missing_locally=0`. The MPC service's adoption
                         // pass derives and registers the mapping in the
                         // background; this state should clear on its own.
-                        let unmapped: Vec<NetworkKeyId> = cert
+                        // A key with both a DKG and a reconfiguration item
+                        // would list twice — dedup via the ordered set.
+                        let unmapped: BTreeSet<NetworkKeyId> = cert
                             .attestation
                             .items
                             .iter()
                             .filter_map(|(item, _)| match item {
                                 HandoffItemKey::NetworkReconfigurationOutput { key_id }
+                                | HandoffItemKey::NetworkDkgOutput { key_id }
                                     if ika_core::network_key_id_mapping::object_id_for(key_id)
                                         .is_none() =>
                                 {
@@ -3369,6 +3402,7 @@ impl IkaNode {
                                 _ => None,
                             })
                             .collect();
+                        let unmapped: Vec<NetworkKeyId> = unmapped.into_iter().collect();
                         (total, missing, unmapped)
                     }
                     None => (0, Vec::new(), Vec::new()),
@@ -3377,7 +3411,7 @@ impl IkaNode {
                     next_epoch,
                     cur_epoch,
                     have_cert = cert.is_some(),
-                    cert_reconfiguration_items,
+                    cert_network_key_items,
                     missing_locally = missing_key_ids.len(),
                     missing_key_ids = ?missing_key_ids,
                     unmapped_cert_keys = ?unmapped_cert_keys,
@@ -3583,27 +3617,35 @@ fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
 
 /// Readiness predicate for the prepare-then-start barrier's network-key
 /// condition, grounded entirely in the verified handoff cert (the off-chain
-/// cross-epoch trust anchor) and this validator's local reconfiguration-output
-/// digest slice — no chain state.
+/// cross-epoch trust anchor) and this validator's local digest slices — no
+/// chain state.
 ///
 /// The cert's single `epoch` field scopes the whole handoff (one cert per
 /// epoch, committee-signed), so there is no per-key epoch to check: every
 /// `NetworkReconfigurationOutput` item is an output of the same reconfiguration
-/// session (the one that ran during `cert.attestation.epoch`). The only per-key
-/// question is presence: for each reconfiguration output the cert certifies,
-/// has this validator locally computed/cached a digest-matching copy? (A
-/// continuing validator caches its own MPC output; a joiner has
-/// `install_joiner_network_key_outputs` fetch + cache the cert's outputs into
-/// the same slice.)
+/// session (the one that ran during `cert.attestation.epoch`), and the DKG
+/// items pin the key's canonical anchor. The only per-key question is
+/// presence: for each certified output, has this validator locally
+/// computed/cached a digest-matching copy? (A continuing validator caches its
+/// own MPC output; `install_joiner_network_key_outputs` fetches + caches
+/// missing/mismatching ones from peers into the same slices.)
 ///
-/// Returns true iff every `NetworkReconfigurationOutput { key_id }` item in the
-/// cert has a local digest equal to the cert's item digest. DKG and
-/// validator-mpc_data items are not gated here — the barrier exists to keep the
-/// new epoch from signing against a stale reconfiguration sharing, and the
-/// reconfiguration output is the epoch-varying material. A cert with no
-/// reconfiguration items is trivially ready on this condition.
-fn all_cert_reconfiguration_outputs_held_locally(
+/// Returns true iff every `NetworkReconfigurationOutput { key_id }` AND every
+/// `NetworkDkgOutput { key_id }` item in the cert has a local digest equal to
+/// the cert's item digest. The reconfiguration output is the epoch-varying
+/// sharing material; the DKG output is equally load-bearing — adoption's
+/// cert-digest gate rejects the key when the local DKG mirror doesn't hash to
+/// the cert's digest, and a mirror poisoned with the chain's pre-V3 anchor
+/// (the hydration-clobber variant of issue #1852) can ONLY be repaired here,
+/// because the installer runs solely while this predicate reads not-ready.
+/// Do not narrow this back to reconfiguration-only: that made the barrier
+/// instantly ready for a poisoned validator every epoch and the wedge
+/// permanent. `ValidatorMpcData` items are not gated (they feed the mpc_data
+/// freeze, a separate plane). A cert with no network-key items is trivially
+/// ready on this condition.
+fn all_cert_network_key_outputs_held_locally(
     cert: &CertifiedHandoffAttestation,
+    local_dkg_digests: &BTreeMap<ObjectID, [u8; 32]>,
     local_reconfiguration_digests: &BTreeMap<ObjectID, [u8; 32]>,
 ) -> bool {
     cert.attestation
@@ -3616,9 +3658,21 @@ fn all_cert_reconfiguration_outputs_held_locally(
                     local_reconfiguration_digests.get(&object_id) == Some(cert_digest)
                 })
             }
-            HandoffItemKey::NetworkDkgOutput { .. } | HandoffItemKey::ValidatorMpcData { .. } => {
-                true
+            // The DKG output is as load-bearing as the reconfiguration
+            // output: adoption's cert-digest gate rejects the key when the
+            // locally-mirrored DKG bytes don't hash to the cert's digest,
+            // and a mirror poisoned with the chain's pre-V3 anchor (the
+            // hydration-clobber variant of issue #1852) can only be
+            // repaired here — the barrier's installer fetches the
+            // cert-pinned bytes from peers and re-caches them. Skipping
+            // DKG items made that repair unreachable (the gate read ready
+            // instantly and the installer only runs while not-ready),
+            // leaving a poisoned validator wedged permanently.
+            HandoffItemKey::NetworkDkgOutput { key_id } => {
+                ika_core::network_key_id_mapping::object_id_for(key_id)
+                    .is_some_and(|object_id| local_dkg_digests.get(&object_id) == Some(cert_digest))
             }
+            HandoffItemKey::ValidatorMpcData { .. } => true,
         })
 }
 
@@ -3661,28 +3715,32 @@ mod tests {
     }
 
     #[test]
-    fn all_cert_reconfiguration_outputs_held_locally_cases() {
-        // The cert is keyed by NetworkKeyId; the local slice by ObjectID.
+    fn all_cert_network_key_outputs_held_locally_cases() {
+        // The cert is keyed by NetworkKeyId; the local slices by ObjectID.
         // Register the mappings so the predicate can translate.
         ika_core::network_key_id_mapping::register(key_id(0), network_key_id(0));
         ika_core::network_key_id_mapping::register(key_id(1), network_key_id(1));
+        let no_dkg = BTreeMap::new();
         // Cert certifies one reconfiguration output; the local slice holds a
         // matching digest → ready.
         let cert = cert_with_reconfiguration_items(vec![(network_key_id(0), [1u8; 32])]);
         let held = BTreeMap::from([(key_id(0), [1u8; 32])]);
-        assert!(all_cert_reconfiguration_outputs_held_locally(&cert, &held));
+        assert!(all_cert_network_key_outputs_held_locally(
+            &cert, &no_dkg, &held
+        ));
 
         // Output not yet computed/cached locally (empty slice) → not ready.
-        assert!(!all_cert_reconfiguration_outputs_held_locally(
+        assert!(!all_cert_network_key_outputs_held_locally(
             &cert,
+            &no_dkg,
             &BTreeMap::new()
         ));
 
         // Local digest differs from the cert's (a stale/wrong local output —
         // the exact condition the cert-digest match exists to catch) → not ready.
         let stale = BTreeMap::from([(key_id(0), [9u8; 32])]);
-        assert!(!all_cert_reconfiguration_outputs_held_locally(
-            &cert, &stale
+        assert!(!all_cert_network_key_outputs_held_locally(
+            &cert, &no_dkg, &stale
         ));
 
         // Two certified outputs, only one held locally → not ready (EVERY item
@@ -3692,19 +3750,20 @@ mod tests {
             (network_key_id(1), [2u8; 32]),
         ]);
         let one = BTreeMap::from([(key_id(0), [1u8; 32])]);
-        assert!(!all_cert_reconfiguration_outputs_held_locally(
-            &cert_two, &one
+        assert!(!all_cert_network_key_outputs_held_locally(
+            &cert_two, &no_dkg, &one
         ));
 
         // Both held with matching digests → ready.
         let both = BTreeMap::from([(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
-        assert!(all_cert_reconfiguration_outputs_held_locally(
-            &cert_two, &both
+        assert!(all_cert_network_key_outputs_held_locally(
+            &cert_two, &no_dkg, &both
         ));
 
-        // A cert with no reconfiguration items is trivially ready (nothing to
-        // wait for), even against an empty slice — and a DKG-only item must NOT
-        // be gated by this reconfiguration-readiness predicate.
+        // A certified DKG output is load-bearing too: a local mirror whose
+        // digest contradicts the cert (the hydration-clobber shape of issue
+        // #1852 — e.g. the chain's pre-V3 anchor over the canonical V3) must
+        // read NOT ready, so the barrier's installer runs and repairs it.
         let dkg_only = CertifiedHandoffAttestation {
             attestation: HandoffAttestation {
                 epoch: 7,
@@ -3718,8 +3777,24 @@ mod tests {
             },
             signatures: vec![],
         };
-        assert!(all_cert_reconfiguration_outputs_held_locally(
+        // Absent locally → not ready.
+        assert!(!all_cert_network_key_outputs_held_locally(
             &dkg_only,
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        ));
+        // Poisoned mirror (digest mismatch) → not ready.
+        let poisoned = BTreeMap::from([(key_id(0), [9u8; 32])]);
+        assert!(!all_cert_network_key_outputs_held_locally(
+            &dkg_only,
+            &poisoned,
+            &BTreeMap::new()
+        ));
+        // Canonical mirror matching the cert → ready.
+        let canonical = BTreeMap::from([(key_id(0), [5u8; 32])]);
+        assert!(all_cert_network_key_outputs_held_locally(
+            &dkg_only,
+            &canonical,
             &BTreeMap::new()
         ));
     }

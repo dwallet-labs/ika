@@ -876,6 +876,19 @@ where
             ObjectID,
             (u64, DWalletNetworkEncryptionKeyState),
         > = HashMap::new();
+        // Pointer identity of the blob source the previous pass merged
+        // with. Installing (or per-epoch replacing) the source changes
+        // which bytes a merge produces for the SAME chain state, so the
+        // `(epoch, state)` fetch memo below is stale the moment the
+        // source flips: an overlay published from a source-less
+        // chain-read pass right after a restart carries the chain's
+        // original pre-V3 DKG anchor, and with no re-merge it would sit
+        // in the watch channel for the rest of the epoch — where the
+        // end-of-epoch hydration pass can cache it over the canonical
+        // mirror (the never-instantiated variant of issue #1852). Clear
+        // the memo whenever the source identity changes so the next
+        // pass re-merges every key through the new source.
+        let mut last_blob_source_ptr: Option<usize> = None;
         // Consecutive 5s ticks each key's overlay has been incomplete.
         // An incomplete overlay is the designed steady state on a
         // notifier/fullnode (whose overlay is legitimately empty for
@@ -887,6 +900,20 @@ where
         let mut consecutive_overlay_incomplete_ticks: HashMap<ObjectID, u64> = HashMap::new();
         loop {
             time::sleep(Duration::from_secs(5)).await;
+
+            let blob_source_ptr = network_key_blob_source
+                .load_full()
+                .map(|source| Arc::as_ptr(&source) as *const () as usize);
+            if blob_source_ptr != last_blob_source_ptr {
+                // Inequality implies at least one side is Some, so this
+                // always concerns a real install/replacement.
+                info!(
+                    source_installed = blob_source_ptr.is_some(),
+                    "network-key blob source changed; re-merging all network keys"
+                );
+                last_fetched_network_keys.clear();
+                last_blob_source_ptr = blob_source_ptr;
+            }
 
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
                 warn!("System object not available, retrying...");

@@ -187,12 +187,22 @@ next epoch inherits.
    entering epoch E+1, the validator blocks until the FULL verified
    handoff data for epoch E is local: the certificate (fetched and
    verified via the same verifier, anchored once per barrier entry) and
-   every certified network-key output blob. Holding the certificate
+   every certified network-key output blob — reconfiguration outputs
+   AND the canonical DKG outputs. Holding the certificate
    does NOT imply holding the outputs (a lagging validator can adopt
    the certificate from a buffered signature quorum without ever
    computing the outputs), so the barrier installs missing outputs by
    digest. This is what prevents stale-share `InvalidParameters`
-   signing failures after the boundary.
+   signing failures after the boundary. The DKG items are part of the
+   readiness predicate deliberately: a local mirror whose digest
+   contradicts the certificate (the hydration-clobber shape below) can
+   only be repaired here — the installer fetches the cert-pinned bytes
+   from peers and re-caches them, and it only runs while the gate reads
+   not-ready. When the gate skipped DKG items, a poisoned mirror passed
+   the barrier instantly every epoch and stayed wedged permanently. The
+   DKG digests are read from the NEW epoch store (empty per-epoch table
+   → perpetual mirror), never the outgoing store, whose per-epoch table
+   is exactly what the end-of-epoch hydration may have poisoned.
 3. **Network-key adoption (steady state)**: each epoch, locally-held
    network-key outputs are adopted into the instantiation set only if
    their digests match the prior epoch's certificate
@@ -264,6 +274,27 @@ next epoch inherits.
      next epoch's cert pins V3. Fail-closed, bounded to that one
      epoch, identical to pre-recovery behavior; epoch close is
      unaffected (the validator still votes EndOfPublish).
+   - The hydration-clobber variant (issue #1852, never-instantiated
+     shape) and its three defenses. Post-restart, until the per-epoch
+     blob source installs, the sync task's full chain read publishes an
+     overlay whose DKG blob is the chain's ORIGINAL pre-V3 anchor; with
+     no later refetch trigger that overlay used to sit in the watch
+     channel all epoch, and the end-of-epoch hydration pass cached it —
+     overwriting the DURABLE perpetual canonical mirror. Every later
+     epoch then failed the DKG-digest gate above before reaching the
+     produced-this-epoch guard (so the stranded-key recovery never
+     fired), permanently: the barrier read ready without checking DKG
+     items, so its installer never repaired the mirror. Defenses, each
+     independently sufficient for its layer: (1) hydration is
+     fill-absence only — it never overwrites an existing per-key DKG
+     digest (the instantiation mirror and the cert-anchored barrier
+     install are strictly more authoritative than the overlay
+     snapshot); (2) the sync task clears its per-key fetch memo
+     whenever the blob-source identity changes, so a source-less
+     chain-read overlay is re-merged within a tick of the install
+     instead of persisting; (3) the barrier verifies and repairs DKG
+     items (see the barrier section) — the only layer that heals an
+     already-poisoned mirror.
 
 ## Key invariants
 
