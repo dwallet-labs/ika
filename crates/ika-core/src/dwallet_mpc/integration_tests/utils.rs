@@ -1,6 +1,6 @@
 use crate::authority::AuthorityStateTrait;
 use crate::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaAssignedPresign,
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -21,8 +21,9 @@ use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKi
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
-    SessionIdentifier, SessionType, SuiChainObservationUpdate, UserSecretKeyShareEventType,
+    ConsensusNOAPresignDemand, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
+    UserSecretKeyShareEventType,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
@@ -68,6 +69,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_global_presign_requests:
         Arc<Mutex<HashMap<Round, Vec<ConsensusGlobalPresignRequest>>>>,
     pub(crate) round_to_noa_observations: Arc<Mutex<HashMap<Round, Vec<ConsensusNOAObservation>>>>,
+    pub(crate) round_to_noa_presign_demands:
+        Arc<Mutex<HashMap<Round, Vec<ConsensusNOAPresignDemand>>>>,
+    /// NOA presigns assigned in consensus order, keyed by demand-id digest.
+    /// Value: (presign session id, blending index, raw presign bytes, network key id).
+    pub(crate) noa_assigned_presigns: Arc<Mutex<HashMap<[u8; 32], NoaAssignedPresign>>>,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
     pub(crate) presign_pools: TestPresignPool,
@@ -151,6 +157,8 @@ impl TestingAuthorityPerEpochStore {
             )]))),
             round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_noa_presign_demands: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            noa_assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
@@ -404,6 +412,73 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         }
         let next = last_consensus_round.unwrap() + 1;
         Ok(store.get(&next).map(|v| (next, v.clone())))
+    }
+
+    fn next_noa_presign_demand(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
+        let store = self.round_to_noa_presign_demands.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(store.get(&0).map(|v| (0, v.clone())));
+        }
+        let next = last_consensus_round.unwrap() + 1;
+        Ok(store.get(&next).map(|v| (next, v.clone())))
+    }
+
+    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
+        Ok(self
+            .noa_assigned_presigns
+            .lock()
+            .unwrap()
+            .get(digest)
+            .cloned())
+    }
+
+    fn assign_noa_presign(
+        &self,
+        digest: [u8; 32],
+        signature_algorithm: DWalletSignatureAlgorithm,
+        network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
+        if let Some((session_id, blending_index, _, _)) = self
+            .noa_assigned_presigns
+            .lock()
+            .unwrap()
+            .get(&digest)
+            .cloned()
+        {
+            return Ok(Some((session_id, blending_index)));
+        }
+        let Some((session_id, blending_index, presign)) =
+            self.pop_presign(signature_algorithm, network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+        self.noa_assigned_presigns.lock().unwrap().insert(
+            digest,
+            (
+                session_id,
+                blending_index,
+                presign,
+                network_encryption_key_id,
+            ),
+        );
+        // Mirror the real store: mark the popped presign used at the point of
+        // consumption (the pool pop above).
+        self.used_presigns
+            .lock()
+            .unwrap()
+            .insert((session_id, blending_index), ());
+        Ok(Some((session_id, blending_index)))
+    }
+
+    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
+        Ok(self
+            .noa_assigned_presigns
+            .lock()
+            .unwrap()
+            .contains_key(digest))
     }
 
     fn assign_presign(
@@ -877,9 +952,20 @@ pub(crate) fn send_advance_results_between_parties(
             })
             .collect();
         let noa_observations: Vec<_> = consensus_messages
+            .clone()
             .into_iter()
             .filter_map(|message| {
                 if let ConsensusTransactionKind::NOAObservation(msg) = message.kind {
+                    Some(msg)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let noa_presign_demands: Vec<_> = consensus_messages
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::NOAPresignDemand(msg) = message.kind {
                     Some(msg)
                 } else {
                     None
@@ -958,6 +1044,17 @@ pub(crate) fn send_advance_results_between_parties(
                 .entry(new_data_consensus_round)
                 .or_default()
                 .extend(noa_observations.clone());
+            // Distribute NOA presign demands to all parties, IDENTICALLY: every
+            // validator receives the same set in the same submitter order
+            // (0,1,2,3), so the consensus-order drain assigns each demand the
+            // same presign on every validator regardless of local receive order.
+            other_epoch_store
+                .round_to_noa_presign_demands
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(noa_presign_demands.clone());
         }
     }
 }
@@ -1189,6 +1286,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                     ConsensusTransactionKind::SuiChainObservationUpdate(_) => true,
                     ConsensusTransactionKind::GlobalPresignRequest(_) => true,
                     ConsensusTransactionKind::NOAObservation(_) => true,
+                    ConsensusTransactionKind::NOAPresignDemand(_) => true,
                     _ => false,
                 });
             }
@@ -1322,6 +1420,21 @@ pub(crate) const TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
 pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
     ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
         apply_test_presign_pool_overrides(&mut config);
+        config
+    })
+}
+
+/// Same small pools as [`create_test_protocol_config_guard`], plus
+/// `noa_checkpoints` enabled. These tests exercise the NOA sign path, which is
+/// gated on `noa_checkpoints`; the flag is scoped here (rather than turned on in
+/// the shared guard) because main's broader NOA cluster is only partially wired
+/// and its version schedule leaves `noa_checkpoints` off — enabling it globally
+/// for tests would exercise unwired paths in the other modules.
+#[cfg(test)]
+pub(crate) fn create_test_protocol_config_guard_with_noa_checkpoints() -> OverrideGuard {
+    ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
+        apply_test_presign_pool_overrides(&mut config);
+        config.set_noa_checkpoints_for_testing(true);
         config
     })
 }

@@ -84,6 +84,7 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::SuiChainObservationUpdate(..)
                 | ConsensusTransactionKind::GlobalPresignRequest(..)
                 | ConsensusTransactionKind::NOAObservation(..)
+                | ConsensusTransactionKind::NOAPresignDemand(..)
                 | ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::EpochMpcDataReadySignal(..)

@@ -207,6 +207,27 @@ impl ConsensusNOAObservation {
     }
 }
 
+/// A validator's announcement that a NOA sign demand exists, so all validators
+/// assign it a presign in the same consensus-delivery order. Deduplicated by
+/// `demand_id` (NOT by authority) so redundant announcements from multiple
+/// validators collapse to one; assignment is idempotent regardless.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ConsensusNOAPresignDemand {
+    pub authority: AuthorityName,
+    pub demand_id: crate::noa_checkpoint::NOAPresignDemandId,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub network_encryption_key_id: ObjectID,
+}
+
+impl ConsensusNOAPresignDemand {
+    /// Deterministic dedup key for this demand: the digest of its `demand_id`.
+    /// Independent of `authority`, so two validators announcing the same demand
+    /// produce the same key and collapse to one in consensus.
+    pub fn demand_id_digest(&self) -> [u8; 32] {
+        self.demand_id.digest()
+    }
+}
+
 /// An assigned presign that has been popped from the internal pool and assigned to a user
 /// for signing. Expires at the end of the epoch.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

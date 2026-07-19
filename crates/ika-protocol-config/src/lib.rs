@@ -1140,6 +1140,10 @@ impl ProtocolConfig {
     pub fn set_internal_presign_sessions_for_testing(&mut self, val: bool) {
         self.feature_flags.internal_presign_sessions = val;
     }
+
+    pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
+        self.feature_flags.noa_checkpoints = val;
+    }
 }
 
 type OverrideFn = dyn Fn(ProtocolVersion, ProtocolConfig) -> ProtocolConfig + Send;

@@ -19,7 +19,7 @@ use crate::dwallet_mpc::integration_tests::network_dkg::{
 };
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    IntegrationTestState, build_test_state, create_test_protocol_config_guard,
+    IntegrationTestState, build_test_state, create_test_protocol_config_guard_with_noa_checkpoints,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
@@ -78,7 +78,7 @@ async fn network_owned_address_sign_flow(
     hash_scheme: DWalletHashScheme,
 ) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let mut test_state = build_test_state(4);
 
@@ -144,6 +144,9 @@ async fn network_owned_address_sign_flow(
                 curve,
                 signature_algorithm,
                 hash_scheme,
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                    ika_types::crypto::keccak256_digest(&test_message),
+                ),
             })
             .await
             .expect("failed to send network-owned-address sign request");
@@ -441,7 +444,7 @@ fn test_dkg_session_identifier_stability() {
 #[cfg(test)]
 async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let mut test_state = build_test_state(4);
 
@@ -484,44 +487,40 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
                     curve: DWalletCurve::Curve25519,
                     signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
                     hash_scheme: DWalletHashScheme::SHA512,
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                        ika_types::crypto::keccak256_digest(&message),
+                    ),
                 })
                 .await
                 .expect("failed to send sign request");
         }
     }
 
-    // Run one service loop iteration to drain the channel and process requests.
+    // One iteration drains the channel into the pending buffer. Under the
+    // consensus-ordered flow a request instantiates only after its demand is
+    // agreed and assigned a presign (several rounds), so after a single
+    // iteration none have instantiated — every request is buffered, none is
+    // dropped.
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
     }
-
-    // Assert: pool is empty (all presigns consumed).
-    let pool_size_after = test_state.epoch_stores[0]
-        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, encryption_key)
-        .expect("failed to get pool size");
-    info!(pool_size_after, "EdDSA pool size after exhaustion");
-    assert_eq!(
-        pool_size_after, 0,
-        "pool should be empty after consuming all presigns"
-    );
-
-    // Assert: exactly `excess_count` requests remain pending on each validator.
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         let pending = service.pending_network_owned_address_sign_request_count();
-        info!(
-            validator = i,
-            pending, "pending sign requests after exhaustion"
-        );
+        info!(validator = i, pending, "pending sign requests after drain");
         assert_eq!(
-            pending, excess_count,
-            "Validator {} should have {} pending requests, got {}",
-            i, excess_count, pending,
+            pending, total_requests,
+            "validator {} should have buffered all {} requests before any presign is assigned, got {}",
+            i, total_requests, pending,
         );
     }
 
-    // Advance rounds to let the presign pool refill via background presign sessions.
-    // After refill, the service loop should process the buffered requests.
-    let mut pending_dropped = false;
+    // The internal pool holds only `pool_size_before` presigns, so at most that
+    // many demands can be assigned before the pool must refill via background
+    // presign sessions. Pump rounds until every buffered request has been
+    // processed (pending drains to zero): the excess (beyond `pool_size_before`)
+    // could only be served AFTER the pool topped up, which proves they were
+    // buffered rather than dropped.
+    let mut pending_drained = false;
     for round in 0..300 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -538,7 +537,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
 
         let pending =
             test_state.dwallet_mpc_services[0].pending_network_owned_address_sign_request_count();
-        if round < 10 || round % 50 == 0 || pending < excess_count {
+        if round < 10 || round % 50 == 0 || pending == 0 {
             let pool_size = test_state.epoch_stores[0]
                 .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, encryption_key)
                 .unwrap_or(0);
@@ -551,24 +550,239 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
             );
         }
 
-        if pending < excess_count {
+        if pending == 0 {
             info!(
                 round,
-                pending, "pending requests dropped — presign pool refilled and excess processed"
+                "all buffered requests processed — presign pool refilled and excess served"
             );
-            pending_dropped = true;
+            pending_drained = true;
             break;
         }
     }
 
     assert!(
-        pending_dropped,
-        "pending sign requests should have been processed after presign pool refill"
+        pending_drained,
+        "all buffered sign requests should be processed after presign pool refill"
+    );
+
+    // Every request consumed a presign; the count exceeds the initial pool, so
+    // the excess were served only after the pool topped up — the deterministic
+    // proof that exhaustion buffered them rather than dropping them.
+    let consumed = test_state.epoch_stores[0]
+        .used_presigns
+        .lock()
+        .unwrap()
+        .len();
+    assert!(
+        consumed >= total_requests,
+        "all {} requests should have consumed a presign (consumed {}, initial pool {}), \
+         proving the pool refilled to serve the excess",
+        total_requests,
+        consumed,
+        pool_size_before
     );
 
     info!(
         "Test passed: presign pool exhaustion correctly buffers and later processes excess requests"
     );
+}
+
+/// Drives consensus rounds until `NetworkOwnedAddressSignOutput`s for BOTH
+/// `first_message` and `second_message` have appeared on validator 0's output
+/// channel (each with a non-empty signature), collecting outputs by message.
+/// Panics after `MAX_SIGN_WAIT_ROUNDS` if either is still missing — which is the
+/// fault signature when validators pair mismatched presigns (the threshold sign
+/// then fails at share combination and never yields an output).
+async fn collect_two_noa_sign_outputs(
+    test_state: &mut IntegrationTestState,
+    first_message: &[u8],
+    second_message: &[u8],
+) -> (Vec<u8>, Vec<u8>) {
+    const MAX_SIGN_WAIT_ROUNDS: usize = 300;
+    let mut signatures: std::collections::HashMap<Vec<u8>, Vec<u8>> =
+        std::collections::HashMap::new();
+    let mut rounds = 0usize;
+    while rounds < MAX_SIGN_WAIT_ROUNDS
+        && !(signatures.contains_key(first_message) && signatures.contains_key(second_message))
+    {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration().await;
+        }
+        utils::wait_for_computations(test_state).await;
+        while let Ok(output) = test_state.network_owned_address_sign_output_receivers[0].try_recv()
+        {
+            signatures.insert(output.message.clone(), output.signature.clone());
+        }
+        rounds += 1;
+    }
+    let first = signatures.get(first_message).cloned().unwrap_or_else(|| {
+        panic!(
+            "no NetworkOwnedAddressSignOutput for the first message after {MAX_SIGN_WAIT_ROUNDS} \
+             consensus rounds — validators paired mismatched presigns"
+        )
+    });
+    let second = signatures.get(second_message).cloned().unwrap_or_else(|| {
+        panic!(
+            "no NetworkOwnedAddressSignOutput for the second message after {MAX_SIGN_WAIT_ROUNDS} \
+             consensus rounds — validators paired mismatched presigns"
+        )
+    });
+    (first, second)
+}
+
+/// Presign assignment for NOA signs is ordered by CONSENSUS, not by each
+/// validator's local receive order.
+///
+/// Reproduces the cross-validator divergence a local-order assignment causes:
+/// four validators receive the SAME two sign demands (M1, M2) but in DIFFERENT
+/// local order — validators 0,1 receive [M1, M2]; validators 2,3 receive
+/// [M2, M1]. A validator that popped its presign pool in local instantiation
+/// order would pair M1 with the pool's first presign on validators 0,1 but with
+/// the SECOND on validators 2,3 (and vice-versa for M2). The four validators
+/// would then run each threshold sign over two different presigns, and the sign
+/// fails at share combination — no output, epoch wedged.
+///
+/// The fix announces every demand through consensus and assigns presigns in
+/// consensus-delivery order (identical on every validator), so both signs pair
+/// the same presign with the same message everywhere and complete. This test
+/// passes ONLY because of that: reverting
+/// `instantiate_network_owned_address_sign_session` to pop the pool locally
+/// makes the divergent local order strand both signs and this test times out.
+#[tokio::test]
+#[cfg(test)]
+async fn test_presign_assignment_is_consensus_ordered_not_local() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
+
+    let curve = DWalletCurve::Curve25519;
+    let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
+    let hash_scheme = DWalletHashScheme::SHA512;
+
+    let mut test_state = build_test_state(4);
+
+    // Create a network key and fill the EdDSA presign pool.
+    let (consensus_round, _network_key_bytes, encryption_key) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let start_round = test_state.consensus_round as u64;
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        signature_algorithm,
+        encryption_key,
+        start_round,
+    )
+    .await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let pool_size_before = test_state.epoch_stores[0]
+        .presign_pool_size(signature_algorithm, encryption_key)
+        .expect("failed to get pool size");
+    assert!(
+        pool_size_before >= 2,
+        "test needs at least two presigns to assign to two demands (pool size {pool_size_before})"
+    );
+
+    // The two demands, sent to every validator but in DIVERGENT local order.
+    let message_one = b"consensus-order-assignment-demand-one".to_vec();
+    let message_two = b"consensus-order-assignment-demand-two".to_vec();
+
+    // Validators 0,1 receive [M1, M2]; validators 2,3 receive [M2, M1].
+    let local_orders: [[&Vec<u8>; 2]; 4] = [
+        [&message_one, &message_two],
+        [&message_one, &message_two],
+        [&message_two, &message_one],
+        [&message_two, &message_one],
+    ];
+    for (validator_index, order) in local_orders.iter().enumerate() {
+        for message in order {
+            test_state.network_owned_address_sign_request_senders[validator_index]
+                .send(NetworkOwnedAddressSignRequest {
+                    message: (*message).clone(),
+                    curve,
+                    signature_algorithm,
+                    hash_scheme,
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                        ika_types::crypto::keccak256_digest(message),
+                    ),
+                })
+                .await
+                .expect("failed to send network-owned-address sign request");
+        }
+    }
+
+    // Drive announce → consensus delivery → consensus-order drain → instantiate
+    // → sign, collecting both outputs.
+    let (signature_one, signature_two) =
+        collect_two_noa_sign_outputs(&mut test_state, &message_one, &message_two).await;
+
+    // Both signs completed with non-empty signatures. This only happens if every
+    // validator paired the SAME presign with the SAME message — i.e. the
+    // consensus-ordered assignment defeated the divergent local receive order.
+    assert!(
+        !signature_one.is_empty(),
+        "first message's signature should not be empty"
+    );
+    assert!(
+        !signature_two.is_empty(),
+        "second message's signature should not be empty"
+    );
+
+    // Direct proof of cross-validator agreement: the presign assigned to each
+    // demand is IDENTICAL on validators that received the demands in OPPOSITE
+    // local order (0 saw [M1,M2]; 2 saw [M2,M1]).
+    let digest_one = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+        ika_types::crypto::keccak256_digest(&message_one),
+    )
+    .digest();
+    let digest_two = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+        ika_types::crypto::keccak256_digest(&message_two),
+    )
+    .digest();
+
+    let assigned_one_v0 = test_state.epoch_stores[0]
+        .noa_assigned_presign(&digest_one)
+        .expect("read assignment")
+        .expect("M1 should have been assigned a presign on validator 0");
+    let assigned_one_v2 = test_state.epoch_stores[2]
+        .noa_assigned_presign(&digest_one)
+        .expect("read assignment")
+        .expect("M1 should have been assigned a presign on validator 2");
+    let assigned_two_v0 = test_state.epoch_stores[0]
+        .noa_assigned_presign(&digest_two)
+        .expect("read assignment")
+        .expect("M2 should have been assigned a presign on validator 0");
+    let assigned_two_v2 = test_state.epoch_stores[2]
+        .noa_assigned_presign(&digest_two)
+        .expect("read assignment")
+        .expect("M2 should have been assigned a presign on validator 2");
+
+    // (session_id, blending_index) must match across validators for each demand.
+    assert_eq!(
+        (assigned_one_v0.0, assigned_one_v0.1),
+        (assigned_one_v2.0, assigned_one_v2.1),
+        "M1's assigned presign must be identical on validators 0 and 2 despite opposite local order"
+    );
+    assert_eq!(
+        (assigned_two_v0.0, assigned_two_v0.1),
+        (assigned_two_v2.0, assigned_two_v2.1),
+        "M2's assigned presign must be identical on validators 0 and 2 despite opposite local order"
+    );
+    // And the two demands got DIFFERENT presigns (no double-assignment).
+    assert_ne!(
+        (assigned_one_v0.0, assigned_one_v0.1),
+        (assigned_two_v0.0, assigned_two_v0.1),
+        "M1 and M2 must be assigned distinct presigns"
+    );
+
+    info!("consensus-ordered presign assignment defeated divergent local order");
 }
 
 /// A validator that instantiates a NOA sign *after* its peers have already
@@ -593,7 +807,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
 #[cfg(test)]
 async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let curve = DWalletCurve::Curve25519;
     let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
@@ -632,45 +846,60 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
                 curve,
                 signature_algorithm,
                 hash_scheme,
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                    ika_types::crypto::keccak256_digest(&test_message),
+                ),
             })
             .await
             .expect("failed to send early network-owned-address sign request");
     }
-    for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration().await;
-    }
-    utils::wait_for_computations(&mut test_state).await;
 
-    // Deliver the early validators' first-round messages to everyone. This is
-    // the only time these messages are on the wire — the collectors are cleared
-    // after distribution, exactly as a consensus round is processed once.
-    utils::send_advance_results_between_parties(
-        &test_state.committee,
-        &mut test_state.sent_consensus_messages_collectors,
-        &mut test_state.epoch_stores,
-        test_state.consensus_round as u64,
-    );
-    test_state.consensus_round += 1;
-    for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration().await;
-    }
+    // NOA sign instantiation is gated on a consensus-ordered presign
+    // assignment: the early validators must announce a presign demand, have it
+    // agreed through consensus, drain-assign a presign, and only THEN
+    // instantiate the sign and emit their first-round messages. That is several
+    // consensus rounds, so pump rounds until every late validator has buffered
+    // those first-round messages in a `WaitingForSessionRequest` placeholder —
+    // the late validators have no request of their own yet, so they never
+    // instantiate; they only receive the early validators' messages (each
+    // distributed exactly once, collectors cleared after each round, as a
+    // consensus round is processed once) and buffer them. This is what the
+    // message-loss fix must preserve across the late validators' own later
+    // instantiation.
+    const MAX_BUFFERING_WAIT_ROUNDS: usize = 40;
+    let mut buffering_rounds = 0usize;
+    loop {
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration().await;
+        }
+        utils::wait_for_computations(&mut test_state).await;
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
 
-    // Each late validator now holds a placeholder NOA-sign session buffering the
-    // early validators' messages, without having instantiated the sign itself.
-    for &i in &late_parties {
-        let has_buffering_placeholder = test_state.dwallet_mpc_services[i]
-            .dwallet_mpc_manager()
-            .sessions
-            .iter()
-            .any(|(id, session)| {
-                id.session_type() == SessionType::NetworkOwnedAddressSign
-                    && matches!(session.status, SessionStatus::WaitingForSessionRequest)
-            });
+        let all_late_buffering = late_parties.iter().all(|&i| {
+            test_state.dwallet_mpc_services[i]
+                .dwallet_mpc_manager()
+                .sessions
+                .iter()
+                .any(|(id, session)| {
+                    id.session_type() == SessionType::NetworkOwnedAddressSign
+                        && matches!(session.status, SessionStatus::WaitingForSessionRequest)
+                })
+        });
+        if all_late_buffering {
+            break;
+        }
+        buffering_rounds += 1;
         assert!(
-            has_buffering_placeholder,
-            "late validator {} should hold a WaitingForSessionRequest NOA-sign \
-             placeholder buffering the early validators' first-round messages",
-            i
+            buffering_rounds < MAX_BUFFERING_WAIT_ROUNDS,
+            "late validators never formed a buffering NOA-sign placeholder within {} \
+             rounds (the early validators' first-round messages never reached them)",
+            MAX_BUFFERING_WAIT_ROUNDS
         );
     }
 
@@ -682,6 +911,9 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
                 curve,
                 signature_algorithm,
                 hash_scheme,
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                    ika_types::crypto::keccak256_digest(&test_message),
+                ),
             })
             .await
             .expect("failed to send late network-owned-address sign request");
@@ -724,7 +956,7 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
 #[cfg(test)]
 async fn test_instantiation_normalizes_byzantine_native_placeholder() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let curve = DWalletCurve::Curve25519;
     let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
@@ -755,18 +987,53 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
             curve,
             signature_algorithm,
             hash_scheme,
+            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                ika_types::crypto::keccak256_digest(&test_message),
+            ),
         })
         .await
         .expect("failed to send id-source sign request");
-    test_state.dwallet_mpc_services[id_source]
-        .run_service_loop_iteration()
-        .await;
-    let noa_session_id = *test_state.dwallet_mpc_services[id_source]
-        .dwallet_mpc_manager()
-        .sessions
-        .keys()
-        .find(|id| id.session_type() == SessionType::NetworkOwnedAddressSign)
-        .expect("id-source validator should have instantiated a NOA sign session");
+    // NOA sign instantiation is gated on a consensus-ordered presign
+    // assignment (announce -> consensus -> drain -> assign), so id_source needs
+    // several rounds to instantiate. Pump until it holds a NOA sign session,
+    // then read the (validator-independent) session id. Break BEFORE the round's
+    // message distribution, so id_source's first-round messages never reach the
+    // target — the target must be clean when the byzantine "native" output
+    // arrives, or a stray real message would pre-create an MPC placeholder and
+    // defeat the Native-placeholder precondition below. (The demand itself was
+    // distributed in prior rounds, so every validator — including the target —
+    // has already drained-and-assigned the presign and can instantiate promptly
+    // once it receives its own request.)
+    const MAX_INSTANTIATE_WAIT_ROUNDS: usize = 40;
+    let mut instantiate_rounds = 0usize;
+    let noa_session_id = loop {
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration().await;
+        }
+        utils::wait_for_computations(&mut test_state).await;
+        if let Some(id) = test_state.dwallet_mpc_services[id_source]
+            .dwallet_mpc_manager()
+            .sessions
+            .keys()
+            .find(|id| id.session_type() == SessionType::NetworkOwnedAddressSign)
+            .copied()
+        {
+            break id;
+        }
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        instantiate_rounds += 1;
+        assert!(
+            instantiate_rounds < MAX_INSTANTIATE_WAIT_ROUNDS,
+            "id-source validator never instantiated a NOA sign session within {} rounds",
+            MAX_INSTANTIATE_WAIT_ROUNDS
+        );
+    };
 
     // A byzantine peer sends a "native" output for that id to the target
     // validator, which has not yet instantiated — creating a Native-typed
@@ -821,6 +1088,9 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
             curve,
             signature_algorithm,
             hash_scheme,
+            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                ika_types::crypto::keccak256_digest(&test_message),
+            ),
         })
         .await
         .expect("failed to send target sign request");
@@ -860,7 +1130,7 @@ async fn network_owned_address_vss_sign_flow(
     hash_scheme: DWalletHashScheme,
 ) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let mut test_state = build_test_state(4);
 
@@ -915,6 +1185,9 @@ async fn network_owned_address_vss_sign_flow(
                 curve,
                 signature_algorithm,
                 hash_scheme,
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                    ika_types::crypto::keccak256_digest(&test_message),
+                ),
             })
             .await
             .expect("failed to send network-owned-address VSS sign request");

@@ -8,9 +8,9 @@ use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use crate::messages_dwallet_mpc::{
-    ConsensusGlobalPresignRequest, ConsensusNOAObservation, DWalletInternalMPCOutput,
-    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
-    SessionIdentifier, SuiChainObservationUpdate,
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNOAPresignDemand,
+    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
+    IdleStatusUpdate, SessionIdentifier, SuiChainObservationUpdate,
 };
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
@@ -81,6 +81,10 @@ pub enum ConsensusTransactionKey {
     GlobalPresignRequest(AuthorityName, u64),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
+    /// A NOA sign presign demand, keyed by its `demand_id` digest ONLY (not
+    /// authority), so redundant announcements of the same demand from different
+    /// validators collapse to a single consensus transaction.
+    NOAPresignDemand([u8; 32]),
     /// A current-committee validator's self-submitted MPC data
     /// announcement, keyed by validator + epoch + timestamp_ms. The
     /// timestamp is the version within (validator, epoch); the
@@ -216,6 +220,9 @@ impl Debug for ConsensusTransactionKey {
                     hex::encode(nonce)
                 )
             }
+            ConsensusTransactionKey::NOAPresignDemand(demand_id_digest) => {
+                write!(f, "NOAPresignDemand(0x{})", hex::encode(demand_id_digest))
+            }
             ConsensusTransactionKey::ValidatorMpcDataAnnouncement(authority, epoch, ts) => {
                 write!(
                     f,
@@ -324,6 +331,7 @@ pub enum ConsensusTransactionKind {
     SuiChainObservationUpdate(SuiChainObservationUpdate),
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
     NOAObservation(ConsensusNOAObservation),
+    NOAPresignDemand(ConsensusNOAPresignDemand),
     /// Self-submission by a current-committee validator: the
     /// announcement (digest + metadata) plus the full mpc_data blob
     /// carried in-band. No payload signature (the consensus block
@@ -572,6 +580,28 @@ impl ConsensusTransaction {
         }
     }
 
+    /// Create a new consensus transaction announcing a NOA sign presign demand.
+    pub fn new_noa_presign_demand(
+        authority: AuthorityName,
+        demand_id: crate::noa_checkpoint::NOAPresignDemandId,
+        signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
+        network_encryption_key_id: ObjectID,
+    ) -> Self {
+        let msg = ConsensusNOAPresignDemand {
+            authority,
+            demand_id,
+            signature_algorithm,
+            network_encryption_key_id,
+        };
+        let mut hasher = DefaultHasher::new();
+        msg.demand_id_digest().hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::NOAPresignDemand(msg),
+        }
+    }
+
     /// Self-submission by a current-committee validator: the bare
     /// announcement, no signature. The consensus block author
     /// authenticates the sender, and `verify_consensus_transaction`
@@ -683,6 +713,9 @@ impl ConsensusTransaction {
             }
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
+            }
+            ConsensusTransactionKind::NOAPresignDemand(msg) => {
+                ConsensusTransactionKey::NOAPresignDemand(msg.demand_id_digest())
             }
             ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, _) => {
                 ConsensusTransactionKey::ValidatorMpcDataAnnouncement(

@@ -383,6 +383,10 @@ fn create_split_idle_test_config_guard() -> ika_protocol_config::OverrideGuard {
     let idle_threshold = 1u64;
 
     ProtocolConfig::apply_overrides_for_testing(move |_version, mut config| {
+        // This test drives a validator non-idle with a NOA sign, whose
+        // instantiation is gated on noa_checkpoints (consensus-ordered presign
+        // assignment). Scoped to this guard.
+        config.set_noa_checkpoints_for_testing(true);
         config.set_idle_session_count_threshold_for_testing(idle_threshold);
 
         config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
@@ -589,15 +593,25 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
                 curve: DWalletCurve::Curve25519,
                 signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
                 hash_scheme: DWalletHashScheme::SHA512,
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                    ika_types::crypto::keccak256_digest(&test_message),
+                ),
             })
             .await
             .expect("failed to send sign request to validator");
     }
 
-    // Advance 2 consensus rounds to:
-    // 1. Process the sign request + send status updates (round 1)
-    // 2. Distribute and process the divergent status updates (round 2)
-    for _ in 0..2 {
+    // NOA sign instantiation is gated on a consensus-ordered presign assignment
+    // (announce → consensus → drain → assign), so validators 0,1 take several
+    // rounds to instantiate their sign session and report non-idle. Validators
+    // 2,3 receive the demand over consensus and assign a presign too, but never
+    // instantiate (no request of their own); their internal-presign top-up is
+    // gated on `network_is_idle` (mpc_manager: `network_is_idle && pool < max`),
+    // so once 0,1 go non-idle the 2-2 split makes the network non-idle and their
+    // top-up stays quiescent — they remain idle. Pump until the split settles.
+    const MAX_SPLIT_WAIT_ROUNDS: usize = 40;
+    let mut split_rounds = 0usize;
+    loop {
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
         }
@@ -611,6 +625,36 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
         }
+
+        let network_idle = test_state.dwallet_mpc_services[0].network_is_idle();
+        let (idle_count, not_idle_count) = {
+            let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+            (
+                manager
+                    .idle_status_by_party
+                    .values()
+                    .filter(|&&v| v)
+                    .count(),
+                manager
+                    .idle_status_by_party
+                    .values()
+                    .filter(|&&v| !v)
+                    .count(),
+            )
+        };
+        if !network_idle && idle_count == 2 && not_idle_count == 2 {
+            break;
+        }
+        split_rounds += 1;
+        assert!(
+            split_rounds < MAX_SPLIT_WAIT_ROUNDS,
+            "2-2 idle split not reached within {} rounds (0,1 should instantiate NOA \
+             signs and go non-idle while 2,3 stay idle); network_idle={}, idle={}, not_idle={}",
+            MAX_SPLIT_WAIT_ROUNDS,
+            network_idle,
+            idle_count,
+            not_idle_count
+        );
     }
 
     // Assert: 2-2 split → ThresholdNotReached → network_is_idle = false.

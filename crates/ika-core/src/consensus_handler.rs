@@ -436,6 +436,7 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::SuiChainObservationUpdate(_) => "sui_chain_observation_update",
         ConsensusTransactionKind::GlobalPresignRequest(_) => "global_presign_request",
         ConsensusTransactionKind::NOAObservation(_) => "noa_observation",
+        ConsensusTransactionKind::NOAPresignDemand(_) => "noa_presign_demand",
         ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..) => {
             "validator_mpc_data_announcement"
         }

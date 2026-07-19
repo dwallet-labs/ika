@@ -24,6 +24,11 @@ pub struct NetworkOwnedAddressSignRequest {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: DWalletHashScheme,
+    /// Network-uniform identity of this sign demand. Announced through
+    /// consensus so every validator assigns it the same presign in
+    /// consensus-delivery order (see `dwallet_mpc_service`'s NOA presign-demand
+    /// drain).
+    pub demand_id: ika_types::noa_checkpoint::NOAPresignDemandId,
 }
 
 /// Output from a completed internal MPC signing session.
