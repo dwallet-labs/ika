@@ -642,7 +642,13 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
                     .count(),
             )
         };
-        if !network_idle && idle_count == 2 && not_idle_count == 2 {
+        // Break on the SPLIT forming (0,1 non-idle, 2,3 idle) alone — do NOT
+        // also require `!network_idle` here. The whole point of the test is that
+        // a 2-2 split does not reach idle consensus; letting the final assertions
+        // judge `network_is_idle()` means a majority-vote regression fails at the
+        // semantically-right assertion, not as a misleading "split not reached"
+        // timeout while the split actually formed.
+        if idle_count == 2 && not_idle_count == 2 {
             break;
         }
         split_rounds += 1;
