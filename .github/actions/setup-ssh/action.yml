@@ -23,8 +23,3 @@ runs:
       shell: bash
       run: |
         git config --global url."git@github.com:dwallet-labs/inkrypto".insteadOf "https://github.com/dwallet-labs/inkrypto"
-        # TEMPORARY: the crypto crates are imported from cryptography-private
-        # (aggregated-randomizer-shares-additive, PR #623) until it is published
-        # to inkrypto; the deploy key must have read access to it. Remove with
-        # the crypto dep move back to inkrypto.
-        git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
