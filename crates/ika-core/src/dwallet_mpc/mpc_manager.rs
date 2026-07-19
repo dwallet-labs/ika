@@ -14,8 +14,8 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::{
 };
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
-    OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, mpc_error_diagnostic,
-    network_key_reconfiguration_raw_output_digest,
+    OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, SessionOrigin,
+    mpc_error_diagnostic, network_key_reconfiguration_raw_output_digest,
 };
 use crate::dwallet_mpc::mpc_session::{
     AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput, SessionComputationType,
@@ -677,6 +677,16 @@ impl DWalletMPCManager {
                         .sessions
                         .get(&session_identifier)
                         .is_some_and(|session| session.self_output_consensus_round.is_some());
+                    // A session this validator only reconstructed from peer
+                    // artifacts (its request never activated locally —
+                    // dominant after a restart) can never have local output;
+                    // that absence is definitional, not a completion race.
+                    let session_reconstructed =
+                        self.sessions
+                            .get(&session_identifier)
+                            .is_some_and(|session| {
+                                session.origin == SessionOrigin::ReconstructedFromConsensus
+                            });
                     let running_computation_count = self
                         .cryptographic_computations_orchestrator
                         .running_computation_count_for_session(&session_identifier);
@@ -734,12 +744,6 @@ impl DWalletMPCManager {
                     if rejected {
                         trigger_conditions.push("rejected_output_reached_quorum");
                     }
-                    if !local_output_observed {
-                        trigger_conditions.push("quorum_reached_before_local_output_observed");
-                    }
-                    if running_computation_count > 0 {
-                        trigger_conditions.push("local_computation_pending_at_session_completion");
-                    }
                     if !malicious_voters.is_empty() {
                         trigger_conditions.push("weighted_majority_identified_malicious_voters");
                     }
@@ -755,7 +759,39 @@ impl DWalletMPCManager {
                     if vote_diagnostics.local_authority_malicious_reason.is_some() {
                         trigger_conditions.push("local_authority_in_final_malicious_set");
                     }
+                    // Quorum forming before this validator's own output or
+                    // computation catches up is the expected state for any
+                    // validator outside the fastest two-thirds of a session,
+                    // not a defect: count it on a plain counter, and attach
+                    // it to the snapshot only as context when one of the
+                    // defect triggers above fired for the same session.
+                    let session_type = session_type_label(session_identifier.session_type());
+                    if !local_output_observed && !session_reconstructed {
+                        self.dwallet_mpc_metrics
+                            .completion_races_total
+                            .with_label_values(&[
+                                "quorum_reached_before_local_output_observed",
+                                session_type,
+                            ])
+                            .inc();
+                    }
+                    if running_computation_count > 0 {
+                        self.dwallet_mpc_metrics
+                            .completion_races_total
+                            .with_label_values(&[
+                                "local_computation_pending_at_session_completion",
+                                session_type,
+                            ])
+                            .inc();
+                    }
                     if !trigger_conditions.is_empty() {
+                        if !local_output_observed && !session_reconstructed {
+                            trigger_conditions.push("quorum_reached_before_local_output_observed");
+                        }
+                        if running_computation_count > 0 {
+                            trigger_conditions
+                                .push("local_computation_pending_at_session_completion");
+                        }
                         self.emit_session_anomaly(
                             session_identifier,
                             MpcAnomalyKind::QuorumAnomaly,
@@ -2518,11 +2554,19 @@ impl DWalletMPCManager {
             counterparty_chain,
             session_computation_type,
         );
+        let session_origin = new_session.origin;
+        if session_origin == SessionOrigin::ReconstructedFromConsensus {
+            self.dwallet_mpc_metrics
+                .sessions_reconstructed_total
+                .with_label_values(&[session_type_label(session_identifier.session_type())])
+                .inc();
+        }
 
         info!(
             party_id=self.party_id,
             authority=?self.validator_name,
             active,
+            session_origin = session_origin.label(),
             ?session_identifier,
             last_session_to_complete_in_current_epoch=?self.last_session_to_complete_in_current_epoch,
             "Adding a new MPC session to the active sessions map",
@@ -3668,6 +3712,7 @@ impl DWalletMPCManager {
                 severity = anomaly_kind.severity(),
                 session_id = %hex::encode(snapshot.session_id),
                 session_type = session_type_label(snapshot.session_type),
+                session_origin = snapshot.session_origin.label(),
                 epoch = snapshot.epoch,
                 local_party_id = snapshot.local_party_id,
                 tracked_session = true,
@@ -3693,6 +3738,7 @@ impl DWalletMPCManager {
                 severity = anomaly_kind.severity(),
                 session_id = %hex::encode(snapshot.session_id),
                 session_type = session_type_label(snapshot.session_type),
+                session_origin = snapshot.session_origin.label(),
                 epoch = snapshot.epoch,
                 local_party_id = snapshot.local_party_id,
                 tracked_session = true,

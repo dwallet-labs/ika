@@ -74,7 +74,10 @@ pub struct DWalletMPCMetrics {
     computation_duration_variance: GaugeVec,
 
     /// Tracks the number of MPC protocol sessions that have been started.
-    session_start_count: IntGaugeVec,
+    /// A genuine counter (monotonic, inc-only); the legacy `_count` name
+    /// predates the counter/`_total` suffix convention and is kept so
+    /// existing dashboards keep working.
+    session_start_count: IntCounterVec,
 
     /// Tracks the total number of completed MPC protocol sessions.
     ///
@@ -190,6 +193,26 @@ pub struct DWalletMPCMetrics {
     /// Labels are fixed enums: `anomaly_kind`, `session_type` (or `unknown` when
     /// service termination has no source session), and `severity`.
     pub(crate) anomaly_snapshots_total: IntCounterVec,
+
+    /// Expected completion races: the session completed via the peers' output
+    /// quorum before this validator's own output returned through consensus,
+    /// while its local computation was still running, or before that
+    /// computation's late result arrived. This is how threshold cryptography
+    /// behaves for any validator outside the fastest two-thirds of a session,
+    /// so these are counted here — NOT in the anomaly taxonomy — to keep
+    /// `anomaly_snapshots_total` meaningful. Labels: `race` (fixed condition
+    /// strings), `session_type`.
+    pub(crate) completion_races_total: IntCounterVec,
+
+    /// Sessions created from peer artifacts arriving through consensus (a
+    /// stray message/output before the request, or a completion replayed at
+    /// restart) rather than from a locally processed session request. A
+    /// bounded burst at restart is healthy recovery; a stream still climbing
+    /// long after restart while `advance_completions` stays flat is a
+    /// validator that is not participating at all (the mid-epoch-restart
+    /// wedge class). Incremented at creation; a later upgrade to
+    /// local-request origin does not retract it. Labels: `session_type`.
+    pub(crate) sessions_reconstructed_total: IntCounterVec,
 
     /// Individual reasons present in emitted anomaly snapshots. One snapshot can
     /// increment several triggers. Trigger values are compile-time static strings.
@@ -346,7 +369,7 @@ impl DWalletMPCMetrics {
         ];
 
         Arc::new(Self {
-            session_start_count: register_int_gauge_vec_with_registry!(
+            session_start_count: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_session_start_count",
                 "Number of MPC protocol sessions started",
                 &protocol_metric_labels,
@@ -549,6 +572,20 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_anomaly_triggers_total",
                 "Trigger conditions included in emitted privacy-safe MPC anomaly snapshots",
                 &["trigger", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            completion_races_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_completion_races_total",
+                "Expected races where a session completed via the peers' output quorum before the local validator caught up",
+                &["race", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            sessions_reconstructed_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_sessions_reconstructed_total",
+                "Sessions created from peer artifacts arriving through consensus instead of a locally processed session request",
+                &["session_type"],
                 registry,
             )
             .unwrap(),

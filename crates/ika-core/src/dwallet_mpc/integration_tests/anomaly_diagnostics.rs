@@ -3,7 +3,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, LocalComputationState, MpcAnomalyContext, MpcAnomalyKind,
-    output_digest, report_digest,
+    SessionOrigin, output_digest, report_digest,
 };
 use crate::dwallet_mpc::mpc_manager::MAX_UNTRACKED_ANOMALIES;
 use crate::dwallet_mpc::mpc_session::DWalletMPCSessionOutput;
@@ -378,10 +378,128 @@ fn self_malicious_service_exit_records_termination_reason() {
     );
 }
 
+/// Quorum forming before this validator's own output or computation catches
+/// up is normal threshold-MPC behavior, not a defect: no anomaly snapshot may
+/// be emitted, and the races land on the plain completion-race counter
+/// instead (per-session dedup times high session churn flooded the anomaly
+/// taxonomy otherwise). The race is only a race for a locally requested
+/// session, so the session's origin is upgraded before quorum here.
 #[test]
-fn quorum_without_local_output_captures_running_computation_and_redacts_payload() {
+fn benign_quorum_race_counts_without_anomaly_snapshot() {
     let (authorities, mut services) = authorities(0);
     let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .cryptographic_computations_orchestrator
+        .currently_running_cryptographic_computations
+        .insert(ComputationId {
+            session_identifier,
+            consensus_round: 40,
+            mpc_round: Some(3),
+            attempt_number: 0,
+        });
+    services[0].dwallet_mpc_manager_mut().handle_output(
+        40,
+        internal_report(authorities[1], session_identifier, vec![3], vec![]),
+    );
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .sessions
+        .get_mut(&session_identifier)
+        .unwrap()
+        .origin = SessionOrigin::LocalRequest;
+    let reports = authorities
+        .iter()
+        .skip(2)
+        .take(2)
+        .map(|authority| internal_report(*authority, session_identifier, vec![3], vec![]))
+        .collect();
+
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(41, reports);
+
+    let manager = services[0].dwallet_mpc_manager();
+    let session = manager.sessions.get(&session_identifier).unwrap();
+    assert_eq!(session.emitted_anomaly_count(), 0);
+    assert!(session.last_anomaly_snapshot().is_none());
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&["quorum_anomaly", "system", "warn"])
+            .get(),
+        0
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&["quorum_reached_before_local_output_observed", "system"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&["local_computation_pending_at_session_completion", "system"])
+            .get(),
+        1
+    );
+}
+
+/// A session known only from peer outputs (its request never activated
+/// locally — the dominant shape after a restart) can never have local
+/// output; quorum on it is a reconstruction, not a completion race. It
+/// lands on `sessions_reconstructed_total` at creation and must not touch
+/// the race counter or the anomaly taxonomy at quorum.
+#[test]
+fn reconstructed_session_quorum_counts_reconstruction_not_race() {
+    let (authorities, mut services) = authorities(0);
+    let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    let reports = authorities
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|authority| internal_report(*authority, session_identifier, vec![3], vec![]))
+        .collect();
+
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(41, reports);
+
+    let manager = services[0].dwallet_mpc_manager();
+    let session = manager.sessions.get(&session_identifier).unwrap();
+    assert_eq!(session.origin, SessionOrigin::ReconstructedFromConsensus);
+    assert_eq!(session.emitted_anomaly_count(), 0);
+    assert!(session.last_anomaly_snapshot().is_none());
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .sessions_reconstructed_total
+            .with_label_values(&["system"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .completion_races_total
+            .with_label_values(&["quorum_reached_before_local_output_observed", "system"])
+            .get(),
+        0
+    );
+}
+
+/// When a defect trigger fires for the same quorum on a locally requested
+/// session, the snapshot is emitted and carries the benign race conditions
+/// as context, the running-computation state, and no protocol payload.
+#[test]
+fn defect_quorum_snapshot_keeps_race_context_and_redacts_payload() {
+    let (authorities, mut services) = authorities(0);
+    let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    let malicious_authority = authorities[3];
     let secret_marker = b"PRIVATE_OUTPUT_MUST_NOT_APPEAR".to_vec();
     services[0]
         .dwallet_mpc_manager_mut()
@@ -393,16 +511,31 @@ fn quorum_without_local_output_captures_running_computation_and_redacts_payload(
             mpc_round: Some(3),
             attempt_number: 0,
         });
+    services[0].dwallet_mpc_manager_mut().handle_output(
+        40,
+        internal_report(
+            authorities[1],
+            session_identifier,
+            secret_marker.clone(),
+            vec![malicious_authority],
+        ),
+    );
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .sessions
+        .get_mut(&session_identifier)
+        .unwrap()
+        .origin = SessionOrigin::LocalRequest;
     let reports = authorities
         .iter()
-        .skip(1)
-        .take(3)
+        .skip(2)
+        .take(2)
         .map(|authority| {
             internal_report(
                 *authority,
                 session_identifier,
                 secret_marker.clone(),
-                vec![],
+                vec![malicious_authority],
             )
         })
         .collect();
@@ -418,20 +551,87 @@ fn quorum_without_local_output_captures_running_computation_and_redacts_payload(
         .unwrap()
         .last_anomaly_snapshot()
         .unwrap();
-    assert!(!snapshot.local_output_observed);
-    assert!(snapshot.quorum_reached_without_local_output);
-    assert_eq!(
-        snapshot.local_computation_state,
-        LocalComputationState::Running
+    assert_eq!(snapshot.session_origin, SessionOrigin::LocalRequest);
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"malicious_authority_identified")
+    );
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"quorum_reached_before_local_output_observed")
     );
     assert!(
         snapshot
             .trigger_conditions
             .contains(&"local_computation_pending_at_session_completion")
     );
+    assert!(!snapshot.local_output_observed);
+    assert!(snapshot.quorum_reached_without_local_output);
+    assert_eq!(
+        snapshot.local_computation_state,
+        LocalComputationState::Running
+    );
     let rendered = snapshot.to_json().unwrap();
     assert!(!rendered.contains(&format!("{:?}", secret_marker)));
     assert!(!rendered.contains("PRIVATE_OUTPUT_MUST_NOT_APPEAR"));
+}
+
+/// The same defect on a session this validator only reconstructed from peer
+/// outputs still snapshots — but its missing local output is definitional,
+/// so the race-context condition is omitted and `session_origin` lets triage
+/// split the populations. The factual state fields are unaffected.
+#[test]
+fn defect_snapshot_on_reconstructed_session_omits_race_context() {
+    let (authorities, mut services) = authorities(0);
+    let session_identifier = SessionIdentifier::new(SessionType::System, [14; 32]);
+    let malicious_authority = authorities[3];
+    let reports = authorities
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|authority| {
+            internal_report(
+                *authority,
+                session_identifier,
+                vec![6],
+                vec![malicious_authority],
+            )
+        })
+        .collect();
+
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(41, reports);
+
+    let snapshot = services[0]
+        .dwallet_mpc_manager()
+        .sessions
+        .get(&session_identifier)
+        .unwrap()
+        .last_anomaly_snapshot()
+        .unwrap();
+    assert_eq!(
+        snapshot.session_origin,
+        SessionOrigin::ReconstructedFromConsensus
+    );
+    assert!(
+        snapshot
+            .trigger_conditions
+            .contains(&"malicious_authority_identified")
+    );
+    assert!(
+        !snapshot
+            .trigger_conditions
+            .contains(&"quorum_reached_before_local_output_observed")
+    );
+    assert!(!snapshot.local_output_observed);
+    assert!(snapshot.quorum_reached_without_local_output);
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&snapshot.to_json().unwrap()).unwrap()["session_origin"]
+            == "reconstructed_from_consensus"
+    );
 }
 
 #[test]

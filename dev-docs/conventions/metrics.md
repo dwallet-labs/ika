@@ -44,9 +44,12 @@ family (`last_pruned_{consensus,authority}_db_epoch`,
   `register_int_counter*` — e.g. `dwallet_mpc_global_presigns_served_total`,
   `dwallet_mpc_network_key_instantiation_failures_total`.
 - **Gauges** (a current value) are a plain noun, often `_count` / `_size`
-  / `_in_flight` — e.g. `dwallet_mpc_session_start_count`,
-  `dwallet_mpc_internal_presign_pool_size`,
+  / `_in_flight` — e.g. `dwallet_mpc_internal_presign_pool_size`,
   `ika_dwallet_mpc_malicious_actors_count`. Never give a gauge `_total`.
+  One legacy exception: `ika_dwallet_mpc_session_start_count` is a genuine
+  counter (converted from a gauge that was only ever incremented) whose
+  `_count` name predates the suffix convention and is kept so existing
+  dashboards keep working.
 - **Per-protocol metrics are LABELLED, not duplicated per protocol.** The
   MPC computation gauges are `*_vec` keyed by
   `["curve", "signature_algorithm", "key_role"]`; the label values come
@@ -133,10 +136,12 @@ ika_dwallet_handoff_signatures_collected
 ika_dwallet_handoff_signatures_rejected_total
 ika_dwallet_handoff_signatures_stake
 ika_dwallet_mpc_active_sessions_by_age
-ika_dwallet_mpc_anomaly_snapshots_total
-ika_dwallet_mpc_anomaly_triggers_total
 ika_dwallet_mpc_advance_calls
 ika_dwallet_mpc_advance_completions
+ika_dwallet_mpc_anomaly_snapshots_dropped_total
+ika_dwallet_mpc_anomaly_snapshots_total
+ika_dwallet_mpc_anomaly_triggers_total
+ika_dwallet_mpc_completion_races_total
 ika_dwallet_mpc_completions_count
 ika_dwallet_mpc_computation_duration_avg
 ika_dwallet_mpc_computation_duration_variance
@@ -150,6 +155,7 @@ ika_dwallet_mpc_data_ready_signals
 ika_dwallet_mpc_global_presign_requests_waiting
 ika_dwallet_mpc_global_presigns_served_total
 ika_dwallet_mpc_internal_presign_pool_size
+ika_dwallet_mpc_internal_presign_requests_pending_for_network_key_data
 ika_dwallet_mpc_last_completion_duration
 ika_dwallet_mpc_malicious_actors_count
 ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version
@@ -168,11 +174,14 @@ ika_dwallet_mpc_requests_pending_for_network_key
 ika_dwallet_mpc_requests_pending_for_next_active_committee
 ika_dwallet_mpc_self_output_to_quorum_consensus_rounds
 ika_dwallet_mpc_service_end_of_publish_local
-ika_dwallet_mpc_session_start_count
+ika_dwallet_mpc_session_late_output_info
+ika_dwallet_mpc_session_late_output_malicious_actors
 ika_dwallet_mpc_session_output_info
 ika_dwallet_mpc_session_output_rejected
 ika_dwallet_mpc_session_reported_malicious_actors
+ika_dwallet_mpc_session_start_count
 ika_dwallet_mpc_session_state_count
+ika_dwallet_mpc_sessions_reconstructed_total
 ika_dwallet_mpc_sessions_rejected_total
 ika_dwallet_mpc_sessions_with_self_output_no_quorum
 ika_dwallet_mpc_user_session_distinct_output_authorities

@@ -23,8 +23,8 @@ use tracing::{debug, error, info, warn};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_diagnostics::{
     BoundedSessionDiagnostics, LocalComputationState, MPC_ANOMALY_SCHEMA_VERSION,
-    MpcAnomalyContext, MpcAnomalyKind, MpcAnomalySnapshot, SessionDiagnosticEvent, output_digest,
-    report_digest,
+    MpcAnomalyContext, MpcAnomalyKind, MpcAnomalySnapshot, SessionDiagnosticEvent, SessionOrigin,
+    output_digest, report_digest,
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
@@ -82,6 +82,15 @@ pub(crate) struct DWalletSession {
 
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
+
+    /// Provenance of this session entry: created from a locally processed
+    /// request, or reconstructed from peer artifacts arriving through
+    /// consensus (stray message/output, replayed completion). Derived from
+    /// the creation status; upgraded to `LocalRequest` if the session later
+    /// activates from its request. Reconstructed sessions are counted on
+    /// `ika_dwallet_mpc_sessions_reconstructed_total` and their missing
+    /// local output is never treated as a completion race.
+    pub(super) origin: SessionOrigin,
 
     pub(super) computation_type: SessionComputationType,
 
@@ -279,8 +288,21 @@ impl DWalletSession {
             _ => (None, None, None),
         };
         let diagnostics = BoundedSessionDiagnostics::new(status.to_string());
+        // The creation status encodes provenance: `WaitingForSessionRequest`
+        // (stray message/output before the request) and `ComputationCompleted`
+        // (completion replayed from consensus) entries exist only because of
+        // peer artifacts; every other creation site processes a local request.
+        let origin = match &status {
+            SessionStatus::WaitingForSessionRequest | SessionStatus::ComputationCompleted => {
+                SessionOrigin::ReconstructedFromConsensus
+            }
+            SessionStatus::Active { .. } | SessionStatus::Completed | SessionStatus::Failed => {
+                SessionOrigin::LocalRequest
+            }
+        };
         let mut session = Self {
             status,
+            origin,
             outputs_by_consensus_round: BTreeMap::new(),
             session_identifier,
             party_id,
@@ -631,6 +653,12 @@ impl DWalletSession {
     }
 
     pub(crate) fn set_status(&mut self, status: SessionStatus) {
+        // Activating means the session's own request was processed locally —
+        // a `WaitingForSessionRequest`-born entry stops being a
+        // reconstruction the moment it activates.
+        if matches!(status, SessionStatus::Active { .. }) {
+            self.origin = SessionOrigin::LocalRequest;
+        }
         self.record_status_transition(&status.to_string());
         self.status = status;
     }
@@ -841,6 +869,7 @@ impl DWalletSession {
             session_type: self
                 .session_type
                 .unwrap_or_else(|| self.session_identifier.session_type()),
+            session_origin: self.origin,
             computation_type: match &self.computation_type {
                 SessionComputationType::MPC { .. } => "MPC",
                 SessionComputationType::Native => "Native",
