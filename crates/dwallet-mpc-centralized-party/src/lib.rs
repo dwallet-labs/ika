@@ -30,7 +30,6 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_hash_scheme, try_into_signature_algorithm,
 };
 use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
-use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
@@ -1183,7 +1182,7 @@ fn protocol_public_parameters(
             Ok(pp)
         }
         VersionedNetworkDkgOutput::V3(network_dkg_public_output) => {
-            let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
+            let network_dkg_public_output: twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
             let pp = match try_into_curve(curve)? {
@@ -1206,7 +1205,7 @@ fn protocol_public_parameters(
         VersionedNetworkDkgOutput::V4(network_dkg_public_output) => {
             // Aggregated shape — same `PublicOutputCore` prefix, so the same
             // core-level protocol-public-parameter accessors apply.
-            let network_dkg_public_output: twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput =
+            let network_dkg_public_output: twopc_mpc::decentralized_party::dkg::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
             let pp = match try_into_curve(curve)? {
@@ -1287,7 +1286,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
         VersionedDecryptionKeyReconfigurationOutput::V4(public_output_bytes) => {
             // Aggregated shape — same `PublicOutputCore` prefix, so the same
             // core-level protocol-public-parameter accessors apply.
-            let public_output: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
             let pp = match try_into_curve(curve)? {

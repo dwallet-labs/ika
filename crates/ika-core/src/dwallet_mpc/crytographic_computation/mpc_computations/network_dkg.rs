@@ -249,9 +249,10 @@ async fn get_decryption_key_shares_from_public_output(
                         }
                     }
                     VersionedNetworkDkgOutput::V3(public_output) => {
-                        match bcs::from_bytes::<<dkg::Party as mpc::Party>::PublicOutput>(
-                            public_output,
-                        ) {
+                        match bcs::from_bytes::<
+                            twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput,
+                        >(public_output)
+                        {
                             Ok(dkg_public_output) => dkg_public_output
                                 .decrypt_decryption_key_shares(
                                     party_id,
@@ -264,7 +265,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedNetworkDkgOutput::V4(public_output) => {
                         match bcs::from_bytes::<
-                            twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput,
+                            twopc_mpc::decentralized_party::dkg::PublicOutput,
                         >(public_output)
                         {
                             Ok(dkg_public_output) => dkg_public_output
@@ -322,7 +323,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedDecryptionKeyReconfigurationOutput::V4(public_output) => {
                         match bcs::from_bytes::<
-                            twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput,
+                            twopc_mpc::decentralized_party::reconfiguration::PublicOutput,
                         >(public_output)
                         {
                             Ok(public_output) => public_output
@@ -462,8 +463,8 @@ fn derive_vss_shamir_cache_for_key(
     // output is upgraded first — a local, deterministic per-receiver homomorphic
     // summation, done once per epoch per key on this cache path.
     enum DeserializedSource {
-        Reconfiguration(Box<dec_reconf::AggregatedPublicOutput>),
-        NetworkDkg(Box<dec_dkg::AggregatedPublicOutput>),
+        Reconfiguration(Box<dec_reconf::PublicOutput>),
+        NetworkDkg(Box<dec_dkg::PublicOutput>),
     }
 
     let source: DeserializedSource = match key.latest_network_reconfiguration_public_output() {
@@ -493,7 +494,7 @@ fn derive_vss_shamir_cache_for_key(
         // Pre-V3 reconfiguration (or none yet) → fall through to network DKG output.
         _ => match key.network_dkg_output() {
             VersionedNetworkDkgOutput::V3(bytes) => {
-                match bcs::from_bytes::<<dec_dkg::Party as mpc::Party>::PublicOutput>(bytes)
+                match bcs::from_bytes::<dec_dkg::NonAggregatedPublicOutput>(bytes)
                     .map_err(|e| e.to_string())
                     .and_then(|output| output.upgrade().map_err(|e| e.to_string()))
                 {
@@ -880,22 +881,20 @@ pub(crate) fn advance_network_dkg_v2(
             malicious_parties,
             private_output,
         }) => {
-            // Always upgrade to the aggregated shape and persist V4 —
-            // unconditionally, NOT behind the aggregated-outputs protocol gate
-            // that reconfiguration honors: no deployed network ever persisted
-            // a pre-aggregation (V3-tagged) fresh network DKG output (the
-            // deployed keys carry V1 anchors), and no network DKG session runs
-            // during the mixed-binary rollout window, so there is no
-            // byte-identical-quorum constraint on this producer.
-            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
-                bcs::from_bytes(&public_output_value)?;
+            // The DKG Party's output IS the primary (aggregated) form — the
+            // protocol aggregates at output formation, unconditionally, NOT
+            // behind the aggregated-outputs protocol gate that reconfiguration
+            // honors: no deployed network ever persisted a pre-aggregation
+            // (V3-tagged) fresh network DKG output (the deployed keys carry V1
+            // anchors), and no network DKG session runs during the mixed-binary
+            // rollout window, so there is no byte-identical-quorum constraint
+            // on this producer. Tag the bytes V4 as-is.
             info!(
                 session_id=?session_id,
                 "persisting aggregated (V4) network DKG output"
             );
-            let public_output_value = bcs::to_bytes(&VersionedNetworkDkgOutput::V4(
-                bcs::to_bytes(&public_output.upgrade()?)?,
-            ))?;
+            let public_output_value =
+                bcs::to_bytes(&VersionedNetworkDkgOutput::V4(public_output_value))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
@@ -1481,10 +1480,10 @@ fn reconstruct_full_network_dkg_output(
     };
 
     if aggregated {
-        let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
+        let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
             bcs::from_bytes(reconfiguration_output_bytes)?;
 
-        let full_network_dkg_output = dkg::AggregatedPublicOutput::new_from_reconfiguration_output(
+        let full_network_dkg_output = dkg::PublicOutput::new_from_reconfiguration_output(
             class_group_dkg_output,
             reconfiguration_output,
         )
@@ -1494,14 +1493,15 @@ fn reconstruct_full_network_dkg_output(
             &full_network_dkg_output,
         )?)))
     } else {
-        let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+        let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
             bcs::from_bytes(reconfiguration_output_bytes)?;
 
-        let full_network_dkg_output = dkg::PublicOutput::new_from_reconfiguration_output(
-            class_group_dkg_output,
-            reconfiguration_output,
-        )
-        .map_err(DwalletMPCError::from)?;
+        let full_network_dkg_output =
+            dkg::NonAggregatedPublicOutput::new_from_reconfiguration_output(
+                class_group_dkg_output,
+                reconfiguration_output,
+            )
+            .map_err(DwalletMPCError::from)?;
 
         Ok(Some(VersionedNetworkDkgOutput::V3(bcs::to_bytes(
             &full_network_dkg_output,
@@ -1703,12 +1703,12 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
             build_from_public_output!(public_output)
         }
         VersionedNetworkDkgOutput::V3(public_output_bytes) => {
-            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
+            let public_output: twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
             build_from_public_output!(public_output)
         }
         VersionedNetworkDkgOutput::V4(public_output_bytes) => {
-            let public_output: twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput =
+            let public_output: twopc_mpc::decentralized_party::dkg::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
             build_from_public_output!(public_output)
         }

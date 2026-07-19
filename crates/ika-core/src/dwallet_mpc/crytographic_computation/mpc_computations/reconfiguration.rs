@@ -219,12 +219,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                     match &versioned {
                         VersionedNetworkDkgOutput::V2(bytes) => bcs::from_bytes(bytes)?,
                         VersionedNetworkDkgOutput::V3(bytes) => {
-                            let full: twopc_mpc::decentralized_party::dkg::PublicOutput =
+                            let full: twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput =
                                 bcs::from_bytes(bytes)?;
                             full.core
                         }
                         VersionedNetworkDkgOutput::V4(bytes) => {
-                            let full: twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput =
+                            let full: twopc_mpc::decentralized_party::dkg::PublicOutput =
                                 bcs::from_bytes(bytes)?;
                             full.core
                         }
@@ -301,12 +301,12 @@ fn decode_prior_reconfiguration_output_core(
     match prior {
         VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => Ok(bcs::from_bytes(bytes)?),
         VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => {
-            let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+            let full: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
                 bcs::from_bytes(bytes)?;
             Ok(full.core)
         }
         VersionedDecryptionKeyReconfigurationOutput::V4(bytes) => {
-            let full: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
+            let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
                 bcs::from_bytes(bytes)?;
             Ok(full.core)
         }
@@ -666,7 +666,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             build_from_reconfig_output!(public_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V4(public_output_bytes) => {
-            let public_output: twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput =
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
             build_from_reconfig_output!(public_output)
         }

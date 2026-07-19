@@ -487,7 +487,7 @@ pub enum VersionedSignOutput {
 ///   `advance_network_dkg_bwd_compat` when
 ///   `ProtocolConfig::is_network_encryption_key_version_v3()` is `false`.
 /// - `V3` — bytes from
-///   `twopc_mpc::decentralized_party::dkg::Party::PublicOutput`. The full
+///   `twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput`. The full
 ///   output wraps `PublicOutputCore` with the trailing
 ///   `threshold_encryption_to_sharing_output` field — so V3 BCS bytes are the
 ///   V2 BCS bytes plus the trailing field (in the pre-aggregation shape:
@@ -497,7 +497,7 @@ pub enum VersionedSignOutput {
 ///   the reconfiguration output's version, which stays V3 below the
 ///   aggregated-outputs gate), so this variant stays decodable forever.
 /// - `V4` — bytes from
-///   `twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput`: the same
+///   `twopc_mpc::decentralized_party::dkg::PublicOutput`: the same
 ///   `PublicOutputCore` prefix, with the trailing sharing output in the
 ///   aggregated shape (one summed randomizer-share ciphertext per receiver
 ///   instead of every dealer's full PVSS dealing — O(n) instead of O(n²)).
@@ -544,12 +544,13 @@ impl VersionedNetworkDkgOutput {
 ///   which is a re-export of
 ///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore`.
 /// - `V3` — bytes from
-///   `twopc_mpc::decentralized_party::reconfiguration::Party::PublicOutput`,
-///   the `PublicOutputCore` plus the trailing
+///   `twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput`
+///   (still the reconfiguration `Party::PublicOutput` — the deployed wire
+///   format): the `PublicOutputCore` plus the trailing
 ///   `threshold_encryption_to_sharing_output` field (pre-aggregation shape).
 ///   Testnet persists V3 outputs, so this variant stays readable forever.
 /// - `V4` — bytes from
-///   `twopc_mpc::decentralized_party::reconfiguration::AggregatedPublicOutput`:
+///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutput`:
 ///   the same `PublicOutputCore` prefix with the trailing sharing output in
 ///   the aggregated shape (one summed randomizer-share ciphertext per
 ///   receiver). Written when `aggregated_network_key_public_outputs()` is
