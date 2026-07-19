@@ -23,7 +23,10 @@ use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
 use mysten_metrics::spawn_logged_monitored_task;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
 use tokio::sync::watch::{Receiver, Sender};
@@ -105,6 +108,12 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        // Network keys the MPC manager flagged as stranded by a mid-epoch
+        // restart (adoption's produced-this-epoch guard skipping a key the
+        // validator holds nothing for). Read by `sync_dwallet_network_keys`:
+        // a flagged key gets a chain-sourced current-epoch reconfiguration
+        // output instead of the off-chain overlay; empty in healthy flows.
+        stranded_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
         off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
@@ -123,6 +132,7 @@ where
             dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
             network_key_blob_source,
+            stranded_network_keys,
             mode,
             self.metrics.clone(),
         ));
@@ -850,6 +860,7 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        stranded_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
         mode: NodeMode,
         metrics: Arc<SuiConnectorMetrics>,
     ) {
@@ -865,6 +876,19 @@ where
             ObjectID,
             (u64, DWalletNetworkEncryptionKeyState),
         > = HashMap::new();
+        // Pointer identity of the blob source the previous pass merged
+        // with. Installing (or per-epoch replacing) the source changes
+        // which bytes a merge produces for the SAME chain state, so the
+        // `(epoch, state)` fetch memo below is stale the moment the
+        // source flips: an overlay published from a source-less
+        // chain-read pass right after a restart carries the chain's
+        // original pre-V3 DKG anchor, and with no re-merge it would sit
+        // in the watch channel for the rest of the epoch — where the
+        // end-of-epoch hydration pass can cache it over the canonical
+        // mirror (the never-instantiated variant of issue #1852). Clear
+        // the memo whenever the source identity changes so the next
+        // pass re-merges every key through the new source.
+        let mut last_blob_source_ptr: Option<usize> = None;
         // Consecutive 5s ticks each key's overlay has been incomplete.
         // An incomplete overlay is the designed steady state on a
         // notifier/fullnode (whose overlay is legitimately empty for
@@ -874,8 +898,22 @@ where
         // validator stuck incomplete escalates to warn every 60th
         // consecutive tick (~5 min).
         let mut consecutive_overlay_incomplete_ticks: HashMap<ObjectID, u64> = HashMap::new();
-        'sync_network_keys: loop {
+        loop {
             time::sleep(Duration::from_secs(5)).await;
+
+            let blob_source_ptr = network_key_blob_source
+                .load_full()
+                .map(|source| Arc::as_ptr(&source) as *const () as usize);
+            if blob_source_ptr != last_blob_source_ptr {
+                // Inequality implies at least one side is Some, so this
+                // always concerns a real install/replacement.
+                info!(
+                    source_installed = blob_source_ptr.is_some(),
+                    "network-key blob source changed; re-merging all network keys"
+                );
+                last_fetched_network_keys.clear();
+                last_blob_source_ptr = blob_source_ptr;
+            }
 
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
                 warn!("System object not available, retrying...");
@@ -913,6 +951,15 @@ where
                 network_encryption_keys
                     .into_iter()
                     .filter(|(id, key)| {
+                        // A key the MPC manager flagged as stranded (mid-epoch
+                        // restart, #1852) is re-fetched regardless of the
+                        // cache: the flag is raised AFTER the overlay entry
+                        // that revealed the strand was already recorded here,
+                        // so without this the chain-sourced recovery read
+                        // below would never run.
+                        if stranded_network_keys.load().contains(id) {
+                            return true;
+                        }
                         if let Some((last_epoch, last_state)) = last_fetched_network_keys.get(id) {
                             // Refetch when either the epoch has
                             // advanced or the chain-side state has
@@ -979,9 +1026,14 @@ where
                 // TODO(v3->v4 migration): once all keys are off-chain, delete this
                 // whole `key_blobs_already_cached` branch and collapse
                 // `chain_fetched` back to the unconditional `off_chain_on`
-                // synthesize-empty fast path — a v4-native key carries empty
-                // on-chain blobs, so the import would read empty and the cache
-                // path already covers it.
+                // synthesize-empty fast path — in steady-state v4 the off-chain
+                // overlay always fills a v4-native key's blobs, so the fast path
+                // covers it. (The chain still HOLDS the real DKG/reconfiguration
+                // blobs — they are written on-chain at DKG/reconfiguration
+                // regardless of protocol version — but no steady-state chain read
+                // is needed once every key is off-chain. This is also why the
+                // stranded-key recovery chain read below reliably yields
+                // the real current-epoch output rather than empty bytes.)
                 // ===================================================================
                 let dkg_in_handoff = network_key_blob_source
                     .load_full()
@@ -998,8 +1050,24 @@ where
                 // DKG'd in a PRIOR epoch whose DKG output is absent from the
                 // handoff is a genuine not-yet-migrated pre-v4 key.
                 let freshly_dkgd_this_epoch = network_dec_key_shares.dkg_at_epoch == current_epoch;
+                // Whether the MPC manager flagged this key as STRANDED by a
+                // mid-epoch restart (#1852): the validator holds nothing for
+                // the key while the off-chain overlay serves only this epoch's
+                // just-produced reconfiguration output R(M) — encrypted to the
+                // NEXT committee, which the adoption pass's produced-this-epoch
+                // guard then skips forever, parking every session on the key.
+                // A flagged key must NOT take the cached fast path: it falls
+                // through to the full chain read and installs the canonical
+                // current-epoch output R(M-1); a confirmed instantiation
+                // un-flags it. The set is empty in every healthy flow —
+                // including a fresh key's DKG-bootstrap window and the
+                // first-instantiation-in-flight window — so the v4
+                // no-steady-state-chain-read invariant is preserved exactly.
+                let key_is_stranded = stranded_network_keys
+                    .load()
+                    .contains(&network_dec_key_shares.id);
                 let key_blobs_already_cached =
-                    off_chain_on && (dkg_in_handoff || freshly_dkgd_this_epoch);
+                    off_chain_on && !key_is_stranded && (dkg_in_handoff || freshly_dkgd_this_epoch);
                 let chain_fetched = if off_chain_on && key_blobs_already_cached {
                     Ok(
                         ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
@@ -1030,15 +1098,12 @@ where
                         // installed or the source has neither blob,
                         // the merged value equals the chain copy
                         // byte-for-byte.
-                        let merged = match network_key_blob_source.load_full() {
-                            Some(source) => {
-                                crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(
-                                    key_full_data,
-                                    source.as_ref().as_ref(),
-                                )
-                            }
-                            None => key_full_data,
-                        };
+                        let source_snapshot = network_key_blob_source.load_full();
+                        let merged = overlay_network_key_data(
+                            key_is_stranded,
+                            key_full_data,
+                            source_snapshot.as_deref().map(|source| source.as_ref()),
+                        );
                         // Under off-chain mode the chain copy carries
                         // empty blob bytes; the overlay above fills them
                         // from the local producer cache. A usable entry
@@ -1129,7 +1194,17 @@ where
                             error=?err,
                             "failed to get network decryption key data, retrying...",
                         );
-                        continue 'sync_network_keys;
+                        // Skip only THIS key: it stays out of
+                        // `last_fetched_network_keys`, so the next tick
+                        // re-selects it. Aborting the whole outer pass would
+                        // also skip the channel send below — and a sibling key
+                        // that merged COMPLETE earlier in this same pass was
+                        // already recorded as fetched, so its data would never
+                        // be published: absent from the overlay, never
+                        // adopted, never instantiated until the next epoch's
+                        // refetch. The stranded-key recovery chain read makes
+                        // this arm hot on exactly that recovery path.
+                        continue;
                     }
                 }
             }
@@ -1479,6 +1554,115 @@ where
                     "Observed {len} new events from Sui network"
                 );
             }
+        }
+    }
+}
+
+/// Chooses how to overlay locally-cached off-chain blobs onto chain-fetched
+/// network-key data, based on whether the MPC manager flagged the key as
+/// stranded by a mid-epoch restart (#1852).
+///
+/// - **Not stranded** (every healthy flow): prefer the off-chain source for
+///   both blobs — the steady-state v4 read path (the chain copy may even be
+///   metadata-only with empty blobs, synthesized by the fast path).
+/// - **Stranded** (restart-recovery chain read): keep the chain's canonical
+///   current-epoch reconfiguration output. Overlaying the off-chain
+///   source's reconfiguration blob would re-override it with the output
+///   this epoch's reconfiguration just produced — encrypted to the NEXT
+///   committee, which the adoption pass's produced-this-epoch guard then
+///   skips forever, keeping the key un-instantiated for the rest of the
+///   epoch (every session parks on it). The DKG blob is the one field
+///   still preferred from the off-chain source: it is the stable per-key
+///   anchor, and the locally-mirrored copy is the CANONICAL representation
+///   whose digest the prior epoch's handoff cert pins — after the V2→V3
+///   canonical migration the chain's original anchor no longer matches the
+///   cert, and adoption would reject the key on the DKG-digest gate.
+///
+/// With no source installed the chain copy flows through unchanged.
+fn overlay_network_key_data(
+    key_is_stranded: bool,
+    chain_data: DWalletNetworkEncryptionKeyData,
+    source: Option<&dyn crate::validator_metadata::NetworkKeyBlobSource>,
+) -> DWalletNetworkEncryptionKeyData {
+    let Some(source) = source else {
+        return chain_data;
+    };
+    if key_is_stranded {
+        let network_dkg_public_output = source
+            .network_dkg_output_blob(&chain_data.id)
+            .unwrap_or(chain_data.network_dkg_public_output);
+        DWalletNetworkEncryptionKeyData {
+            network_dkg_public_output,
+            ..chain_data
+        }
+    } else {
+        crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(chain_data, source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validator_metadata::StaticNetworkKeyBlobSource;
+
+    fn chain_data(key_id: ObjectID) -> DWalletNetworkEncryptionKeyData {
+        DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: 7,
+            dkg_at_epoch: 0,
+            network_dkg_public_output: b"chain dkg anchor".to_vec(),
+            current_reconfiguration_public_output: b"chain current-epoch reconfiguration output"
+                .to_vec(),
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        }
+    }
+
+    /// The restart-recovery contract (#1852): for a key the manager flagged
+    /// as stranded, the off-chain source must never override the chain's
+    /// current-epoch reconfiguration output (the source serves the output
+    /// this epoch's reconfiguration just produced, encrypted to the next
+    /// committee), while the DKG blob still prefers the source's canonical
+    /// mirror (the digest the handoff cert pins).
+    #[test]
+    fn stranded_key_keeps_chain_reconfiguration_output_and_canonical_dkg() {
+        let key_id = ObjectID::random();
+        let mut source = StaticNetworkKeyBlobSource::new();
+        source.insert_dkg(key_id, b"canonical mirrored dkg output".to_vec());
+        source.insert_reconfig(
+            key_id,
+            b"this epoch's output for the next committee".to_vec(),
+        );
+
+        let merged = overlay_network_key_data(true, chain_data(key_id), Some(&source));
+        assert_eq!(
+            merged.current_reconfiguration_public_output,
+            b"chain current-epoch reconfiguration output".to_vec(),
+            "a stranded key must keep the chain's current-epoch output"
+        );
+        assert_eq!(
+            merged.network_dkg_public_output,
+            b"canonical mirrored dkg output".to_vec(),
+            "the DKG blob must still prefer the canonical off-chain mirror"
+        );
+
+        // A non-stranded key keeps the steady-state behavior: both blobs
+        // prefer the off-chain source.
+        let merged = overlay_network_key_data(false, chain_data(key_id), Some(&source));
+        assert_eq!(
+            merged.current_reconfiguration_public_output,
+            b"this epoch's output for the next committee".to_vec(),
+            "a non-stranded key keeps the off-chain overlay for the reconfiguration output"
+        );
+        assert_eq!(
+            merged.network_dkg_public_output,
+            b"canonical mirrored dkg output".to_vec(),
+        );
+
+        // No source installed: the chain copy flows through unchanged in
+        // both states.
+        for key_is_stranded in [false, true] {
+            let merged = overlay_network_key_data(key_is_stranded, chain_data(key_id), None);
+            assert_eq!(merged, chain_data(key_id));
         }
     }
 }

@@ -709,3 +709,158 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     );
     assert_all_adopted_resolve(manager, "after the cert-less registration pass");
 }
+
+/// The mid-epoch-restart strand (#1852), manager side. Once this epoch's
+/// reconfiguration completes, its output digest is recorded under the CURRENT
+/// epoch and the off-chain overlay serves that output — which is encrypted to
+/// the NEXT committee. Adoption must skip it (a running validator already
+/// holds this epoch's parameters; adopting would fail decryption), and that
+/// skip is exactly what strands a validator that restarted mid-epoch with an
+/// empty instantiation map: nothing else re-delivers an instantiable output.
+/// The contracts this test pins: the manager flags such a key as stranded
+/// (the syncer's trigger to source the current epoch's output from chain),
+/// and an overlay carrying the CURRENT epoch's output — what that
+/// chain-sourced recovery read delivers — is adopted and spawns
+/// instantiation.
+#[tokio::test]
+async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_recovers() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+    let prior_epoch = epoch_id - 1;
+
+    let key_id = ObjectID::random();
+    let network_key_id = NetworkKeyId([0x71; 32]);
+    crate::network_key_id_mapping::register(key_id, network_key_id);
+    let dkg_output = b"restart strand network dkg public output".to_vec();
+    // R(M-1): produced by the PRIOR epoch's reconfiguration FOR this epoch's
+    // committee — the output this epoch's parameters derive from, and what
+    // the chain serves as the current epoch's reconfiguration output.
+    let current_epoch_output = b"reconfiguration output for the current committee".to_vec();
+    // R(M): produced by THIS epoch's reconfiguration FOR the next committee.
+    let this_epoch_output = b"reconfiguration output for the next committee".to_vec();
+
+    // Record R(M)'s digest under the current epoch, exactly as output
+    // processing does when this epoch's reconfiguration completes.
+    let perpetual_dir = tempfile::tempdir().expect("tempdir");
+    let perpetual = Arc::new(
+        crate::authority::authority_perpetual_tables::AuthorityPerpetualTables::open(
+            perpetual_dir.path(),
+            None,
+        ),
+    );
+    perpetual
+        .insert_network_reconfiguration_output_digest_for_epoch(
+            epoch_id,
+            key_id,
+            mpc_data_blob_hash(&this_epoch_output),
+        )
+        .expect("digest insert");
+    epoch_stores
+        .first()
+        .unwrap()
+        .perpetual_tables
+        .lock()
+        .unwrap()
+        .replace(perpetual);
+
+    // Phase 1 — the strand shape. The cert deliberately pins R(M) so the
+    // cert-digest gate alone would ADOPT this overlay; only the
+    // produced-this-epoch guard can be the one skipping it. (In the real
+    // restart the prior epoch's cert pins R(M-1) and both gates skip R(M);
+    // pinning R(M) here isolates the guard under test.)
+    let cert_pinning = |reconfiguration_output: &[u8]| CertifiedHandoffAttestation {
+        attestation: HandoffAttestation {
+            epoch: prior_epoch,
+            next_committee_pubkey_set_hash: [0u8; 32],
+            items: vec![
+                (
+                    HandoffItemKey::NetworkDkgOutput {
+                        key_id: network_key_id,
+                    },
+                    mpc_data_blob_hash(&dkg_output),
+                ),
+                (
+                    HandoffItemKey::NetworkReconfigurationOutput {
+                        key_id: network_key_id,
+                    },
+                    mpc_data_blob_hash(reconfiguration_output),
+                ),
+            ],
+        },
+        signatures: vec![],
+    };
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(prior_epoch, cert_pinning(&this_epoch_output));
+
+    let this_epoch_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(key_id, epoch_id, dkg_output.clone(), this_epoch_output),
+    )]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&this_epoch_overlay);
+    assert!(
+        !manager.adopted_network_key_data.contains_key(&key_id),
+        "an overlay serving the reconfiguration output produced THIS epoch (for \
+         the next committee) must be skipped by the produced-this-epoch guard"
+    );
+    // Holding nothing for the skipped key (not instantiated, nothing in
+    // flight, nothing adopted) is the restart strand: the manager must flag
+    // the key so the syncer sources the current epoch's output from chain.
+    assert!(
+        manager.stranded_network_keys.load().contains(&key_id),
+        "the skipped key must be flagged as stranded for the syncer's \
+         chain-sourced recovery read"
+    );
+
+    // Phase 2 — the recovery contract. The realistic prior-epoch cert pins
+    // R(M-1); the overlay now carries R(M-1) (the syncer's stranded-key
+    // chain read). The recorded R(M) digest must not match it, so adoption
+    // proceeds and instantiation spawns.
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(prior_epoch, cert_pinning(&current_epoch_output));
+    let current_epoch_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            dkg_output.clone(),
+            current_epoch_output.clone(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&current_epoch_overlay);
+    let adopted = manager
+        .adopted_network_key_data
+        .get(&key_id)
+        .expect("the current-epoch reconfiguration output must be adopted");
+    assert_eq!(
+        adopted.current_reconfiguration_public_output, current_epoch_output,
+        "the adopted data must carry the current epoch's output"
+    );
+    manager.instantiate_adopted_network_keys();
+    assert!(
+        manager
+            .pending_network_key_instantiations
+            .contains_key(&key_id),
+        "the adopted current-epoch output must spawn instantiation"
+    );
+}
