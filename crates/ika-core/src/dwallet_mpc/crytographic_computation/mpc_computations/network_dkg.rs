@@ -1444,12 +1444,15 @@ mod network_key_id_derivation_tool {
 /// deployed mainnet/testnet shape, written by a pre-1.1.8 binary) IS the raw
 /// `class_groups::dkg::PublicOutput` and decodes directly.
 ///
-/// Returns `Some(V3)` only when `network_dkg_output` is V1 or V2 AND a V3
+/// Returns `Some` only when the reconfiguration output's format is ahead of
+/// the anchor's — (V1/V2 anchor, V3 or V4 reconfiguration output), or the
+/// (V3 anchor, V4 reconfiguration output) migration off the pre-aggregation
+/// encoding — i.e. only when `network_dkg_output` predates the full shape or a V3
 /// reconfiguration output is available; `None` otherwise. The reconstruction is
 /// a pure (RNG-free) function of its inputs, so every validator holding the same
 /// anchor and the same quorum-agreed V3 reconfiguration output derives
 /// byte-identical V3 bytes.
-fn reconstruct_full_network_dkg_output(
+pub(crate) fn reconstruct_full_network_dkg_output(
     network_dkg_output: &VersionedNetworkDkgOutput,
     latest_network_reconfiguration_public_output: Option<
         &VersionedDecryptionKeyReconfigurationOutput,
@@ -1475,6 +1478,16 @@ fn reconstruct_full_network_dkg_output(
             let dkg_public_output_core: dkg::PublicOutputCore =
                 bcs::from_bytes(dkg_public_output_core_bytes)?;
             dkg_public_output_core.class_group_dkg_output()
+        }
+        // A V3 (pre-aggregation full-shape) anchor migrates to V4 once the
+        // cert-pinned reconfiguration output is aggregated — the same
+        // rebuild-from-the-reconfiguration-output construction as the
+        // V1/V2 arms, so no live state stays pinned on the legacy encoding.
+        // Below the gate (V3 reconfiguration output) it is already at parity.
+        VersionedNetworkDkgOutput::V3(full_output_bytes) if aggregated => {
+            let full_output: twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput =
+                bcs::from_bytes(full_output_bytes)?;
+            full_output.core.class_group_dkg_output()
         }
         VersionedNetworkDkgOutput::V3(_) | VersionedNetworkDkgOutput::V4(_) => return Ok(None),
     };
@@ -1722,13 +1735,17 @@ mod tests {
         VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
     };
 
-    /// The reconstruction must fire ONLY for a V1 or V2 DKG anchor paired with
-    /// a full V3 reconfiguration output. Every other combination returns `None`
-    /// without touching the crypto decoders (so dummy bytes are fine there).
-    /// The `Some` paths need real anchor + V3 reconfiguration bytes and are
-    /// exercised end-to-end by the v4 reconfiguration integration tests
+    /// The reconstruction must fire ONLY when the reconfiguration output's
+    /// format is ahead of the anchor's: a V1/V2 anchor with a full (V3/V4)
+    /// reconfiguration output, or a V3 anchor with an aggregated (V4)
+    /// reconfiguration output — the migration off the pre-aggregation
+    /// encoding. Every other combination returns `None` without touching the
+    /// crypto decoders (so dummy bytes are fine there); the firing
+    /// combinations must engage the decoders (errors on garbage), and their
+    /// `Some` paths are exercised with real bytes by the integration tests
     /// (`test_v2_to_v3_reconfiguration_migration`,
-    /// `test_v1_anchor_main_reconfiguration_and_anchor_migration`).
+    /// `test_v1_anchor_main_reconfiguration_and_anchor_migration`,
+    /// `test_pre_aggregation_to_aggregated_reconfiguration_migration`).
     #[test]
     fn reconstruct_full_network_dkg_output_gating() {
         use VersionedDecryptionKeyReconfigurationOutput as Reconfiguration;
@@ -1775,6 +1792,16 @@ mod tests {
             .is_none()
         );
 
+        // A V4 (aggregated) anchor never reconstructs — it is the end state.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V4(vec![]),
+                Some(&Reconfiguration::V4(vec![])),
+            )
+            .unwrap()
+            .is_none()
+        );
+
         // V1 anchor + V3 reconfiguration output DOES engage the
         // reconstruction — with garbage bytes it must fail decoding rather
         // than return `None` (a `None` here would silently skip the deployed
@@ -1783,6 +1810,17 @@ mod tests {
             reconstruct_full_network_dkg_output(
                 &Dkg::V1(vec![]),
                 Some(&Reconfiguration::V3(vec![])),
+            )
+            .is_err()
+        );
+
+        // V3 anchor + V4 (aggregated) reconfiguration output engages the
+        // V3→V4 migration off the pre-aggregation encoding — same
+        // must-not-silently-skip property.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V3(vec![]),
+                Some(&Reconfiguration::V4(vec![])),
             )
             .is_err()
         );

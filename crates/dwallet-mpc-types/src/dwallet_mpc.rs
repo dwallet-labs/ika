@@ -124,11 +124,12 @@ pub struct NetworkEncryptionKeyPublicData {
     /// reconfiguration-invariant class-group DKG output with the V3
     /// reconfiguration output.
     ///
-    /// `Some` only at the one-time migration epoch — when
-    /// [`Self::network_dkg_output`] is still V2 AND a V3 reconfiguration output
-    /// is available; `None` otherwise (a natively-V3 or already-migrated DKG
-    /// output needs no reconstruction, and a V2-only reconfiguration output
-    /// lacks the trailing field).
+    /// `Some` only at a migration epoch — when the reconfiguration output's
+    /// format is ahead of the anchor's: a V1/V2 anchor with a full (V3/V4)
+    /// reconfiguration output, or a V3 anchor with an aggregated (V4)
+    /// reconfiguration output (the migration off the pre-aggregation
+    /// encoding); `None` otherwise (a V4 anchor is the end state, and a
+    /// V2-only reconfiguration output lacks the trailing field).
     ///
     /// This `Some` value DRIVES the one-time canonical V2->V3 migration: the
     /// instantiation-completion path mirrors it via `cache_network_dkg_output`,

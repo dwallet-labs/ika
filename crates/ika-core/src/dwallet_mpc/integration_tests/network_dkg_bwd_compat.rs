@@ -58,7 +58,7 @@ fn pin_protocol_to_v2_overrides() -> ika_protocol_config::OverrideGuard {
 /// activates. Without this pin the default (MAX) config is v5, which writes
 /// V4-tagged aggregated reconfiguration outputs. (Network DKG outputs are not
 /// gated — they are V4-tagged regardless of this pin.)
-fn pin_pre_aggregation_outputs_overrides() -> ika_protocol_config::OverrideGuard {
+pub(crate) fn pin_pre_aggregation_outputs_overrides() -> ika_protocol_config::OverrideGuard {
     ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
         config.set_aggregated_network_key_public_outputs_for_testing(false);
         config
@@ -1123,9 +1123,41 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
     );
     info!("Phase 1: V4-tagged anchor + V3-tagged reconfiguration output captured");
 
+    // ── Fabricate the TESTNET-shaped anchor: a V3-tagged (pre-aggregation)
+    //    full anchor, as testnet validators persist after their V2→V3
+    //    canonical migration. Built with the same construction that migration
+    //    used: the anchor's reconfiguration-invariant class-group DKG output
+    //    combined with the pre-aggregation reconfiguration output. ──────────
+    let VersionedNetworkDkgOutput::V4(v4_anchor_inner) =
+        bcs::from_bytes(&v4_anchor_bytes).expect("decode the phase-1 versioned anchor")
+    else {
+        panic!("phase-1 anchor must be V4-tagged");
+    };
+    let aggregated_anchor: twopc_mpc::decentralized_party::dkg::PublicOutput =
+        bcs::from_bytes(&v4_anchor_inner).expect("decode the phase-1 aggregated anchor");
+    let VersionedDecryptionKeyReconfigurationOutput::V3(v3_reconfiguration_inner) =
+        bcs::from_bytes(&v3_reconfiguration_output_bytes)
+            .expect("decode the phase-1 versioned reconfiguration output")
+    else {
+        panic!("phase-1 reconfiguration output must be V3-tagged");
+    };
+    let non_aggregated_reconfiguration: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
+        bcs::from_bytes(&v3_reconfiguration_inner)
+            .expect("decode the phase-1 pre-aggregation reconfiguration output");
+    let v3_anchor = twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput::new_from_reconfiguration_output(
+        aggregated_anchor.core.class_group_dkg_output(),
+        non_aggregated_reconfiguration,
+    )
+    .expect("build the testnet-shaped V3 anchor");
+    let v3_anchor_bytes = bcs::to_bytes(&VersionedNetworkDkgOutput::V3(
+        bcs::to_bytes(&v3_anchor).expect("serialize the V3 anchor"),
+    ))
+    .expect("serialize the versioned V3 anchor");
+
     // ── Phase 2 (default v5, aggregated outputs ON): rebuild services on the
-    //    same committee, inject the phase-1 (V4 anchor, V3 reconfiguration
-    //    output) pair, and run the first v5 reconfiguration. ────────────────
+    //    same committee, inject the testnet-shaped (V3 anchor, V3
+    //    reconfiguration output) pair, and run the first v5
+    //    reconfiguration. ─────────────────────────────────────────────────
     drop(pre_aggregation_override);
     let (
         p2_dwallet_mpc_services,
@@ -1174,7 +1206,7 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
                         dkg_at_epoch: 1,
                         current_reconfiguration_public_output: v3_reconfiguration_output_bytes
                             .clone(),
-                        network_dkg_public_output: v4_anchor_bytes.clone(),
+                        network_dkg_public_output: v3_anchor_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
                     },
                 )])));
@@ -1203,7 +1235,7 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
                 .network_keys
                 .get_network_encryption_key_public_data(&key_id)
                 .is_ok(),
-            "phase-2 validator {i} should instantiate the key from the (V4 anchor, V3 \
+            "phase-2 validator {i} should instantiate the key from the (V3 anchor, V3 \
              reconfiguration output) pair"
         );
     }
@@ -1257,4 +1289,25 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
          output"
     );
     info!("Phase 2: v4→v5 boundary reconfiguration produced a V4-tagged aggregated output");
+
+    // ── The V3→V4 canonical anchor migration: with the aggregated (V4)
+    //    reconfiguration output cert-pinned, the reconstruction must migrate
+    //    the V3 (pre-aggregation) anchor to a decodable V4 (aggregated)
+    //    anchor — no live state stays on the legacy encoding. Asserted with
+    //    the run's real bytes. ────────────────────────────────────────────
+    let migrated_anchor = crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::reconstruct_full_network_dkg_output(
+        &bcs::from_bytes(&v3_anchor_bytes).expect("decode the injected V3 anchor"),
+        Some(
+            &bcs::from_bytes(&v4_reconfiguration_output_bytes)
+                .expect("decode the phase-2 V4 reconfiguration output"),
+        ),
+    )
+    .expect("the V3→V4 anchor migration must succeed on real bytes");
+    let Some(VersionedNetworkDkgOutput::V4(migrated_anchor_inner)) = migrated_anchor else {
+        panic!("the (V3 anchor, V4 reconfiguration output) pair must reconstruct a V4 anchor");
+    };
+    let _: twopc_mpc::decentralized_party::dkg::PublicOutput =
+        bcs::from_bytes(&migrated_anchor_inner)
+            .expect("the migrated anchor must decode as the aggregated DKG output");
+    info!("V3→V4 canonical anchor migration verified on the run's real bytes");
 }

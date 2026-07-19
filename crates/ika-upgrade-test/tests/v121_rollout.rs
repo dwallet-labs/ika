@@ -190,6 +190,11 @@ async fn v121_rollout_reaches_aggregated_outputs_at_v5() {
         // is race-free — unlike asserting the local producer log line, which
         // a validator that loses the computation race may never emit).
         .expect_reconfiguration_output_version_at_least(4)
+        // The canonical anchor — migrated V2→V3 during the v4 mixed phase —
+        // must re-migrate V3→V4 off the pre-aggregation encoding now that the
+        // cert-pinned reconfiguration output is aggregated: no live state
+        // stays on the legacy encoding after the flip.
+        .expect_network_dkg_output_version_at_least(4)
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
         // The committee must keep serving users on the aggregated key data.

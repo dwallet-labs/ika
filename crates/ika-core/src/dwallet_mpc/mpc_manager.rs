@@ -2923,14 +2923,18 @@ impl DWalletMPCManager {
                                 && !key_data.network_dkg_public_output.is_empty()
                             {
                                 // Mirror the CANONICAL DKG output. Once the
-                                // cert-pinned reconfiguration output is V3, the
-                                // instantiation carries a reconstructed full V3
-                                // output; mirror that in place of the V2 anchor
-                                // so the handoff digest, the overlay, and joiners
-                                // all migrate to V3 together. One-shot: after the
-                                // flip the overlay resolves V3, `reconstruct`
-                                // returns None, and this falls back to the (now
-                                // V3) anchor. Epoch-aligned because the
+                                // cert-pinned reconfiguration output's format is
+                                // ahead of the anchor's (V3/V4 over a V1/V2
+                                // anchor; V4 over a V3 anchor), the
+                                // instantiation carries a reconstructed full
+                                // output; mirror that in place of the stale
+                                // anchor so the handoff digest, the overlay, and
+                                // joiners all migrate together. One-shot per
+                                // flip: after it the overlay resolves the
+                                // migrated version, `reconstruct` returns None,
+                                // and this falls back to the (now migrated)
+                                // anchor — the V4 (aggregated) anchor is the end
+                                // state. Epoch-aligned because the
                                 // reconstruction comes from the cert-pinned
                                 // reconfiguration output, identical committee-wide.
                                 let canonical_dkg_output = match key
