@@ -137,10 +137,13 @@ async fn v121_rollout_reaches_aggregated_outputs_at_v5() {
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
         .expect_protocol_version_at_most(4)
-        // The first v4 reshare carries the V2→V3 anchor migration; the
-        // installed reconfiguration output must be the pre-aggregation V3.
+        // The first v4 reshare carries the V2→V3 anchor migration.
+        // (No reconfiguration-output-version assertion here: the literal
+        // v1.2.1 validators predate that gauge, so a min-across-validators
+        // poll can never clear it in the mixed phase — and the digest
+        // convergence with v1.2.1 validators, which can only produce V3,
+        // already proves the pre-aggregation tagging.)
         .expect_network_dkg_output_version_at_least(3)
-        .expect_reconfiguration_output_version_at_least(3)
         // The mixed committee must keep serving users at v4.
         .run_workload("mixed-v4-after-first-reshare")
         .wait_for_epoch(3)
