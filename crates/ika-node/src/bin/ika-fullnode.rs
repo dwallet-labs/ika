@@ -27,5 +27,5 @@ bin_version::bin_version!();
 
 fn main() {
     // Run as fullnode with explicit mode validation
-    ika_node::run_node(Some(NodeMode::Fullnode), VERSION);
+    ika_node::run_node(Some(NodeMode::Fullnode), VERSION, GIT_REVISION);
 }

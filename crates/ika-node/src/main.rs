@@ -26,5 +26,5 @@ static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() {
     // Auto-detect mode from config
-    ika_node::run_node(None, VERSION);
+    ika_node::run_node(None, VERSION, GIT_REVISION);
 }

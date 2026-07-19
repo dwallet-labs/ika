@@ -27,5 +27,5 @@ bin_version::bin_version!();
 
 fn main() {
     // Run as notifier with explicit mode validation
-    ika_node::run_node(Some(NodeMode::Notifier), VERSION);
+    ika_node::run_node(Some(NodeMode::Notifier), VERSION, GIT_REVISION);
 }

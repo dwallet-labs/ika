@@ -51,7 +51,8 @@ pub struct NodeArgs {
 /// # Arguments
 /// * `mode` - Optional explicit mode to run in. If None, auto-detects from config.
 /// * `version` - The version string for this binary.
-pub fn run_node(mode: Option<NodeMode>, version: &'static str) {
+/// * `git_revision` - The source revision embedded in this binary.
+pub fn run_node(mode: Option<NodeMode>, version: &'static str, git_revision: &'static str) {
     let bin_name = mode
         .map(|m| match m {
             NodeMode::Validator => "ika-validator",
@@ -59,7 +60,7 @@ pub fn run_node(mode: Option<NodeMode>, version: &'static str) {
             NodeMode::Notifier => "ika-notifier",
         })
         .unwrap_or("ika-node");
-    run_node_with_name(mode, version, bin_name);
+    run_node_with_name(mode, version, git_revision, bin_name);
 }
 
 /// Runs an Ika node with the specified mode and binary name.
@@ -67,8 +68,14 @@ pub fn run_node(mode: Option<NodeMode>, version: &'static str) {
 /// # Arguments
 /// * `mode` - Optional explicit mode to run in. If None, auto-detects from config.
 /// * `version` - The version string for this binary.
+/// * `git_revision` - The source revision embedded in this binary.
 /// * `bin_name` - The name to use in CLI help/version output.
-pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_name: &'static str) {
+pub fn run_node_with_name(
+    mode: Option<NodeMode>,
+    version: &'static str,
+    git_revision: &'static str,
+    bin_name: &'static str,
+) {
     // Ensure that a validator never calls get_for_min_version/get_for_max_version_UNSAFE.
     // TODO: re-enable after we figure out how to eliminate crashes in prod because of this.
     // ProtocolConfig::poison_get_for_min_version();
@@ -150,6 +157,18 @@ pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_nam
         .init();
 
     drop(metrics_rt);
+
+    if node_mode.is_validator() {
+        let validator_metrics = crate::validator_metrics::ValidatorMetrics::new(
+            &prometheus_registry,
+            version,
+            git_revision,
+            &config.db_path,
+        );
+        runtimes.metrics.spawn(async move {
+            validator_metrics.run().await;
+        });
+    }
 
     info!("Ika Node version: {version}");
     info!("Node mode: {node_mode}");

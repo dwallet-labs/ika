@@ -112,6 +112,7 @@ pub async fn publish_metrics(
         name.clone(),
         labels.network,
         labels.inventory_hostname,
+        addr.ip().to_string(),
         data,
     );
     relay.submit(data.clone());
