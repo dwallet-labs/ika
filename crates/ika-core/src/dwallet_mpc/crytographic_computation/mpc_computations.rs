@@ -52,7 +52,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
@@ -1654,6 +1654,10 @@ impl ProtocolCryptographicData {
                         let public_output_value = if aggregated_network_key_public_outputs {
                             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                                 bcs::from_bytes(&public_output_value)?;
+                            info!(
+                                session_identifier=?session_identifier,
+                                "persisting aggregated (V4) network-key reconfiguration output"
+                            );
                             bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
                                 bcs::to_bytes(&public_output.upgrade()?)?,
                             ))?

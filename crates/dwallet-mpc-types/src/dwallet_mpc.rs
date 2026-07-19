@@ -558,6 +558,18 @@ pub enum VersionedDecryptionKeyReconfigurationOutput {
     V4(MPCPublicOutput),
 }
 
+impl VersionedDecryptionKeyReconfigurationOutput {
+    /// The wire version tag (1, 2, 3, or 4).
+    pub fn version(&self) -> u64 {
+        match self {
+            Self::V1(_) => 1,
+            Self::V2(_) => 2,
+            Self::V3(_) => 3,
+            Self::V4(_) => 4,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedPublicKeyShareAndProof {
     V1(MPCPublicOutput),

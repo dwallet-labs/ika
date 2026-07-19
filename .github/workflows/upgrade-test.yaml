@@ -33,6 +33,13 @@ name: Upgrade Test
 #                  mainnet-v1.1.8, upgrade exactly one validator, and keep the
 #                  other three literal old binaries through two protocol-v3
 #                  network-key reconfigurations with per-authority convergence.
+#   v121_rollout — the aggregated-outputs (protocol v5) rollout rehearsal:
+#                  boot the literal `release/testnet-v1.2.1` binary (deployed
+#                  testnet, protocol v4), upgrade one validator and converge
+#                  two mixed pre-aggregation (V3) reshares, then swap the
+#                  rest, vote to v5, and confirm the first aggregated (V4)
+#                  reconfiguration output installs everywhere. Defaults to
+#                  old_ref=release/testnet-v1.2.1, old_bin_name=ika-validator.
 #   legacy_config — rollout-day config rehearsal: the current build on
 #                  old-style (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
@@ -217,7 +224,7 @@ jobs:
           TEST: ${{ inputs.test || 'v118_mixed_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload cross_binary v118_upgrade v118_churn v118_mixed_rollout legacy_config"
+          ALL="smoke workload cross_binary v118_upgrade v118_churn v118_mixed_rollout v121_rollout legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -335,6 +342,7 @@ jobs:
             v118_upgrade) RUN_FLAG=RUN_V118_UPGRADE ;;
             v118_churn)   RUN_FLAG=RUN_V118_CHURN ;;
             v118_mixed_rollout) RUN_FLAG=RUN_V118_MIXED_ROLLOUT ;;
+            v121_rollout) RUN_FLAG=RUN_V121_ROLLOUT ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
@@ -360,6 +368,19 @@ jobs:
               }
               OLD_REF=mainnet-v1.1.8
               OLD_BIN_NAME=ika-node
+              ;;
+            v121_rollout)
+              [ -z "$OLD_REF" ] || [ "$OLD_REF" = "release/testnet-v1.2.1" ] || {
+                echo "v121_rollout requires literal old_ref=release/testnet-v1.2.1" >&2; exit 1;
+              }
+              [ -z "$OLD_BIN_NAME" ] || [ "$OLD_BIN_NAME" = "ika-validator" ] || {
+                echo "v121_rollout requires the ika-validator binary" >&2; exit 1;
+              }
+              [ -z "$PATCH_MAX" ] || {
+                echo "v121_rollout forbids MAX_PROTOCOL_VERSION patching" >&2; exit 1;
+              }
+              OLD_REF=release/testnet-v1.2.1
+              OLD_BIN_NAME=ika-validator
               ;;
             cross_binary)
               # The old side is current source with only the protocol ceiling
@@ -395,8 +416,8 @@ jobs:
           TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if [ "$TEST_NAME" = "v118_mixed_rollout" ] && [ "$USE_MOCKS" = "true" ]; then
-            echo "v118_mixed_rollout is a release gate and must use real cryptography" >&2
+          if { [ "$TEST_NAME" = "v118_mixed_rollout" ] || [ "$TEST_NAME" = "v121_rollout" ]; } && [ "$USE_MOCKS" = "true" ]; then
+            echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
             exit 1
           fi
           if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v118_mixed_rollout" ]; then
@@ -427,7 +448,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' || matrix.test == 'v118_mixed_rollout' }}
+        if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' || matrix.test == 'v118_mixed_rollout' || matrix.test == 'v121_rollout' }}
         env:
           USE_MOCKS: ${{ inputs.use_mocks }}
         run: |

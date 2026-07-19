@@ -2963,18 +2963,28 @@ impl DWalletMPCManager {
                                     );
                                 }
                                 // Surface the canonical DKG-output version for
-                                // observability of the V2->V3 migration: it
-                                // reads 3 once this validator mirrors the
-                                // reconstructed full output.
-                                let canonical_version: i64 =
-                                    if key.reconstructed_full_network_dkg_output().is_some() {
-                                        3
-                                    } else {
-                                        key.network_dkg_output().version() as i64
-                                    };
+                                // observability of the anchor migration: it
+                                // reads the reconstructed full output's version
+                                // (3 pre-aggregation, 4 aggregated) once this
+                                // validator mirrors it.
+                                let canonical_version: i64 = key
+                                    .reconstructed_full_network_dkg_output()
+                                    .map(|output| output.version())
+                                    .unwrap_or_else(|| key.network_dkg_output().version())
+                                    as i64;
                                 self.dwallet_mpc_metrics
                                     .network_encryption_key_canonical_dkg_output_version
                                     .set(canonical_version);
+                                // Same observability for the reconfiguration
+                                // output: 3 = pre-aggregation, 4 = aggregated
+                                // (the protocol-v5 format flip), 0 = none yet.
+                                let reconfiguration_version: i64 =
+                                    key.latest_network_reconfiguration_public_output()
+                                        .map(|output| output.version())
+                                        .unwrap_or(0) as i64;
+                                self.dwallet_mpc_metrics
+                                    .network_encryption_key_latest_reconfiguration_output_version
+                                    .set(reconfiguration_version);
                             }
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a

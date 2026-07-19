@@ -887,6 +887,10 @@ pub(crate) fn advance_network_dkg_v2(
             let public_output_value = if aggregated_network_key_public_outputs {
                 let public_output: <dkg::Party as mpc::Party>::PublicOutput =
                     bcs::from_bytes(&public_output_value)?;
+                info!(
+                    session_id=?session_id,
+                    "persisting aggregated (V4) network DKG output"
+                );
                 bcs::to_bytes(&VersionedNetworkDkgOutput::V4(bcs::to_bytes(
                     &public_output.upgrade()?,
                 )?))?
