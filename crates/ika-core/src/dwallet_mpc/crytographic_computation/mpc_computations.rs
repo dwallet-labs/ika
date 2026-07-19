@@ -1604,7 +1604,6 @@ impl ProtocolCryptographicData {
                 advance_request,
                 class_groups_decryption_key,
                 &mut rng,
-                aggregated_network_key_public_outputs,
             ),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
                 public_input,

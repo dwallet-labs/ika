@@ -57,11 +57,13 @@ VSS path is internal NOA-VSS.
   `second_secret_key_polynomial_commitments` per curve) derives **only from a
   version-3 network-key DKG output**. A pre-version-3 key has no VSS cache.
   The full-shape output comes in two wire tags — V3 (pre-aggregation, what
-  testnet persists at protocol v4) and V4 (aggregated, written at protocol v5
-  under `aggregated_network_key_public_outputs()`) — and the cache derivation
-  runs on the **aggregated** form either way (a V3 output is upgraded on
-  first derivation), so recovering a Shamir share costs a single class-group
-  decryption per curve-part.
+  testnet persists at protocol v4) and V4 (aggregated). Reconfiguration
+  outputs flip V3→V4 at protocol v5 under
+  `aggregated_network_key_public_outputs()`; fresh network DKG outputs are V4
+  unconditionally (no deployed network persisted a pre-aggregation fresh DKG
+  output). The cache derivation runs on the **aggregated** form either way (a
+  V3 output is upgraded on first derivation), so recovering a Shamir share
+  costs a single class-group decryption per curve-part.
 
 ## Transport — how PVSS reaches the network DKG
 

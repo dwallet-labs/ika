@@ -53,10 +53,11 @@ fn pin_protocol_to_v2_overrides() -> ika_protocol_config::OverrideGuard {
 
 /// Builds an override guard that pins the deployed-testnet (protocol v4)
 /// output format: version-3 network-key crypto (the default), but with
-/// `aggregated_network_key_public_outputs` OFF — so producers write V3-tagged
-/// pre-aggregation outputs, as testnet does until protocol v5 activates.
-/// Without this pin the default (MAX) config is v5, which writes V4-tagged
-/// aggregated outputs.
+/// `aggregated_network_key_public_outputs` OFF — so RECONFIGURATION producers
+/// write V3-tagged pre-aggregation outputs, as testnet does until protocol v5
+/// activates. Without this pin the default (MAX) config is v5, which writes
+/// V4-tagged aggregated reconfiguration outputs. (Network DKG outputs are not
+/// gated — they are V4-tagged regardless of this pin.)
 fn pin_pre_aggregation_outputs_overrides() -> ika_protocol_config::OverrideGuard {
     ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
         config.set_aggregated_network_key_public_outputs_for_testing(false);
@@ -1008,15 +1009,16 @@ async fn test_v1_anchor_main_reconfiguration_and_anchor_migration() {
     info!("Phase 3: V1→V3 anchor reconstruction verified on every validator");
 }
 
-/// The protocol v4 → v5 boundary on a network key: the deployed-testnet state
-/// when the aggregated-outputs gate flips is a **V3-tagged (pre-aggregation)
-/// anchor** plus a **V3-tagged prior reconfiguration output**. The first v5
-/// reconfiguration must consume both via the pre-aggregation decode arms
-/// (`decode_prior_reconfiguration_output_core`'s V3 arm; the V3 anchor →
-/// core arm) and produce a **V4-tagged (aggregated) output**; instantiating
-/// the key from the resulting (V3 anchor, V4 reconfiguration output) pair
+/// The protocol v4 → v5 boundary on a network key: a **V3-tagged
+/// (pre-aggregation) prior reconfiguration output** — what testnet persists
+/// at protocol v4 — must be consumed via the pre-aggregation decode arm
+/// (`decode_prior_reconfiguration_output_core`'s V3 arm) and the first v5
+/// reconfiguration must produce a **V4-tagged (aggregated) output**;
+/// instantiating the key from the (anchor, V4 reconfiguration output) pair
 /// must succeed — the VSS Shamir cache derives from the V4 output directly
-/// and no anchor reconstruction fires (the anchor is already full-shape).
+/// and no anchor reconstruction fires (the anchor is already full-shape;
+/// fresh DKG anchors are V4-tagged unconditionally, since the DKG producer
+/// is not gated).
 #[tokio::test]
 #[cfg(test)]
 async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
@@ -1029,8 +1031,9 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
     let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
 
     // ── Phase 1 (pinned pre-aggregation = deployed testnet, protocol v4):
-    //    DKG → V3-tagged anchor, then one reconfiguration to the SAME
-    //    committee → V3-tagged reconfiguration output. ─────────────────────
+    //    DKG → V4-tagged anchor (the DKG producer is ungated), then one
+    //    reconfiguration to the SAME committee → V3-tagged reconfiguration
+    //    output (reconfiguration honors the pin). ──────────────────────────
     let pre_aggregation_override = pin_pre_aggregation_outputs_overrides();
     let (
         p1_dwallet_mpc_services,
@@ -1065,12 +1068,13 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
         network_owned_address_sign_request_senders: p1_noa_sign_request_senders,
         network_owned_address_sign_output_receivers: p1_noa_sign_output_receivers,
     };
-    let (consensus_round, v3_anchor_bytes, key_id) = create_network_key_test(&mut p1_state).await;
+    let (consensus_round, v4_anchor_bytes, key_id) = create_network_key_test(&mut p1_state).await;
     let versioned_anchor: VersionedNetworkDkgOutput =
-        bcs::from_bytes(&v3_anchor_bytes).expect("decode the phase-1 anchor");
+        bcs::from_bytes(&v4_anchor_bytes).expect("decode the phase-1 anchor");
     assert!(
-        matches!(versioned_anchor, VersionedNetworkDkgOutput::V3(_)),
-        "phase-1 network DKG below the aggregated-outputs gate must produce a V3-tagged anchor"
+        matches!(versioned_anchor, VersionedNetworkDkgOutput::V4(_)),
+        "network DKG always produces a V4-tagged (aggregated) anchor — the DKG producer is \
+         not gated (no deployed network persisted a pre-aggregation fresh DKG output)"
     );
 
     // Reconfigure to the same committee at the next epoch (the committee is
@@ -1117,10 +1121,10 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
         ),
         "phase-1 reconfiguration below the aggregated-outputs gate must produce a V3-tagged output"
     );
-    info!("Phase 1: V3-tagged anchor + V3-tagged reconfiguration output captured");
+    info!("Phase 1: V4-tagged anchor + V3-tagged reconfiguration output captured");
 
     // ── Phase 2 (default v5, aggregated outputs ON): rebuild services on the
-    //    same committee, inject the phase-1 (V3 anchor, V3 reconfiguration
+    //    same committee, inject the phase-1 (V4 anchor, V3 reconfiguration
     //    output) pair, and run the first v5 reconfiguration. ────────────────
     drop(pre_aggregation_override);
     let (
@@ -1170,7 +1174,7 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
                         dkg_at_epoch: 1,
                         current_reconfiguration_public_output: v3_reconfiguration_output_bytes
                             .clone(),
-                        network_dkg_public_output: v3_anchor_bytes.clone(),
+                        network_dkg_public_output: v4_anchor_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
                     },
                 )])));
@@ -1199,7 +1203,7 @@ async fn test_pre_aggregation_to_aggregated_reconfiguration_migration() {
                 .network_keys
                 .get_network_encryption_key_public_data(&key_id)
                 .is_ok(),
-            "phase-2 validator {i} should instantiate the key from the (V3 anchor, V3 \
+            "phase-2 validator {i} should instantiate the key from the (V4 anchor, V3 \
              reconfiguration output) pair"
         );
     }

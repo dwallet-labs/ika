@@ -860,7 +860,6 @@ pub(crate) fn advance_network_dkg_v2(
     advance_request: AdvanceRequest<<dkg::Party as mpc::Party>::Message>,
     class_groups_decryption_key: ClassGroupsDecryptionKey,
     rng: &mut ChaCha20Rng,
-    aggregated_network_key_public_outputs: bool,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
     let private_input = dkg::PrivateInput {
         decryption_key_per_crt_prime: class_groups_decryption_key,
@@ -881,22 +880,22 @@ pub(crate) fn advance_network_dkg_v2(
             malicious_parties,
             private_output,
         }) => {
-            // Below the aggregated-outputs protocol gate the protocol's
-            // pre-aggregation output is persisted as-is (V3); above it, the
-            // output is upgraded to the aggregated shape and persisted V4.
-            let public_output_value = if aggregated_network_key_public_outputs {
-                let public_output: <dkg::Party as mpc::Party>::PublicOutput =
-                    bcs::from_bytes(&public_output_value)?;
-                info!(
-                    session_id=?session_id,
-                    "persisting aggregated (V4) network DKG output"
-                );
-                bcs::to_bytes(&VersionedNetworkDkgOutput::V4(bcs::to_bytes(
-                    &public_output.upgrade()?,
-                )?))?
-            } else {
-                bcs::to_bytes(&VersionedNetworkDkgOutput::V3(public_output_value))?
-            };
+            // Always upgrade to the aggregated shape and persist V4 —
+            // unconditionally, NOT behind the aggregated-outputs protocol gate
+            // that reconfiguration honors: no deployed network ever persisted
+            // a pre-aggregation (V3-tagged) fresh network DKG output (the
+            // deployed keys carry V1 anchors), and no network DKG session runs
+            // during the mixed-binary rollout window, so there is no
+            // byte-identical-quorum constraint on this producer.
+            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(&public_output_value)?;
+            info!(
+                session_id=?session_id,
+                "persisting aggregated (V4) network DKG output"
+            );
+            let public_output_value = bcs::to_bytes(&VersionedNetworkDkgOutput::V4(
+                bcs::to_bytes(&public_output.upgrade()?)?,
+            ))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,

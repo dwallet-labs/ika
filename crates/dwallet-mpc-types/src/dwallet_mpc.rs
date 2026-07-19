@@ -491,19 +491,24 @@ pub enum VersionedSignOutput {
 ///   output wraps `PublicOutputCore` with the trailing
 ///   `threshold_encryption_to_sharing_output` field — so V3 BCS bytes are the
 ///   V2 BCS bytes plus the trailing field (in the pre-aggregation shape:
-///   every dealer's full PVSS dealing). Written by `advance_network_dkg_v2`
-///   when `is_network_encryption_key_version_v3()` is `true` and
-///   `aggregated_network_key_public_outputs()` is `false`. Testnet persists
-///   V3 outputs, so this variant stays readable forever.
+///   every dealer's full PVSS dealing). No longer PRODUCED by the DKG
+///   (superseded by V4), but still READ: testnet validators persist
+///   V3-tagged reconstructed anchors (the V1/V2→V3 anchor migration follows
+///   the reconfiguration output's version, which stays V3 below the
+///   aggregated-outputs gate), so this variant stays decodable forever.
 /// - `V4` — bytes from
 ///   `twopc_mpc::decentralized_party::dkg::AggregatedPublicOutput`: the same
 ///   `PublicOutputCore` prefix, with the trailing sharing output in the
 ///   aggregated shape (one summed randomizer-share ciphertext per receiver
 ///   instead of every dealer's full PVSS dealing — O(n) instead of O(n²)).
-///   Written when `aggregated_network_key_public_outputs()` is `true`
-///   (protocol v5). The producer upgrades the protocol's pre-aggregation
-///   output via `PublicOutput::upgrade()`. The flip is protocol-gated because
-///   MPC outputs must reach byte-identical quorum across the committee.
+///   Written UNCONDITIONALLY by `advance_network_dkg_v2` (the producer
+///   upgrades the protocol's pre-aggregation output via
+///   `PublicOutput::upgrade()`): unlike reconfiguration outputs, fresh DKG
+///   outputs need no protocol gate — no deployed network ever persisted a
+///   pre-aggregation fresh DKG output, and no DKG session runs during a
+///   mixed-binary rollout window, so there is no byte-identical-quorum
+///   constraint on this producer. A V4-tagged anchor also arises from the
+///   anchor migration once the reconfiguration output is V4 (protocol v5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),

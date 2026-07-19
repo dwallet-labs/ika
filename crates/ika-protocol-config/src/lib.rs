@@ -188,13 +188,17 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     off_chain_validator_metadata: bool,
 
-    // If true, network DKG / reconfiguration public outputs are persisted in
+    // If true, network-key reconfiguration public outputs are persisted in
     // the aggregated wire format (one summed randomizer-share ciphertext per
     // receiver instead of every dealer's full PVSS dealing), tagged V4 in
     // ika's versioned output enums. False keeps producing the pre-aggregation
     // V3 wire format that testnet already persists. MPC outputs must reach
-    // byte-identical quorum, so the flip must happen at a protocol version
-    // boundary, never per-binary.
+    // byte-identical quorum and reconfiguration runs every epoch — including
+    // during a mixed-binary rollout — so the flip must happen at a protocol
+    // version boundary, never per-binary. Network DKG outputs are NOT gated
+    // by this flag: they are always persisted in the aggregated (V4) format,
+    // since no deployed network ever persisted a pre-aggregation fresh DKG
+    // output and no DKG session runs during a rollout window.
     #[serde(skip_serializing_if = "is_false")]
     aggregated_network_key_public_outputs: bool,
 }
@@ -459,10 +463,12 @@ impl ProtocolConfig {
         self.feature_flags.off_chain_validator_metadata
     }
 
-    /// True iff network DKG / reconfiguration public outputs are persisted in
+    /// True iff network-key reconfiguration public outputs are persisted in
     /// the aggregated wire format (V4-tagged in the versioned output enums)
-    /// instead of the pre-aggregation V3 format. See the flag definition for
-    /// why this flips only at a protocol version boundary.
+    /// instead of the pre-aggregation V3 format. Network DKG outputs are
+    /// always aggregated regardless of this flag. See the flag definition for
+    /// why the reconfiguration flip happens only at a protocol version
+    /// boundary.
     pub fn aggregated_network_key_public_outputs(&self) -> bool {
         self.feature_flags.aggregated_network_key_public_outputs
     }
