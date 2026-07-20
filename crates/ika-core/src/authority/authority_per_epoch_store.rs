@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
@@ -951,6 +951,19 @@ pub struct AuthorityPerEpochStore {
     /// tick, so without the latch the identical warn floods for hours.
     /// The `own_mpc_data_blob_unhealthy` gauge carries the ongoing state.
     self_blob_unhealthy_warned: AtomicBool,
+
+    /// Running max of `commit_timestamp_ms` over every consensus commit
+    /// this validator has processed this epoch — the epoch's consensus
+    /// clock. In-memory only: it starts at 0 on (re)open and restores
+    /// itself on the next processed commit (replayed or fresh), and its
+    /// only consumer — the mpc_data ready-signal emit gate — treats 0 as
+    /// "consensus time unknown", which merely defers a wall-clock-free
+    /// deadline that could not have any effect while no commits flow
+    /// anyway (nothing can be sequenced). Leader-proposed timestamps are
+    /// only manipulable at seconds scale against the hours-scale
+    /// deadlines built on this; the max makes it monotone locally
+    /// regardless.
+    max_processed_commit_timestamp_ms: AtomicU64,
 }
 
 /// The reconfiguration state of the authority.
@@ -1067,6 +1080,17 @@ pub struct AuthorityEpochTables {
     /// every validator (including one restarting mid-grace) freezes at the
     /// same round on the same signal set.
     mpc_data_ready_quorum_round: DBMap<u64, u64>,
+
+    /// Single-key (0) table holding the `commit_timestamp_ms` of the FIRST
+    /// consensus commit this validator processed this epoch — the
+    /// consensus-clock anchor of the mpc_data ready-signal 3/4-epoch
+    /// backstop deadline (`ready_signal_deadline_ms`). Persisted (written
+    /// atomically with the first commit's batch) because replay after a
+    /// restart resumes from the last processed commit, so the first
+    /// commit's timestamp is otherwise unrecoverable. Identical across
+    /// honest validators up to consensus determinism; consumed only for
+    /// emit timing, never for signal content.
+    epoch_first_commit_timestamp_ms: DBMap<u64, u64>,
 
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
@@ -1794,6 +1818,7 @@ impl AuthorityPerEpochStore {
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
             self_blob_unhealthy_warned: AtomicBool::new(false),
+            max_processed_commit_timestamp_ms: AtomicU64::new(0),
         });
 
         s.update_buffer_stake_metric();
@@ -3614,6 +3639,30 @@ impl AuthorityPerEpochStore {
             .collect())
     }
 
+    /// The epoch's consensus clock: the max `commit_timestamp_ms` over all
+    /// consensus commits processed so far, or `None` if no commit has been
+    /// processed since this store opened (fresh epoch, or a restart whose
+    /// replay hasn't reached the handler yet). Emit-timing consumer only.
+    pub(crate) fn max_processed_commit_timestamp_ms(&self) -> Option<u64> {
+        match self
+            .max_processed_commit_timestamp_ms
+            .load(Ordering::Acquire)
+        {
+            0 => None,
+            timestamp_ms => Some(timestamp_ms),
+        }
+    }
+
+    /// Commit timestamp of the epoch's first processed consensus commit
+    /// (the persisted ready-signal backstop anchor), or `None` before any
+    /// commit landed.
+    pub(crate) fn epoch_first_commit_timestamp_ms(&self) -> IkaResult<Option<u64>> {
+        self.tables()?
+            .epoch_first_commit_timestamp_ms
+            .get(&0)
+            .map_err(IkaError::from)
+    }
+
     /// The consensus leader round at which this validator observed the
     /// `EndOfPublish` stake quorum — the persisted anchor of the
     /// deferred-close grace countdown — or `None` if quorum hasn't been
@@ -4004,6 +4053,22 @@ impl AuthorityPerEpochStore {
             .collect();
 
         let mut output = ConsensusCommitOutput::new(consensus_commit_info.round);
+
+        // Epoch consensus clock: advance the in-memory running max of
+        // processed commit timestamps, and persist the FIRST commit's
+        // timestamp once (the ready-signal backstop anchor — replay
+        // resumes from the last processed commit, so "first" is
+        // unrecoverable unless written with its own commit's batch).
+        self.max_processed_commit_timestamp_ms
+            .fetch_max(consensus_commit_info.timestamp, Ordering::AcqRel);
+        if self
+            .tables()?
+            .epoch_first_commit_timestamp_ms
+            .get(&0)?
+            .is_none()
+        {
+            output.set_epoch_first_commit_timestamp_ms(consensus_commit_info.timestamp);
+        }
 
         let (
             verified_dwallet_checkpoint_messages,
@@ -5141,6 +5206,11 @@ pub(crate) struct ConsensusCommitOutput {
     /// was observed (the freeze-grace anchor). Same atomicity rationale as
     /// `end_of_publish_quorum_round`.
     mpc_data_ready_quorum_round: Option<u64>,
+
+    /// Commit timestamp of the epoch's first processed consensus commit
+    /// (the ready-signal backstop anchor). Set only on the commit observed
+    /// first; same atomicity rationale as `mpc_data_ready_quorum_round`.
+    epoch_first_commit_timestamp_ms: Option<u64>,
 }
 
 impl ConsensusCommitOutput {
@@ -5165,6 +5235,10 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_mpc_data_ready_quorum_round(&mut self, round: u64) {
         self.mpc_data_ready_quorum_round = Some(round);
+    }
+
+    pub(crate) fn set_epoch_first_commit_timestamp_ms(&mut self, timestamp_ms: u64) {
+        self.epoch_first_commit_timestamp_ms = Some(timestamp_ms);
     }
 
     pub(crate) fn set_dwallet_mpc_round_outputs(&mut self, new_value: Vec<DWalletMPCOutput>) {
@@ -5318,6 +5392,12 @@ impl ConsensusCommitOutput {
         }
         if let Some(round) = self.mpc_data_ready_quorum_round {
             batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
+        }
+        if let Some(timestamp_ms) = self.epoch_first_commit_timestamp_ms {
+            batch.insert_batch(
+                &tables.epoch_first_commit_timestamp_ms,
+                [(0u64, timestamp_ms)],
+            )?;
         }
 
         batch.insert_batch(
