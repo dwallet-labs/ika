@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 3;
-const MAX_PROTOCOL_VERSION: u64 = 4;
+const MAX_PROTOCOL_VERSION: u64 = 5;
 
 // Record history of protocol version allocations here:
 //
@@ -29,7 +29,11 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 //            (network_encryption_key_version = 3, reconfiguration_message_version = 3; #1707) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
-// Version 5: noa_checkpoints on.
+// Version 5: aggregated_network_key_public_outputs on — network DKG /
+//            reconfiguration public outputs switch to the aggregated wire
+//            format (V4-tagged); V3-tagged pre-aggregation outputs remain
+//            readable forever (testnet persisted them at v4).
+// Version 6 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -183,6 +187,20 @@ struct FeatureFlags {
     // version boundary ensures every validator switches together.
     #[serde(skip_serializing_if = "is_false")]
     off_chain_validator_metadata: bool,
+
+    // If true, network-key reconfiguration public outputs are persisted in
+    // the aggregated wire format (one summed randomizer-share ciphertext per
+    // receiver instead of every dealer's full PVSS dealing), tagged V4 in
+    // ika's versioned output enums. False keeps producing the pre-aggregation
+    // V3 wire format that testnet already persists. MPC outputs must reach
+    // byte-identical quorum and reconfiguration runs every epoch — including
+    // during a mixed-binary rollout — so the flip must happen at a protocol
+    // version boundary, never per-binary. Network DKG outputs are NOT gated
+    // by this flag: they are always persisted in the aggregated (V4) format,
+    // since no deployed network ever persisted a pre-aggregation fresh DKG
+    // output and no DKG session runs during a rollout window.
+    #[serde(skip_serializing_if = "is_false")]
+    aggregated_network_key_public_outputs: bool,
 }
 
 #[allow(unused)]
@@ -443,6 +461,16 @@ impl ProtocolConfig {
 
     pub fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.feature_flags.off_chain_validator_metadata
+    }
+
+    /// True iff network-key reconfiguration public outputs are persisted in
+    /// the aggregated wire format (V4-tagged in the versioned output enums)
+    /// instead of the pre-aggregation V3 format. Network DKG outputs are
+    /// always aggregated regardless of this flag. See the flag definition for
+    /// why the reconfiguration flip happens only at a protocol version
+    /// boundary.
+    pub fn aggregated_network_key_public_outputs(&self) -> bool {
+        self.feature_flags.aggregated_network_key_public_outputs
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -761,7 +789,10 @@ impl ProtocolConfig {
                     cfg.schnorr_presign_second_round_delay = Some(8);
                     cfg.schnorr_presign_third_round_delay = Some(8);
                 }
-                // 5 => {
+                5 => {
+                    cfg.feature_flags.aggregated_network_key_public_outputs = true;
+                }
+                // 6 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
                 // }
                 // Use this template when making changes:
@@ -1143,6 +1174,10 @@ impl ProtocolConfig {
 
     pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
         self.feature_flags.noa_checkpoints = val;
+    }
+
+    pub fn set_aggregated_network_key_public_outputs_for_testing(&mut self, val: bool) {
+        self.feature_flags.aggregated_network_key_public_outputs = val;
     }
 }
 

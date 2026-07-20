@@ -65,6 +65,52 @@ which bytes* deterministic in consensus order.
   strictly (the `sequence_number` exists so consensus dedup does not
   drop re-emits). Per-signer rows REPLACE — the latest signal from a
   signer is its current attestation.
+- **Emit gate** (`decide_ready_to_finalize`, producer-side): each
+  validator withholds its first ready signal until the next-epoch
+  committee is published AND every one of its members is **covered** —
+  blob locally validated, or digest present in the prior epoch's
+  handoff certificate. A prior-cert member cannot be dropped by the
+  freeze (carry-forward re-freezes it at the prior digest, see below),
+  so waiting for its fresh announcement buys nothing; only uncovered
+  members — a first-time joiner still propagating, or a member that has
+  never announced in any epoch — hold the gate open. That wait is
+  bounded by a deadline: the 3/4-epoch liveness backstop, tightened —
+  once the validator first observes `V_{e+1}` published — to
+  `min(backstop, first-observed-publication + grace)` with
+  `grace = clamp(epoch/24, 30s, 1h)`. The `min` means the deadline can
+  only ever be earlier than the historical fixed 3/4 mark (short test
+  epochs keep exactly the 3/4 behavior, since the clamped grace
+  overshoots them). Without the coverage rule and the tightened
+  deadline, a single never-announcing committee member forces every
+  validator onto the backstop every epoch, compressing the
+  reconfiguration + pricing + lock pipeline into the last quarter of
+  every epoch (observed live on testnet — issue #1866). The deadline
+  warning names only uncovered members — carry-forward-covered members
+  stay in the frozen set, so naming them would be a false exclusion
+  alarm.
+- **Emit-gate clock**: every time term of the gate is denominated in
+  the epoch's CONSENSUS clock — "now" is the running max of processed
+  `commit_timestamp_ms`, the backstop is anchored at the epoch's FIRST
+  processed commit's timestamp (persisted with that commit's batch —
+  replay resumes from the last processed commit, so "first" is
+  otherwise unrecoverable), and the publication observation is stamped
+  with the consensus "now" at the tick that first sees it. Machine
+  wall-clock is never consulted. This fate-shares the deadline with
+  the machinery it times: before the first commit (or during a
+  consensus stall) there is no deadline — nothing can be sequenced, so
+  a deadline could not have produced a freeze — and a partitioned or
+  catching-up validator's deadline pauses with its consensus view
+  instead of deadline-emitting a stale attestation set mid-catch-up.
+  Commit timestamps are leader-proposed and manipulable at seconds
+  scale — immaterial against these hours-scale terms. The first-commit
+  anchor sits a consensus spin-up after the Sui epoch-start timestamp
+  the backstop was historically measured from; the 3/4 slack absorbs
+  normal spin-up, but a pathologically late consensus start delays the
+  backstop by the same amount. All of these terms remain emit-timing
+  only (the freeze snapshot stays a pure function of consensus-ordered
+  signals); the publication anchor is still each validator's LOCAL
+  first observation — making it a fleet-identical consensus fact
+  (quorum of sequenced publication attestations) is issue #1869.
 - **Receive-time canonicalization** (`canonicalize_ready_signal_peers`)
   MUST be a pure function of the sequenced signal bytes: dedup by
   authority, a current-committee quorum-coverage floor, and a

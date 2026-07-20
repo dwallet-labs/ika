@@ -144,6 +144,13 @@ pub struct DWalletMPCMetrics {
     /// key; with several it reflects the most recently instantiated.)
     pub(crate) network_encryption_key_canonical_dkg_output_version: IntGauge,
 
+    /// Version of the latest network-key reconfiguration output installed on
+    /// this validator: 3 = pre-aggregation, 4 = aggregated (the protocol-v5
+    /// format flip), 0 until the first reconfiguration output is installed.
+    /// (With one network key this reflects that key; with several it reflects
+    /// the most recently instantiated.)
+    pub(crate) network_encryption_key_latest_reconfiguration_output_version: IntGauge,
+
     /// Network-key instantiation failures by reason (`channel_closed`,
     /// `epoch_mismatch`, `decrypt_failed`, `instantiate_failed`). Note
     /// `decrypt_failed` is an expected transient for recently-joined
@@ -496,7 +503,13 @@ impl DWalletMPCMetrics {
             .unwrap(),
             network_encryption_key_canonical_dkg_output_version: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version",
-                "Version (2 or 3) of the canonical network DKG output mirrored into the off-chain handoff; migrates 2 -> 3 at the V2->V3 anchor migration",
+                "Version (2 or 3 or 4) of the canonical network DKG output mirrored into the off-chain handoff; migrates at the anchor migration (3 pre-aggregation, 4 aggregated)",
+                registry
+            )
+            .unwrap(),
+            network_encryption_key_latest_reconfiguration_output_version: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_network_encryption_key_latest_reconfiguration_output_version",
+                "Version of the latest installed network-key reconfiguration output (3 pre-aggregation, 4 aggregated, 0 none yet)",
                 registry
             )
             .unwrap(),

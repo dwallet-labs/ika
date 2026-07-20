@@ -2800,6 +2800,9 @@ impl DWalletMPCManager {
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
                         protocol_cryptographic_data,
+                        aggregated_network_key_public_outputs: self
+                            .protocol_config
+                            .aggregated_network_key_public_outputs(),
                     };
 
                     (computation_id, computation_request)
@@ -3016,14 +3019,18 @@ impl DWalletMPCManager {
                                 && !key_data.network_dkg_public_output.is_empty()
                             {
                                 // Mirror the CANONICAL DKG output. Once the
-                                // cert-pinned reconfiguration output is V3, the
-                                // instantiation carries a reconstructed full V3
-                                // output; mirror that in place of the V2 anchor
-                                // so the handoff digest, the overlay, and joiners
-                                // all migrate to V3 together. One-shot: after the
-                                // flip the overlay resolves V3, `reconstruct`
-                                // returns None, and this falls back to the (now
-                                // V3) anchor. Epoch-aligned because the
+                                // cert-pinned reconfiguration output's format is
+                                // ahead of the anchor's (V3/V4 over a V1/V2
+                                // anchor; V4 over a V3 anchor), the
+                                // instantiation carries a reconstructed full
+                                // output; mirror that in place of the stale
+                                // anchor so the handoff digest, the overlay, and
+                                // joiners all migrate together. One-shot per
+                                // flip: after it the overlay resolves the
+                                // migrated version, `reconstruct` returns None,
+                                // and this falls back to the (now migrated)
+                                // anchor — the V4 (aggregated) anchor is the end
+                                // state. Epoch-aligned because the
                                 // reconstruction comes from the cert-pinned
                                 // reconfiguration output, identical committee-wide.
                                 let canonical_dkg_output = match key
@@ -3056,18 +3063,28 @@ impl DWalletMPCManager {
                                     );
                                 }
                                 // Surface the canonical DKG-output version for
-                                // observability of the V2->V3 migration: it
-                                // reads 3 once this validator mirrors the
-                                // reconstructed full output.
-                                let canonical_version: i64 =
-                                    if key.reconstructed_full_network_dkg_output().is_some() {
-                                        3
-                                    } else {
-                                        key.network_dkg_output().version() as i64
-                                    };
+                                // observability of the anchor migration: it
+                                // reads the reconstructed full output's version
+                                // (3 pre-aggregation, 4 aggregated) once this
+                                // validator mirrors it.
+                                let canonical_version: i64 = key
+                                    .reconstructed_full_network_dkg_output()
+                                    .map(|output| output.version())
+                                    .unwrap_or_else(|| key.network_dkg_output().version())
+                                    as i64;
                                 self.dwallet_mpc_metrics
                                     .network_encryption_key_canonical_dkg_output_version
                                     .set(canonical_version);
+                                // Same observability for the reconfiguration
+                                // output: 3 = pre-aggregation, 4 = aggregated
+                                // (the protocol-v5 format flip), 0 = none yet.
+                                let reconfiguration_version: i64 =
+                                    key.latest_network_reconfiguration_public_output()
+                                        .map(|output| output.version())
+                                        .unwrap_or(0) as i64;
+                                self.dwallet_mpc_metrics
+                                    .network_encryption_key_latest_reconfiguration_output_version
+                                    .set(reconfiguration_version);
                             }
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a
