@@ -30,7 +30,6 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_hash_scheme, try_into_signature_algorithm,
 };
 use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
-use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
@@ -1002,6 +1001,7 @@ pub fn network_key_version_inner(
         VersionedNetworkDkgOutput::V1(_) => Ok(1),
         VersionedNetworkDkgOutput::V2(_) => Ok(2),
         VersionedNetworkDkgOutput::V3(_) => Ok(3),
+        VersionedNetworkDkgOutput::V4(_) => Ok(4),
     }
 }
 
@@ -1182,7 +1182,30 @@ fn protocol_public_parameters(
             Ok(pp)
         }
         VersionedNetworkDkgOutput::V3(network_dkg_public_output) => {
-            let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
+            let network_dkg_public_output: twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Ristretto => bcs::to_bytes(
+                    &network_dkg_public_output.ristretto_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(
+                    &network_dkg_public_output.curve25519_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256r1_protocol_public_parameters()?,
+                )?,
+            };
+
+            Ok(pp)
+        }
+        VersionedNetworkDkgOutput::V4(network_dkg_public_output) => {
+            // Aggregated shape — same `PublicOutputCore` prefix, so the same
+            // core-level protocol-public-parameter accessors apply.
+            let network_dkg_public_output: twopc_mpc::decentralized_party::dkg::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
             let pp = match try_into_curve(curve)? {
@@ -1240,7 +1263,30 @@ fn protocol_public_parameters_from_reconfiguration_output(
             Ok(pp)
         }
         VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
-            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?)?
+                }
+            };
+
+            Ok(pp)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V4(public_output_bytes) => {
+            // Aggregated shape — same `PublicOutputCore` prefix, so the same
+            // core-level protocol-public-parameter accessors apply.
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
             let pp = match try_into_curve(curve)? {

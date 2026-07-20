@@ -2,6 +2,7 @@ mod anomaly_diagnostics;
 mod computation_results_batch;
 mod create_dwallet;
 mod encrypt_secret_share;
+mod fixed_vectors;
 mod idle_status_voting;
 mod internal_presign;
 mod late_reconfiguration_output;

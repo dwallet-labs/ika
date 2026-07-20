@@ -52,7 +52,7 @@ use mpc::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
 use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
@@ -472,6 +472,7 @@ impl ProtocolCryptographicData {
         root_seed: RootSeed,
         vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        aggregated_network_key_public_outputs: bool,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -1644,12 +1645,34 @@ impl ProtocolCryptographicData {
                         private_output,
                     } => {
                         // Wrap the public output with its version. Main
-                        // Reconfig writes V3 (version-3 shape); the
-                        // bwd-compat path in `advance_network_reconfiguration_bwd_compat`
+                        // Reconfig writes V3 (pre-aggregation shape) below the
+                        // aggregated-outputs protocol gate and V4 (aggregated
+                        // shape, via upgrade()) above it; the bwd-compat path
+                        // in `advance_network_reconfiguration_bwd_compat`
                         // writes V2.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDecryptionKeyReconfigurationOutput::V3(public_output_value),
-                        )?;
+                        let public_output_value = if aggregated_network_key_public_outputs {
+                            // Deliberately the CONCRETE non-aggregated type, not the
+                            // Party's associated output type: this decode-and-upgrade
+                            // (and the V3 tagging below the gate) is correct only while
+                            // the reconfiguration Party's wire output is the
+                            // non-aggregated shape. When the Party migrates to the
+                            // aggregated output post-upgrade, this site must be
+                            // revisited — a hardcoded type makes that a loud failure
+                            // instead of a silent misinterpretation.
+                            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
+                                bcs::from_bytes(&public_output_value)?;
+                            info!(
+                                session_identifier=?session_identifier,
+                                "persisting aggregated (V4) network-key reconfiguration output"
+                            );
+                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
+                                bcs::to_bytes(&public_output.upgrade()?)?,
+                            ))?
+                        } else {
+                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V3(
+                                public_output_value,
+                            ))?
+                        };
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,

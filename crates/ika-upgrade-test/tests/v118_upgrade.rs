@@ -198,9 +198,11 @@ async fn v118_full_committee_upgrade_to_local_build() {
         .expect_protocol_version_at_most(3)
         .record_mpc_timings("pre-activation-window")
         // Boundary 2->3: the local binaries reshare the 1.1.8-created key
-        // and the capability vote advances v3 -> v4.
+        // and the capability vote jumps DIRECT to the highest quorum-supported
+        // version — v3 -> v5 in one boundary (v4 never activates on this
+        // path, exactly as on a mainnet 1.1.8 -> latest rollout).
         .wait_for_epoch(3)
-        .expect_protocol_version_at_least(4)
+        .expect_protocol_version_at_least(5)
         .expect_committee_size(4)
         // The swapped binaries opened 1.1.8-written `committee_map` records:
         // the store must have migrated them at open (positive check), and no
@@ -214,8 +216,8 @@ async fn v118_full_committee_upgrade_to_local_build() {
         // pool-served global presign, sign — all on top of state a 1.1.8
         // network created. (No `set_global_presign_config` step: the config
         // has been the mainnet-shape Full since genesis.)
-        .run_workload("local-v4")
-        .record_mpc_timings("local-v4")
+        .run_workload("local-post-upgrade")
+        .record_mpc_timings("local-post-upgrade")
         // One more boundary: a clean reshare executed end-to-end by the
         // local build alone — and the first one run *at protocol v4*, i.e.
         // with the v4 reconfiguration math (`reconfiguration_message_version
@@ -223,21 +225,23 @@ async fn v118_full_committee_upgrade_to_local_build() {
         // protocol). The snapshot's *window* vs `local-v4` isolates that
         // v4-math reshare from the cumulative averages.
         .wait_for_epoch(4)
-        // The deployed (1.1.8-created) network key's DKG output migrates V2->V3
-        // here. Epoch 2->3 reshared under v3 (V2 reconfiguration output); epoch
-        // 3->4 is the first reshare at v4 (`reconfiguration_message_version = 3`),
-        // producing the V3 reconfiguration output that lets each validator
-        // reconstruct the full V3 DKG output and mirror it into the off-chain
-        // handoff. Assert the migration actually happened (the on-chain copy
-        // stays V2 — this reads the validators' canonical-version metric).
-        .expect_network_dkg_output_version_at_least(3)
-        .record_mpc_timings("v4-reshare")
+        // The deployed (1.1.8-created) network key's DKG output migrates
+        // V2->V4 here. Epoch 2->3 reshared under v3 (V2 reconfiguration
+        // output); epoch 3->4 is the first reshare at v5 — above the
+        // aggregated-outputs gate — producing the aggregated V4-tagged
+        // reconfiguration output that lets each validator reconstruct the
+        // full V4 DKG output and mirror it into the off-chain handoff.
+        // Assert both migrations actually happened (the on-chain copy stays
+        // V2 — these read the validators' metrics).
+        .expect_network_dkg_output_version_at_least(4)
+        .expect_reconfiguration_output_version_at_least(4)
+        .record_mpc_timings("post-gate-reshare")
         // Settled v4 lifecycle: pools were filled during epoch 3, the
         // boundary work is done, so this window prices v4 DKG / pool-served
         // presign / sign without the pool-fill contention that loaded the
         // `local-v4` numbers.
-        .run_workload("local-v4-settled")
-        .record_mpc_timings("local-v4-settled")
+        .run_workload("local-post-upgrade-settled")
+        .record_mpc_timings("local-post-upgrade-settled")
         .run()
         .await
         .expect("v1.1.8 -> local full-committee upgrade rehearsal");

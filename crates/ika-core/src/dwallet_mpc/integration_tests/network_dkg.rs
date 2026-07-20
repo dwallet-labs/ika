@@ -638,8 +638,10 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
 }
 
 /// Like [`create_network_key_test`] but additionally runs a network reconfiguration
-/// (to the **same** committee at the next epoch) and installs the resulting **V3
-/// reconfiguration output** on every validator's network key.
+/// (to the **same** committee at the next epoch) and installs the resulting
+/// **versioned reconfiguration output** (V4 aggregated at the default MAX
+/// protocol config; V3 pre-aggregation below the gate) on every validator's
+/// network key.
 ///
 /// Fast Schnorr (VSS) sign requires a reconfigured key: the DKG-only public output
 /// does not expose the per-curve secret-key polynomial commitments / masked parts
@@ -664,9 +666,9 @@ pub(crate) async fn create_reconfigured_network_key_test(
 }
 
 /// Runs a network reconfiguration (to the same key-bearing committee at the next
-/// epoch) on an already-created network key, then installs the resulting V3
-/// reconfiguration output on every validator's key in place. Returns the next
-/// unused consensus round.
+/// epoch) on an already-created network key, then installs the resulting
+/// versioned reconfiguration output on every validator's key in place. Returns
+/// the next unused consensus round.
 ///
 /// Split out of [`create_reconfigured_network_key_test`] so a caller can create
 /// dWallets *before* reconfiguring — the dWallet DKG runs against the pre-reconfig
@@ -710,8 +712,8 @@ pub(crate) async fn reconfigure_network_key(
 
     // Reassemble the (chunked) reconfiguration public output across all
     // `RespondDWalletMPCNetworkReconfigurationOutput` messages. These bytes are
-    // already `bcs(VersionedDecryptionKeyReconfigurationOutput::V3(..))`, so they go
-    // into `current_reconfiguration_public_output` verbatim.
+    // already versioned (`bcs(VersionedDecryptionKeyReconfigurationOutput::V3/V4(..))`),
+    // so they go into `current_reconfiguration_public_output` verbatim.
     let mut reconfiguration_output_bytes = vec![];
     for message in reconfiguration_checkpoint.messages() {
         let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
@@ -727,7 +729,7 @@ pub(crate) async fn reconfigure_network_key(
         "reconfiguration output should not be empty"
     );
 
-    // Install the V3 reconfiguration output on every validator's network key.
+    // Install the versioned reconfiguration output on every validator's network key.
     // `create_network_key_test` installed the key with an EMPTY reconfiguration
     // output (DKG-only public data, which VSS sign rejects). The consensus
     // status-vote path cannot carry this update: it dedups already-agreed keys

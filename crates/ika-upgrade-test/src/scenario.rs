@@ -66,6 +66,7 @@ pub enum Step {
     /// the off-chain handoff migrated the DKG output (e.g. 2 -> 3 after the v4
     /// reconfiguration); the on-chain copy stays V2, so this is metric-based.
     ExpectNetworkDkgOutputVersionAtLeast(u64),
+    ExpectReconfigurationOutputVersionAtLeast(u64),
     /// Register a brand-new validator on chain (candidate → stake → join) and
     /// spawn its process on the given binary. It enters the active committee
     /// at the next epoch boundary.
@@ -167,6 +168,9 @@ impl std::fmt::Display for Step {
             }
             Step::ExpectNetworkDkgOutputVersionAtLeast(v) => {
                 write!(f, "expect_network_dkg_output_version_at_least({v})")
+            }
+            Step::ExpectReconfigurationOutputVersionAtLeast(v) => {
+                write!(f, "expect_reconfiguration_output_version_at_least({v})")
             }
             Step::JoinValidator(spec) => write!(f, "join_validator({})", spec.label()),
             Step::JoinValidatorMirrored(spec) => {
@@ -392,6 +396,15 @@ impl Scenario {
     pub fn expect_network_dkg_output_version_at_least(mut self, version: u64) -> Self {
         self.steps
             .push(Step::ExpectNetworkDkgOutputVersionAtLeast(version));
+        self
+    }
+
+    /// Assert every running validator installed a network-key reconfiguration
+    /// output of at least `version` (3 = pre-aggregation, 4 = aggregated;
+    /// polled across all running validators' metrics).
+    pub fn expect_reconfiguration_output_version_at_least(mut self, version: u64) -> Self {
+        self.steps
+            .push(Step::ExpectReconfigurationOutputVersionAtLeast(version));
         self
     }
 
@@ -746,6 +759,30 @@ impl Scenario {
                             bail!(
                                 "min canonical network DKG output version {got} < expected \
                                  {at_least} after timeout — the off-chain handoff did not migrate"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
+                Step::ExpectReconfigurationOutputVersionAtLeast(at_least) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectReconfigurationOutputVersionAtLeast before StartAll")?;
+                    let deadline = tokio::time::Instant::now() + self.epoch_timeout;
+                    loop {
+                        let got = c.min_latest_reconfiguration_output_version().await;
+                        if got >= *at_least {
+                            tracing::info!(
+                                got,
+                                expected = *at_least,
+                                "reconfiguration output version assertion passed"
+                            );
+                            break;
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            bail!(
+                                "min installed reconfiguration output version {got} < expected \
+                                 {at_least} after timeout"
                             );
                         }
                         tokio::time::sleep(Duration::from_secs(5)).await;

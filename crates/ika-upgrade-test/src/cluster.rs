@@ -1579,6 +1579,32 @@ impl ClusterOfProcesses {
         min.unwrap_or(0)
     }
 
+    /// The minimum installed network-key reconfiguration output version
+    /// reported across all running validators' `/metrics` (3 =
+    /// pre-aggregation, 4 = aggregated, 0 = not installed / unreachable).
+    /// Same polling semantics as
+    /// [`Self::min_canonical_network_dkg_output_version`].
+    pub async fn min_latest_reconfiguration_output_version(&self) -> u64 {
+        let http = reqwest::Client::new();
+        let mut min: Option<u64> = None;
+        for proc in self.validators.iter().filter(|p| p.is_running()) {
+            let url = format!("http://127.0.0.1:{}/metrics", proc.metrics_port());
+            let version = match http.get(&url).send().await {
+                Ok(resp) => match resp.text().await {
+                    Ok(body) => parse_labelless_gauge(
+                        &body,
+                        "ika_dwallet_mpc_network_encryption_key_latest_reconfiguration_output_version",
+                    )
+                    .unwrap_or(0),
+                    Err(_) => 0,
+                },
+                Err(_) => 0,
+            };
+            min = Some(min.map_or(version, |m| m.min(version)));
+        }
+        min.unwrap_or(0)
+    }
+
     /// Block until the on-chain ika epoch counter reaches `target`.
     ///
     /// The counter advancing to epoch N is itself the completion signal for
