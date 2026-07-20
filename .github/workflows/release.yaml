@@ -47,7 +47,7 @@ jobs:
       network: ${{ steps.resolve.outputs.network }}
       is_release: ${{ steps.resolve.outputs.is_release }}
       # Runner labels — change here to update all jobs
-      runner_linux: linux-32-runner
+      runner_linux: ika-k8s-large
       runner_macos_x64: macos-latest
       runner_macos_arm64: macos-latest
       runner_windows: windows-latest
