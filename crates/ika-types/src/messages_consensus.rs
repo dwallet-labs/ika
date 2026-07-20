@@ -774,9 +774,8 @@ mod wire_format_tests {
     /// NOAPresignDemand, crash-looping upgraded validators mid-rollout).
     #[test]
     fn consensus_transaction_kind_wire_tags_are_append_only() {
-        let tag = |kind: &ConsensusTransactionKind| -> u8 {
-            bcs::to_bytes(kind).expect("bcs encode")[0]
-        };
+        let tag =
+            |kind: &ConsensusTransactionKind| -> u8 { bcs::to_bytes(kind).expect("bcs encode")[0] };
         assert_eq!(
             tag(&ConsensusTransactionKind::EndOfPublish(
                 AuthorityName::default()
