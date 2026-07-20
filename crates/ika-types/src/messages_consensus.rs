@@ -81,10 +81,6 @@ pub enum ConsensusTransactionKey {
     GlobalPresignRequest(AuthorityName, u64),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
-    /// A NOA sign presign demand, keyed by its `demand_id` digest ONLY (not
-    /// authority), so redundant announcements of the same demand from different
-    /// validators collapse to a single consensus transaction.
-    NOAPresignDemand([u8; 32]),
     /// A current-committee validator's self-submitted MPC data
     /// announcement, keyed by validator + epoch + timestamp_ms. The
     /// timestamp is the version within (validator, epoch); the
@@ -130,6 +126,14 @@ pub enum ConsensusTransactionKey {
     /// signature inside V2 is not separately keyed; the consumer
     /// routes it through the handoff aggregator after extraction.
     EndOfPublishV2(AuthorityName),
+    // WIRE/DB-FORMAT DISCIPLINE: BCS-serialized as the key of persisted
+    // DBMaps (pending_consensus_transactions, consensus_message_processed)
+    // and rebuilt across binary upgrades - variants are APPEND-ONLY, same
+    // as ConsensusTransactionKind above.
+    /// A NOA sign presign demand, keyed by its `demand_id` digest ONLY (not
+    /// authority), so redundant announcements of the same demand from different
+    /// validators collapse to a single consensus transaction.
+    NOAPresignDemand([u8; 32]),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -331,7 +335,6 @@ pub enum ConsensusTransactionKind {
     SuiChainObservationUpdate(SuiChainObservationUpdate),
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
     NOAObservation(ConsensusNOAObservation),
-    NOAPresignDemand(ConsensusNOAPresignDemand),
     /// Self-submission by a current-committee validator: the
     /// announcement (digest + metadata) plus the full mpc_data blob
     /// carried in-band. No payload signature (the consensus block
@@ -351,6 +354,13 @@ pub enum ConsensusTransactionKind {
     /// whole committee via consensus replication.
     RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement, Vec<u8>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
+    // WIRE-FORMAT DISCIPLINE: this enum is BCS-serialized into consensus
+    // blocks and decoded by every binary version in a mixed committee.
+    // Variants are APPEND-ONLY - inserting mid-enum shifts every later
+    // tag, so old binaries' transactions decode as the WRONG variant on
+    // new binaries (caught live in v121_rollout: v1.2.1 announcements,
+    // tag 10, decoded as NOAPresignDemand when it was inserted at index
+    // 10, crash-looping the upgraded validator mid-rollout).
     /// V2 of `EndOfPublish` that bundles the validator's signed
     /// handoff attestation into the same consensus message.
     ///
@@ -379,6 +389,7 @@ pub enum ConsensusTransactionKind {
         authority: AuthorityName,
         handoff_signature: Box<HandoffSignatureMessage>,
     },
+    NOAPresignDemand(ConsensusNOAPresignDemand),
 }
 
 impl ConsensusTransaction {
@@ -742,5 +753,50 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::EndOfPublishV2(*authority)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::*;
+    use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+    use sui_types::base_types::ObjectID;
+
+    /// The BCS variant tag of `ConsensusTransactionKind` is a cross-version
+    /// wire contract: every binary in a mixed committee decodes every other
+    /// binary's transactions. Tags 0-12 are what deployed binaries
+    /// (release/testnet-v1.2.1) emit and expect; they may NEVER shift.
+    /// New variants append after the last pinned tag. This test pins the
+    /// contract with cheap-to-construct variants bracketing the enum, plus
+    /// the appended tail. If it fails, a variant was inserted mid-enum -
+    /// move it to the end (see the WIRE-FORMAT DISCIPLINE comment on the
+    /// enum; live incident: v1.2.1 announcements decoded as the mid-enum
+    /// NOAPresignDemand, crash-looping upgraded validators mid-rollout).
+    #[test]
+    fn consensus_transaction_kind_wire_tags_are_append_only() {
+        let tag =
+            |kind: &ConsensusTransactionKind| -> u8 { bcs::to_bytes(kind).expect("bcs encode")[0] };
+        assert_eq!(
+            tag(&ConsensusTransactionKind::EndOfPublish(
+                AuthorityName::default()
+            )),
+            3,
+            "EndOfPublish must keep wire tag 3 (v1.2.1 contract)"
+        );
+        assert_eq!(
+            tag(&ConsensusTransactionKind::NOAPresignDemand(
+                ConsensusNOAPresignDemand {
+                    authority: AuthorityName::default(),
+                    demand_id: crate::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                        [0u8; 32],
+                    ),
+                    signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+                    network_encryption_key_id: ObjectID::ZERO,
+                }
+            )),
+            15,
+            "NOAPresignDemand is post-v1.2.1 and must stay APPENDED at tag 15; \
+             renumbering it (or anything before it) breaks mixed-committee decoding"
+        );
     }
 }
