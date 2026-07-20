@@ -129,40 +129,47 @@ fn decide_ready_to_finalize(
 const POST_PUBLICATION_GRACE_MIN_MS: u64 = 30_000;
 const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
 
-/// The wall-clock deadline after which the emit gate stops waiting for
-/// uncovered next-epoch members. Pure function so the timing rule is
-/// unit-testable.
+/// The deadline after which the emit gate stops waiting for uncovered
+/// next-epoch members, denominated in the epoch's CONSENSUS clock (max
+/// processed `commit_timestamp_ms`) — never machine wall-clock. Pure
+/// function so the timing rule is unit-testable.
 ///
-/// Before V_{e+1} is locally observed as published there is no member
-/// set to wait on, so the only bound is the 3/4-epoch liveness
-/// backstop. Once publication is observed, the wait shrinks to a
-/// propagation grace after that observation — a member that is neither
-/// validated nor prior-cert-covered by then is either a first-time
-/// joiner that failed to propagate or a never-alive member, and
-/// holding every validator's ready signal for it until the 3/4 mark
-/// would compress the reconfiguration into the last quarter of every
-/// epoch (observed live on testnet with two permanently-silent
-/// members; issue #1866). The `min` keeps the backstop as a hard upper
-/// bound, so this can only ever make the gate fire earlier — under
-/// short test epochs (where the clamped grace exceeds epoch/4) the
-/// deadline stays exactly the 3/4 backstop.
+/// `first_commit_ts_ms` anchors the 3/4-epoch liveness backstop at the
+/// epoch's first processed consensus commit; `None` (no commit
+/// processed yet) means no deadline at all — nothing can be sequenced
+/// while no commits flow, so a deadline could not have produced a
+/// freeze anyway (fate-sharing: the deadline pauses exactly when the
+/// machinery it times is paused). Once V_{e+1} publication has been
+/// observed (`next_committee_first_seen_ms`, also recorded off the
+/// consensus clock), the wait shrinks to a propagation grace after
+/// that observation — a member that is neither validated nor
+/// prior-cert-covered by then is either a first-time joiner that
+/// failed to propagate or a never-alive member, and holding every
+/// validator's ready signal for it until the 3/4 mark would compress
+/// the reconfiguration into the last quarter of every epoch (observed
+/// live on testnet with two permanently-silent members; issue #1866).
+/// The `min` keeps the backstop as a hard upper bound — under short
+/// test epochs (where the clamped grace exceeds epoch/4) the deadline
+/// stays exactly the 3/4 backstop.
 ///
-/// Wall-clock only affects WHEN each validator emits its signal; the
-/// freeze snapshot stays a pure function of the consensus-ordered
-/// signals, so per-validator skew in observing the publication is
-/// harmless.
+/// The clock choice only affects WHEN each validator emits its signal;
+/// the freeze snapshot stays a pure function of the consensus-ordered
+/// signals. Commit timestamps are leader-proposed and manipulable at
+/// seconds scale — immaterial against these hours-scale terms (issue
+/// #1868); the epoch store's running max makes the observed clock
+/// monotone locally regardless.
 fn ready_signal_deadline_ms(
-    epoch_start_ms: u64,
+    first_commit_ts_ms: Option<u64>,
     epoch_duration_ms: u64,
     next_committee_first_seen_ms: Option<u64>,
-) -> u64 {
-    let backstop = epoch_start_ms.saturating_add(epoch_duration_ms / 4 * 3);
+) -> Option<u64> {
+    let backstop = first_commit_ts_ms?.saturating_add(epoch_duration_ms / 4 * 3);
     let Some(first_seen_ms) = next_committee_first_seen_ms else {
-        return backstop;
+        return Some(backstop);
     };
     let grace = (epoch_duration_ms / 24)
         .clamp(POST_PUBLICATION_GRACE_MIN_MS, POST_PUBLICATION_GRACE_MAX_MS);
-    backstop.min(first_seen_ms.saturating_add(grace))
+    Some(backstop.min(first_seen_ms.saturating_add(grace)))
 }
 
 /// Per-epoch producer task that broadcasts this validator's
@@ -223,12 +230,16 @@ pub struct MpcDataAnnouncementSender {
     /// thereafter, so a sequencing stall still surfaces) logs at
     /// info, re-submissions in between at debug.
     announcement_submit_attempts: AtomicU64,
-    /// Wall-clock ms at which this validator FIRST observed the
+    /// Consensus-clock ms (the epoch store's max processed commit
+    /// timestamp) at which this validator FIRST observed the
     /// next-epoch committee published on the watch channel, or `0`
-    /// (sentinel: not yet observed). Anchors the post-publication
-    /// grace in [`ready_signal_deadline_ms`] — local-only emit
-    /// timing, so per-validator skew (including a reset to the
-    /// restart time after a mid-epoch restart) is harmless.
+    /// (sentinel: not yet observed, or observed while no commit had
+    /// been processed yet — re-recorded on a later tick). Anchors the
+    /// post-publication grace in [`ready_signal_deadline_ms`] —
+    /// local-only emit timing, so per-validator skew (including a
+    /// reset to the restart-time consensus view after a mid-epoch
+    /// restart) is harmless. Making this anchor fleet-identical
+    /// (consensus-sequenced publication attestations) is issue #1869.
     next_committee_first_seen_ms: AtomicU64,
 }
 
@@ -456,13 +467,20 @@ impl MpcDataAnnouncementSender {
     ///   present in the prior epoch's handoff cert (the freeze
     ///   carries such members forward, so waiting for them buys
     ///   nothing) — or
-    /// - the epoch-clock deadline has passed: the 3/4-epoch liveness
-    ///   backstop, tightened to a propagation grace after this
+    /// - the consensus-clock deadline has passed: the 3/4-epoch
+    ///   liveness backstop anchored at the epoch's first consensus
+    ///   commit, tightened to a propagation grace after this
     ///   validator first observes V_{e+1} published (see
     ///   `ready_signal_deadline_ms`) — so an uncovered member that
     ///   never announces can't hold every epoch's freeze to the 3/4
     ///   mark (the still-uncovered members are surfaced so the
     ///   caller can warn).
+    ///
+    /// Every time term is read off the epoch's consensus clock (max
+    /// processed commit timestamp) — machine wall-clock is never
+    /// consulted, so an NTP-skewed or partitioned validator's gate
+    /// pauses with its consensus view instead of deadline-emitting a
+    /// stale attestation set mid-catch-up (issue #1868, Part A).
     fn ready_to_finalize(
         &self,
         epoch_store: &AuthorityPerEpochStore,
@@ -470,11 +488,12 @@ impl MpcDataAnnouncementSender {
     ) -> ReadyToFinalize {
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
         let epoch_start = epoch_store.epoch_start_state();
-        // On clock failure, treat as past the deadline (emit) rather
-        // than stalling the freeze.
-        let now = now_ms().unwrap_or(u64::MAX);
-        // Copy out of the watch borrow before the cert read below, so
-        // the channel's read guard isn't held across a DB access.
+        // The epoch's consensus clock. `None` (no commit processed yet)
+        // disables the deadline terms below; the coverage-based `Ready`
+        // path needs no clock at all.
+        let consensus_now = epoch_store.max_processed_commit_timestamp_ms();
+        // Copy out of the watch borrow before the DB reads below, so
+        // the channel's read guard isn't held across them.
         let (next_committee_epoch, next_members) = {
             let next = self.next_epoch_committee_receiver.borrow();
             let members: Vec<AuthorityName> =
@@ -482,10 +501,12 @@ impl MpcDataAnnouncementSender {
             (next.epoch(), members)
         };
         let next_published = next_committee_epoch == epoch_store.epoch() + 1;
-        if next_published {
+        if next_published && let Some(now) = consensus_now {
             // Record the FIRST observation only (compare-and-swap from
-            // the 0 sentinel), so re-borrows on later ticks don't slide
-            // the grace anchor forward.
+            // the 0 sentinel), so later ticks don't slide the grace
+            // anchor forward. Skipped while the consensus clock is
+            // unknown (`now` would be the 0 sentinel) — a later tick
+            // records it once commits flow.
             let _ = self.next_committee_first_seen_ms.compare_exchange(
                 0,
                 now,
@@ -497,11 +518,23 @@ impl MpcDataAnnouncementSender {
             0 => None,
             first_seen_ms => Some(first_seen_ms),
         };
-        let deadline = ready_signal_deadline_ms(
-            epoch_start.epoch_start_timestamp_ms(),
-            epoch_start.epoch_duration_ms(),
-            first_seen,
-        );
+        // Backstop anchor: the epoch's first processed consensus
+        // commit. A read error degrades to "no anchor" (deadline
+        // disabled this tick) — emit-timing only, so unlike freeze-
+        // commit reads it must not fail the caller.
+        let first_commit_ts = match epoch_store.epoch_first_commit_timestamp_ms() {
+            Ok(first_commit_ts) => first_commit_ts,
+            Err(err) => {
+                debug!(
+                    error = ?err,
+                    "failed to read the epoch's first-commit timestamp for the \
+                     ready-signal emit gate; deadline disabled this tick"
+                );
+                None
+            }
+        };
+        let deadline =
+            ready_signal_deadline_ms(first_commit_ts, epoch_start.epoch_duration_ms(), first_seen);
         // Members covered by the prior epoch's handoff cert cannot be
         // dropped by the freeze (carry-forward re-freezes them at the
         // prior-cert digest), so they must not hold the gate. A read
@@ -521,9 +554,14 @@ impl MpcDataAnnouncementSender {
                     HashSet::new()
                 }
             };
+        // Translate the Options at the pure-function boundary: an
+        // unknown consensus clock (0) can never reach a real deadline,
+        // and an absent deadline (u64::MAX) is never reached — both
+        // collapse to "the deadline terms are inert; only coverage can
+        // make us Ready".
         decide_ready_to_finalize(
-            now,
-            deadline,
+            consensus_now.unwrap_or(0),
+            deadline.unwrap_or(u64::MAX),
             next_committee_epoch,
             epoch_store.epoch() + 1,
             &next_members,
@@ -586,8 +624,8 @@ impl MpcDataAnnouncementSender {
         // lets joiners — who announce only after `V_{e+1}` is
         // published, mid-epoch — make it into the frozen set, the
         // next committee's class-groups map, and the handoff cert.
-        // The deadline (wall-clock) only affects WHEN each validator
-        // emits; the freeze snapshot itself is still computed
+        // The deadline (consensus-clock) only affects WHEN each
+        // validator emits; the freeze snapshot itself is still computed
         // deterministically at the consensus-ordered quorum point.
         let deadline_missing = match self.ready_to_finalize(&epoch_store, &validated_names) {
             ReadyToFinalize::NotYet => {
@@ -826,47 +864,62 @@ mod tests {
         );
     }
 
-    /// The deadline formula: 3/4-epoch backstop until V_{e+1} is
-    /// observed published, then min(backstop, first-observed + grace)
-    /// with grace = epoch/24 clamped to [30s, 1h]. The min means the
-    /// change can only fire the gate EARLIER than the old fixed 3/4
-    /// deadline, and short test epochs keep the 3/4 behavior exactly.
+    /// The deadline formula, all terms on the consensus clock: no
+    /// deadline before the epoch's first commit; then the 3/4-epoch
+    /// backstop anchored at that commit until V_{e+1} is observed
+    /// published; then min(backstop, first-observed + grace) with
+    /// grace = epoch/24 clamped to [30s, 1h]. The min means the
+    /// publication term can only fire the gate EARLIER than the
+    /// backstop, and short test epochs keep the 3/4 behavior exactly.
     #[test]
     fn ready_signal_deadline_tracks_publication_with_clamped_grace() {
         const HOUR_MS: u64 = 3_600_000;
+        // No consensus commit processed yet: no deadline at all —
+        // nothing can be sequenced, so a deadline could do nothing.
+        assert_eq!(ready_signal_deadline_ms(None, 24 * HOUR_MS, None), None);
+        assert_eq!(
+            ready_signal_deadline_ms(None, 24 * HOUR_MS, Some(12 * HOUR_MS)),
+            None
+        );
         // Publication not yet observed: the 3/4 backstop.
         assert_eq!(
-            ready_signal_deadline_ms(0, 24 * HOUR_MS, None),
-            18 * HOUR_MS
+            ready_signal_deadline_ms(Some(0), 24 * HOUR_MS, None),
+            Some(18 * HOUR_MS)
         );
         // 24h epoch, published at mid-epoch: grace = 24h/24 = 1h, so
         // the deadline is 13h — well before the 18h backstop.
         assert_eq!(
-            ready_signal_deadline_ms(0, 24 * HOUR_MS, Some(12 * HOUR_MS)),
-            13 * HOUR_MS
+            ready_signal_deadline_ms(Some(0), 24 * HOUR_MS, Some(12 * HOUR_MS)),
+            Some(13 * HOUR_MS)
         );
         // Publication observed very late: the backstop still caps it.
         assert_eq!(
-            ready_signal_deadline_ms(0, 24 * HOUR_MS, Some(HOUR_MS + 18 * HOUR_MS)),
-            18 * HOUR_MS
+            ready_signal_deadline_ms(Some(0), 24 * HOUR_MS, Some(HOUR_MS + 18 * HOUR_MS)),
+            Some(18 * HOUR_MS)
         );
         // 10s test epoch, published at mid-epoch: grace clamps up to
         // 30s which overshoots the epoch, so the 7.5s backstop wins —
         // identical to the pre-change behavior for short epochs.
-        assert_eq!(ready_signal_deadline_ms(0, 10_000, Some(5_000)), 7_500);
+        assert_eq!(
+            ready_signal_deadline_ms(Some(0), 10_000, Some(5_000)),
+            Some(7_500)
+        );
         // 5min epoch, published at mid-epoch: grace clamps up to 30s;
         // 150s + 30s = 180s beats the 225s backstop.
-        assert_eq!(ready_signal_deadline_ms(0, 300_000, Some(150_000)), 180_000);
+        assert_eq!(
+            ready_signal_deadline_ms(Some(0), 300_000, Some(150_000)),
+            Some(180_000)
+        );
         // 7-day epoch: grace caps at 1h rather than 7h.
         let week = 7 * 24 * HOUR_MS;
         assert_eq!(
-            ready_signal_deadline_ms(0, week, Some(84 * HOUR_MS)),
-            85 * HOUR_MS
+            ready_signal_deadline_ms(Some(0), week, Some(84 * HOUR_MS)),
+            Some(85 * HOUR_MS)
         );
-        // Non-zero epoch start shifts the backstop.
+        // A non-zero first-commit anchor shifts the backstop.
         assert_eq!(
-            ready_signal_deadline_ms(1_000_000, 24 * HOUR_MS, None),
-            1_000_000 + 18 * HOUR_MS
+            ready_signal_deadline_ms(Some(1_000_000), 24 * HOUR_MS, None),
+            Some(1_000_000 + 18 * HOUR_MS)
         );
     }
 

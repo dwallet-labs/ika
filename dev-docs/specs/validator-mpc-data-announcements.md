@@ -85,12 +85,32 @@ which bytes* deterministic in consensus order.
   validator onto the backstop every epoch, compressing the
   reconfiguration + pricing + lock pipeline into the last quarter of
   every epoch (observed live on testnet — issue #1866). The deadline
-  and the publication-observation time are wall-clock and per-validator
-  (skew, restarts resetting the anchor): they only affect WHEN a
-  validator emits, never the signal's content, so determinism of the
-  freeze is untouched. The deadline warning names only uncovered
-  members — carry-forward-covered members stay in the frozen set, so
-  naming them would be a false exclusion alarm.
+  warning names only uncovered members — carry-forward-covered members
+  stay in the frozen set, so naming them would be a false exclusion
+  alarm.
+- **Emit-gate clock**: every time term of the gate is denominated in
+  the epoch's CONSENSUS clock — "now" is the running max of processed
+  `commit_timestamp_ms`, the backstop is anchored at the epoch's FIRST
+  processed commit's timestamp (persisted with that commit's batch —
+  replay resumes from the last processed commit, so "first" is
+  otherwise unrecoverable), and the publication observation is stamped
+  with the consensus "now" at the tick that first sees it. Machine
+  wall-clock is never consulted. This fate-shares the deadline with
+  the machinery it times: before the first commit (or during a
+  consensus stall) there is no deadline — nothing can be sequenced, so
+  a deadline could not have produced a freeze — and a partitioned or
+  catching-up validator's deadline pauses with its consensus view
+  instead of deadline-emitting a stale attestation set mid-catch-up.
+  Commit timestamps are leader-proposed and manipulable at seconds
+  scale — immaterial against these hours-scale terms. The first-commit
+  anchor sits a consensus spin-up after the Sui epoch-start timestamp
+  the backstop was historically measured from; the 3/4 slack absorbs
+  normal spin-up, but a pathologically late consensus start delays the
+  backstop by the same amount. All of these terms remain emit-timing
+  only (the freeze snapshot stays a pure function of consensus-ordered
+  signals); the publication anchor is still each validator's LOCAL
+  first observation — making it a fleet-identical consensus fact
+  (quorum of sequenced publication attestations) is issue #1869.
 - **Receive-time canonicalization** (`canonicalize_ready_signal_peers`)
   MUST be a pure function of the sequenced signal bytes: dedup by
   authority, a current-committee quorum-coverage floor, and a
