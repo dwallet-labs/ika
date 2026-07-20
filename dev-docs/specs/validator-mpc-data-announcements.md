@@ -65,6 +65,32 @@ which bytes* deterministic in consensus order.
   strictly (the `sequence_number` exists so consensus dedup does not
   drop re-emits). Per-signer rows REPLACE — the latest signal from a
   signer is its current attestation.
+- **Emit gate** (`decide_ready_to_finalize`, producer-side): each
+  validator withholds its first ready signal until the next-epoch
+  committee is published AND every one of its members is **covered** —
+  blob locally validated, or digest present in the prior epoch's
+  handoff certificate. A prior-cert member cannot be dropped by the
+  freeze (carry-forward re-freezes it at the prior digest, see below),
+  so waiting for its fresh announcement buys nothing; only uncovered
+  members — a first-time joiner still propagating, or a member that has
+  never announced in any epoch — hold the gate open. That wait is
+  bounded by a deadline: the 3/4-epoch liveness backstop, tightened —
+  once the validator first observes `V_{e+1}` published — to
+  `min(backstop, first-observed-publication + grace)` with
+  `grace = clamp(epoch/24, 30s, 1h)`. The `min` means the deadline can
+  only ever be earlier than the historical fixed 3/4 mark (short test
+  epochs keep exactly the 3/4 behavior, since the clamped grace
+  overshoots them). Without the coverage rule and the tightened
+  deadline, a single never-announcing committee member forces every
+  validator onto the backstop every epoch, compressing the
+  reconfiguration + pricing + lock pipeline into the last quarter of
+  every epoch (observed live on testnet — issue #1866). The deadline
+  and the publication-observation time are wall-clock and per-validator
+  (skew, restarts resetting the anchor): they only affect WHEN a
+  validator emits, never the signal's content, so determinism of the
+  freeze is untouched. The deadline warning names only uncovered
+  members — carry-forward-covered members stay in the frozen set, so
+  naming them would be a false exclusion alarm.
 - **Receive-time canonicalization** (`canonicalize_ready_signal_peers`)
   MUST be a pure function of the sequenced signal bytes: dedup by
   authority, a current-committee quorum-coverage floor, and a
