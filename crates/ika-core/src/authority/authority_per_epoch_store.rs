@@ -3448,7 +3448,17 @@ impl AuthorityPerEpochStore {
     /// freeze-path realization of handoff.md invariant 4 ("fail open with
     /// retry on read errors"), and it mirrors the ready-signals read in
     /// `freeze_mpc_data_if_first`, which already `?`-propagates.
-    fn prior_epoch_mpc_data_digests(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
+    ///
+    /// Second consumer: the ready-signal emit gate
+    /// (`MpcDataAnnouncementSender::ready_to_finalize`) reads the same map
+    /// to know which members carry-forward covers, so they don't hold the
+    /// gate open. THAT read is emit-timing only, so the caller degrades an
+    /// `Err` to an empty map (wait longer) instead of propagating —
+    /// fail-loud is a freeze-commit requirement, not a property of this
+    /// function.
+    pub(crate) fn prior_epoch_mpc_data_digests(
+        &self,
+    ) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
         let Some(prior_epoch) = self.epoch().checked_sub(1) else {
             return Ok(HashMap::new());
         };

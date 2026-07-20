@@ -18,10 +18,12 @@
 //! 3. Once the announcement is confirmed AND local blob coverage
 //!    meets stake quorum AND `ready_to_finalize` holds (the
 //!    next-epoch committee is published and all its members are
-//!    locally validated, or the 3/4-epoch deadline elapsed), submits
-//!    an `EpochMpcDataReadySignal` (the first quorum of which freezes
-//!    the input set). Re-emits with an incremented `sequence_number`
-//!    as `validated_peers` grows, until `is_mpc_data_frozen()`.
+//!    covered — locally validated or carry-forward-covered by the
+//!    prior epoch's handoff cert — or the announcement deadline
+//!    elapsed), submits an `EpochMpcDataReadySignal` (the first
+//!    quorum of which freezes the input set). Re-emits with an
+//!    incremented `sequence_number` as `validated_peers` grows,
+//!    until `is_mpc_data_frozen()`.
 //!
 //! Without this task running, no validator would broadcast its
 //! mpc_data — leaving `frozen_validator_mpc_data_input_set` empty
@@ -54,20 +56,23 @@ use tracing::{debug, info, warn};
 /// Outcome of the ready-signal emit gate ([`decide_ready_to_finalize`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadyToFinalize {
-    /// Don't emit yet — keep waiting (V_{e+1} unpublished, or not all
-    /// of its members validated, and the deadline hasn't passed).
+    /// Don't emit yet — keep waiting (V_{e+1} unpublished, or some of
+    /// its members neither validated nor carry-forward-covered, and
+    /// the deadline hasn't passed).
     NotYet,
-    /// Emit: the next-epoch committee is published and every member's
-    /// blob is locally validated, so a freeze triggered by these
-    /// signals captures all of them.
+    /// Emit: the next-epoch committee is published and every member is
+    /// covered — its blob locally validated, or its digest present in
+    /// the prior epoch's handoff cert (the freeze carries such members
+    /// forward, so a freeze triggered by these signals loses no one).
     Ready,
     /// Emit because the epoch-clock deadline elapsed, but some
-    /// next-epoch members were NOT locally validated. They will be
-    /// excluded from this validator's `validated_peers` and risk
-    /// being dropped from the frozen set / next committee's
-    /// class-groups map — i.e. blob propagation is too slow for the
-    /// epoch length. The missing members are surfaced for an operator
-    /// warning + metric.
+    /// next-epoch members were neither locally validated nor covered
+    /// by the prior epoch's handoff cert. They will be absent from
+    /// this validator's `validated_peers`, the freeze cannot carry
+    /// them forward, and they risk being dropped from the frozen set /
+    /// next committee's class-groups map — i.e. a first-time joiner
+    /// whose blob never propagated (or a never-alive member). The
+    /// missing members are surfaced for an operator warning.
     ReadyViaDeadlineMissing(Vec<AuthorityName>),
 }
 
@@ -75,10 +80,14 @@ pub enum ReadyToFinalize {
 /// `MpcDataAnnouncementSender::ready_to_finalize`). Extracted so the
 /// joiner-inclusion timing rule is unit-testable without an epoch
 /// store. Emit once either the next-epoch committee is published and
-/// every one of its members is locally validated (so a freeze
-/// triggered by these signals captures the joiners), or the
-/// epoch-clock deadline has passed (liveness backstop) — the latter
-/// reports any still-missing members so the caller can warn.
+/// every one of its members is covered — locally validated, or listed
+/// in the prior epoch's handoff cert (`prior_cert_members`), which the
+/// freeze carries forward deterministically, so waiting for a fresh
+/// announcement from such a member buys nothing — or the epoch-clock
+/// deadline has passed (liveness backstop) — the latter reports the
+/// still-uncovered members so the caller can warn. Only uncovered
+/// members (first-time joiners still propagating, or members that have
+/// never announced in any epoch) can hold the gate open.
 fn decide_ready_to_finalize(
     now_ms: u64,
     deadline_ms: u64,
@@ -86,13 +95,14 @@ fn decide_ready_to_finalize(
     expected_next_epoch: u64,
     next_members: &[AuthorityName],
     validated_peers: &[AuthorityName],
+    prior_cert_members: &HashSet<AuthorityName>,
 ) -> ReadyToFinalize {
     let validated: HashSet<&AuthorityName> = validated_peers.iter().collect();
     let next_published = next_committee_epoch == expected_next_epoch;
     let missing: Vec<AuthorityName> = if next_published {
         next_members
             .iter()
-            .filter(|name| !validated.contains(name))
+            .filter(|name| !validated.contains(name) && !prior_cert_members.contains(name))
             .copied()
             .collect()
     } else {
@@ -107,6 +117,52 @@ fn decide_ready_to_finalize(
         return ReadyToFinalize::ReadyViaDeadlineMissing(missing);
     }
     ReadyToFinalize::NotYet
+}
+
+/// Post-publication grace bounds for [`ready_signal_deadline_ms`]:
+/// nominally 1/24 of the epoch, floored at 30s so latencies that don't
+/// scale with epoch length (P2P round-trips, consensus sequencing,
+/// poll ticks) still fit under short epochs, and capped at one hour —
+/// announcement propagation takes minutes, so a longer courtesy wait
+/// for a member that will never announce is pure reconfiguration-
+/// runway loss.
+const POST_PUBLICATION_GRACE_MIN_MS: u64 = 30_000;
+const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
+
+/// The wall-clock deadline after which the emit gate stops waiting for
+/// uncovered next-epoch members. Pure function so the timing rule is
+/// unit-testable.
+///
+/// Before V_{e+1} is locally observed as published there is no member
+/// set to wait on, so the only bound is the 3/4-epoch liveness
+/// backstop. Once publication is observed, the wait shrinks to a
+/// propagation grace after that observation — a member that is neither
+/// validated nor prior-cert-covered by then is either a first-time
+/// joiner that failed to propagate or a never-alive member, and
+/// holding every validator's ready signal for it until the 3/4 mark
+/// would compress the reconfiguration into the last quarter of every
+/// epoch (observed live on testnet with two permanently-silent
+/// members; issue #1866). The `min` keeps the backstop as a hard upper
+/// bound, so this can only ever make the gate fire earlier — under
+/// short test epochs (where the clamped grace exceeds epoch/4) the
+/// deadline stays exactly the 3/4 backstop.
+///
+/// Wall-clock only affects WHEN each validator emits its signal; the
+/// freeze snapshot stays a pure function of the consensus-ordered
+/// signals, so per-validator skew in observing the publication is
+/// harmless.
+fn ready_signal_deadline_ms(
+    epoch_start_ms: u64,
+    epoch_duration_ms: u64,
+    next_committee_first_seen_ms: Option<u64>,
+) -> u64 {
+    let backstop = epoch_start_ms.saturating_add(epoch_duration_ms / 4 * 3);
+    let Some(first_seen_ms) = next_committee_first_seen_ms else {
+        return backstop;
+    };
+    let grace = (epoch_duration_ms / 24)
+        .clamp(POST_PUBLICATION_GRACE_MIN_MS, POST_PUBLICATION_GRACE_MAX_MS);
+    backstop.min(first_seen_ms.saturating_add(grace))
 }
 
 /// Per-epoch producer task that broadcasts this validator's
@@ -167,6 +223,13 @@ pub struct MpcDataAnnouncementSender {
     /// thereafter, so a sequencing stall still surfaces) logs at
     /// info, re-submissions in between at debug.
     announcement_submit_attempts: AtomicU64,
+    /// Wall-clock ms at which this validator FIRST observed the
+    /// next-epoch committee published on the watch channel, or `0`
+    /// (sentinel: not yet observed). Anchors the post-publication
+    /// grace in [`ready_signal_deadline_ms`] — local-only emit
+    /// timing, so per-validator skew (including a reset to the
+    /// restart time after a mid-epoch restart) is harmless.
+    next_committee_first_seen_ms: AtomicU64,
 }
 
 impl MpcDataAnnouncementSender {
@@ -192,6 +255,7 @@ impl MpcDataAnnouncementSender {
             last_emitted_validated_peers_count: AtomicUsize::new(0),
             next_sequence_number: std::sync::atomic::AtomicU64::new(0),
             announcement_submit_attempts: AtomicU64::new(0),
+            next_committee_first_seen_ms: AtomicU64::new(0),
         }
     }
 
@@ -388,12 +452,17 @@ impl MpcDataAnnouncementSender {
     /// Whether it's time to emit the ready signal — i.e. the freeze
     /// is allowed to capture our attestation set. Ready once either:
     /// - the next-epoch committee is published AND every one of its
-    ///   members' blobs is locally validated (so a freeze triggered
-    ///   by these signals includes the joiners), or
-    /// - the epoch-clock deadline (3/4 of the epoch) has passed —
-    ///   liveness backstop so a never-announcing joiner can't stall
-    ///   the freeze forever (the still-missing members are surfaced
-    ///   so the caller can warn + record a metric).
+    ///   members is covered — blob locally validated, or digest
+    ///   present in the prior epoch's handoff cert (the freeze
+    ///   carries such members forward, so waiting for them buys
+    ///   nothing) — or
+    /// - the epoch-clock deadline has passed: the 3/4-epoch liveness
+    ///   backstop, tightened to a propagation grace after this
+    ///   validator first observes V_{e+1} published (see
+    ///   `ready_signal_deadline_ms`) — so an uncovered member that
+    ///   never announces can't hold every epoch's freeze to the 3/4
+    ///   mark (the still-uncovered members are surfaced so the
+    ///   caller can warn).
     fn ready_to_finalize(
         &self,
         epoch_store: &AuthorityPerEpochStore,
@@ -401,22 +470,65 @@ impl MpcDataAnnouncementSender {
     ) -> ReadyToFinalize {
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
         let epoch_start = epoch_store.epoch_start_state();
-        let deadline = epoch_start
-            .epoch_start_timestamp_ms()
-            .saturating_add(epoch_start.epoch_duration_ms() / 4 * 3);
         // On clock failure, treat as past the deadline (emit) rather
         // than stalling the freeze.
         let now = now_ms().unwrap_or(u64::MAX);
-        let next = self.next_epoch_committee_receiver.borrow();
-        let next_members: Vec<AuthorityName> =
-            next.voting_rights.iter().map(|(name, _)| *name).collect();
+        // Copy out of the watch borrow before the cert read below, so
+        // the channel's read guard isn't held across a DB access.
+        let (next_committee_epoch, next_members) = {
+            let next = self.next_epoch_committee_receiver.borrow();
+            let members: Vec<AuthorityName> =
+                next.voting_rights.iter().map(|(name, _)| *name).collect();
+            (next.epoch(), members)
+        };
+        let next_published = next_committee_epoch == epoch_store.epoch() + 1;
+        if next_published {
+            // Record the FIRST observation only (compare-and-swap from
+            // the 0 sentinel), so re-borrows on later ticks don't slide
+            // the grace anchor forward.
+            let _ = self.next_committee_first_seen_ms.compare_exchange(
+                0,
+                now,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+        }
+        let first_seen = match self.next_committee_first_seen_ms.load(Ordering::Acquire) {
+            0 => None,
+            first_seen_ms => Some(first_seen_ms),
+        };
+        let deadline = ready_signal_deadline_ms(
+            epoch_start.epoch_start_timestamp_ms(),
+            epoch_start.epoch_duration_ms(),
+            first_seen,
+        );
+        // Members covered by the prior epoch's handoff cert cannot be
+        // dropped by the freeze (carry-forward re-freezes them at the
+        // prior-cert digest), so they must not hold the gate. A read
+        // error degrades to "no coverage" — strictly the pre-carry-
+        // forward wait, never an early emit — and this read is
+        // emit-timing only, so unlike the freeze-time read in
+        // `freeze_mpc_data_if_first` it must NOT fail the caller.
+        let prior_cert_members: HashSet<AuthorityName> =
+            match epoch_store.prior_epoch_mpc_data_digests() {
+                Ok(digests) => digests.into_keys().collect(),
+                Err(err) => {
+                    debug!(
+                        error = ?err,
+                        "failed to read prior-epoch handoff cert for the ready-signal emit \
+                         gate; treating all next-epoch members as requiring fresh validation"
+                    );
+                    HashSet::new()
+                }
+            };
         decide_ready_to_finalize(
             now,
             deadline,
-            next.epoch(),
+            next_committee_epoch,
             epoch_store.epoch() + 1,
             &next_members,
             validated_peers,
+            &prior_cert_members,
         )
     }
 
@@ -467,8 +579,9 @@ impl MpcDataAnnouncementSender {
         let validated_names: Vec<AuthorityName> =
             validated_peers.iter().map(|(name, _)| *name).collect();
         // Defer the ready signal until the next-epoch committee is
-        // known and all its members are locally validated (or the
-        // epoch-clock deadline elapses). The freeze fires on the
+        // known and all its members are covered — locally validated,
+        // or carried forward from the prior epoch's handoff cert (or
+        // the announcement deadline elapses). The freeze fires on the
         // first quorum of ready signals, so withholding here is what
         // lets joiners — who announce only after `V_{e+1}` is
         // published, mid-epoch — make it into the frozen set, the
@@ -525,21 +638,26 @@ impl MpcDataAnnouncementSender {
         self.last_emitted_validated_peers_count
             .store(new_count, Ordering::Release);
         if !deadline_missing.is_empty() {
-            // The signal just emitted omits next-epoch members we never
-            // validated; they risk exclusion from the frozen set / next
-            // committee's class-groups map — blob propagation is too
-            // slow for the epoch length. Surface loudly so operators
-            // can lengthen the epoch or investigate the slow joiner(s).
+            // The signal just emitted omits next-epoch members that are
+            // neither validated nor prior-cert-covered; the freeze
+            // cannot carry them forward, so they risk exclusion from
+            // the frozen set / next committee's class-groups map — a
+            // first-time joiner whose blob never propagated, or a
+            // member that has never announced in any epoch. Surface
+            // loudly, naming them, so operators can chase or unstake
+            // them. (Members the prior cert covers are deliberately NOT
+            // listed here — carry-forward keeps them in the frozen set,
+            // so naming them would be a false exclusion alarm.)
             // Bounded: fires only on actual emissions (the validated set
             // strictly grows, so at most committee-size lines per epoch).
             warn!(
                 epoch = self.epoch_id,
                 missing_count = deadline_missing.len(),
                 missing = ?deadline_missing,
-                "emitted EpochMpcDataReadySignal at the freeze deadline with \
-                 unvalidated next-epoch members — they may be excluded from the \
-                 next committee's working set (blob propagation slower than the \
-                 epoch length)"
+                "emitted EpochMpcDataReadySignal at the announcement deadline with \
+                 next-epoch members that never announced and have no prior-epoch \
+                 handoff-cert coverage — they will be excluded from the next \
+                 committee's working set"
             );
         }
         info!(
@@ -611,21 +729,30 @@ mod tests {
         let a = name(1);
         let b = name(2);
         let joiner = name(3);
+        let no_prior_cert = HashSet::new();
         // Before V_{e+1} is published (next epoch shows current=5,
         // not 6): not ready, even with everything validated.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b]),
+            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b], &no_prior_cert),
             ReadyToFinalize::NotYet
         );
         // V_{e+1} published (epoch 6) but the joiner isn't validated
         // yet: not ready.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b]),
+            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b], &no_prior_cert),
             ReadyToFinalize::NotYet
         );
         // V_{e+1} published AND all its members validated: ready.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b, joiner]),
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, b, joiner],
+                &[a, b, joiner],
+                &no_prior_cert
+            ),
             ReadyToFinalize::Ready
         );
     }
@@ -634,18 +761,112 @@ mod tests {
     fn ready_to_finalize_deadline_forces_emit_and_reports_missing() {
         let a = name(1);
         let joiner = name(3);
+        let no_prior_cert = HashSet::new();
         // Past the deadline, V_{e+1} not yet published: emit via the
         // backstop (no members known to report missing).
         assert_eq!(
-            decide_ready_to_finalize(1000, 1000, 5, 6, &[a, joiner], &[a]),
+            decide_ready_to_finalize(1000, 1000, 5, 6, &[a, joiner], &[a], &no_prior_cert),
             ReadyToFinalize::ReadyViaDeadlineMissing(vec![])
         );
         // Past the deadline, V_{e+1} published but the joiner never
         // got validated: emit via the backstop AND report the joiner
-        // as missing so the producer warns + records a metric.
+        // as missing so the producer warns.
         assert_eq!(
-            decide_ready_to_finalize(2000, 1000, 6, 6, &[a, joiner], &[a]),
+            decide_ready_to_finalize(2000, 1000, 6, 6, &[a, joiner], &[a], &no_prior_cert),
             ReadyToFinalize::ReadyViaDeadlineMissing(vec![joiner])
+        );
+    }
+
+    /// A member with a prior-epoch handoff-cert digest can never be
+    /// dropped by the freeze (carry-forward re-freezes it), so it must
+    /// not hold the emit gate: with the down member cert-covered, the
+    /// gate is `Ready` as soon as everyone else validates — no waiting
+    /// for the announcement deadline. This is the every-epoch-latency
+    /// fix from issue #1866: a dark-but-previously-frozen member no
+    /// longer forces the whole network onto the deadline path.
+    #[test]
+    fn prior_cert_covered_member_does_not_hold_the_gate() {
+        let a = name(1);
+        let b = name(2);
+        let down = name(3);
+        let prior_cert: HashSet<AuthorityName> = [down].into_iter().collect();
+        // Well before the deadline (100 < 1000), `down` unvalidated but
+        // cert-covered: Ready.
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, down], &[a, b], &prior_cert),
+            ReadyToFinalize::Ready
+        );
+        // Coverage requires publication regardless: same set, V_{e+1}
+        // not yet published -> NotYet.
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b, down], &[a, b], &prior_cert),
+            ReadyToFinalize::NotYet
+        );
+    }
+
+    /// At the deadline, only members that are neither validated nor
+    /// cert-covered are reported missing: naming a carry-forward-
+    /// covered member would be a false exclusion alarm (this is the
+    /// misleading warn observed in issue #1866's fact 4).
+    #[test]
+    fn deadline_reports_only_uncovered_members() {
+        let a = name(1);
+        let down = name(2);
+        let never_alive = name(3);
+        let prior_cert: HashSet<AuthorityName> = [down].into_iter().collect();
+        // Before the deadline the uncovered member still holds the gate.
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 6, 6, &[a, down, never_alive], &[a], &prior_cert),
+            ReadyToFinalize::NotYet
+        );
+        // At the deadline, only the uncovered member is reported.
+        assert_eq!(
+            decide_ready_to_finalize(1000, 1000, 6, 6, &[a, down, never_alive], &[a], &prior_cert),
+            ReadyToFinalize::ReadyViaDeadlineMissing(vec![never_alive])
+        );
+    }
+
+    /// The deadline formula: 3/4-epoch backstop until V_{e+1} is
+    /// observed published, then min(backstop, first-observed + grace)
+    /// with grace = epoch/24 clamped to [30s, 1h]. The min means the
+    /// change can only fire the gate EARLIER than the old fixed 3/4
+    /// deadline, and short test epochs keep the 3/4 behavior exactly.
+    #[test]
+    fn ready_signal_deadline_tracks_publication_with_clamped_grace() {
+        const HOUR_MS: u64 = 3_600_000;
+        // Publication not yet observed: the 3/4 backstop.
+        assert_eq!(
+            ready_signal_deadline_ms(0, 24 * HOUR_MS, None),
+            18 * HOUR_MS
+        );
+        // 24h epoch, published at mid-epoch: grace = 24h/24 = 1h, so
+        // the deadline is 13h — well before the 18h backstop.
+        assert_eq!(
+            ready_signal_deadline_ms(0, 24 * HOUR_MS, Some(12 * HOUR_MS)),
+            13 * HOUR_MS
+        );
+        // Publication observed very late: the backstop still caps it.
+        assert_eq!(
+            ready_signal_deadline_ms(0, 24 * HOUR_MS, Some(HOUR_MS + 18 * HOUR_MS)),
+            18 * HOUR_MS
+        );
+        // 10s test epoch, published at mid-epoch: grace clamps up to
+        // 30s which overshoots the epoch, so the 7.5s backstop wins —
+        // identical to the pre-change behavior for short epochs.
+        assert_eq!(ready_signal_deadline_ms(0, 10_000, Some(5_000)), 7_500);
+        // 5min epoch, published at mid-epoch: grace clamps up to 30s;
+        // 150s + 30s = 180s beats the 225s backstop.
+        assert_eq!(ready_signal_deadline_ms(0, 300_000, Some(150_000)), 180_000);
+        // 7-day epoch: grace caps at 1h rather than 7h.
+        let week = 7 * 24 * HOUR_MS;
+        assert_eq!(
+            ready_signal_deadline_ms(0, week, Some(84 * HOUR_MS)),
+            85 * HOUR_MS
+        );
+        // Non-zero epoch start shifts the backstop.
+        assert_eq!(
+            ready_signal_deadline_ms(1_000_000, 24 * HOUR_MS, None),
+            1_000_000 + 18 * HOUR_MS
         );
     }
 
