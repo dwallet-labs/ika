@@ -47,7 +47,9 @@ jobs:
       network: ${{ steps.resolve.outputs.network }}
       is_release: ${{ steps.resolve.outputs.is_release }}
       # Runner labels — change here to update all jobs
-      runner_linux: ika-k8s-large
+      # GitHub-hosted: has a Docker daemon (the ARC k8s runners do not,
+      # which broke 'Build binaries in Docker'); 4-core, so builds run longer.
+      runner_linux: ubuntu-latest
       runner_macos_x64: macos-latest
       runner_macos_arm64: macos-latest
       runner_windows: windows-latest
@@ -144,7 +146,9 @@ jobs:
     name: Build linux-${{ matrix.arch }}
     needs: version
     runs-on: ${{ needs.version.outputs.runner_linux }}
-    timeout-minutes: 180
+    # 4-core GitHub-hosted runners build the workspace ~4-6x slower than the
+    # old 32-core pool; 300m keeps headroom (hosted max is 360m).
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
