@@ -661,7 +661,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             build_from_reconfig_output!(public_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
-            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
             build_from_reconfig_output!(public_output)
         }

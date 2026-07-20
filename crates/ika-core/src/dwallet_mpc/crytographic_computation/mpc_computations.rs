@@ -1651,7 +1651,15 @@ impl ProtocolCryptographicData {
                         // in `advance_network_reconfiguration_bwd_compat`
                         // writes V2.
                         let public_output_value = if aggregated_network_key_public_outputs {
-                            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+                            // Deliberately the CONCRETE non-aggregated type, not the
+                            // Party's associated output type: this decode-and-upgrade
+                            // (and the V3 tagging below the gate) is correct only while
+                            // the reconfiguration Party's wire output is the
+                            // non-aggregated shape. When the Party migrates to the
+                            // aggregated output post-upgrade, this site must be
+                            // revisited — a hardcoded type makes that a loud failure
+                            // instead of a silent misinterpretation.
+                            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
                                 bcs::from_bytes(&public_output_value)?;
                             info!(
                                 session_identifier=?session_identifier,

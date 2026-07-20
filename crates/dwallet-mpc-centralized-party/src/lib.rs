@@ -1263,7 +1263,7 @@ fn protocol_public_parameters_from_reconfiguration_output(
             Ok(pp)
         }
         VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
-            let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
+            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 
             let pp = match try_into_curve(curve)? {

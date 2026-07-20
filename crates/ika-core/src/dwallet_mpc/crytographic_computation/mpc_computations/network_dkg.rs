@@ -308,7 +308,7 @@ async fn get_decryption_key_shares_from_public_output(
                     }
                     VersionedDecryptionKeyReconfigurationOutput::V3(public_output) => {
                         match bcs::from_bytes::<
-                            <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput,
+                            twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput,
                         >(public_output)
                         {
                             Ok(public_output) => public_output
@@ -469,7 +469,7 @@ fn derive_vss_shamir_cache_for_key(
 
     let source: DeserializedSource = match key.latest_network_reconfiguration_public_output() {
         Some(VersionedDecryptionKeyReconfigurationOutput::V3(bytes)) => {
-            match bcs::from_bytes::<<dec_reconf::Party as mpc::Party>::PublicOutput>(&bytes)
+            match bcs::from_bytes::<dec_reconf::NonAggregatedPublicOutput>(&bytes)
                 .map_err(|e| e.to_string())
                 .and_then(|output| output.upgrade().map_err(|e| e.to_string()))
             {
