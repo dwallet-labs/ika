@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use ika_types::noa_checkpoint::{
     CounterpartyChain, NOACheckpointKind, NOACheckpointMessage, NOACheckpointResolution,
-    NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus,
+    NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus, NOAPresignDemandId,
 };
 use sui_types::base_types::EpochId;
 use tracing::{error, info, warn};
@@ -94,11 +94,22 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
 
         tx_bytes_list
             .into_iter()
-            .map(|tx_bytes| NetworkOwnedAddressSignRequest {
+            .enumerate()
+            .map(|(tx_index, tx_bytes)| NetworkOwnedAddressSignRequest {
                 message: tx_bytes,
                 curve: <K::Counterparty as CounterpartyChain>::CURVE,
                 signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
                 hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
+                // First attempt for this checkpoint tx: retry_round 0.
+                demand_id: NOAPresignDemandId::Checkpoint {
+                    tx_ref: NOACheckpointTxRef {
+                        kind_name: K::KIND_NAME,
+                        sequence_number: seq,
+                        tx_index: tx_index as u32,
+                        epoch: self.epoch,
+                    },
+                    retry_round: 0,
+                },
             })
             .collect()
     }
@@ -328,6 +339,12 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .store
             .initiate_tx_retry(tx_ref, context, &self.noa_public_key)?;
 
+        // `initiate_tx_retry` incremented the per-tx retry round and rebuilt
+        // `tx_bytes` embedding it, so read the round back for the demand id. The
+        // round is network-uniform: retries are driven by the consensus failure
+        // quorum, so every validator reaches the same round for this tx.
+        let retry_round = self.store.get_retry_round(tx_ref);
+
         info!(
             kind = %K::KIND_NAME,
             sequence_number = tx_ref.sequence_number,
@@ -340,6 +357,10 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             curve: <K::Counterparty as CounterpartyChain>::CURVE,
             signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
             hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
+            demand_id: NOAPresignDemandId::Checkpoint {
+                tx_ref: tx_ref.clone(),
+                retry_round,
+            },
         })
     }
 

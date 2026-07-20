@@ -1172,6 +1172,10 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions = val;
     }
 
+    pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
+        self.feature_flags.noa_checkpoints = val;
+    }
+
     pub fn set_aggregated_network_key_public_outputs_for_testing(&mut self, val: bool) {
         self.feature_flags.aggregated_network_key_public_outputs = val;
     }

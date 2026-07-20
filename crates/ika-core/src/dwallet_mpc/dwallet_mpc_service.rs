@@ -54,8 +54,8 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier, SessionType,
+    ConsensusNOAPresignDemand, DWalletInternalMPCOutputKind, DWalletMPCOutputKind,
+    DWalletMPCOutputReport, GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier, SessionType,
     SuiChainObservationUpdate, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
@@ -154,6 +154,22 @@ pub struct DWalletMPCService {
     buffered_noa_system_messages: Vec<Vec<SystemCheckpointMessageKind>>,
     /// Buffered NOA checkpoint observations to include in the next status update.
     buffered_noa_observations: Vec<NOACheckpointTxObservation>,
+    /// NOA sign presign demands announced this iteration, awaiting submission to
+    /// consensus in the next status update.
+    ///
+    /// These three fields are per-epoch: they rebuild empty when the per-epoch
+    /// service is reconstructed at an epoch boundary. The presign pool and the
+    /// `noa_assigned_presigns` table they feed are also per-epoch, so a rebuild
+    /// simply re-announces any still-pending demand (consensus dedup and the
+    /// idempotent assignment table absorb the duplicate).
+    buffered_noa_presign_demands: Vec<ConsensusNOAPresignDemand>,
+    /// NOA sign presign demands agreed via consensus, drained in
+    /// consensus-delivery order to assign each a presign (kept across rounds
+    /// when the pool is momentarily empty).
+    agreed_noa_presign_demands_queue: Vec<ConsensusNOAPresignDemand>,
+    /// Digests of demands this validator has already announced this epoch, so it
+    /// announces each demand at most once.
+    announced_noa_demand_digests: HashSet<[u8; 32]>,
     /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
     network_owned_address_sign_output_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignOutput>,
@@ -267,6 +283,9 @@ impl DWalletMPCService {
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
             buffered_noa_observations: Vec::new(),
+            buffered_noa_presign_demands: Vec::new(),
+            agreed_noa_presign_demands_queue: Vec::new(),
+            announced_noa_demand_digests: HashSet::new(),
             network_owned_address_sign_output_receiver,
             dwallet_checkpoint_handler,
             system_checkpoint_handler,
@@ -349,6 +368,9 @@ impl DWalletMPCService {
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
             buffered_noa_observations: Vec::new(),
+            buffered_noa_presign_demands: Vec::new(),
+            agreed_noa_presign_demands_queue: Vec::new(),
+            announced_noa_demand_digests: HashSet::new(),
             network_owned_address_sign_output_receiver: tokio::sync::mpsc::channel(
                 NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
             )
@@ -613,6 +635,56 @@ impl DWalletMPCService {
             return;
         }
 
+        // Announce a presign demand for each pending request so every validator
+        // assigns it a presign in the same consensus-delivery order (the drain
+        // in `process_consensus_rounds_from_storage`). Gated on `noa_checkpoints()`
+        // for wire safety — the `NOAPresignDemand` consensus kind must never
+        // reach a peer that predates it — and on the signing network key being
+        // known (the demand carries its id, and the presign pool is keyed by it;
+        // announcing before adoption would let validators disagree on the key).
+        // Announce each demand at most once; one already assigned a presign needs
+        // no (re-)announcement. Do NOT pop/instantiate here.
+        if self.protocol_config.noa_checkpoints()
+            && let Some(network_encryption_key_id) = self
+                .dwallet_mpc_manager
+                .network_owned_address_signing_network_encryption_key_id()
+        {
+            for request in &self.pending_network_owned_address_sign_requests {
+                let digest = request.demand_id.digest();
+                if self.announced_noa_demand_digests.contains(&digest) {
+                    continue;
+                }
+                match self.epoch_store.has_noa_assigned_presign(&digest) {
+                    Ok(true) => {
+                        // Already assigned — no (re-)announcement needed.
+                        self.announced_noa_demand_digests.insert(digest);
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        // Rare DB read error on this per-iteration path. Log it
+                        // (once per digest: on fall-through we mark it announced,
+                        // so the `contains` guard above suppresses re-logs) and
+                        // announce anyway — the consensus-ordered drain is
+                        // idempotent, so a redundant announcement is harmless.
+                        error!(
+                            error=?e,
+                            should_never_happen = true,
+                            "failed to read NOA assigned-presign state during announcement; announcing anyway"
+                        );
+                    }
+                }
+                self.buffered_noa_presign_demands
+                    .push(ConsensusNOAPresignDemand {
+                        authority: self.name,
+                        demand_id: request.demand_id.clone(),
+                        signature_algorithm: request.signature_algorithm,
+                        network_encryption_key_id,
+                    });
+                self.announced_noa_demand_digests.insert(digest);
+            }
+        }
+
         let mut newly_submitted: Vec<[u8; 32]> = Vec::new();
         self.pending_network_owned_address_sign_requests
             .retain(|request| {
@@ -622,33 +694,53 @@ impl DWalletMPCService {
                 {
                     return true; // key not yet available, keep in buffer
                 }
-                if !self
-                    .dwallet_mpc_manager
-                    .has_network_owned_address_signing_presign_available(
-                        request.signature_algorithm,
-                    )
-                {
-                    return true; // no presign yet for this algorithm, keep in buffer
-                }
 
-                let instantiated = self
-                    .dwallet_mpc_manager
-                    .instantiate_network_owned_address_sign_session(
-                        request.message.clone(),
-                        request.curve,
-                        request.signature_algorithm,
-                        request.hash_scheme,
-                    );
-                if instantiated {
-                    newly_submitted.push(DefaultHash::digest(&request.message).into());
+                // Instantiate only once this demand's presign has been assigned
+                // in consensus order (written to `noa_assigned_presigns` by the
+                // drain). Until then keep the request pending; never pop the pool
+                // here — that reintroduces the local-order pairing this fix
+                // removes. The raw presign and the network key it was popped
+                // from are both read from the assignment, so the sign
+                // instantiates under the SAME key the presign came from (never a
+                // locally re-resolved key that could have shifted since announce).
+                let digest = request.demand_id.digest();
+                match self.epoch_store.noa_assigned_presign(&digest) {
+                    Ok(Some((
+                        presign_session_id,
+                        presign_blending_index,
+                        presign,
+                        network_encryption_key_id,
+                    ))) => {
+                        let instantiated = self
+                            .dwallet_mpc_manager
+                            .instantiate_network_owned_address_sign_session(
+                                request.message.clone(),
+                                request.curve,
+                                request.signature_algorithm,
+                                request.hash_scheme,
+                                presign_session_id,
+                                presign_blending_index,
+                                presign,
+                                network_encryption_key_id,
+                            );
+                        if instantiated {
+                            newly_submitted.push(DefaultHash::digest(&request.message).into());
+                        }
+                        !instantiated // keep in buffer if instantiation failed
+                    }
+                    Ok(None) => true, // presign not yet assigned in consensus order
+                    Err(e) => {
+                        error!(error = ?e, "failed to read NOA assigned presign; keeping request pending");
+                        true
+                    }
                 }
-                !instantiated // keep in buffer if instantiation failed
             });
         // Starvation signal: requests are waiting and this pass made no
-        // progress — the signing network key is unavailable or the internal
-        // presign pool for the requested algorithm is empty. Without this,
-        // a wedged pool looks identical to no demand. Throttled to once per
-        // 30s (the loop runs every 20ms).
+        // progress — the signing network key is unavailable, or the demand's
+        // presign has not yet been assigned in consensus order (the pool is
+        // momentarily empty, or the demand has not yet reached consensus).
+        // Without this, a wedged pool looks identical to no demand. Throttled to
+        // once per 30s (the loop runs every 20ms).
         let starvation_persists = newly_submitted.is_empty()
             && !self.pending_network_owned_address_sign_requests.is_empty();
         if starvation_persists
@@ -659,8 +751,8 @@ impl DWalletMPCService {
             self.last_noa_starvation_log = Some(Instant::now());
             warn!(
                 pending_requests = self.pending_network_owned_address_sign_requests.len(),
-                "network-owned-address sign requests waiting: internal presign pool \
-                 empty or signing key unavailable"
+                "network-owned-address sign requests waiting: presign not yet assigned \
+                 in consensus order or signing key unavailable"
             );
         }
         self.submitted_noa_sign_messages.extend(newly_submitted);
@@ -695,11 +787,13 @@ impl DWalletMPCService {
             && self.last_sent_idle_status != Some(is_idle);
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
+        let has_noa_presign_demands = !self.buffered_noa_presign_demands.is_empty();
 
         if !has_unsent_requests
             && !idle_status_changed
             && !observation_changed
             && !has_noa_observations
+            && !has_noa_presign_demands
         {
             return;
         }
@@ -761,6 +855,29 @@ impl DWalletMPCService {
                 .await
             {
                 error!(error = ?e, consensus_round, "Failed to submit NOA observation");
+            }
+        }
+
+        // One message per buffered NOA presign demand. Gated on `noa_checkpoints()`
+        // for wire safety — the `NOAPresignDemand` consensus kind must never reach
+        // a peer that predates it. Consensus dedups cross-validator duplicates by
+        // the demand-id digest key, and the assignment drain is idempotent.
+        if self.protocol_config.noa_checkpoints() {
+            let noa_presign_demands = std::mem::take(&mut self.buffered_noa_presign_demands);
+            for demand in noa_presign_demands {
+                let tx = ConsensusTransaction::new_noa_presign_demand(
+                    demand.authority,
+                    demand.demand_id,
+                    demand.signature_algorithm,
+                    demand.network_encryption_key_id,
+                );
+                if let Err(e) = self
+                    .dwallet_submit_to_consensus
+                    .submit_to_consensus(&[tx])
+                    .await
+                {
+                    error!(error = ?e, consensus_round, "Failed to submit NOA presign demand");
+                }
             }
         }
     }
@@ -1246,6 +1363,33 @@ impl DWalletMPCService {
                 Vec::new()
             };
 
+            // NOA presign demands belong to the NOA cluster — gate on `noa_checkpoints()`.
+            let noa_presign_demand_messages = if self.protocol_config.noa_checkpoints() {
+                match self
+                    .epoch_store
+                    .next_noa_presign_demand(self.last_read_consensus_round)
+                {
+                    Ok(Some((round, msgs))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?round,
+                                ?mpc_messages_consensus_round,
+                                "NOA presign demands consensus round mismatch"
+                            );
+                            panic!("NOA presign demands consensus round mismatch");
+                        }
+                        msgs
+                    }
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
+                        error!(error=?e, "failed to load NOA presign demands from the local DB");
+                        panic!("failed to load NOA presign demands from the local DB");
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
             if mpc_messages_consensus_round != external_mpc_outputs_consensus_round {
                 error!(
                     ?mpc_messages_consensus_round,
@@ -1488,6 +1632,74 @@ impl DWalletMPCService {
             self.dwallet_mpc_metrics
                 .global_presign_requests_waiting
                 .set(self.agreed_global_presign_requests_queue.len() as i64);
+
+            // NOA sign presign demands: assign each a presign in consensus-
+            // delivery order, so the sign session that later reads
+            // `noa_assigned_presigns` pairs the SAME presign with the SAME demand
+            // on every validator. This is the determinism crux of the fix:
+            //   (a) every validator processes consensus rounds in identical order
+            //       (this loop reads the per-round DB stream in ascending
+            //       round order);
+            //   (b) the demand queue is extended in that same order;
+            //   (c) `Vec::retain` visits elements in their original (insertion)
+            //       order, so demands drain in consensus order;
+            //   (d) the presign pool is network-uniform (keyed by the
+            //       consensus-assigned presign sequence), so popping in the same
+            //       order yields the same presign per demand on every validator.
+            // `assign_noa_presign` is atomic + idempotent: it pops and records
+            // in one committed batch, and returns an already-assigned demand
+            // without popping again (so re-delivery, and a re-drain after a
+            // consensus-round replay, are both safe). Keeping a demand when the
+            // pool is momentarily empty (`Ok(None)` => keep) preserves ordering
+            // across rounds until its presign is generated. Both the queue and
+            // the assignment table it writes are per-epoch (the queue rebuilds
+            // empty on the per-epoch service restart; the table is physically
+            // dropped on epoch rotation).
+            //
+            // The assignment step reads ONLY the consensus-delivered demand
+            // queue and the consensus-generated presign pool — there is no
+            // wall-clock, channel-arrival-order, or local-instantiation-order
+            // input in it. That is the whole point: the bug this replaces
+            // popped presigns in local instantiation order, which diverged
+            // across a staggered restart. The `network_encryption_key_id` is
+            // carried IN the consensus-agreed demand (frozen at announce), and
+            // the sign later instantiates under that same key (stored with the
+            // assignment), so the key is fully consensus-uniform — it does not
+            // rest on the announce-time and instantiate-time key resolutions
+            // agreeing.
+            self.agreed_noa_presign_demands_queue
+                .extend(noa_presign_demand_messages);
+            if !self.agreed_noa_presign_demands_queue.is_empty() {
+                self.agreed_noa_presign_demands_queue.retain(|demand| {
+                    // Atomic + idempotent (see `assign_noa_presign`): pops a
+                    // presign and records the assignment (raw presign + the
+                    // demand's network key id) in ONE committed batch, or
+                    // returns the existing assignment without popping. The pop
+                    // and the record MUST be one commit — a crash between a
+                    // self-committed pop and a separate record would let a
+                    // re-drain after a consensus-round replay pop a different
+                    // presign than peers assigned. `Ok(Some(_))` => assigned (or
+                    // already assigned) — drop; `Ok(None)` => pool momentarily
+                    // empty — keep, preserving order across rounds until the
+                    // presign is generated; `Err` => keep for retry.
+                    match self.epoch_store.assign_noa_presign(
+                        demand.demand_id_digest(),
+                        demand.signature_algorithm,
+                        demand.network_encryption_key_id,
+                    ) {
+                        Ok(Some(_)) => false,
+                        Ok(None) => true,
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                should_never_happen = true,
+                                "failed to assign presign for NOA demand — keeping for retry"
+                            );
+                            true
+                        }
+                    }
+                });
+            }
 
             // Group checkpoint messages by chain.
             let mut messages_by_chain: HashMap<

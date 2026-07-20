@@ -73,8 +73,8 @@ use ika_types::messages_dwallet_checkpoint::{
 };
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
-    IkaNetworkConfig, SessionIdentifier, SuiChainObservationUpdate,
+    ConsensusNOAPresignDemand, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    IdleStatusUpdate, IkaNetworkConfig, SessionIdentifier, SuiChainObservationUpdate,
 };
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -235,6 +235,10 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
+/// A presign assigned (in consensus order) to a NOA sign demand:
+/// `(presign session id, blending index, raw presign bytes, network key id)`.
+pub(crate) type NoaAssignedPresign = (SessionIdentifier, u16, Vec<u8>, ObjectID);
+
 /// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
 pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     fn insert_pending_dwallet_checkpoint(
@@ -321,6 +325,32 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>>;
+
+    /// Returns the next NOA presign demands after the given consensus round.
+    fn next_noa_presign_demand(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>>;
+
+    /// Reads the presign assigned (in consensus order) to a NOA sign demand.
+    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>>;
+
+    /// Assigns a presign to a NOA sign demand atomically and idempotently: if
+    /// the demand is already assigned, returns the existing assignment without
+    /// popping; otherwise pops a presign and records the assignment in a SINGLE
+    /// committed batch (the pop and the record must not be separable — a crash
+    /// between them would let a re-drain after replay pop a different presign
+    /// than peers assigned). Mirrors `assign_presign`. The network key id is
+    /// stored so the sign instantiates under the SAME key the presign came from.
+    fn assign_noa_presign(
+        &self,
+        digest: [u8; 32],
+        signature_algorithm: DWalletSignatureAlgorithm,
+        network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>>;
+
+    /// Whether a presign has already been assigned to a NOA sign demand.
+    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool>;
 
     /// Marks a presign as used so it cannot be reused.
     fn mark_presign_as_used(
@@ -643,6 +673,39 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         } else {
             Ok(iter.nth(1).transpose()?)
         }
+    }
+
+    fn next_noa_presign_demand(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .noa_presign_demands
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
+        Ok(self.tables()?.noa_assigned_presigns.get(digest)?)
+    }
+
+    fn assign_noa_presign(
+        &self,
+        digest: [u8; 32],
+        signature_algorithm: DWalletSignatureAlgorithm,
+        network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
+        self.tables()?
+            .assign_noa_presign(digest, signature_algorithm, network_encryption_key_id)
+    }
+
+    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
+        Ok(self.tables()?.noa_assigned_presigns.contains_key(digest)?)
     }
 
     fn mark_presign_as_used(
@@ -1165,6 +1228,20 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
 
+    /// NOA sign presign demands by consensus round. Drained in consensus order
+    /// to assign each demand a presign identically on every validator.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
+
+    /// Presign assigned to each NOA sign demand, keyed by the demand's
+    /// `demand_id` digest. Written by the consensus-order drain and read by the
+    /// sign-session instantiation, so all validators pair the same presign with
+    /// the same demand. Value is a [`NoaAssignedPresign`]. Per-epoch (physically
+    /// dropped on rotation) like `used_presigns`; the demand queue that feeds it
+    /// is rebuilt empty when the per-epoch service restarts, and idempotency here
+    /// makes re-drains safe.
+    noa_assigned_presigns: DBMap<[u8; 32], NoaAssignedPresign>,
+
     /// Tracks presigns that have been consumed for signing.
     /// Key: (SessionIdentifier, blending_index) - uniquely identifies a single presign within
     /// the blended vector produced by the presign session that created it.
@@ -1656,6 +1733,59 @@ impl AuthorityEpochTables {
         )?;
         batch.write()?;
 
+        Ok(Some((session_identifier, blending_index)))
+    }
+
+    /// Atomically + idempotently assign a presign to a NOA sign demand.
+    ///
+    /// If the demand is already assigned, return the existing assignment
+    /// without popping. Otherwise pop a presign and record the assignment
+    /// (raw presign bytes + the network key id it came from) in the SAME
+    /// committed batch as the pop. Atomicity is load-bearing: `pop_presign`
+    /// self-commits, so a separate record write would leave a crash window
+    /// where, after a consensus-round replay, the demand looks unassigned but
+    /// its presign is gone from the pool — a re-drain would then pop a
+    /// DIFFERENT presign than the (non-crashed) peers assigned, reintroducing
+    /// the cross-validator divergence this fix exists to remove. Mirrors
+    /// `assign_presign`.
+    pub fn assign_noa_presign(
+        &self,
+        digest: [u8; 32],
+        signature_algorithm: DWalletSignatureAlgorithm,
+        network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
+        if let Some((session_identifier, blending_index, _, _)) =
+            self.noa_assigned_presigns.get(&digest)?
+        {
+            return Ok(Some((session_identifier, blending_index)));
+        }
+        let Some((mut batch, session_identifier, blending_index, presign)) =
+            self.prepare_pop_presign(signature_algorithm, network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+        batch.insert_batch(
+            &self.noa_assigned_presigns,
+            [(
+                &digest,
+                &(
+                    session_identifier,
+                    blending_index,
+                    presign,
+                    network_encryption_key_id,
+                ),
+            )],
+        )?;
+        // Mark the popped presign used, in the SAME batch as the assignment.
+        // This is the point of actual consumption (the pool pop happens in
+        // `prepare_pop_presign` above); the sign session later reads the presign
+        // from the assignment table and never pops again, so this is the only
+        // place the consumption is recorded.
+        batch.insert_batch(
+            &self.used_presigns,
+            [(&(session_identifier, blending_index), &())],
+        )?;
+        batch.write()?;
         Ok(Some((session_identifier, blending_index)))
     }
 
@@ -3972,6 +4102,18 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NOAPresignDemand(msg),
+                ..
+            }) => {
+                if transaction.sender_authority() != msg.authority {
+                    warn!(
+                        "NOAPresignDemand authority {} does not match its author from consensus {}",
+                        msg.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, _),
                 ..
             }) => {
@@ -4467,6 +4609,7 @@ impl AuthorityPerEpochStore {
         ));
         output.set_global_presign_requests(Self::filter_global_presign_requests(transactions));
         output.set_noa_observations(Self::filter_noa_observations(transactions));
+        output.set_noa_presign_demands(Self::filter_noa_presign_demands(transactions));
 
         authority_metrics
             .consensus_handler_cancelled_transactions
@@ -4637,6 +4780,27 @@ impl AuthorityPerEpochStore {
             .collect()
     }
 
+    fn filter_noa_presign_demands(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<ConsensusNOAPresignDemand> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::NOAPresignDemand(msg),
+                        ..
+                    }) => Some(msg.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     #[instrument(level = "trace", skip_all)]
     async fn process_consensus_transaction<C: DWalletCheckpointServiceNotify>(
         &self,
@@ -4684,6 +4848,10 @@ impl AuthorityPerEpochStore {
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::NOAObservation(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NOAPresignDemand(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -5187,6 +5355,7 @@ pub(crate) struct ConsensusCommitOutput {
     sui_chain_observation_updates: Vec<SuiChainObservationUpdate>,
     global_presign_requests: Vec<ConsensusGlobalPresignRequest>,
     noa_observations: Vec<ConsensusNOAObservation>,
+    noa_presign_demands: Vec<ConsensusNOAPresignDemand>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
     verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
@@ -5272,6 +5441,10 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_noa_observations(&mut self, new_value: Vec<ConsensusNOAObservation>) {
         self.noa_observations = new_value;
+    }
+
+    pub(crate) fn set_noa_presign_demands(&mut self, new_value: Vec<ConsensusNOAPresignDemand>) {
+        self.noa_presign_demands = new_value;
     }
 
     fn record_verified_dwallet_checkpoint_messages(
@@ -5377,6 +5550,10 @@ impl ConsensusCommitOutput {
             batch.insert_batch(
                 &tables.noa_observations,
                 [(self.consensus_round, self.noa_observations)],
+            )?;
+            batch.insert_batch(
+                &tables.noa_presign_demands,
+                [(self.consensus_round, self.noa_presign_demands)],
             )?;
             batch.insert_batch(
                 &tables.sui_chain_observation_updates,

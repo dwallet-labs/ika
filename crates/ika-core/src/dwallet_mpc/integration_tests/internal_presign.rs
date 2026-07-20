@@ -606,13 +606,17 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // These only consume presigns from the EdDSA pool (excluded from assertions).
     let num_sign_requests = 20u64;
     for idx in 0..num_sign_requests {
+        let message = format!("idle-breaker-{}", idx).into_bytes();
         for sender in &test_state.network_owned_address_sign_request_senders {
             sender
                 .send(NetworkOwnedAddressSignRequest {
-                    message: format!("idle-breaker-{}", idx).into_bytes(),
+                    message: message.clone(),
                     curve: DWalletCurve::Curve25519,
                     signature_algorithm: noa_sign_algorithm,
                     hash_scheme: noa_sign_hash_scheme,
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
+                        ika_types::crypto::keccak256_digest(&message),
+                    ),
                 })
                 .await
                 .expect("failed to send network-owned-address sign request");

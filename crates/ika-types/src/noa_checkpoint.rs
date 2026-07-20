@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::committee::EpochId;
+use crate::crypto::keccak256_digest;
 use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_system_checkpoints::SystemCheckpointMessageKind;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
@@ -295,6 +296,29 @@ pub struct NOACheckpointTxRef {
     pub tx_index: u32,
     /// The epoch this checkpoint belongs to.
     pub epoch: EpochId,
+}
+
+/// Network-uniform identity of a single NOA sign demand, used to assign it a
+/// presign deterministically in consensus order. Two arms cover all three
+/// demand sources: checkpoint signs (and their per-tx retries) carry the
+/// checkpoint tx coordinate + a retry round (0 for the first attempt); gRPC
+/// attestation signs carry their gRPC session identifier.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NOAPresignDemandId {
+    Checkpoint {
+        tx_ref: NOACheckpointTxRef,
+        retry_round: u32,
+    },
+    GrpcAttestation([u8; 32]),
+}
+
+impl NOAPresignDemandId {
+    /// Deterministic digest of the demand identity. Used network-wide as the
+    /// consensus dedup key and the per-epoch presign-assignment table key, so
+    /// every validator maps the same demand to the same presign.
+    pub fn digest(&self) -> [u8; 32] {
+        keccak256_digest(&bcs::to_bytes(self).expect("NOAPresignDemandId is BCS-serializable"))
+    }
 }
 
 /// A single validator's observation of a checkpoint tx's on-chain status.

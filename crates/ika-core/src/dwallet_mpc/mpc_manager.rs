@@ -1905,7 +1905,9 @@ impl DWalletMPCManager {
     /// iteration order — per-process-random, so validators could disagree on
     /// which key is the NOA key and apply different pool configs (different
     /// batch sizes ⇒ divergent internal-presign sequence numbers).
-    fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
+    pub(super) fn network_owned_address_signing_network_encryption_key_id(
+        &self,
+    ) -> Option<ObjectID> {
         // Select over the ADOPTED (consensus-agreed) set, not the installed set
         // (`network_keys.network_encryption_keys`): installation completes on
         // wall-clock time per validator, so choosing over it would let two
@@ -2340,26 +2342,26 @@ impl DWalletMPCManager {
 
     /// Instantiates a generic network-owned-address sign session.
     ///
-    /// Pops a presign from the internal pool, wraps it, and creates the sign session.
-    /// Returns `true` if the session was successfully instantiated, `false` on error.
+    /// Creates the sign session using the presign assigned in consensus order by
+    /// the service layer (passed in as raw bytes and wrapped here). Returns
+    /// `true` if the session was successfully instantiated, `false` on error.
     pub(super) fn instantiate_network_owned_address_sign_session(
         &mut self,
         message: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: DWalletHashScheme,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+        presign: Vec<u8>,
+        dwallet_network_encryption_key_id: ObjectID,
     ) -> bool {
-        // Derive config values from the request
-        let Some(dwallet_network_encryption_key_id) =
-            self.network_owned_address_signing_network_encryption_key_id()
-        else {
-            error!(
-                should_never_happen = true,
-                "No network-owned-address signing network key available — caller should check \
-                 has_network_owned_address_signing_network_key() first"
-            );
-            return false;
-        };
+        // The network key is the one the presign was popped from in consensus
+        // order (carried through the demand and the assignment), NOT a locally
+        // re-resolved key: if the min-by-dkg-epoch resolution shifted between
+        // announce and instantiate, re-resolving here would sign under a key the
+        // presign wasn't generated for → InvalidParameters. Using the assigned
+        // key for BOTH the presign and the session keeps them consistent.
         let hash_scheme_group: group::HashScheme = hash_scheme.into();
         let network_key_identity_bytes = match self
             .network_keys
@@ -2381,65 +2383,13 @@ impl DWalletMPCManager {
             }
         };
 
-        // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign_blending_index, presign) = match self
-            .epoch_store
-            .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
-        {
-            Ok(Some(triple)) => triple,
-            Ok(None) => {
-                error!(
-                    ?signature_algorithm,
-                    should_never_happen = true,
-                    "No presign available in pool — caller should check \
-                     has_network_owned_address_signing_presign_available() first"
-                );
-                return false;
-            }
-            Err(e) => {
-                error!(
-                    ?signature_algorithm,
-                    error = ?e,
-                    should_never_happen = true,
-                    "Failed to get presign from internal pool for network-owned-address signing"
-                );
-                return false;
-            }
-        };
-
-        // Check if this presign has already been used (safety check)
-        if self
-            .epoch_store
-            .is_presign_used(presign_session_id, presign_blending_index)
-            .unwrap_or(false)
-        {
-            error!(
-                ?presign_session_id,
-                ?presign_blending_index,
-                should_never_happen = true,
-                "Presign has already been used — this should not happen"
-            );
-            return false;
-        }
-
-        // Mark the presign as used to prevent double-spending
-        if let Err(e) = self
-            .epoch_store
-            .mark_presign_as_used(presign_session_id, presign_blending_index)
-        {
-            error!(
-                ?presign_session_id,
-                ?presign_blending_index,
-                error = ?e,
-                should_never_happen = true,
-                "Failed to mark presign as used"
-            );
-            return false;
-        }
-
-        // Wrap the raw presign bytes for consistency with the sign session
-        // input path, which expects a versioned wrapper. AHE presigns use V2;
-        // Fast Schnorr (VSS) presigns are a different shape and use V3.
+        // The presign is assigned in consensus-delivery order by the service
+        // layer (`assign_noa_presign`) and passed in as raw bytes, so every
+        // validator pairs the same presign with the same demand. This function
+        // no longer pops from the pool — doing so used LOCAL instantiation
+        // order, which diverged across a staggered restart and wedged the epoch.
+        // Wrap for the sign-input path: AHE presigns use V2, Fast Schnorr (VSS)
+        // use V3.
         let versioned = if signature_algorithm.is_vss() {
             VersionedPresignOutput::V3(presign)
         } else {
@@ -2451,12 +2401,11 @@ impl DWalletMPCManager {
                 error!(
                     error = ?e,
                     should_never_happen = true,
-                    "Failed to wrap presign in VersionedPresignOutput for network-owned-address sign"
+                    "Failed to wrap presign for network-owned-address sign session"
                 );
                 return false;
             }
         };
-
         let request = DWalletSessionRequest::new_network_owned_address_sign(
             self.epoch_id,
             curve,
@@ -2481,6 +2430,8 @@ impl DWalletMPCManager {
             ?curve,
             ?signature_algorithm,
             ?session_identifier,
+            ?presign_session_id,
+            presign_blending_index,
             message_length = message.len(),
             "instantiating network-owned-address sign session",
         );
@@ -2504,8 +2455,9 @@ impl DWalletMPCManager {
             // own request was still parked (key/presign not yet local). Don't
             // flip an already-resolved session back to `Active` — that would
             // strand it `Active` forever and pin this validator's idle status.
-            // The presign was popped above (and stays popped) so our pop order
-            // remains network-uniform with the peers that ran the session.
+            // The presign was assigned to this demand in consensus order
+            // upstream and passed in, so every validator pairs the same presign
+            // with the same demand regardless of who ran the session first.
             // Mirrors the non-`WaitingForSessionRequest` short-circuit in
             // `try_activate_internal_presign_request`.
             if !matches!(session.status, SessionStatus::WaitingForSessionRequest) {
@@ -2550,22 +2502,6 @@ impl DWalletMPCManager {
     pub(super) fn has_network_owned_address_signing_network_key(&self) -> bool {
         self.network_owned_address_signing_network_encryption_key_id()
             .is_some()
-    }
-
-    /// Checks if this manager has a presign available for network-owned-address signing
-    /// for the given signature algorithm.
-    pub(super) fn has_network_owned_address_signing_presign_available(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-    ) -> bool {
-        let Some(key_id) = self.network_owned_address_signing_network_encryption_key_id() else {
-            return false;
-        };
-
-        self.epoch_store
-            .presign_pool_size(signature_algorithm, key_id)
-            .unwrap_or(0)
-            > 0
     }
 
     fn internal_presign_pool_size(
