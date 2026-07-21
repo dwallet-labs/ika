@@ -32,6 +32,7 @@ use crate::dwallet_mpc::{
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::network_key_id_mapping::network_key_id_for;
+use crate::validator_metadata::{OffChainMpcDataAssembly, assemble_committee_mpc_data_off_chain};
 use arc_swap::ArcSwap;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
@@ -137,6 +138,25 @@ pub(crate) struct ParkedInternalPresignRequest(pub(crate) Box<DWalletSessionRequ
 /// — Executing all active sessions, and
 /// — (De)activating sessions.
 ///
+/// Outcome of one attempt to source the CURRENT epoch's validator MPC keys
+/// from the prior epoch's handoff certificate
+/// (`DWalletMPCManager::try_ingest_current_epoch_keys_from_prior_handoff_cert`).
+enum PriorCertKeysOutcome {
+    /// Keys assembled and ingested; `current_epoch_keys_ingested` is set.
+    Ingested,
+    /// The prior epoch has no handoff certificate (or none observable yet):
+    /// genesis, a pre-v4 prior epoch, a cert without mpc_data items, or a
+    /// cold start whose bootstrap fetch hasn't landed the cert. The caller
+    /// may consult the freeze-gated `current_epoch_mpc_keys` channel this
+    /// iteration; the cert path re-runs next iteration regardless.
+    NoPriorCert,
+    /// Transient miss with the cert PRESENT (store read error, perpetual
+    /// handle not installed, blobs still propagating). Retry next service
+    /// iteration WITHOUT falling back to the channel — see the divergence
+    /// note at the call site.
+    RetryLater,
+}
+
 /// The correct way to use the manager is to create it along with all other Ika components
 /// at the start of each epoch.
 /// Ensuring it is destroyed when the epoch ends and providing a clean slate for each new epoch.
@@ -164,11 +184,14 @@ pub(crate) struct DWalletMPCManager {
     /// `class_groups` straight off the on-chain committee (the bare key Sui
     /// already carries), with empty PVSS/VSS — all the backward-compatible DKG
     /// needs. At version 3 it starts empty and the whole set (class_groups
-    /// included) is read from the `current_epoch_mpc_keys` channel by
-    /// `ingest_offchain_mpc_keys` once the consensus freeze decides the agreed
-    /// set. That agreed set may legitimately omit offline/withholding validators
-    /// — the DKG deals only to the parties that have keys. Passed to
-    /// `session_input_from_request` per session-input construction.
+    /// included) is filled by `ingest_offchain_mpc_keys`: primarily assembled
+    /// from the prior epoch's handoff certificate (restart-safe — issue
+    /// #1879), falling back to the `current_epoch_mpc_keys` channel (fed once
+    /// the consensus freeze decides the agreed set) only in the chain-true
+    /// no-cert epochs. That agreed set may legitimately omit
+    /// offline/withholding validators — the DKG deals only to the parties
+    /// that have keys. Passed to `session_input_from_request` per
+    /// session-input construction.
     pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
     /// Set once the current epoch's off-chain key set has been ingested (the
     /// consensus-frozen agreed set). Gates session initiation so the DKG never
@@ -304,6 +327,13 @@ pub(crate) struct DWalletMPCManager {
     /// otherwise warn ~50x/second; warn at most every 10s (debug in
     /// between). The retry behavior itself is unthrottled.
     last_cert_read_warn: Option<Instant>,
+
+    /// Last time the prior-cert current-epoch key ingestion warned about
+    /// a retryable miss (cert read error, missing perpetual handle, or
+    /// missing/undecodable mpc_data blobs). Same 20ms-loop rationale as
+    /// `last_cert_read_warn`: warn at most every 10s, debug in between;
+    /// the retry itself is unthrottled.
+    last_prior_cert_keys_warn: Option<Instant>,
 
     /// `(key_id, local output digest)` pairs whose contradiction with the
     /// prior epoch's handoff cert was already warned about. The adoption
@@ -616,6 +646,7 @@ impl DWalletMPCManager {
             last_instantiated_network_key_data: HashMap::new(),
             pending_network_key_instantiations: HashMap::new(),
             last_cert_read_warn: None,
+            last_prior_cert_keys_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
             network_key_id_derivations_spawned: HashMap::new(),
             stranded_network_keys,
@@ -1089,37 +1120,68 @@ impl DWalletMPCManager {
     }
 
     /// Ingest the per-epoch off-chain validator MPC keys (3 PVSS HPKE + VSS
-    /// HPKE) delivered on the `current_epoch_mpc_keys` / `next_epoch_mpc_keys`
-    /// channels into `validator_mpc_keys_by_party_id` (current) and
+    /// HPKE) into `validator_mpc_keys_by_party_id` (current) and
     /// `next_epoch_validator_mpc_keys` (next).
     ///
-    /// The producer only delivers a bundle once the per-epoch set is frozen by
-    /// consensus (a stake-quorum of `EpochMpcDataReadySignal`s), so the delivered
-    /// bundle IS the agreed set. We ingest it **once** and do NOT re-impose an
-    /// all-committee completeness check: the agreed set may legitimately omit
+    /// CURRENT epoch: the primary source is the prior epoch's handoff
+    /// certificate (`try_ingest_current_epoch_keys_from_prior_handoff_cert`)
+    /// — the perpetual, quorum-signed pin of the prior epoch's frozen set,
+    /// which is the committee-agreed value of this epoch's key set and is
+    /// reachable after a mid-epoch restart (issue #1879). Only in the
+    /// chain-true no-cert epochs (genesis, first epoch after the off-chain
+    /// pipeline activated) does it fall back to the `current_epoch_mpc_keys`
+    /// channel, whose producer delivers once THIS epoch's set is frozen by
+    /// consensus (a stake-quorum of `EpochMpcDataReadySignal`s).
+    ///
+    /// NEXT epoch: delivered on the `next_epoch_mpc_keys` channel from this
+    /// epoch's post-freeze assembly.
+    ///
+    /// Either way we ingest **once** and do NOT re-impose an all-committee
+    /// completeness check: the agreed set may legitimately omit
     /// offline/withholding validators, and the DKG/reconfig deal only to the
     /// parties that have keys (the rest stay active in consensus, just undealt).
-    /// `class_groups` still comes from the committee.
     pub(crate) fn ingest_offchain_mpc_keys(&mut self) -> DwalletMPCResult<()> {
         // Current epoch: fill the within-epoch network DKG key set, once.
         if !self.current_epoch_keys_ingested {
-            let delivered = self
-                .sui_data_receivers
-                .current_epoch_mpc_keys_receiver
-                .borrow()
-                .clone();
-            if let Some((epoch, bundles)) = delivered
-                && epoch == self.epoch_id
-            {
-                self.validator_mpc_keys_by_party_id =
-                    get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
-                self.current_epoch_keys_ingested = true;
-                info!(
-                    epoch = self.epoch_id,
-                    dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
-                    committee = self.committee.voting_rights.len(),
-                    "ingested current-epoch off-chain validator MPC keys (agreed frozen set)"
-                );
+            // The cert path only applies at network-key version 3 (the
+            // off-chain pipeline); at version 2 the construction already
+            // seeded `class_groups` from the on-chain committee and a cert
+            // ingest would overwrite it with the wrong source/shape.
+            let cert_outcome = if self.protocol_config.is_network_encryption_key_version_v3() {
+                self.try_ingest_current_epoch_keys_from_prior_handoff_cert()?
+            } else {
+                PriorCertKeysOutcome::NoPriorCert
+            };
+            match cert_outcome {
+                PriorCertKeysOutcome::Ingested => {}
+                // Transient cert-path miss: retry next iteration WITHOUT
+                // falling back to the channel. Post-freeze the channel
+                // carries THIS epoch's frozen set, which in a joiner-churn
+                // epoch is a strict superset of the boundary set the rest
+                // of the committee latched at the flip — ingesting it here
+                // would byte-diverge this validator's VSS presign public
+                // inputs from every peer's.
+                PriorCertKeysOutcome::RetryLater => {}
+                PriorCertKeysOutcome::NoPriorCert => {
+                    let delivered = self
+                        .sui_data_receivers
+                        .current_epoch_mpc_keys_receiver
+                        .borrow()
+                        .clone();
+                    if let Some((epoch, bundles)) = delivered
+                        && epoch == self.epoch_id
+                    {
+                        self.validator_mpc_keys_by_party_id =
+                            get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
+                        self.current_epoch_keys_ingested = true;
+                        info!(
+                            epoch = self.epoch_id,
+                            dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
+                            committee = self.committee.voting_rights.len(),
+                            "ingested current-epoch off-chain validator MPC keys (agreed frozen set)"
+                        );
+                    }
+                }
             }
         }
 
@@ -1150,6 +1212,164 @@ impl DWalletMPCManager {
         }
 
         Ok(())
+    }
+
+    /// Assembles the CURRENT epoch's validator MPC key bundle from the prior
+    /// epoch's handoff certificate (`ValidatorMpcData` items ∩ current
+    /// committee) against the perpetual content-addressed blob store, and
+    /// ingests it into `validator_mpc_keys_by_party_id`.
+    ///
+    /// WHY the cert: the committee-agreed value of the current epoch's key
+    /// set is the PRIOR epoch's frozen set restricted to the current
+    /// committee — that is what every continuing validator ingests at the
+    /// epoch flip (the syncer assembles the prior epoch's post-freeze set
+    /// during the boundary window, the manager latches it for the whole
+    /// epoch, and the current epoch's own freeze never re-feeds it). The
+    /// cert pins exactly that set (`compute_handoff_items` builds the
+    /// `ValidatorMpcData` items 1:1 from the frozen map), is quorum-signed
+    /// and perpetual, and — unlike the boundary window's process-local watch
+    /// channel — is reachable after a mid-epoch restart (issue #1879). Blobs
+    /// are content-addressed and digest-verified at the store's write
+    /// boundary, so the assembled bundle is byte-identical to the boundary
+    /// delivery.
+    ///
+    /// Committee members without a prior-cert digest were excluded from the
+    /// prior epoch's frozen set (first-time joiners that missed its freeze
+    /// window); the boundary delivery skips them identically — DKG and the
+    /// VSS protocols deal only to the parties that have keys.
+    fn try_ingest_current_epoch_keys_from_prior_handoff_cert(
+        &mut self,
+    ) -> DwalletMPCResult<PriorCertKeysOutcome> {
+        let Some(prior_epoch) = self.epoch_id.checked_sub(1) else {
+            return Ok(PriorCertKeysOutcome::NoPriorCert);
+        };
+        let cert = match self
+            .epoch_store
+            .get_certified_handoff_attestation(prior_epoch)
+        {
+            Ok(Some(cert)) => cert,
+            // Ambiguous between "chain-true no cert" (a pre-v4 prior epoch,
+            // where the freeze-gated channel is the fleet-uniform source)
+            // and "bootstrap anchor still fetching" on a cold start. Fall
+            // through to the channel: this method re-runs every service
+            // iteration, and pre-freeze the channel delivers nothing, so the
+            // cert wins the race in any epoch whose cert arrives before the
+            // current epoch's freeze fires.
+            Ok(None) => return Ok(PriorCertKeysOutcome::NoPriorCert),
+            Err(e) => {
+                // A read ERROR must not degrade to the channel path — the
+                // cert may exist, and the channel post-freeze can carry a
+                // divergent (superset) key set. Retry.
+                if self.should_warn_prior_cert_keys() {
+                    warn!(
+                        error = ?e,
+                        prior_epoch,
+                        "failed to read the prior epoch's handoff cert while sourcing \
+                         current-epoch validator MPC keys; retrying"
+                    );
+                }
+                return Ok(PriorCertKeysOutcome::RetryLater);
+            }
+        };
+        let prior_cert_digests: HashMap<AuthorityName, [u8; 32]> = cert
+            .attestation
+            .items
+            .iter()
+            .filter_map(|(key, digest)| match key {
+                HandoffItemKey::ValidatorMpcData { validator } => Some((*validator, *digest)),
+                _ => None,
+            })
+            .collect();
+        if prior_cert_digests.is_empty() {
+            // A cert that predates mpc_data handoff items (the first epoch
+            // after the off-chain pipeline activated) — fleet-uniform, the
+            // channel is the source.
+            return Ok(PriorCertKeysOutcome::NoPriorCert);
+        }
+        let pairs: Vec<(AuthorityName, [u8; 32])> = self
+            .committee
+            .voting_rights
+            .iter()
+            .filter_map(|(name, _)| prior_cert_digests.get(name).map(|digest| (*name, *digest)))
+            .collect();
+        if pairs.is_empty() {
+            // Cert has mpc_data items but none for any current committee
+            // member — cannot happen on a continuing network (quorum
+            // continuity), so surface it rather than silently ingesting
+            // nothing.
+            if self.should_warn_prior_cert_keys() {
+                warn!(
+                    prior_epoch,
+                    "prior handoff cert carries mpc_data items but none for any current \
+                     committee member — falling back to the freeze-gated delivery"
+                );
+            }
+            return Ok(PriorCertKeysOutcome::NoPriorCert);
+        }
+        let Some(perpetual) = self.epoch_store.perpetual_tables_handle() else {
+            // Near-unreachable: a missing perpetual handle already made the
+            // cert read above return `Ok(None)` (its impl reads the cert
+            // THROUGH this handle), so reaching here means the handle
+            // vanished between the two loads. Defense-in-depth: retry rather
+            // than fall to the channel while a cert was just observed.
+            return Ok(PriorCertKeysOutcome::RetryLater);
+        };
+        let assembly = assemble_committee_mpc_data_off_chain(pairs, move |digest| {
+            perpetual.get_mpc_artifact_blob(digest).ok().flatten()
+        });
+        match assembly {
+            OffChainMpcDataAssembly::Complete(bundles) => {
+                self.validator_mpc_keys_by_party_id =
+                    get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
+                self.current_epoch_keys_ingested = true;
+                info!(
+                    epoch = self.epoch_id,
+                    prior_epoch,
+                    dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
+                    committee = self.committee.voting_rights.len(),
+                    "ingested current-epoch off-chain validator MPC keys from the prior \
+                     epoch's handoff certificate"
+                );
+                Ok(PriorCertKeysOutcome::Ingested)
+            }
+            OffChainMpcDataAssembly::Incomplete { missing } => {
+                if self.should_warn_prior_cert_keys() {
+                    warn!(
+                        prior_epoch,
+                        ?missing,
+                        "prior-cert mpc_data blobs missing or undecodable in the perpetual \
+                         store; current-epoch validator MPC keys not ingested yet — retrying"
+                    );
+                }
+                Ok(PriorCertKeysOutcome::RetryLater)
+            }
+            OffChainMpcDataAssembly::EverythingExcluded => {
+                // `assemble_committee_mpc_data_off_chain` never returns this
+                // variant (it belongs to the pre-assembly decision); guard
+                // defensively rather than panic.
+                error!(
+                    should_never_happen = true,
+                    prior_epoch,
+                    "off-chain assembly returned EverythingExcluded for a non-empty \
+                     prior-cert pair set"
+                );
+                Ok(PriorCertKeysOutcome::RetryLater)
+            }
+        }
+    }
+
+    /// 10s throttle for the prior-cert key-ingestion warns (the ingest runs
+    /// every 20ms service iteration). Returns whether to warn now and, if
+    /// so, stamps the throttle.
+    fn should_warn_prior_cert_keys(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_prior_cert_keys_warn {
+            Some(last) if now.duration_since(last) < Duration::from_secs(10) => false,
+            _ => {
+                self.last_prior_cert_keys_warn = Some(now);
+                true
+            }
+        }
     }
 
     /// Adopt this validator's locally-observed network-key outputs into

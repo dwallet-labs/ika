@@ -422,6 +422,16 @@ where
             // — assemble directly for the current committee, not by borrowing
             // the next committee's keys. Runs before the next-committee check so
             // it still fires when Sui hasn't selected a next committee yet.
+            //
+            // NOTE: this channel is the manager's FALLBACK source only — for
+            // the chain-true no-cert epochs (genesis, the first
+            // off-chain-enabled epoch). Whenever the prior epoch produced a
+            // handoff certificate, the manager sources the bundle from that
+            // cert instead (`try_ingest_current_epoch_keys_from_prior_handoff_cert`,
+            // issue #1879) and ignores this delivery: the cert set is the
+            // boundary set the committee latched, while this post-freeze
+            // assembly is the CURRENT epoch's frozen set, a possible strict
+            // superset in a joiner-churn epoch.
             let current_epoch = system_inner.epoch();
             // Only deliver once the set is FROZEN — the frozen set is the
             // consensus-agreed validator-key set (a stake-quorum of ready

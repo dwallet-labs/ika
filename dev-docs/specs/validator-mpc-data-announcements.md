@@ -157,7 +157,15 @@ which bytes* deterministic in consensus order.
 - **Frozen set semantics**: `frozen: validator -> blob_hash` is written
   once per epoch (`freeze_mpc_data_if_first`) and is immutable for the
   epoch. Validators not in the frozen set are the epoch's **excluded**
-  set: the reconfiguration proceeds without them.
+  set: the reconfiguration proceeds without them. The frozen + excluded
+  rows are persisted through the freeze commit's `ConsensusCommitOutput`
+  batch — atomically with that commit's processed-markers — never as
+  per-row inserts: a crash mid-write would otherwise latch a strict
+  subset as frozen forever (the idempotence guard is table
+  non-emptiness, and the commit replays dedup-skipped), leaving this
+  validator on a divergent shrunken set (issue #1829). A crash before
+  the batch lands replays the whole commit and the freeze re-fires
+  identically.
 - **Carry-forward (stable mpc_data)**: a validator's blob is a pure
   function of its root seed (`derive_mpc_data_blob`), so a continuing
   validator's blob is byte-identical every epoch. At the freeze, a
@@ -200,6 +208,37 @@ which bytes* deterministic in consensus order.
   mechanism is announcement propagation reaching a stake quorum BEFORE
   the freeze fires: a joiner whose blob has not propagated in time is
   excluded for the epoch, with no after-the-fact recovery.
+
+## Current-epoch key bundle (manager ingestion)
+
+The MPC manager's current-epoch key set
+(`validator_mpc_keys_by_party_id` — consumed by the within-epoch network
+DKG and by every VSS presign/sign public input) is NOT fed by the
+current epoch's freeze. Its committee-agreed value is the **prior
+epoch's frozen set ∩ current committee** — the set the prior epoch's
+post-freeze assembly delivered at the boundary and every continuing
+validator latched for the whole epoch. Sourcing rules
+(`ingest_offchain_mpc_keys`, ingested once per manager):
+
+1. **Primary — the prior epoch's handoff certificate**: assemble the
+   cert's `ValidatorMpcData` digests ∩ current committee against the
+   perpetual blob store. Byte-identical to the boundary delivery (the
+   cert items are built 1:1 from the frozen map; blobs are
+   content-addressed) and, unlike the boundary window's process-local
+   watch channel, reachable after a mid-epoch restart — the restart
+   wedge of issue #1879. Members without a cert digest (prior-epoch
+   excluded joiners) are skipped, exactly as the boundary assembly
+   skips them.
+2. **Fallback — the freeze-gated syncer delivery** (the
+   `current_epoch_mpc_keys` channel): only for the chain-true no-cert
+   epochs (genesis, the first off-chain-enabled epoch), where the
+   epoch's own freeze is the only agreed set.
+3. **Never mix**: with a cert present, the channel is not consulted —
+   post-freeze it carries the CURRENT epoch's frozen set, a possible
+   strict superset of the boundary set (a late-attested joiner), and
+   ingesting it would byte-diverge this validator's VSS presign public
+   inputs from the committee's. Cert read errors retry; missing
+   cert-pinned blobs defer ingestion until propagation converges.
 
 ## Next-committee assembly
 

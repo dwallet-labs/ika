@@ -41,7 +41,14 @@ next epoch inherits.
     excluded from it by design (the computing validators are a quorum).
   - `ValidatorMpcData { validator }` — pins the exact mpc_data version
     consumed by this epoch's MPC sessions (the frozen set; see the
-    announcements spec).
+    announcements spec). Divergence guard: if the ready-signal quorum
+    round is anchored for the epoch but the local frozen table is empty
+    (freeze not yet fired, or a crash window lost it), the items builder
+    DEFERS (errors → the sender retries) instead of emitting an
+    attestation missing every `ValidatorMpcData` item — a missing
+    signature aggregates as nothing, while a divergent one pollutes the
+    aggregation bucket. A quorum-less epoch legitimately emits none,
+    uniformly with peers.
 - The attestation is built once per epoch when the validator's local
   view is complete (snapshot-ready), and it must be DETERMINISTIC
   across validators: every digest source above is consensus-anchored.
@@ -274,6 +281,29 @@ next epoch inherits.
      next epoch's cert pins V3. Fail-closed, bounded to that one
      epoch, identical to pre-recovery behavior; epoch close is
      unaffected (the validator still votes EndOfPublish).
+   - Current-epoch validator MPC keys (mid-epoch restart, issue #1879).
+     The manager's current-epoch key bundle
+     (`validator_mpc_keys_by_party_id` — consumed by the within-epoch
+     network DKG and by every VSS presign/sign public input) is sourced
+     from the prior cert's `ValidatorMpcData` items ∩ current committee,
+     assembled against the perpetual blob store
+     (`try_ingest_current_epoch_keys_from_prior_handoff_cert`). The
+     cert set IS the committee-agreed value of this epoch's bundle: it
+     pins the prior epoch's frozen set, which is what the boundary-window
+     delivery hands every continuing validator, and blobs are
+     content-addressed, so the rebuild is byte-identical — and unlike
+     the boundary window's process-local watch channel it survives a
+     mid-epoch restart. With a cert present the freeze-gated channel
+     delivery is NEVER consulted: post-freeze it carries the CURRENT
+     epoch's frozen set, a possible strict superset of the boundary set
+     (a late-attested joiner), and ingesting that superset would
+     byte-diverge this validator's VSS presign inputs from the
+     committee's. The channel remains the source only for the
+     chain-true no-cert epochs (genesis, the first off-chain-enabled
+     epoch), where the epoch's own freeze is the only agreed set. A
+     cert READ ERROR retries without falling back to the channel; a
+     missing cert-pinned blob defers ingestion (retry as propagation
+     converges), never downgrades to the channel bundle.
    - The hydration-clobber variant (issue #1852, never-instantiated
      shape) and its three defenses. Post-restart, until the per-epoch
      blob source installs, the sync task's full chain read publishes an

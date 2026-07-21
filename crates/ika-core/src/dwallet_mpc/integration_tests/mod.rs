@@ -8,6 +8,7 @@ mod internal_presign;
 mod late_reconfiguration_output;
 mod malicious_behavior;
 mod message_before_event;
+mod mid_epoch_restart_keys;
 mod missing_network_key;
 mod network_dkg;
 mod network_dkg_bwd_compat;
