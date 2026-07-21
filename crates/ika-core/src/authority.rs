@@ -205,6 +205,10 @@ pub(crate) struct AuthorityCapabilitiesVotingResults {
     pub(crate) move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
 }
 
+/// One tallied capability-vote group: the protocol-config digest, the set of
+/// Move packages that group votes to upgrade, and the group's aggregated stake.
+pub type ProtocolUpgradeVoteGroup = (Digest, Vec<(ObjectID, MovePackageDigest)>, u64);
+
 /// Trait for AuthorityState, which gets created once per validator (NOT recreated on epoch switch).
 pub trait AuthorityStateTrait: Sync + Send + 'static {
     fn insert_dwallet_mpc_computation_completed_sessions(
@@ -528,7 +532,7 @@ impl AuthorityState {
         proposed_protocol_version: ProtocolVersion,
         committee: &Committee,
         capabilities: Vec<AuthorityCapabilitiesV1>,
-    ) -> Option<Vec<(Digest, Vec<(ObjectID, MovePackageDigest)>, u64)>> {
+    ) -> Option<Vec<ProtocolUpgradeVoteGroup>> {
         // For each validator, gather the protocol version and system packages that it would like
         // to upgrade to in the next epoch.
         let mut desired_upgrades: Vec<_> = capabilities
