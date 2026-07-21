@@ -326,6 +326,17 @@ impl AuthorityState {
         prometheus_registry: &Registry,
         config: NodeConfig,
     ) -> Arc<Self> {
+        // The advertised capability range is constant for the process; export
+        // it so fleet dashboards can measure upgrade support directly against
+        // the committee thresholds (see ika_committee_quorum_threshold).
+        epoch_store
+            .metrics
+            .supported_protocol_version_min
+            .set(supported_protocol_versions.min.as_u64() as i64);
+        epoch_store
+            .metrics
+            .supported_protocol_version_max
+            .set(supported_protocol_versions.max.as_u64() as i64);
         Self::check_protocol_version(supported_protocol_versions, epoch_store.protocol_version());
 
         let metrics = Arc::new(AuthorityMetrics::new(prometheus_registry));

@@ -69,6 +69,12 @@ pub struct EpochMetrics {
     /// The active committee's total voting stake (3f+1-ish; unit stake =>
     /// committee size).
     pub committee_total_stake: IntGauge,
+    /// The protocol-version range THIS binary advertises in its capability
+    /// votes (constant per process). Fleet aggregation of `..._max` against
+    /// committee_quorum_threshold + ika_effective_buffer_stake shows exactly
+    /// how much stake still has to upgrade before the next version arms.
+    pub supported_protocol_version_min: IntGauge,
+    pub supported_protocol_version_max: IntGauge,
 
     /// Epoch of the most recent mpc_data freeze observed locally. Alert when
     /// it lags `current_epoch` well past the freeze grace window — a freeze
@@ -209,6 +215,18 @@ impl EpochMetrics {
             committee_total_stake: register_int_gauge_with_registry!(
                 "ika_committee_total_stake",
                 "Active committee total voting stake",
+                registry,
+            )
+            .unwrap(),
+            supported_protocol_version_min: register_int_gauge_with_registry!(
+                "ika_supported_protocol_version_min",
+                "Lowest protocol version this binary advertises support for",
+                registry,
+            )
+            .unwrap(),
+            supported_protocol_version_max: register_int_gauge_with_registry!(
+                "ika_supported_protocol_version_max",
+                "Highest protocol version this binary advertises support for",
                 registry,
             )
             .unwrap(),
