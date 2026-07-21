@@ -75,6 +75,15 @@ pub struct EpochMetrics {
     /// how much stake still has to upgrade before the next version arms.
     pub supported_protocol_version_min: IntGauge,
     pub supported_protocol_version_max: IntGauge,
+    /// The stake required to arm the next protocol version:
+    /// quorum_threshold + ceil(f * buffer_stake_bps / 10000). THE activation
+    /// line - compare protocol_upgrade_supporting_stake against it.
+    pub protocol_upgrade_effective_threshold: IntGauge,
+    /// Stake whose consensus-recorded capability votes advertise support for
+    /// a version ABOVE the current protocol version. When this crosses
+    /// protocol_upgrade_effective_threshold, the upgrade arms and activates
+    /// at the next epoch boundary.
+    pub protocol_upgrade_supporting_stake: IntGauge,
 
     /// Epoch of the most recent mpc_data freeze observed locally. Alert when
     /// it lags `current_epoch` well past the freeze grace window — a freeze
@@ -227,6 +236,18 @@ impl EpochMetrics {
             supported_protocol_version_max: register_int_gauge_with_registry!(
                 "ika_supported_protocol_version_max",
                 "Highest protocol version this binary advertises support for",
+                registry,
+            )
+            .unwrap(),
+            protocol_upgrade_effective_threshold: register_int_gauge_with_registry!(
+                "ika_protocol_upgrade_effective_threshold",
+                "Stake required to arm the next protocol version (quorum + buffer)",
+                registry,
+            )
+            .unwrap(),
+            protocol_upgrade_supporting_stake: register_int_gauge_with_registry!(
+                "ika_protocol_upgrade_supporting_stake",
+                "Stake whose capability votes support a version above the current one",
                 registry,
             )
             .unwrap(),

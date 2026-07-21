@@ -2186,6 +2186,47 @@ impl AuthorityPerEpochStore {
         self.metrics
             .effective_buffer_stake
             .set(self.get_effective_buffer_stake_bps() as i64);
+        self.update_protocol_upgrade_metrics();
+    }
+
+    /// Export the protocol-upgrade activation line and the current support
+    /// tally: effective_threshold = quorum + ceil(f * buffer_bps / 10000)
+    /// (the same formula `is_protocol_version_supported_v1` enforces), and
+    /// supporting_stake = stake whose consensus-recorded capabilities
+    /// advertise ANY version above the current protocol version. Called at
+    /// epoch-store open, on buffer-override changes, and on every capability
+    /// receipt - cheap (committee-sized scan of a per-epoch table).
+    fn update_protocol_upgrade_metrics(&self) {
+        let committee = self.committee();
+        let quorum = committee.quorum_threshold();
+        let f = committee.total_votes() - quorum;
+        let buffer = (f * self.get_effective_buffer_stake_bps()).div_ceil(10000);
+        self.metrics
+            .protocol_upgrade_effective_threshold
+            .set((quorum + buffer) as i64);
+        let current = self.protocol_version();
+        let Ok(capabilities) = self.get_capabilities_v1() else {
+            return;
+        };
+        let supporting: u64 = capabilities
+            .iter()
+            .filter(|cap| {
+                cap.supported_protocol_versions
+                    .versions
+                    .iter()
+                    .any(|(v, _)| *v > current)
+            })
+            .filter_map(|cap| {
+                committee
+                    .voting_rights
+                    .iter()
+                    .find(|(name, _)| *name == cap.authority)
+                    .map(|(_, stake)| *stake)
+            })
+            .sum();
+        self.metrics
+            .protocol_upgrade_supporting_stake
+            .set(supporting as i64);
     }
 
     pub fn get_effective_buffer_stake_bps(&self) -> u64 {
@@ -2220,6 +2261,7 @@ impl AuthorityPerEpochStore {
         tables
             .authority_capabilities_v1
             .insert(authority, capabilities)?;
+        self.update_protocol_upgrade_metrics();
         Ok(())
     }
 
