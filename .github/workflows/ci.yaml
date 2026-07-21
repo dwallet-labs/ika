@@ -96,6 +96,13 @@ jobs:
         # see dev-docs/conventions/sui-version-bump.md.
         run: ./scripts/check-sui-version-consistency.sh
 
+      - name: Workspace version consistency (standalone lockfiles)
+        # Standalone lockfiles (sdk/ika-wasm) pin root-workspace crates and
+        # don't update with the root lock: the v1.2.2 bump missed the wasm
+        # lock, breaking --locked SDK builds. Red PR instead of a
+        # post-release discovery.
+        run: ./scripts/check-workspace-version-consistency.sh
+
   # Runs on PRs AND pushes: clippy used to be push-to-main-only, which let a
   # workspace-wide lint backlog accumulate invisibly (PRs merged unlinted and
   # only the FIRST failing crate ever surfaced on main).
