@@ -5,9 +5,13 @@
 //!
 //! This replaces the operator-pinned end-of-epoch "anchor" (a recent,
 //! out-of-band, weak-subjectivity digest). The genesis checkpoint digest *is*
-//! the Sui chain identifier, which ika already hardcodes per chain
-//! ([`ika_types::digests::get_mainnet_chain_identifier`] /
-//! [`get_testnet_chain_identifier`](ika_types::digests::get_testnet_chain_identifier)).
+//! the **Sui** chain identifier, whose per-chain constants come from the
+//! pinned Sui upstream (`sui_types::digests`). NOTE the trap this module once
+//! fell into: `ika_types::digests` exposes same-named chain-identifier
+//! constants/getters, but those hold the **ika system object IDs** (the ika
+//! chain identity used in metrics labels and short-id matching) — NOT Sui
+//! genesis digests. Comparing a real genesis blob against those made this
+//! verifier reject every legitimate blob on both public chains.
 //!
 //! So the trust root shrinks to a 32-byte compiled-in constant: we load the
 //! genesis blob, recompute its checkpoint digest, assert it equals the
@@ -25,13 +29,16 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use fastcrypto::encoding::{Base58, Encoding};
 use ika_config::node::SuiChainIdentifier;
-use ika_types::digests::{
-    ChainIdentifier, get_mainnet_chain_identifier, get_testnet_chain_identifier,
-};
+use ika_types::digests::ChainIdentifier;
 use sui_config::genesis::Genesis;
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::committee::Committee;
+use sui_types::digests::{
+    MAINNET_CHAIN_IDENTIFIER_BASE58 as SUI_MAINNET_GENESIS_DIGEST_BASE58,
+    TESTNET_CHAIN_IDENTIFIER_BASE58 as SUI_TESTNET_GENESIS_DIGEST_BASE58,
+};
 use sui_types::effects::TransactionEffects;
 use sui_types::message_envelope::Message;
 use sui_types::messages_checkpoint::CheckpointSummary;
@@ -227,13 +234,33 @@ fn verify_objects_committed_by_effects(
     Ok(())
 }
 
-/// The binary's compiled-in Sui chain identifier (= genesis checkpoint digest)
-/// for the public chains. `None` for `Devnet`/`Custom`, where the genesis
-/// blob's own digest is the root.
+/// Decode one of the pinned Sui upstream's base58 genesis-digest constants
+/// into ika's [`ChainIdentifier`] wrapper. Sourcing these from
+/// `sui_types::digests` (rather than keeping ika-side copies) means the
+/// expected digest can never drift from the Sui version this binary embeds.
+fn sui_genesis_chain_identifier(base58: &str) -> ChainIdentifier {
+    let bytes = Base58::decode(base58)
+        .expect("pinned Sui genesis checkpoint digest literal is invalid base58");
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .expect("pinned Sui genesis checkpoint digest must be 32 bytes");
+    ChainIdentifier::from(ObjectID::new(bytes))
+}
+
+/// The binary's compiled-in **Sui** chain identifier (= Sui genesis checkpoint
+/// digest, from the pinned Sui upstream's constants) for the public chains.
+/// `None` for `Devnet`/`Custom`, where the genesis blob's own digest is the
+/// root. Deliberately NOT `ika_types::digests`' same-named getters — those are
+/// the ika system object IDs (ika's own chain identity), and comparing a Sui
+/// genesis digest against them rejects every legitimate blob.
 pub fn compiled_in_chain_identifier(chain: SuiChainIdentifier) -> Option<ChainIdentifier> {
     match chain {
-        SuiChainIdentifier::Mainnet => Some(get_mainnet_chain_identifier()),
-        SuiChainIdentifier::Testnet => Some(get_testnet_chain_identifier()),
+        SuiChainIdentifier::Mainnet => Some(sui_genesis_chain_identifier(
+            SUI_MAINNET_GENESIS_DIGEST_BASE58,
+        )),
+        SuiChainIdentifier::Testnet => Some(sui_genesis_chain_identifier(
+            SUI_TESTNET_GENESIS_DIGEST_BASE58,
+        )),
         SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => None,
     }
 }
@@ -244,9 +271,9 @@ pub fn compiled_in_chain_identifier(chain: SuiChainIdentifier) -> Option<ChainId
 /// private net). This is how a node learns its chain from the *verified* genesis
 /// blob rather than from the operator-declared config.
 pub fn chain_of_chain_identifier(id: ChainIdentifier) -> SuiChainIdentifier {
-    if id == get_mainnet_chain_identifier() {
+    if id == sui_genesis_chain_identifier(SUI_MAINNET_GENESIS_DIGEST_BASE58) {
         SuiChainIdentifier::Mainnet
-    } else if id == get_testnet_chain_identifier() {
+    } else if id == sui_genesis_chain_identifier(SUI_TESTNET_GENESIS_DIGEST_BASE58) {
         SuiChainIdentifier::Testnet
     } else {
         SuiChainIdentifier::Custom
@@ -264,6 +291,7 @@ impl SuiGenesisBootstrap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fastcrypto::encoding::Hex;
     use sui_types::SUI_SYSTEM_STATE_OBJECT_ID;
     use sui_types::base_types::SuiAddress;
     use sui_types::messages_checkpoint::CheckpointContentsDigest;
@@ -274,6 +302,55 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/sui_genesis.blob"
     );
+
+    /// The compiled-in expectations are SUI genesis checkpoint digests: their
+    /// hex must carry the well-known Sui chain short-ids, and they must NOT
+    /// equal ika's own chain identifiers (the ika system object IDs) — mixing
+    /// those up made this verifier reject every legitimate genesis blob
+    /// (the v1.2.1 gRPC-path boot failure reported by operators).
+    #[test]
+    fn compiled_in_identifiers_are_sui_genesis_digests_not_ika_object_ids() {
+        let mainnet = compiled_in_chain_identifier(SuiChainIdentifier::Mainnet).unwrap();
+        let testnet = compiled_in_chain_identifier(SuiChainIdentifier::Testnet).unwrap();
+        assert!(
+            Hex::encode(Base58::decode(&mainnet.base58_encode()).unwrap()).starts_with("35834a8a"),
+            "mainnet expectation must be the Sui mainnet genesis digest (short id 35834a8a)"
+        );
+        assert!(
+            Hex::encode(Base58::decode(&testnet.base58_encode()).unwrap()).starts_with("4c78adac"),
+            "testnet expectation must be the Sui testnet genesis digest (short id 4c78adac)"
+        );
+        assert_ne!(
+            mainnet,
+            ika_types::digests::get_mainnet_chain_identifier(),
+            "the ika mainnet chain identifier (system object ID) is NOT a Sui genesis digest"
+        );
+        assert_ne!(
+            testnet,
+            ika_types::digests::get_testnet_chain_identifier(),
+            "the ika testnet chain identifier (system object ID) is NOT a Sui genesis digest"
+        );
+        assert!(matches!(
+            chain_of_chain_identifier(testnet),
+            SuiChainIdentifier::Testnet
+        ));
+    }
+
+    /// A non-testnet blob checked against Testnet must fail with the SUI
+    /// testnet genesis digest as the expectation — pre-fix, `expected` showed
+    /// the ika system object ID and no legitimate blob could ever match.
+    #[test]
+    fn mismatch_error_expects_the_sui_genesis_digest() {
+        let err = load_and_verify_sui_genesis(FIXTURE, SuiChainIdentifier::Testnet)
+            .expect_err("a local test blob is not the Sui testnet genesis");
+        match err {
+            GenesisError::ChainMismatch { expected, .. } => assert_eq!(
+                expected, SUI_TESTNET_GENESIS_DIGEST_BASE58,
+                "the verifier must expect the Sui testnet genesis checkpoint digest"
+            ),
+            other => panic!("expected ChainMismatch, got {other:?}"),
+        }
+    }
 
     #[test]
     fn loads_genesis_and_derives_chain_identifier_for_custom() {
@@ -406,11 +483,15 @@ mod tests {
     fn compiled_in_identifiers_map_public_chains_only() {
         assert_eq!(
             compiled_in_chain_identifier(SuiChainIdentifier::Mainnet),
-            Some(get_mainnet_chain_identifier())
+            Some(sui_genesis_chain_identifier(
+                SUI_MAINNET_GENESIS_DIGEST_BASE58
+            ))
         );
         assert_eq!(
             compiled_in_chain_identifier(SuiChainIdentifier::Testnet),
-            Some(get_testnet_chain_identifier())
+            Some(sui_genesis_chain_identifier(
+                SUI_TESTNET_GENESIS_DIGEST_BASE58
+            ))
         );
         assert_eq!(
             compiled_in_chain_identifier(SuiChainIdentifier::Devnet),
@@ -429,11 +510,15 @@ mod tests {
         assert_eq!(boot.chain(), SuiChainIdentifier::Custom);
         // The compiled-in constants map back to their chains.
         assert_eq!(
-            chain_of_chain_identifier(get_mainnet_chain_identifier()),
+            chain_of_chain_identifier(sui_genesis_chain_identifier(
+                SUI_MAINNET_GENESIS_DIGEST_BASE58
+            )),
             SuiChainIdentifier::Mainnet
         );
         assert_eq!(
-            chain_of_chain_identifier(get_testnet_chain_identifier()),
+            chain_of_chain_identifier(sui_genesis_chain_identifier(
+                SUI_TESTNET_GENESIS_DIGEST_BASE58
+            )),
             SuiChainIdentifier::Testnet
         );
     }
