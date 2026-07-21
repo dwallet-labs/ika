@@ -900,6 +900,31 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
             // succeed against peers' versions either.
             return Ok(Vec::new());
         };
+        // Divergence guard (issue #1879): an EMPTY frozen table while this
+        // epoch's ready-signal quorum is anchored means the freeze either
+        // hasn't fired yet (attestation built early) or its rows were lost
+        // to a crash window — either way every healthy peer's attestation
+        // WILL carry `ValidatorMpcData` items, so emitting an items list
+        // without them would byte-diverge and pollute the signature
+        // aggregation bucket. Defer signing instead (Err → the sender
+        // warns and retries next tick, the same deferral shape as the
+        // `to_network_key_id_keyed` guard below): the freeze re-fires at a
+        // commit boundary once quorum + grace hold, and a missing
+        // signature aggregates as nothing while a divergent one is poison.
+        // A quorum-less epoch (the pipeline never ran to quorum — also the
+        // off_chain-disabled case, where signals are never recorded)
+        // legitimately emits no `ValidatorMpcData` items, uniformly with
+        // peers.
+        if store.mpc_data_ready_quorum_round()?.is_some()
+            && store.get_frozen_validator_mpc_data_input_set()?.is_empty()
+        {
+            return Err(IkaError::Unknown(format!(
+                "mpc_data ready-signal quorum is anchored for epoch {epoch} but the \
+                 frozen set is empty — deferring handoff attestation build until the \
+                 freeze fires, rather than signing an attestation missing every \
+                 ValidatorMpcData item"
+            )));
+        }
         let effective =
             store.get_effective_reconfig_input_set(next_committee_pubkeys.iter().copied())?;
         // Translate the locally-stored ObjectID-keyed digests into the

@@ -1314,7 +1314,11 @@ pub struct AuthorityEpochTables {
     /// recorded in `epoch_excluded_validators` instead.
     /// Empty until quorum; populated once and never modified within
     /// the epoch (`freeze_mpc_data_if_first` is idempotent on a
-    /// non-empty table).
+    /// non-empty table). Written through the freeze commit's
+    /// `ConsensusCommitOutput` batch — never per-row — so the whole
+    /// partition lands atomically with the commit's processed-markers
+    /// (issue #1829: a partial write latched a shrunken, divergent
+    /// frozen set forever).
     pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
 
     /// Announcers that crossed the freeze gate's "announcement
@@ -3714,7 +3718,11 @@ impl AuthorityPerEpochStore {
             .collect())
     }
 
-    fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
+    fn freeze_mpc_data_if_first(
+        &self,
+        tables: &AuthorityEpochTables,
+        output: &mut ConsensusCommitOutput,
+    ) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
         }
@@ -3771,20 +3779,22 @@ impl AuthorityPerEpochStore {
             excluded_set = ?partition.excluded,
             "ready quorum reached — freezing attestation-validated mpc_data input set (stable carry-forward applied)"
         );
-        for (authority, blob_hash) in &partition.frozen {
-            tables
-                .frozen_validator_mpc_data_input_set
-                .insert(authority, blob_hash)?;
-        }
-        for authority in &partition.excluded {
-            tables.epoch_excluded_validators.insert(authority, &())?;
-        }
         self.metrics
             .dwallet_mpc_data_freeze_epoch
             .set(self.epoch() as i64);
         self.metrics
             .dwallet_mpc_data_excluded_validators
             .set(partition.excluded.len() as i64);
+        // Persist through the commit's batch, NOT per-row inserts: the frozen
+        // + excluded rows must land atomically with this commit's
+        // processed-markers (`last_consensus_stats`). A crash between per-row
+        // inserts left a strict subset latched as frozen forever — the
+        // non-empty-table idempotence guard above stopped the replayed commit
+        // from re-firing, and the shrunken set byte-diverged this validator's
+        // reconfiguration output from the committee's (issue #1829). With the
+        // batch, a crash before the write replays the whole commit and the
+        // freeze re-fires cleanly; after it, the full partition is on disk.
+        output.set_mpc_data_freeze_partition(partition);
         Ok(())
     }
 
@@ -3840,6 +3850,17 @@ impl AuthorityPerEpochStore {
     pub(crate) fn epoch_first_commit_timestamp_ms(&self) -> IkaResult<Option<u64>> {
         self.tables()?
             .epoch_first_commit_timestamp_ms
+            .get(&0)
+            .map_err(IkaError::from)
+    }
+
+    /// The consensus round at which this epoch's mpc_data ready-signal
+    /// stake quorum was first observed (the freeze-grace anchor, written
+    /// with that commit's batch), or `None` if quorum hasn't been reached.
+    /// Consensus-anchored: identical across honest validators.
+    pub(crate) fn mpc_data_ready_quorum_round(&self) -> IkaResult<Option<u64>> {
+        self.tables()?
+            .mpc_data_ready_quorum_round
             .get(&0)
             .map_err(IkaError::from)
     }
@@ -4634,7 +4655,7 @@ impl AuthorityPerEpochStore {
                 let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
                     >= self.protocol_config().mpc_data_freeze_grace_rounds();
                 if full_coverage || grace_elapsed {
-                    self.freeze_mpc_data_if_first(&tables)?;
+                    self.freeze_mpc_data_if_first(&tables, output)?;
                     info!(
                         validator = ?self.name,
                         quorum_round,
@@ -5431,6 +5452,14 @@ pub(crate) struct ConsensusCommitOutput {
     /// (the ready-signal backstop anchor). Set only on the commit observed
     /// first; same atomicity rationale as `mpc_data_ready_quorum_round`.
     epoch_first_commit_timestamp_ms: Option<u64>,
+
+    /// The mpc_data freeze partition decided at this commit's boundary
+    /// (`freeze_mpc_data_if_first`), or `None` when the freeze didn't fire
+    /// at this commit. Written to `frozen_validator_mpc_data_input_set` +
+    /// `epoch_excluded_validators` in the SAME batch as the commit's
+    /// processed-markers: a partially-persisted freeze is a divergent
+    /// (shrunken) frozen set on this validator only (issue #1829).
+    mpc_data_freeze_partition: Option<crate::validator_metadata::FreezePartition>,
 }
 
 impl ConsensusCommitOutput {
@@ -5455,6 +5484,13 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_mpc_data_ready_quorum_round(&mut self, round: u64) {
         self.mpc_data_ready_quorum_round = Some(round);
+    }
+
+    pub(crate) fn set_mpc_data_freeze_partition(
+        &mut self,
+        partition: crate::validator_metadata::FreezePartition,
+    ) {
+        self.mpc_data_freeze_partition = Some(partition);
     }
 
     pub(crate) fn set_epoch_first_commit_timestamp_ms(&mut self, timestamp_ms: u64) {
@@ -5620,6 +5656,19 @@ impl ConsensusCommitOutput {
         }
         if let Some(round) = self.mpc_data_ready_quorum_round {
             batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
+        }
+        if let Some(partition) = self.mpc_data_freeze_partition {
+            batch.insert_batch(
+                &tables.frozen_validator_mpc_data_input_set,
+                partition.frozen,
+            )?;
+            batch.insert_batch(
+                &tables.epoch_excluded_validators,
+                partition
+                    .excluded
+                    .into_iter()
+                    .map(|authority| (authority, ())),
+            )?;
         }
         if let Some(timestamp_ms) = self.epoch_first_commit_timestamp_ms {
             batch.insert_batch(
