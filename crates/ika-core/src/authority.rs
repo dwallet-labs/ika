@@ -29,6 +29,7 @@ use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use sui_macros::fail_point;
 use sui_types::crypto::Signer;
+use sui_types::digests::Digest;
 use sui_types::executable_transaction::VerifiedExecutableTransaction;
 use sui_types::metrics::{BytecodeVerifierMetrics, LimitsMetrics};
 
@@ -204,6 +205,10 @@ pub(crate) struct AuthorityCapabilitiesVotingResults {
     pub(crate) move_contracts_to_upgrade: Vec<(ObjectID, MovePackageDigest)>,
 }
 
+/// One tallied capability-vote group: the protocol-config digest, the set of
+/// Move packages that group votes to upgrade, and the group's aggregated stake.
+pub type ProtocolUpgradeVoteGroup = (Digest, Vec<(ObjectID, MovePackageDigest)>, u64);
+
 /// Trait for AuthorityState, which gets created once per validator (NOT recreated on epoch switch).
 pub trait AuthorityStateTrait: Sync + Send + 'static {
     fn insert_dwallet_mpc_computation_completed_sessions(
@@ -326,6 +331,17 @@ impl AuthorityState {
         prometheus_registry: &Registry,
         config: NodeConfig,
     ) -> Arc<Self> {
+        // The advertised capability range is constant for the process; export
+        // it so fleet dashboards can measure upgrade support directly against
+        // the committee thresholds (see ika_committee_quorum_threshold).
+        epoch_store
+            .metrics
+            .supported_protocol_version_min
+            .set(supported_protocol_versions.min.as_u64() as i64);
+        epoch_store
+            .metrics
+            .supported_protocol_version_max
+            .set(supported_protocol_versions.max.as_u64() as i64);
         Self::check_protocol_version(supported_protocol_versions, epoch_store.protocol_version());
 
         let metrics = Arc::new(AuthorityMetrics::new(prometheus_registry));
@@ -485,17 +501,38 @@ impl AuthorityState {
         epoch_store.clear_override_protocol_upgrade_buffer_stake()
     }
 
-    fn is_protocol_version_supported_v1(
-        proposed_protocol_version: ProtocolVersion,
+    /// The stake required for a protocol upgrade to arm: quorum plus
+    /// `buffer_stake_bps` of f, rounded up (0bps => plain 2f+1 suffices,
+    /// 10000bps => unanimity). SINGLE SOURCE OF TRUTH: consumed by the
+    /// activation decision (`is_protocol_version_supported_v1`) and by the
+    /// `ika_protocol_upgrade_effective_threshold` metric, so the exported
+    /// activation line can never drift from what the tally enforces.
+    pub fn protocol_upgrade_effective_threshold(
         committee: &Committee,
-        capabilities: Vec<AuthorityCapabilitiesV1>,
         mut buffer_stake_bps: u64,
-    ) -> (Option<AuthorityCapabilitiesVotingResults>, bool) {
+    ) -> u64 {
         if buffer_stake_bps > 10000 {
             warn!("clamping buffer_stake_bps to 10000");
             buffer_stake_bps = 10000;
         }
+        let quorum_threshold = committee.quorum_threshold();
+        let f = committee.total_votes() - committee.quorum_threshold();
+        // multiply by buffer_stake_bps / 10000, rounded up.
+        let buffer_stake = (f * buffer_stake_bps).div_ceil(10000);
+        quorum_threshold + buffer_stake
+    }
 
+    /// Group capability votes for `proposed_protocol_version` by
+    /// (protocol-config digest, move contracts) and tally each group's stake,
+    /// in the tally's deterministic sorted order. SINGLE SOURCE OF TRUTH for
+    /// what counts as "supporting stake": the activation decision walks these
+    /// groups in order, the `ika_protocol_upgrade_supporting_stake` metric
+    /// reports the strongest group. `None` when nobody votes for the version.
+    pub fn tally_protocol_upgrade_votes(
+        proposed_protocol_version: ProtocolVersion,
+        committee: &Committee,
+        capabilities: Vec<AuthorityCapabilitiesV1>,
+    ) -> Option<Vec<ProtocolUpgradeVoteGroup>> {
         // For each validator, gather the protocol version and system packages that it would like
         // to upgrade to in the next epoch.
         let mut desired_upgrades: Vec<_> = capabilities
@@ -518,51 +555,73 @@ impl AuthorityState {
             .collect();
 
         if desired_upgrades.is_empty() {
-            return (None, true);
+            return None;
         }
 
         // There can only be one set of votes that have a majority, find one if it exists.
         desired_upgrades.sort();
-        let res = desired_upgrades
-            .into_iter()
-            .chunk_by(|(digest, move_contracts_to_upgrade, _authority)| {
-                (*digest, move_contracts_to_upgrade.clone())
-            })
-            .into_iter()
-            .find_map(|((digest, move_contracts_to_upgrade), group)| {
-                let mut stake_aggregator: StakeAggregator<(), true> =
-                    StakeAggregator::new(Arc::new(committee.clone()));
-
-                for (_, _, authority) in group {
-                    stake_aggregator.insert_generic(authority, ());
-                }
-
-                let total_votes = stake_aggregator.total_votes();
-                let quorum_threshold = committee.quorum_threshold();
-                let f = committee.total_votes() - committee.quorum_threshold();
-
-                // multiply by buffer_stake_bps / 10000, rounded up.
-                let buffer_stake = (f * buffer_stake_bps).div_ceil(10000);
-                let effective_threshold = quorum_threshold + buffer_stake;
-                let has_support = total_votes >= effective_threshold;
-
-                info!(
-                    protocol_config_digest = ?digest,
-                    ?total_votes,
-                    ?quorum_threshold,
-                    ?buffer_stake_bps,
-                    ?effective_threshold,
-                    ?proposed_protocol_version,
-                    ?move_contracts_to_upgrade,
-                    has_support,
-                    "checking support for upgrade"
-                );
-
-                has_support.then_some(AuthorityCapabilitiesVotingResults {
-                    protocol_version: proposed_protocol_version,
-                    move_contracts_to_upgrade,
+        Some(
+            desired_upgrades
+                .into_iter()
+                .chunk_by(|(digest, move_contracts_to_upgrade, _authority)| {
+                    (*digest, move_contracts_to_upgrade.clone())
                 })
-            });
+                .into_iter()
+                .map(|((digest, move_contracts_to_upgrade), group)| {
+                    let mut stake_aggregator: StakeAggregator<(), true> =
+                        StakeAggregator::new(Arc::new(committee.clone()));
+
+                    for (_, _, authority) in group {
+                        stake_aggregator.insert_generic(authority, ());
+                    }
+
+                    (
+                        digest,
+                        move_contracts_to_upgrade,
+                        stake_aggregator.total_votes(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn is_protocol_version_supported_v1(
+        proposed_protocol_version: ProtocolVersion,
+        committee: &Committee,
+        capabilities: Vec<AuthorityCapabilitiesV1>,
+        buffer_stake_bps: u64,
+    ) -> (Option<AuthorityCapabilitiesVotingResults>, bool) {
+        let effective_threshold =
+            Self::protocol_upgrade_effective_threshold(committee, buffer_stake_bps);
+
+        let Some(vote_groups) =
+            Self::tally_protocol_upgrade_votes(proposed_protocol_version, committee, capabilities)
+        else {
+            return (None, true);
+        };
+
+        let res =
+            vote_groups
+                .into_iter()
+                .find_map(|(digest, move_contracts_to_upgrade, total_votes)| {
+                    let has_support = total_votes >= effective_threshold;
+
+                    info!(
+                        protocol_config_digest = ?digest,
+                        ?total_votes,
+                        ?buffer_stake_bps,
+                        ?effective_threshold,
+                        ?proposed_protocol_version,
+                        ?move_contracts_to_upgrade,
+                        has_support,
+                        "checking support for upgrade"
+                    );
+
+                    has_support.then_some(AuthorityCapabilitiesVotingResults {
+                        protocol_version: proposed_protocol_version,
+                        move_contracts_to_upgrade,
+                    })
+                });
         (res, false)
     }
 

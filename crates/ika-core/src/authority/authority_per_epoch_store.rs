@@ -1846,6 +1846,15 @@ impl AuthorityPerEpochStore {
         let epoch_start_configuration = Arc::new(epoch_start_configuration);
         metrics.current_epoch.set(epoch_id as i64);
         metrics
+            .committee_quorum_threshold
+            .set(committee.quorum_threshold() as i64);
+        metrics
+            .committee_validity_threshold
+            .set(committee.validity_threshold() as i64);
+        metrics
+            .committee_total_stake
+            .set(committee.total_votes() as i64);
+        metrics
             .current_voting_right
             .set(committee.weight(&name) as i64);
         // EpochMetrics is node-lifetime (shared across epoch stores), so the
@@ -2177,6 +2186,47 @@ impl AuthorityPerEpochStore {
         self.metrics
             .effective_buffer_stake
             .set(self.get_effective_buffer_stake_bps() as i64);
+        self.update_protocol_upgrade_metrics();
+    }
+
+    /// Export the protocol-upgrade activation line and the current support
+    /// tally, computed by the SAME shared functions the activation decision
+    /// uses (`AuthorityState::protocol_upgrade_effective_threshold` /
+    /// `tally_protocol_upgrade_votes`) - no duplicated formula to drift.
+    /// Supporting stake is the strongest same-(digest, contracts) vote group
+    /// for the next protocol version, exactly the quantity the decision
+    /// compares against the threshold. Called at epoch-store open, on
+    /// buffer-override changes, and on every capability receipt - cheap
+    /// (committee-sized scan of a per-epoch table).
+    fn update_protocol_upgrade_metrics(&self) {
+        let committee = self.committee();
+        let effective_threshold =
+            crate::authority::AuthorityState::protocol_upgrade_effective_threshold(
+                committee,
+                self.get_effective_buffer_stake_bps(),
+            );
+        self.metrics
+            .protocol_upgrade_effective_threshold
+            .set(effective_threshold as i64);
+        let Ok(capabilities) = self.get_capabilities_v1() else {
+            return;
+        };
+        let supporting = crate::authority::AuthorityState::tally_protocol_upgrade_votes(
+            self.protocol_version() + 1,
+            committee,
+            capabilities,
+        )
+        .map(|groups| {
+            groups
+                .into_iter()
+                .map(|(_, _, stake)| stake)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+        self.metrics
+            .protocol_upgrade_supporting_stake
+            .set(supporting as i64);
     }
 
     pub fn get_effective_buffer_stake_bps(&self) -> u64 {
@@ -2211,6 +2261,7 @@ impl AuthorityPerEpochStore {
         tables
             .authority_capabilities_v1
             .insert(authority, capabilities)?;
+        self.update_protocol_upgrade_metrics();
         Ok(())
     }
 

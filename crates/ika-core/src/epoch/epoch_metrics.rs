@@ -59,6 +59,31 @@ pub struct EpochMetrics {
 
     /// Buffer stake current in effect for this epoch
     pub effective_buffer_stake: IntGauge,
+    /// The active committee's quorum threshold (2f+1 in stake units). With
+    /// unit stake this pairs with total_stake to draw activation lines
+    /// (e.g. protocol upgrades need quorum + buffer, see
+    /// ika_effective_buffer_stake) without dashboards re-deriving BFT math.
+    pub committee_quorum_threshold: IntGauge,
+    /// The active committee's validity threshold (f+1 in stake units).
+    pub committee_validity_threshold: IntGauge,
+    /// The active committee's total voting stake (3f+1-ish; unit stake =>
+    /// committee size).
+    pub committee_total_stake: IntGauge,
+    /// The protocol-version range THIS binary advertises in its capability
+    /// votes (constant per process). Fleet aggregation of `..._max` against
+    /// committee_quorum_threshold + ika_effective_buffer_stake shows exactly
+    /// how much stake still has to upgrade before the next version arms.
+    pub supported_protocol_version_min: IntGauge,
+    pub supported_protocol_version_max: IntGauge,
+    /// The stake required to arm the next protocol version:
+    /// quorum_threshold + ceil(f * buffer_stake_bps / 10000). THE activation
+    /// line - compare protocol_upgrade_supporting_stake against it.
+    pub protocol_upgrade_effective_threshold: IntGauge,
+    /// Stake whose consensus-recorded capability votes advertise support for
+    /// a version ABOVE the current protocol version. When this crosses
+    /// protocol_upgrade_effective_threshold, the upgrade arms and activates
+    /// at the next epoch boundary.
+    pub protocol_upgrade_supporting_stake: IntGauge,
 
     /// Epoch of the most recent mpc_data freeze observed locally. Alert when
     /// it lags `current_epoch` well past the freeze grace window — a freeze
@@ -182,6 +207,48 @@ impl EpochMetrics {
                 "ika_dwallet_mpc_data_freeze_epoch",
                 "Epoch of the most recent mpc_data freeze observed locally",
                 registry
+            )
+            .unwrap(),
+            committee_quorum_threshold: register_int_gauge_with_registry!(
+                "ika_committee_quorum_threshold",
+                "Active committee quorum threshold (2f+1) in stake units",
+                registry,
+            )
+            .unwrap(),
+            committee_validity_threshold: register_int_gauge_with_registry!(
+                "ika_committee_validity_threshold",
+                "Active committee validity threshold (f+1) in stake units",
+                registry,
+            )
+            .unwrap(),
+            committee_total_stake: register_int_gauge_with_registry!(
+                "ika_committee_total_stake",
+                "Active committee total voting stake",
+                registry,
+            )
+            .unwrap(),
+            supported_protocol_version_min: register_int_gauge_with_registry!(
+                "ika_supported_protocol_version_min",
+                "Lowest protocol version this binary advertises support for",
+                registry,
+            )
+            .unwrap(),
+            supported_protocol_version_max: register_int_gauge_with_registry!(
+                "ika_supported_protocol_version_max",
+                "Highest protocol version this binary advertises support for",
+                registry,
+            )
+            .unwrap(),
+            protocol_upgrade_effective_threshold: register_int_gauge_with_registry!(
+                "ika_protocol_upgrade_effective_threshold",
+                "Stake required to arm the next protocol version (quorum + buffer)",
+                registry,
+            )
+            .unwrap(),
+            protocol_upgrade_supporting_stake: register_int_gauge_with_registry!(
+                "ika_protocol_upgrade_supporting_stake",
+                "Stake whose capability votes support a version above the current one",
+                registry,
             )
             .unwrap(),
             dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
