@@ -2190,40 +2190,40 @@ impl AuthorityPerEpochStore {
     }
 
     /// Export the protocol-upgrade activation line and the current support
-    /// tally: effective_threshold = quorum + ceil(f * buffer_bps / 10000)
-    /// (the same formula `is_protocol_version_supported_v1` enforces), and
-    /// supporting_stake = stake whose consensus-recorded capabilities
-    /// advertise ANY version above the current protocol version. Called at
-    /// epoch-store open, on buffer-override changes, and on every capability
-    /// receipt - cheap (committee-sized scan of a per-epoch table).
+    /// tally, computed by the SAME shared functions the activation decision
+    /// uses (`AuthorityState::protocol_upgrade_effective_threshold` /
+    /// `tally_protocol_upgrade_votes`) - no duplicated formula to drift.
+    /// Supporting stake is the strongest same-(digest, contracts) vote group
+    /// for the next protocol version, exactly the quantity the decision
+    /// compares against the threshold. Called at epoch-store open, on
+    /// buffer-override changes, and on every capability receipt - cheap
+    /// (committee-sized scan of a per-epoch table).
     fn update_protocol_upgrade_metrics(&self) {
         let committee = self.committee();
-        let quorum = committee.quorum_threshold();
-        let f = committee.total_votes() - quorum;
-        let buffer = (f * self.get_effective_buffer_stake_bps()).div_ceil(10000);
+        let effective_threshold =
+            crate::authority::AuthorityState::protocol_upgrade_effective_threshold(
+                committee,
+                self.get_effective_buffer_stake_bps(),
+            );
         self.metrics
             .protocol_upgrade_effective_threshold
-            .set((quorum + buffer) as i64);
-        let current = self.protocol_version();
+            .set(effective_threshold as i64);
         let Ok(capabilities) = self.get_capabilities_v1() else {
             return;
         };
-        let supporting: u64 = capabilities
-            .iter()
-            .filter(|cap| {
-                cap.supported_protocol_versions
-                    .versions
-                    .iter()
-                    .any(|(v, _)| *v > current)
-            })
-            .filter_map(|cap| {
-                committee
-                    .voting_rights
-                    .iter()
-                    .find(|(name, _)| *name == cap.authority)
-                    .map(|(_, stake)| *stake)
-            })
-            .sum();
+        let supporting = crate::authority::AuthorityState::tally_protocol_upgrade_votes(
+            self.protocol_version() + 1,
+            committee,
+            capabilities,
+        )
+        .map(|groups| {
+            groups
+                .into_iter()
+                .map(|(_, _, stake)| stake)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
         self.metrics
             .protocol_upgrade_supporting_stake
             .set(supporting as i64);
