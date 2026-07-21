@@ -1846,6 +1846,15 @@ impl AuthorityPerEpochStore {
         let epoch_start_configuration = Arc::new(epoch_start_configuration);
         metrics.current_epoch.set(epoch_id as i64);
         metrics
+            .committee_quorum_threshold
+            .set(committee.quorum_threshold() as i64);
+        metrics
+            .committee_validity_threshold
+            .set(committee.validity_threshold() as i64);
+        metrics
+            .committee_total_stake
+            .set(committee.total_votes() as i64);
+        metrics
             .current_voting_right
             .set(committee.weight(&name) as i64);
         // EpochMetrics is node-lifetime (shared across epoch stores), so the

@@ -59,6 +59,16 @@ pub struct EpochMetrics {
 
     /// Buffer stake current in effect for this epoch
     pub effective_buffer_stake: IntGauge,
+    /// The active committee's quorum threshold (2f+1 in stake units). With
+    /// unit stake this pairs with total_stake to draw activation lines
+    /// (e.g. protocol upgrades need quorum + buffer, see
+    /// ika_effective_buffer_stake) without dashboards re-deriving BFT math.
+    pub committee_quorum_threshold: IntGauge,
+    /// The active committee's validity threshold (f+1 in stake units).
+    pub committee_validity_threshold: IntGauge,
+    /// The active committee's total voting stake (3f+1-ish; unit stake =>
+    /// committee size).
+    pub committee_total_stake: IntGauge,
 
     /// Epoch of the most recent mpc_data freeze observed locally. Alert when
     /// it lags `current_epoch` well past the freeze grace window — a freeze
@@ -182,6 +192,24 @@ impl EpochMetrics {
                 "ika_dwallet_mpc_data_freeze_epoch",
                 "Epoch of the most recent mpc_data freeze observed locally",
                 registry
+            )
+            .unwrap(),
+            committee_quorum_threshold: register_int_gauge_with_registry!(
+                "ika_committee_quorum_threshold",
+                "Active committee quorum threshold (2f+1) in stake units",
+                registry,
+            )
+            .unwrap(),
+            committee_validity_threshold: register_int_gauge_with_registry!(
+                "ika_committee_validity_threshold",
+                "Active committee validity threshold (f+1) in stake units",
+                registry,
+            )
+            .unwrap(),
+            committee_total_stake: register_int_gauge_with_registry!(
+                "ika_committee_total_stake",
+                "Active committee total voting stake",
+                registry,
             )
             .unwrap(),
             dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
