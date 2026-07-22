@@ -157,6 +157,15 @@ pub struct DWalletMPCMetrics {
     /// validators — tune alerts per reason.
     pub(crate) network_key_instantiation_failures_total: IntCounterVec,
 
+    /// Number of prior-handoff-cert `ValidatorMpcData` blobs (∩ current
+    /// committee) missing from the local perpetual store while the manager
+    /// sources the current epoch's validator MPC key bundle. Non-zero means
+    /// key ingestion is deferred and the peer-blob fetcher's prior-cert
+    /// repair is fetching the missing blobs; 0 once the bundle assembles.
+    /// Sustained non-zero = the wedge of issue #1881 (no advances, every
+    /// session deferred) — previously visible only in logs.
+    pub(crate) prior_cert_blobs_missing: IntGauge,
+
     /// Number of distinct authorities this validator has recorded as malicious
     /// in the current epoch (quorum-agreed; see
     /// `DWalletMPCManager::record_malicious_actors`). A scrapable signal that
@@ -517,6 +526,12 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_network_key_instantiation_failures_total",
                 "Network-key instantiation failures by reason",
                 &["reason"],
+                registry
+            )
+            .unwrap(),
+            prior_cert_blobs_missing: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_prior_cert_blobs_missing",
+                "Prior-handoff-cert mpc_data blobs missing from the local perpetual store while sourcing the current epoch's validator MPC keys (non-zero = key ingestion deferred; sustained non-zero = wedged ingest)",
                 registry
             )
             .unwrap(),

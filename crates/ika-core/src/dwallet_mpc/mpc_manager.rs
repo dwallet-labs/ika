@@ -153,7 +153,12 @@ enum PriorCertKeysOutcome {
     /// Transient miss with the cert PRESENT (store read error, perpetual
     /// handle not installed, blobs still propagating). Retry next service
     /// iteration WITHOUT falling back to the channel — see the divergence
-    /// note at the call site.
+    /// note at the call site. The repair action behind the retry is the
+    /// peer-blob fetcher's prior-cert pass
+    /// (`fetch_missing_prior_cert_mpc_data_blobs`), which fetches missing
+    /// cert-pinned blobs from committee peers into the perpetual store —
+    /// without it a store that never held a long-dark member's blob would
+    /// retry forever (issue #1881).
     RetryLater,
 }
 
@@ -1319,6 +1324,7 @@ impl DWalletMPCManager {
         });
         match assembly {
             OffChainMpcDataAssembly::Complete(bundles) => {
+                self.dwallet_mpc_metrics.prior_cert_blobs_missing.set(0);
                 self.validator_mpc_keys_by_party_id =
                     get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
                 self.current_epoch_keys_ingested = true;
@@ -1333,6 +1339,13 @@ impl DWalletMPCManager {
                 Ok(PriorCertKeysOutcome::Ingested)
             }
             OffChainMpcDataAssembly::Incomplete { missing } => {
+                // Surface the deferral without log access (issue #1881): the
+                // gauge holds the missing-blob count until the peer-blob
+                // fetcher's prior-cert repair lands the blobs and assembly
+                // completes (which resets it to 0 above).
+                self.dwallet_mpc_metrics
+                    .prior_cert_blobs_missing
+                    .set(missing.len() as i64);
                 if self.should_warn_prior_cert_keys() {
                     warn!(
                         prior_epoch,
