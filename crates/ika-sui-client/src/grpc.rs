@@ -256,13 +256,19 @@ impl SuiTransport for SuiGrpcClient {
         let mut rpc = self.rpc.clone();
         let mut request = proto::GetEpochRequest::default();
         request.epoch = Some(epoch);
+        // NotFound must stay distinguishable (`rpc_status_err`, not `rpc_err`):
+        // a source that no longer serves this epoch's record ("Epoch N not
+        // found" — a pruned fullnode, or sui-state-direct serving current state
+        // only) is a determinate condition the committee ratchet routes to its
+        // pruned-boundary fallback chain. Collapsing it into `Network` made the
+        // ratchet retry it forever, invisibly.
         let response = rpc
             .inner_mut()
             .clone()
             .ledger_client()
             .get_epoch(request)
             .await
-            .map_err(Self::rpc_err)?
+            .map_err(Self::rpc_status_err)?
             .into_inner();
         let info = response
             .epoch

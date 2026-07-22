@@ -29,6 +29,16 @@ pub struct OcsMetrics {
     /// `allow_unverified_committee_fallback` is on). Security-critical: each
     /// increment is a link of the proof chain trusted on the endpoint's word.
     pub unverified_committee_fallback_total: IntCounter,
+    /// 1 while the last completed committee-ratchet attempt failed, 0 once one
+    /// succeeds. The direct health signal for a node that cannot advance its
+    /// committee head — e.g. booted against a source that serves no historical
+    /// epochs — which otherwise presents only as absent downstream series
+    /// while every verified read fails `missing_committee`.
+    pub ratchet_stalled: IntGauge,
+    /// Committee-ratchet attempt failures by reason (`transport` is the only
+    /// retryable one; every other reason is determinate and needs the operator
+    /// to act — typically re-anchor against a full-retention source).
+    pub ratchet_failures_total: IntCounterVec, // labels: ["reason"]
 
     // Pusher (sui-state-direct)
     pub pusher_cursor_seq: IntGauge,
@@ -88,6 +98,19 @@ impl OcsMetrics {
             unverified_committee_fallback_total: register_int_counter_with_registry!(
                 "ika_ocs_unverified_committee_fallback_total",
                 "SECURITY-CRITICAL: committee[E+1] installed via the unverified direct-fetch prune fallback (trust degraded to the endpoint's word)",
+                registry,
+            )
+            .unwrap(),
+            ratchet_stalled: register_int_gauge_with_registry!(
+                "ika_ocs_ratchet_stalled",
+                "1 while the last completed Sui-committee-ratchet attempt failed, 0 once one succeeds; a persistent 1 means verified reads past the persisted anchor cannot work (re-anchor against a full-retention source)",
+                registry,
+            )
+            .unwrap(),
+            ratchet_failures_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_ratchet_failures_total",
+                "Sui-committee-ratchet attempt failures by reason (only `transport` is retryable; every other reason is determinate and needs operator action)",
+                &["reason"],
                 registry,
             )
             .unwrap(),

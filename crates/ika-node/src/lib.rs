@@ -815,9 +815,29 @@ impl IkaNode {
                         head_epoch = stack.ratchet.committees().head_epoch(),
                         "Sui committee ratchet caught up before binding p2p"
                     ),
+                    // A determinate failure — typically the configured source
+                    // serves no history back to the persisted anchor (a pruned
+                    // fullnode, or an anchor-less first boot against
+                    // sui-state-direct) — cannot be healed by the periodic
+                    // retry: without a current committee every verified read
+                    // fails `missing_committee` and the whole MPC stack sits
+                    // dead behind an invisible retry loop. Fail boot loudly
+                    // instead (same posture as the peer-only boot ratchet);
+                    // at this point the node holds no in-flight duties, and a
+                    // crash loop is visible to supervisors where the zombie
+                    // was not.
+                    Err(e) if !e.is_retryable() => {
+                        return Err(anyhow!(
+                            "initial Sui committee ratchet hit a permanent error that retrying \
+                             cannot heal; boot once against a full-retention Sui RPC (or \
+                             configure a `sui_checkpoint_archive`) so the persisted committee \
+                             anchor catches up, then switch back to the pruned source: {e}"
+                        ));
+                    }
                     Err(e) => warn!(
                         error = ?e,
-                        "initial ratchet to current epoch failed; periodic ratchet will retry"
+                        "initial ratchet to current epoch failed (transient); periodic ratchet \
+                         will retry"
                     ),
                 }
                 unpack(stack)
@@ -893,11 +913,25 @@ impl IkaNode {
             if let Some(receiver) = stack.changeset_receiver.take() {
                 tokio::spawn(async move { receiver.run().await });
             }
-            if let Err(e) = stack.ratchet.ratchet_to_current_epoch().await {
-                warn!(
+            match stack.ratchet.ratchet_to_current_epoch().await {
+                Ok(()) => {}
+                // Same posture as the sui-state-direct and peer-only boot
+                // ratchets: a determinate failure means verified reads can
+                // never work past the persisted anchor, so fail boot loudly
+                // rather than leaving the MPC stack dead behind a retry loop.
+                Err(e) if !e.is_retryable() => {
+                    return Err(anyhow!(
+                        "initial Sui committee ratchet (sui-state-mirrored) hit a permanent \
+                         error that retrying cannot heal; boot once against a full-retention \
+                         Sui RPC (or configure a `sui_checkpoint_archive`) so the persisted \
+                         committee anchor catches up: {e}"
+                    ));
+                }
+                Err(e) => warn!(
                     error = ?e,
-                    "initial ratchet to current epoch (sui-state-mirrored) failed; periodic ratchet will retry"
-                );
+                    "initial ratchet to current epoch (sui-state-mirrored) failed (transient); \
+                     periodic ratchet will retry"
+                ),
             }
             reader_opt = Some(stack.reader);
             ratchet_opt = Some(stack.ratchet);
@@ -922,8 +956,23 @@ impl IkaNode {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
                 loop {
                     tick.tick().await;
-                    if let Err(e) = ratchet.ratchet_to_current_epoch().await {
-                        warn!(error = ?e, "Sui committee ratchet failed; will retry");
+                    match ratchet.ratchet_to_current_epoch().await {
+                        Ok(()) => {}
+                        // Mid-run we never tear the node down (it may hold live
+                        // consensus/MPC duties its in-memory state can still
+                        // serve), but a determinate failure is an operator
+                        // problem, not a transient: escalate the log and rely
+                        // on `ika_ocs_ratchet_stalled` (set inside the ratchet)
+                        // for alerting.
+                        Err(e) if !e.is_retryable() => error!(
+                            error = ?e,
+                            "Sui committee ratchet hit a permanent error retrying cannot heal \
+                             (ika_ocs_ratchet_stalled=1); verified Sui reads past the persisted \
+                             anchor will keep failing until the operator re-anchors — boot once \
+                             against a full-retention Sui RPC or configure a \
+                             `sui_checkpoint_archive`"
+                        ),
+                        Err(e) => warn!(error = ?e, "Sui committee ratchet failed; will retry"),
                     }
                 }
             });

@@ -369,7 +369,7 @@ mod tests {
     use std::sync::Barrier;
 
     use sui_types::committee::{Committee, ProtocolVersion};
-    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::crypto::{AuthorityKeyPair, KeypairTraits, get_key_pair};
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointContents, CheckpointSequenceNumber, CheckpointSummary, EndOfEpochData,
@@ -714,5 +714,64 @@ mod tests {
             Some(2),
             "persisted head must not regress on a staggered lower install"
         );
+    }
+
+    /// The persisted anchor is a *verification root*, so a corrupted or
+    /// hand-edited anchor must fail CLOSED. Tampering the stored transition
+    /// summary (replacing it with one signed by a foreign committee) makes the
+    /// store reopen — the head still resolves, from the forged summary — but
+    /// every genuine current-epoch summary then fails BLS verification
+    /// (`BadSignature`, terminal): the forged root can misdirect derivation,
+    /// yet nothing real ever verifies against it, and nothing is accepted
+    /// silently.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tampered_persisted_anchor_fails_closed() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        {
+            let store = CommitteeStore::open(
+                tables.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
+            )
+            .unwrap();
+            for epoch in 0..=1u64 {
+                let committee_e = committee_at(&base, epoch);
+                store
+                    .install_next_from_summary(&signed_end_of_epoch(&committee_e, &keys, epoch))
+                    .unwrap();
+            }
+            assert_eq!(store.head_epoch(), 2);
+        }
+
+        // Hand-edit the anchor: overwrite the epoch-1 transition summary with
+        // one signed by a DIFFERENT (attacker) committee, so committee[2] now
+        // derives to the attacker's set. `new_simple_test_committee` is
+        // fixed-seed (it would reproduce the REAL keys), so the attacker's
+        // keys come from the OS RNG.
+        let attacker_keys: Vec<AuthorityKeyPair> = (0..4)
+            .map(|_| get_key_pair::<AuthorityKeyPair>().1)
+            .collect();
+        let attacker = Committee::new_for_testing_with_normalized_voting_power(
+            1,
+            attacker_keys
+                .iter()
+                .map(|key| (key.public().into(), 1))
+                .collect(),
+        );
+        let forged = signed_end_of_epoch(&attacker, &attacker_keys, 1);
+        tables.sui_committee_summaries.insert(&1, &forged).unwrap();
+
+        let reopened = CommitteeStore::open(tables, None).unwrap();
+        assert_eq!(reopened.head_epoch(), 2);
+
+        // A genuine summary signed by the REAL committee[2] must not verify
+        // against the tampered chain — fail closed, never silent acceptance.
+        let genuine = signed_end_of_epoch(&committee_at(&base, 2), &keys, 2);
+        match reopened.verify_summary(genuine) {
+            Err(SummaryVerifyError::BadSignature { epoch: 2, .. }) => {}
+            Ok(_) => panic!("a tampered anchor must not verify genuine summaries"),
+            Err(other) => panic!("expected a terminal BadSignature, got {other:?}"),
+        }
     }
 }

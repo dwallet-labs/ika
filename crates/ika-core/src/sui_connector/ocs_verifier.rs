@@ -41,11 +41,12 @@ pub enum OcsError {
     #[error("checkpoint {0} is not end-of-epoch")]
     NotEndOfEpoch(CheckpointSequenceNumber),
     #[error(
-        "proof chain broken at epoch {epoch}: the end-of-epoch checkpoint is pruned upstream (and \
-         absent from any configured checkpoint archive) so the next committee cannot be \
-         BLS-verified; configure a `sui_checkpoint_archive` that retains this epoch's \
-         end-of-epoch checkpoint, or set allow_unverified_committee_fallback to accept degraded \
-         trust"
+        "proof chain broken at epoch {epoch}: the epoch record or its end-of-epoch checkpoint is \
+         pruned upstream (and absent from any configured checkpoint archive) so the next \
+         committee cannot be BLS-verified from the persisted anchor. Remediation: boot once \
+         against a full-retention Sui RPC so the persisted committee anchor catches up, \
+         configure a `sui_checkpoint_archive` that retains this epoch's end-of-epoch \
+         checkpoint, or set allow_unverified_committee_fallback to accept degraded trust"
     )]
     ProofChainBroken { epoch: u64 },
     #[error(
@@ -83,6 +84,50 @@ impl OcsError {
     /// rather than spin forever against an unhealable condition.
     pub fn is_retryable(&self) -> bool {
         matches!(self, OcsError::Transport(_))
+    }
+
+    /// Bounded label for `OcsMetrics::ratchet_failures_total`.
+    pub fn metric_reason(&self) -> &'static str {
+        match self {
+            OcsError::Transport(_) => "transport",
+            OcsError::MissingCommittee(_) => "missing_committee",
+            OcsError::BadCheckpointSig(..) => "bad_checkpoint_sig",
+            OcsError::NotEndOfEpoch(_) => "not_end_of_epoch",
+            OcsError::ProofChainBroken { .. } => "proof_chain_broken",
+            OcsError::FallbackEpochMismatch { .. } | OcsError::RatchetEpochMismatch { .. } => {
+                "epoch_mismatch"
+            }
+            OcsError::Ika(_) => "store",
+        }
+    }
+}
+
+/// Map one committee-transition install onto the ratchet's error surface.
+/// `Installed(E)` is the only success; a checkpoint served at an epoch
+/// boundary that is not the next transition means the chain the source
+/// presented is inconsistent with the verified head — a determinate
+/// `NotEndOfEpoch` at `seq`.
+fn installed_epoch(
+    result: Result<CommitteeTransition, CommitteeTransitionError>,
+    seq: CheckpointSequenceNumber,
+) -> Result<u64, OcsError> {
+    match result {
+        Ok(CommitteeTransition::Installed(epoch)) => Ok(epoch),
+        Ok(CommitteeTransition::NotNextTransition) => Err(OcsError::NotEndOfEpoch(seq)),
+        Err(CommitteeTransitionError::MissingCommittee(epoch)) => {
+            Err(OcsError::MissingCommittee(epoch))
+        }
+        Err(
+            CommitteeTransitionError::BadSignature { error, .. }
+            | CommitteeTransitionError::Extract { error, .. },
+        ) => Err(OcsError::BadCheckpointSig(seq, error)),
+        Err(CommitteeTransitionError::EpochMismatch { expected, got }) => {
+            Err(OcsError::RatchetEpochMismatch {
+                requested: expected,
+                returned: got,
+            })
+        }
+        Err(CommitteeTransitionError::Store(e)) => Err(e.into()),
     }
 }
 
@@ -183,33 +228,12 @@ impl OcsVerifyingClient {
                 .fetch_checkpoint(seq)
                 .await
                 .map_err(|e| OcsError::Ika(format!("archive fetch checkpoint {seq}: {e}")))?;
-            match self.committees.install_next_from_summary(&summary) {
-                Ok(CommitteeTransition::Installed(epoch)) => {
-                    info!(epoch, seq, "cold-bootstrapped Sui committee from archive");
-                }
-                // `epochs.json[head]` is not epoch `head`'s end-of-epoch
-                // checkpoint — the enumeration is inconsistent with the verified
-                // chain (gapped/reordered), so we cannot verify past this point.
-                Ok(CommitteeTransition::NotNextTransition) => {
-                    return Err(OcsError::NotEndOfEpoch(seq));
-                }
-                Err(CommitteeTransitionError::MissingCommittee(e)) => {
-                    return Err(OcsError::MissingCommittee(e));
-                }
-                Err(
-                    CommitteeTransitionError::BadSignature { error, .. }
-                    | CommitteeTransitionError::Extract { error, .. },
-                ) => {
-                    return Err(OcsError::BadCheckpointSig(seq, error));
-                }
-                Err(CommitteeTransitionError::EpochMismatch { expected, got }) => {
-                    return Err(OcsError::RatchetEpochMismatch {
-                        requested: expected,
-                        returned: got,
-                    });
-                }
-                Err(CommitteeTransitionError::Store(e)) => return Err(e.into()),
-            }
+            // `epochs.json[head]` not being epoch `head`'s end-of-epoch
+            // checkpoint means the enumeration is inconsistent with the
+            // verified chain (gapped/reordered) — `installed_epoch` surfaces
+            // that as `NotEndOfEpoch`, so we cannot verify past this point.
+            let epoch = installed_epoch(self.committees.install_next_from_summary(&summary), seq)?;
+            info!(epoch, seq, "cold-bootstrapped Sui committee from archive");
         }
     }
 
@@ -234,6 +258,28 @@ impl OcsVerifyingClient {
                 return Ok(());
             }
         };
+        // Health signal around the actual attempt (the coalesced early return
+        // above must not clear a stall another caller is observing): stalled
+        // is 1 while the last completed ratchet attempt failed, 0 once one
+        // succeeds. This is what makes a wedged ratchet — e.g. a boot against
+        // a source that serves no historical epochs — visible to alerting
+        // instead of presenting only as absent downstream series.
+        let result = self.ratchet_locked().await;
+        match &result {
+            Ok(()) => self.metrics.ratchet_stalled.set(0),
+            Err(e) => {
+                self.metrics.ratchet_stalled.set(1);
+                self.metrics
+                    .ratchet_failures_total
+                    .with_label_values(&[e.metric_reason()])
+                    .inc();
+            }
+        }
+        result
+    }
+
+    /// The walk itself; the caller holds `ratchet_lock`.
+    async fn ratchet_locked(&self) -> Result<(), OcsError> {
         // Cold-bootstrap once from the archive (if configured): walk the
         // committee chain genesis -> latest purely from the object store before
         // the transport walk below, BLS-verifying every summary from genesis
@@ -266,105 +312,28 @@ impl OcsVerifyingClient {
             if head >= target {
                 break;
             }
-            let last_seq = self.transport.last_checkpoint_of_epoch(head).await?;
+            // Both boundary reads can come back `NotFound` on a source that no
+            // longer serves epoch `head`: the epoch *record* itself (a pruned
+            // fullnode or sui-state-direct, which serves current state only —
+            // "Epoch N not found"), or the end-of-epoch *checkpoint*. Either
+            // way the transition can't be verified from this source, which is
+            // determinate for it — so both route to the same fallback chain
+            // instead of surfacing as a retryable transport error the callers
+            // would spin on forever.
+            let last_seq = match self.transport.last_checkpoint_of_epoch(head).await {
+                Ok(seq) => seq,
+                Err(TransportError::NotFound(reason)) => {
+                    self.pruned_boundary_fallback(head, target, None, &reason)
+                        .await?;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
             let data = match self.transport.get_full_checkpoint(last_seq).await {
                 Ok(d) => d,
                 Err(TransportError::NotFound(reason)) => {
-                    // Verified fallback first: the end-of-epoch checkpoint was
-                    // pruned upstream, but a checkpoint archive may still retain
-                    // it. Fetch + BLS-verify against committee[head] + install —
-                    // identical trust to the primary path. The archive is
-                    // untrusted: a forged/corrupt summary fails verification here
-                    // (hard error, fail-closed), while a mere fetch miss falls
-                    // through to the next fallback.
-                    if let Some(archive) = &self.archive {
-                        match archive.fetch_checkpoint(last_seq).await {
-                            Ok((summary, _contents)) => {
-                                match self.committees.install_next_from_summary(&summary) {
-                                    Ok(CommitteeTransition::Installed(epoch)) => {
-                                        info!(
-                                            epoch,
-                                            last_seq,
-                                            "ratcheted Sui committee (verified archive fallback)"
-                                        );
-                                        continue;
-                                    }
-                                    Ok(CommitteeTransition::NotNextTransition) => {
-                                        return Err(OcsError::NotEndOfEpoch(last_seq));
-                                    }
-                                    Err(CommitteeTransitionError::MissingCommittee(e)) => {
-                                        return Err(OcsError::MissingCommittee(e));
-                                    }
-                                    Err(
-                                        CommitteeTransitionError::BadSignature { error, .. }
-                                        | CommitteeTransitionError::Extract { error, .. },
-                                    ) => {
-                                        return Err(OcsError::BadCheckpointSig(last_seq, error));
-                                    }
-                                    Err(CommitteeTransitionError::EpochMismatch {
-                                        expected,
-                                        got,
-                                    }) => {
-                                        return Err(OcsError::RatchetEpochMismatch {
-                                            requested: expected,
-                                            returned: got,
-                                        });
-                                    }
-                                    Err(CommitteeTransitionError::Store(e)) => {
-                                        return Err(e.into());
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    head,
-                                    last_seq,
-                                    target,
-                                    error = %e,
-                                    "ratchet: end-of-epoch checkpoint pruned upstream and the \
-                                     verified archive fallback also failed; trying next fallback"
-                                );
-                            }
-                        }
-                    }
-                    if !self.allow_unverified_committee_fallback {
-                        error!(
-                            head,
-                            last_seq,
-                            target,
-                            ?reason,
-                            "ratchet: end-of-epoch checkpoint pruned upstream and the unverified \
-                             fallback is disabled — proof chain broken; re-anchor required"
-                        );
-                        return Err(OcsError::ProofChainBroken { epoch: head });
-                    }
-                    error!(
-                        security_critical = true,
-                        head,
-                        last_seq,
-                        target,
-                        ?reason,
-                        "ratchet: end-of-epoch checkpoint pruned upstream; installing committee[E+1] \
-                         via UNVERIFIED direct fetch — trust degraded to the endpoint's word"
-                    );
-                    self.metrics.unverified_committee_fallback_total.inc();
-                    let next = self.transport.get_committee(Some(head + 1)).await?;
-                    // Even in unverified mode the endpoint doesn't get to pick
-                    // the epoch: `install_next` keys the store by the
-                    // committee's own epoch field, so an endpoint returning a
-                    // mislabeled committee could jump the ratchet head past
-                    // epochs that were never installed.
-                    if next.epoch != head + 1 {
-                        return Err(OcsError::FallbackEpochMismatch {
-                            requested: head + 1,
-                            returned: next.epoch,
-                        });
-                    }
-                    self.committees.install_next(next, None)?;
-                    info!(
-                        epoch = head + 1,
-                        "ratcheted Sui committee (UNVERIFIED direct-fetch fallback)"
-                    );
+                    self.pruned_boundary_fallback(head, target, Some(last_seq), &reason)
+                        .await?;
                     continue;
                 }
                 Err(e) => return Err(e.into()),
@@ -374,34 +343,128 @@ impl OcsVerifyingClient {
             // (`CommitteeStore::install_next_from_checkpoint`). `data` is the
             // end-of-epoch checkpoint of `head`, so this installs
             // `committee[head + 1]`.
-            match self.committees.install_next_from_checkpoint(&data) {
-                Ok(CommitteeTransition::Installed(epoch)) => {
-                    info!(epoch, last_seq, "ratcheted Sui committee");
+            let epoch = installed_epoch(
+                self.committees.install_next_from_checkpoint(&data),
+                last_seq,
+            )?;
+            info!(epoch, last_seq, "ratcheted Sui committee");
+        }
+        Ok(())
+    }
+
+    /// Fallback chain for a pruned epoch boundary at `head` — the source
+    /// returned `NotFound` for the epoch record (`last_seq` is `None`) or for
+    /// its end-of-epoch checkpoint. On success `committee[head + 1]` is
+    /// installed and the caller continues the walk.
+    ///
+    /// Verified archive first: fetch + BLS-verify against `committee[head]` +
+    /// install — identical trust to the primary path. The archive is untrusted:
+    /// a forged/corrupt summary fails verification (hard error, fail-closed),
+    /// while a mere fetch miss falls through. When the epoch record itself was
+    /// pruned, the end-of-epoch sequence is resolved from the archive's own
+    /// `epochs.json` enumeration — an untrusted hint that can stall the walk
+    /// but never forge an install (the per-summary verification decides).
+    ///
+    /// Then the degraded unverified direct fetch, only when
+    /// `allow_unverified_committee_fallback` is set; otherwise the terminal,
+    /// non-retryable `ProofChainBroken` whose message names the remediation.
+    async fn pruned_boundary_fallback(
+        &self,
+        head: u64,
+        target: u64,
+        last_seq: Option<CheckpointSequenceNumber>,
+        reason: &str,
+    ) -> Result<(), OcsError> {
+        if let Some(archive) = &self.archive {
+            let seq = match last_seq {
+                Some(seq) => Some(seq),
+                None => match archive.enumerate_end_of_epoch_seqs().await {
+                    Ok(seqs) => seqs.get(head as usize).copied(),
+                    Err(e) => {
+                        warn!(
+                            head,
+                            target,
+                            error = %e,
+                            "ratchet: archive epochs.json enumeration failed while resolving a \
+                             pruned epoch record; trying next fallback"
+                        );
+                        None
+                    }
+                },
+            };
+            match seq {
+                Some(seq) => match archive.fetch_checkpoint(seq).await {
+                    Ok((summary, _contents)) => {
+                        let epoch = installed_epoch(
+                            self.committees.install_next_from_summary(&summary),
+                            seq,
+                        )?;
+                        info!(
+                            epoch,
+                            seq, "ratcheted Sui committee (verified archive fallback)"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            head,
+                            seq,
+                            target,
+                            error = %e,
+                            "ratchet: epoch boundary pruned upstream and the verified archive \
+                             fallback also failed; trying next fallback"
+                        );
+                    }
+                },
+                None => {
+                    warn!(
+                        head,
+                        target,
+                        "ratchet: epoch boundary pruned upstream and the archive does not \
+                         enumerate this epoch; trying next fallback"
+                    );
                 }
-                // The relay returned a checkpoint at `last_checkpoint_of_epoch(head)`
-                // that isn't the end-of-epoch checkpoint of `head` (wrong epoch
-                // or not end-of-epoch) — a broken proof chain, non-retryable.
-                Ok(CommitteeTransition::NotNextTransition) => {
-                    return Err(OcsError::NotEndOfEpoch(last_seq));
-                }
-                Err(CommitteeTransitionError::MissingCommittee(e)) => {
-                    return Err(OcsError::MissingCommittee(e));
-                }
-                Err(
-                    CommitteeTransitionError::BadSignature { error, .. }
-                    | CommitteeTransitionError::Extract { error, .. },
-                ) => {
-                    return Err(OcsError::BadCheckpointSig(last_seq, error));
-                }
-                Err(CommitteeTransitionError::EpochMismatch { expected, got }) => {
-                    return Err(OcsError::RatchetEpochMismatch {
-                        requested: expected,
-                        returned: got,
-                    });
-                }
-                Err(CommitteeTransitionError::Store(e)) => return Err(e.into()),
             }
         }
+        if !self.allow_unverified_committee_fallback {
+            error!(
+                head,
+                ?last_seq,
+                target,
+                reason,
+                "ratchet: epoch boundary pruned upstream and the unverified fallback is \
+                 disabled — proof chain broken; boot once against a full-retention Sui RPC (or \
+                 configure a `sui_checkpoint_archive`) so the persisted committee anchor \
+                 catches up"
+            );
+            return Err(OcsError::ProofChainBroken { epoch: head });
+        }
+        error!(
+            security_critical = true,
+            head,
+            ?last_seq,
+            target,
+            reason,
+            "ratchet: epoch boundary pruned upstream; installing committee[E+1] via UNVERIFIED \
+             direct fetch — trust degraded to the endpoint's word"
+        );
+        self.metrics.unverified_committee_fallback_total.inc();
+        let next = self.transport.get_committee(Some(head + 1)).await?;
+        // Even in unverified mode the endpoint doesn't get to pick the epoch:
+        // `install_next` keys the store by the committee's own epoch field, so
+        // an endpoint returning a mislabeled committee could jump the ratchet
+        // head past epochs that were never installed.
+        if next.epoch != head + 1 {
+            return Err(OcsError::FallbackEpochMismatch {
+                requested: head + 1,
+                returned: next.epoch,
+            });
+        }
+        self.committees.install_next(next, None)?;
+        info!(
+            epoch = head + 1,
+            "ratcheted Sui committee (UNVERIFIED direct-fetch fallback)"
+        );
         Ok(())
     }
 }
@@ -497,6 +560,11 @@ mod tests {
     /// `get_committee` call so a test can assert the fallback was (not) taken.
     struct RatchetMock {
         target_epoch: u64,
+        /// Epochs below this floor have no record on this source:
+        /// `last_checkpoint_of_epoch` answers NotFound ("Epoch N not found")
+        /// for them — the sui-state-direct / pruned-fullnode shape. `None`
+        /// serves every epoch record.
+        epoch_floor: Option<u64>,
         /// `last_checkpoint_of_epoch(E)` -> seq. Defaults to `E` when absent.
         full_checkpoints: HashMap<CheckpointSequenceNumber, FullCheckpointOutcome>,
         /// Committee handed back by the unverified `get_committee(Some(_))`
@@ -509,6 +577,7 @@ mod tests {
         fn new(target_epoch: u64) -> Self {
             Self {
                 target_epoch,
+                epoch_floor: None,
                 full_checkpoints: HashMap::new(),
                 committees: HashMap::new(),
                 get_committee_calls: StdMutex::new(Vec::new()),
@@ -528,6 +597,9 @@ mod tests {
             &self,
             epoch: u64,
         ) -> Result<CheckpointSequenceNumber, TransportError> {
+            if self.epoch_floor.is_some_and(|floor| epoch < floor) {
+                return Err(TransportError::NotFound(format!("Epoch {epoch} not found")));
+            }
             // Identity mapping epoch->seq keeps the test's checkpoint map simple.
             Ok(epoch)
         }
@@ -622,6 +694,11 @@ mod tests {
         seqs: Vec<CheckpointSequenceNumber>,
         checkpoints:
             HashMap<CheckpointSequenceNumber, (CertifiedCheckpointSummary, CheckpointContents)>,
+        /// Fail this many `enumerate_end_of_epoch_seqs` calls before serving.
+        /// Lets a test defeat the one-shot cold-bootstrap backfill (which
+        /// enumerates first) so the ratchet's per-boundary archive fallback is
+        /// what gets exercised.
+        fail_enumerations: StdMutex<u32>,
     }
 
     #[async_trait]
@@ -629,6 +706,14 @@ mod tests {
         async fn enumerate_end_of_epoch_seqs(
             &self,
         ) -> Result<Vec<CheckpointSequenceNumber>, ika_sui_client::archive::ArchiveError> {
+            let mut remaining = self.fail_enumerations.lock().unwrap();
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(ika_sui_client::archive::ArchiveError::Enumerate {
+                    url: "mock".into(),
+                    source: anyhow::anyhow!("enumeration unavailable"),
+                });
+            }
             Ok(self.seqs.clone())
         }
         async fn fetch_checkpoint(
@@ -661,7 +746,11 @@ mod tests {
             seqs.push(seq);
             checkpoints.insert(seq, (cp.checkpoint_summary, cp.checkpoint_contents));
         }
-        MockArchive { seqs, checkpoints }
+        MockArchive {
+            seqs,
+            checkpoints,
+            fail_enumerations: StdMutex::new(0),
+        }
     }
 
     fn client_with_store(store: Arc<CommitteeStore>) -> OcsVerifyingClient {
@@ -940,5 +1029,282 @@ mod tests {
         assert!(!OcsError::BadCheckpointSig(42, "bad bls".into()).is_retryable());
         assert!(!OcsError::MissingCommittee(3).is_retryable());
         assert!(!OcsError::Ika("store write failed".into()).is_retryable());
+    }
+
+    /// A transport whose current epoch is `target` and which serves epoch
+    /// records + end-of-epoch checkpoints only for epochs in `floor..target`:
+    /// `floor = 0` is a full-retention source, `floor = target` a history-less
+    /// (sui-state-direct-shaped) one that answers "Epoch N not found" for every
+    /// completed epoch.
+    fn mock_with_history(
+        base: &Committee,
+        keys: &[AuthorityKeyPair],
+        target: u64,
+        floor: u64,
+    ) -> RatchetMock {
+        let mut mock = RatchetMock::new(target);
+        mock.epoch_floor = (floor > 0).then_some(floor);
+        for epoch in floor..target {
+            let committee_e = committee_at_epoch(base, keys, epoch);
+            mock.full_checkpoints.insert(
+                epoch,
+                FullCheckpointOutcome::Data(Box::new(end_of_epoch_checkpoint(
+                    &committee_e,
+                    keys,
+                    epoch,
+                ))),
+            );
+        }
+        mock
+    }
+
+    /// First boot: bootstrap from genesis and ratchet to `head` over a
+    /// full-retention source, persisting the anchor into the perpetual tables
+    /// at `path`. Everything is dropped before returning — the "process" exits.
+    async fn anchor_db_at(
+        path: &std::path::Path,
+        base: &Committee,
+        keys: &[AuthorityKeyPair],
+        head: u64,
+    ) {
+        let tables = Arc::new(AuthorityPerpetualTables::open(path, None));
+        let store = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
+            )
+            .unwrap(),
+        );
+        let mock = Arc::new(mock_with_history(base, keys, head, 0));
+        let client =
+            OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing(), false);
+        client.ratchet_to_current_epoch().await.unwrap();
+        assert_eq!(store.head_epoch(), head, "first boot must reach the anchor");
+    }
+
+    fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let target = dst.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir_recursive(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+
+    /// The regression for the state-direct boot wedge: verify → persist the
+    /// anchor → restart against a source with NO history (every completed epoch
+    /// answers "Epoch N not found") → verification resumes from the persisted
+    /// anchor, ratchets forward using only the source's live window, and
+    /// current-epoch summaries verify. No genesis re-bootstrap, no unverified
+    /// fallback, no stall.
+    #[tokio::test]
+    async fn persisted_anchor_round_trip_resumes_on_history_less_source() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        anchor_db_at(dir.path(), &base, &keys, 3).await;
+
+        // Restart: no bootstrap material — resumption must come purely from the
+        // persisted anchor in the perpetual tables.
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let store =
+            Arc::new(CommitteeStore::open(tables, None).expect("resume from the persisted anchor"));
+        assert_eq!(
+            store.head_epoch(),
+            3,
+            "boot resumes at the anchor, not genesis"
+        );
+
+        // History-less source at epoch 4: only epoch 3's record/checkpoint (the
+        // live window) is served; epochs 0..3 are "Epoch N not found".
+        let mock = Arc::new(mock_with_history(&base, &keys, 4, 3));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        client.ratchet_to_current_epoch().await.unwrap();
+        assert_eq!(
+            store.head_epoch(),
+            4,
+            "ratchet resumed forward from the anchor"
+        );
+        assert_eq!(
+            mock.get_committee_call_count(),
+            0,
+            "no unverified fallback on the resumed path"
+        );
+        assert_eq!(metrics.ratchet_stalled.get(), 0);
+
+        // The resumed chain verifies current-epoch summaries — the capability
+        // every verified read (`verify_summary`) hangs off.
+        let current = end_of_epoch_checkpoint(&committee_at_epoch(&base, &keys, 4), &keys, 99);
+        store
+            .verify_summary(current.checkpoint_summary)
+            .expect("current-epoch summary verifies against the resumed committee chain");
+    }
+
+    /// The anchor is machine/identity-independent: copying the perpetual DB to
+    /// fresh directories (a mirrored / snapshot-restored "different node") and
+    /// booting there against the history-less source verifies exactly like the
+    /// original.
+    #[tokio::test]
+    async fn mirrored_db_copy_boots_from_the_same_anchor() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        anchor_db_at(dir.path(), &base, &keys, 3).await;
+
+        let mirror_dir = tempfile::tempdir().unwrap();
+        copy_dir_recursive(dir.path(), mirror_dir.path());
+
+        let tables = Arc::new(AuthorityPerpetualTables::open(mirror_dir.path(), None));
+        let store = Arc::new(
+            CommitteeStore::open(tables, None).expect("a copied DB must be exactly as bootable"),
+        );
+        assert_eq!(store.head_epoch(), 3);
+
+        let mock = Arc::new(mock_with_history(&base, &keys, 4, 3));
+        let client =
+            OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing(), false);
+        client.ratchet_to_current_epoch().await.unwrap();
+        assert_eq!(store.head_epoch(), 4);
+        let current = end_of_epoch_checkpoint(&committee_at_epoch(&base, &keys, 4), &keys, 99);
+        store
+            .verify_summary(current.checkpoint_summary)
+            .expect("the mirrored DB verifies current-epoch summaries");
+    }
+
+    /// A stale anchor (mirror promoted after the primary ran on) ratchets
+    /// forward as long as the source still serves the walk's needs — the epoch
+    /// record and end-of-epoch checkpoint of every epoch from the anchor to
+    /// current. Here: anchor 3, current 6, source window `3..`.
+    #[tokio::test]
+    async fn stale_anchor_within_source_window_catches_up() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        anchor_db_at(dir.path(), &base, &keys, 3).await;
+
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let store = Arc::new(CommitteeStore::open(tables, None).unwrap());
+        let mock = Arc::new(mock_with_history(&base, &keys, 6, 3));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        client.ratchet_to_current_epoch().await.unwrap();
+        assert_eq!(
+            store.head_epoch(),
+            6,
+            "stale anchor bridged across the window"
+        );
+        assert_eq!(mock.get_committee_call_count(), 0);
+        assert_eq!(metrics.ratchet_stalled.get(), 0);
+    }
+
+    /// Beyond the source's window the walk cannot be verified: the outcome is
+    /// the terminal, non-retryable `ProofChainBroken` naming the remediation —
+    /// never a silent retryable loop — and the stall is visible in metrics.
+    /// Here: anchor 3, current 6, but the source only serves epochs `5..`.
+    #[tokio::test]
+    async fn stale_anchor_beyond_source_window_fails_terminally_not_silently() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        anchor_db_at(dir.path(), &base, &keys, 3).await;
+
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let store = Arc::new(CommitteeStore::open(tables, None).unwrap());
+        let mock = Arc::new(mock_with_history(&base, &keys, 6, 5));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+
+        let err = client.ratchet_to_current_epoch().await.unwrap_err();
+        assert!(
+            matches!(err, OcsError::ProofChainBroken { epoch: 3 }),
+            "expected ProofChainBroken at the anchor epoch, got {err:?}"
+        );
+        assert!(
+            !err.is_retryable(),
+            "beyond the window is determinate, not a retry loop"
+        );
+        assert!(
+            err.to_string().contains("full-retention Sui RPC"),
+            "the error must name the remediation: {err}"
+        );
+        assert_eq!(store.head_epoch(), 3, "head holds at the anchor");
+        assert_eq!(mock.get_committee_call_count(), 0, "no unverified fallback");
+        assert_eq!(metrics.ratchet_stalled.get(), 1, "the stall is visible");
+        assert_eq!(
+            metrics
+                .ratchet_failures_total
+                .with_label_values(&["proof_chain_broken"])
+                .get(),
+            1
+        );
+    }
+
+    /// When the epoch *record* itself is pruned (`last_checkpoint_of_epoch` →
+    /// NotFound), a configured checkpoint archive bridges the boundary: the
+    /// end-of-epoch sequence is resolved from the archive's own enumeration and
+    /// the fetched summary is BLS-verified before install — same trust as the
+    /// primary path, no unverified fallback. The one-shot cold-bootstrap
+    /// backfill is defeated (its enumeration fails once) so the per-boundary
+    /// fallback is what bridges.
+    #[tokio::test]
+    async fn pruned_epoch_record_bridged_by_verified_archive_fallback() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee.clone());
+        let mut archive = archive_for_chain(&committee, &keys, 2);
+        archive.fail_enumerations = StdMutex::new(1);
+        let archive: Arc<dyn CheckpointArchive> = Arc::new(archive);
+
+        // The transport serves NO epoch records below the current epoch (2).
+        let mock = Arc::new(mock_with_history(&committee, &keys, 2, 2));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false)
+            .with_archive(Some(archive));
+
+        client.ratchet_to_current_epoch().await.unwrap();
+        assert_eq!(store.head_epoch(), 2, "archive bridged the pruned records");
+        assert_eq!(mock.get_committee_call_count(), 0);
+        assert_eq!(metrics.unverified_committee_fallback_total.get(), 0);
+        assert_eq!(metrics.ratchet_stalled.get(), 0);
+    }
+
+    /// Anchor-less cold start on a history-less source (fresh DB, genesis-only
+    /// anchor, sui-state-direct-shaped source): the DEFINED behavior is an
+    /// immediate terminal error naming the remediation, plus the stall metric —
+    /// not the historical invisible 30s retry-forever loop. (At node boot the
+    /// non-retryable classification asserted here is what fails startup loudly.)
+    #[tokio::test]
+    async fn anchorless_cold_start_on_history_less_source_fails_loud_with_metric() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee.clone());
+        assert_eq!(store.head_epoch(), 0, "genesis-only anchor");
+
+        let mock = Arc::new(mock_with_history(&committee, &keys, 100, 100));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+
+        let err = client.ratchet_to_current_epoch().await.unwrap_err();
+        assert!(
+            matches!(err, OcsError::ProofChainBroken { epoch: 0 }),
+            "expected ProofChainBroken at genesis, got {err:?}"
+        );
+        assert!(
+            !err.is_retryable(),
+            "cold-start-on-pruned-source must be terminal"
+        );
+        assert!(
+            err.to_string().contains("full-retention Sui RPC"),
+            "the error must name the remediation: {err}"
+        );
+        assert_eq!(metrics.ratchet_stalled.get(), 1);
+        assert_eq!(
+            metrics
+                .ratchet_failures_total
+                .with_label_values(&["proof_chain_broken"])
+                .get(),
+            1
+        );
+        assert_eq!(store.head_epoch(), 0);
+        assert_eq!(mock.get_committee_call_count(), 0);
     }
 }
