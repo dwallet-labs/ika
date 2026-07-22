@@ -1179,6 +1179,11 @@ impl DWalletMPCManager {
                         self.validator_mpc_keys_by_party_id =
                             get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
                         self.current_epoch_keys_ingested = true;
+                        // Ingestion is complete, so no prior-cert blob can
+                        // still be "missing" — clear the gauge in case an
+                        // earlier iteration's cert attempt set it before
+                        // this epoch resolved as a chain-true no-cert one.
+                        self.dwallet_mpc_metrics.prior_cert_blobs_missing.set(0);
                         info!(
                             epoch = self.epoch_id,
                             dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),

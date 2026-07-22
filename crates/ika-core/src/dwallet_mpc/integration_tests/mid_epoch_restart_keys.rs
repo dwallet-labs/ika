@@ -27,6 +27,7 @@ use ika_network::mpc_artifacts::{
 use ika_types::committee::{EpochId, ValidatorEncryptionKeysAndProofs};
 use ika_types::crypto::AuthorityName;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
+use prometheus::{IntCounterVec, Opts};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -463,17 +464,28 @@ async fn missing_prior_cert_blob_is_refetched_from_peers_and_ingested() {
         (serving_member, live_peer_id),
     ]);
     let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual.clone());
+    let fetch_outcomes = IntCounterVec::new(
+        Opts::new("test_mpc_data_blob_fetch_total", "test fetch outcomes"),
+        &["result"],
+    )
+    .expect("counter");
     let fetched = fetch_missing_prior_cert_mpc_data_blobs(
         &cert_with_mpc_data(prior_epoch, &cert_entries),
         own_authority,
         &blob_cache,
         &local_network,
         &authority_names_to_peer_ids,
+        &fetch_outcomes,
     )
     .await;
     assert_eq!(
         fetched, 1,
         "the dark member's cert-pinned blob must be fetched from the live peer"
+    );
+    assert_eq!(
+        fetch_outcomes.with_label_values(&["ok"]).get(),
+        1,
+        "the repair must record its fetch outcome on the shared counter"
     );
     assert!(
         perpetual

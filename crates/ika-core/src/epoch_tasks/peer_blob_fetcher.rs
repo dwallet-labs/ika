@@ -173,6 +173,7 @@ impl PeerBlobFetcher {
             &self.blob_cache,
             &self.p2p_network,
             &self.authority_names_to_peer_ids,
+            &self.fetch_outcomes,
         )
         .await;
     }
@@ -406,15 +407,18 @@ impl PeerBlobFetcher {
 /// blob's owner is asked first, but it is typically exactly the dark member,
 /// so every other committee peer follows in shuffled order. Fetched bytes
 /// are verified (digest + structural decode) before the write-through
-/// insert into the perpetual + in-memory stores. Returns the number of
-/// blobs fetched and persisted this pass; still-missing blobs are retried
-/// on the next pass.
+/// insert into the perpetual + in-memory stores; every fetch outcome
+/// increments the same `fetch_outcomes` counter as the announcement pass,
+/// so a peer serving garbage on this path is equally visible. Returns the
+/// number of blobs fetched and persisted this pass; still-missing blobs
+/// are retried on the next pass.
 pub async fn fetch_missing_prior_cert_mpc_data_blobs(
     cert: &CertifiedHandoffAttestation,
     own_authority: AuthorityName,
     blob_cache: &BlobCache,
     p2p_network: &Network,
     authority_names_to_peer_ids: &HashMap<AuthorityName, PeerId>,
+    fetch_outcomes: &IntCounterVec,
 ) -> usize {
     let missing: Vec<(AuthorityName, [u8; 32])> = cert
         .attestation
@@ -457,21 +461,41 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
         for (candidate_authority, peer_id) in candidates {
             match fetch_blob(p2p_network, peer_id, digest).await {
                 Ok(Some(bytes)) => {
-                    if !matches!(
-                        verify_peer_blob_for_relay(&bytes, &digest),
-                        PeerBlobVerdict::Accept
-                    ) {
-                        debug!(
-                            ?owner,
-                            ?candidate_authority,
-                            ?peer_id,
-                            expected = ?digest,
-                            "prior-cert blob repair: candidate served bytes that fail \
-                             digest/decode verification; trying next peer"
-                        );
-                        continue;
+                    match verify_peer_blob_for_relay(&bytes, &digest) {
+                        PeerBlobVerdict::Accept => {}
+                        PeerBlobVerdict::HashMismatch => {
+                            fetch_outcomes.with_label_values(&["hash_mismatch"]).inc();
+                            debug!(
+                                ?owner,
+                                ?candidate_authority,
+                                ?peer_id,
+                                expected = ?digest,
+                                "prior-cert blob repair: candidate served bytes that don't \
+                                 match the cert digest; trying next peer"
+                            );
+                            continue;
+                        }
+                        PeerBlobVerdict::DecodeFailed => {
+                            // Hash matched but the bytes fail structural
+                            // decode — only the blob's producer could
+                            // craft hash-matching bad bytes, so this is a
+                            // byzantine signal, distinguished from a
+                            // plain mismatch in metrics and logs.
+                            fetch_outcomes.with_label_values(&["decode_failed"]).inc();
+                            debug!(
+                                ?owner,
+                                ?candidate_authority,
+                                ?peer_id,
+                                "prior-cert blob repair: candidate served hash-matching bytes \
+                                 that fail structural decode; refusing to persist"
+                            );
+                            continue;
+                        }
                     }
                     if let Err(e) = blob_cache.insert(digest, bytes) {
+                        fetch_outcomes
+                            .with_label_values(&["cache_insert_failed"])
+                            .inc();
                         warn!(
                             error = ?e,
                             ?owner,
@@ -480,6 +504,7 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
                         );
                         continue;
                     }
+                    fetch_outcomes.with_label_values(&["ok"]).inc();
                     info!(
                         ?owner,
                         served_by = ?candidate_authority,
@@ -491,6 +516,7 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
                     break;
                 }
                 Ok(None) => {
+                    fetch_outcomes.with_label_values(&["not_found"]).inc();
                     debug!(
                         ?owner,
                         ?candidate_authority,
@@ -499,6 +525,7 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
                     );
                 }
                 Err(e) => {
+                    fetch_outcomes.with_label_values(&["transport_error"]).inc();
                     debug!(
                         ?owner,
                         ?candidate_authority,
