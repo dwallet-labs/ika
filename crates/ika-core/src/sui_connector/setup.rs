@@ -35,7 +35,7 @@
 use std::sync::Arc;
 
 use anemo::PeerId;
-use ika_config::node::{SuiConnectorConfig, SuiDataSource};
+use ika_config::node::{SuiConnectorConfig, SuiDataSource, resolve_sui_checkpoint_archive};
 use ika_network::proof_provider::{
     LocalProofProvider, ProofCacheConfig, ProofProvider, ProofProviderMetrics,
 };
@@ -333,10 +333,28 @@ pub async fn build_sui_connector_stack(
     };
     let committees = Arc::new(CommitteeStore::open(perpetual.clone(), bootstrap)?);
     // Verified-fallback end-of-epoch checkpoint archive (object store). Used by
-    // the ratchet when the upstream fullnode has pruned an end-of-epoch
-    // checkpoint; every byte is BLS-verified, so the archive is untrusted.
+    // the ratchet for cold bootstrap and when the upstream fullnode has pruned
+    // an end-of-epoch checkpoint; every byte is BLS-verified, so the archive is
+    // untrusted. An explicit config wins verbatim; with none, the known public
+    // chains default to their public Sui checkpoint store (localnet gets none).
+    let archive_config = resolve_sui_checkpoint_archive(
+        cfg.sui_chain_identifier,
+        cfg.sui_checkpoint_archive.as_ref(),
+    );
+    if cfg.sui_checkpoint_archive.is_none()
+        && let Some(default_archive) = &archive_config
+    {
+        info!(
+            url = %default_archive.url,
+            chain = %cfg.sui_chain_identifier,
+            "no sui-checkpoint-archive configured; using the network's public Sui \
+             end-of-epoch checkpoint store as the verified fallback archive \
+             (untrusted availability source — every checkpoint is BLS-verified \
+             against the genesis-rooted committee chain)"
+        );
+    }
     let archive: Option<Arc<dyn ika_sui_client::archive::CheckpointArchive>> =
-        cfg.sui_checkpoint_archive.as_ref().map(|a| {
+        archive_config.as_ref().map(|a| {
             Arc::new(ika_sui_client::archive::SuiCheckpointArchive::new(
                 a.url.clone(),
                 a.options.clone(),
