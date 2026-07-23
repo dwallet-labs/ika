@@ -518,3 +518,179 @@ async fn missing_prior_cert_blob_is_refetched_from_peers_and_ingested() {
         "the gauge must return to 0 once assembly completes"
     );
 }
+
+/// The compound case observed live on testnet: the cert-pinned member is
+/// ALIVE and reachable — it keeps signing and participating in consensus —
+/// but MPC-dead: it never announced this epoch, so its own blob store lacks
+/// its blob and its Anemo endpoint answers `GetMpcDataBlob` with not-found.
+/// Distinct from the fully-dark case (unreachable peer) above: the repair
+/// must fall through from the owner's not-found answer to another live
+/// committee holder, persist, and let ingestion complete — recording both
+/// the owner's `not_found` and the eventual `ok` on the shared
+/// fetch-outcomes counter.
+#[tokio::test(flavor = "multi_thread")]
+async fn mpc_dead_owner_not_found_falls_through_to_live_holder() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
+    let (mut services, sui_data_senders, _stores, epoch_stores, ..) =
+        utils::create_dwallet_mpc_services_with_committee_and_seeds(
+            committee.clone(),
+            seeds,
+            bundles.clone(),
+        );
+    let service = services.first_mut().unwrap();
+    let own_authority = service.name;
+    let epoch_id = service.dwallet_mpc_manager().epoch_id;
+    let prior_epoch = epoch_id - 1;
+
+    // Restart shape: a fresh process's watch channel starts empty.
+    let _ = sui_data_senders
+        .first()
+        .unwrap()
+        .current_epoch_mpc_keys_sender
+        .send(None);
+
+    let members: Vec<AuthorityName> = committee
+        .voting_rights
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    // The MPC-dead member whose blob this host never stored, and the live
+    // committee holder that will serve it — both distinct from this
+    // validator.
+    let dead_member = *members
+        .iter()
+        .rev()
+        .find(|member| **member != own_authority)
+        .expect("committee has peers");
+    let holder_member = *members
+        .iter()
+        .find(|member| **member != own_authority && **member != dead_member)
+        .expect("committee has a second peer");
+
+    // Cert pins all four members, but the MPC-dead member's blob is absent
+    // from the local perpetual store.
+    let perpetual_dir = tempfile::tempdir().expect("tempdir");
+    let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+    let mut dead_member_blob: Option<([u8; 32], Vec<u8>)> = None;
+    let cert_entries: Vec<(AuthorityName, [u8; 32])> = members
+        .iter()
+        .map(|authority| {
+            let blob = mpc_data_blob_for(&bundles, authority);
+            let digest = mpc_data_blob_hash(&blob);
+            if *authority == dead_member {
+                dead_member_blob = Some((digest, blob));
+            } else {
+                perpetual
+                    .insert_mpc_artifact_blob(digest, &blob)
+                    .expect("blob insert");
+            }
+            (*authority, digest)
+        })
+        .collect();
+    let epoch_store = epoch_stores.first().unwrap();
+    epoch_store
+        .perpetual_tables
+        .lock()
+        .unwrap()
+        .replace(perpetual.clone());
+    epoch_store
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(prior_epoch, cert_with_mpc_data(prior_epoch, &cert_entries));
+
+    let manager = service.dwallet_mpc_manager_mut();
+    manager
+        .ingest_offchain_mpc_keys()
+        .expect("ingest_offchain_mpc_keys");
+    assert!(
+        !manager.current_epoch_keys_ingested,
+        "a missing cert-pinned blob must defer ingestion"
+    );
+
+    // The MPC-dead owner is reachable but has nothing to serve (empty blob
+    // store — it never announced this epoch); a live committee holder
+    // serves the blob.
+    let (dead_digest, dead_blob) = dead_member_blob.expect("dead member blob");
+    let owner_network = build_test_network(Router::new().add_rpc_service(build_server(
+        InMemoryBlobStore::new(),
+        AnnouncementRelayHandle::new(),
+        Arc::new(NoHandoffCerts),
+    )));
+    let holder_store = InMemoryBlobStore::new();
+    holder_store.insert(dead_digest, dead_blob);
+    let holder_network = build_test_network(Router::new().add_rpc_service(build_server(
+        holder_store,
+        AnnouncementRelayHandle::new(),
+        Arc::new(NoHandoffCerts),
+    )));
+    let local_network = build_test_network(Router::new());
+    let owner_peer_id = local_network
+        .connect(owner_network.local_addr())
+        .await
+        .expect("connect to MPC-dead owner");
+    let holder_peer_id = local_network
+        .connect(holder_network.local_addr())
+        .await
+        .expect("connect to live holder");
+    let authority_names_to_peer_ids: HashMap<AuthorityName, PeerId> = HashMap::from([
+        (dead_member, owner_peer_id),
+        (holder_member, holder_peer_id),
+    ]);
+
+    let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual.clone());
+    let fetch_outcomes = IntCounterVec::new(
+        Opts::new("test_mpc_data_blob_fetch_total", "test fetch outcomes"),
+        &["result"],
+    )
+    .expect("counter");
+    let fetched = fetch_missing_prior_cert_mpc_data_blobs(
+        &cert_with_mpc_data(prior_epoch, &cert_entries),
+        own_authority,
+        &blob_cache,
+        &local_network,
+        &authority_names_to_peer_ids,
+        &fetch_outcomes,
+    )
+    .await;
+    assert_eq!(
+        fetched, 1,
+        "the repair must fall through from the owner's not-found to the \
+         live holder"
+    );
+    assert_eq!(
+        fetch_outcomes.with_label_values(&["not_found"]).get(),
+        1,
+        "the reachable-but-empty owner must be recorded as not_found"
+    );
+    assert_eq!(
+        fetch_outcomes.with_label_values(&["ok"]).get(),
+        1,
+        "the holder's serve must be recorded as ok"
+    );
+    assert!(
+        perpetual
+            .get_mpc_artifact_blob(&dead_digest)
+            .expect("perpetual read")
+            .is_some(),
+        "the fetched blob must be persisted to the perpetual store"
+    );
+
+    let manager = services.first_mut().unwrap().dwallet_mpc_manager_mut();
+    manager
+        .ingest_offchain_mpc_keys()
+        .expect("ingest_offchain_mpc_keys");
+    assert!(
+        manager.current_epoch_keys_ingested,
+        "ingestion must complete after the fall-through refetch"
+    );
+    assert_eq!(
+        manager.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
+        members.len(),
+        "every cert-covered committee member must be dealt, including the \
+         MPC-dead member"
+    );
+}
