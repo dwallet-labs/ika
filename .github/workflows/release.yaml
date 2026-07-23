@@ -464,20 +464,20 @@ jobs:
           #
           # They differ only in which tag the release hangs off. Non-mainnet
           # attaches to the TRIGGER tag itself (release/<network>-v<version>,
-          # already pointing at this run's commit). Mainnet instead mints its
-          # own slash-free <network>-v<version> tag on publish, because the
-          # Homebrew formula's download URL interpolates the tag, and a tag
-          # containing '/' would make that URL's path ambiguous. Minting it is
-          # safe: the push trigger is `release/*-*`, which a bare
-          # mainnet-v<version> tag does not match, so publishing cannot
-          # re-trigger this workflow.
+          # already pointing at this run's commit) — publishing a release on
+          # an existing tag creates no tag and fires no push event, so it
+          # cannot re-trigger this workflow.
+          #
+          # Mainnet used to mint its own slash-free tag instead, on the belief
+          # that the '/' in the trigger tag would break the Homebrew formula's
+          # download URL. It does not: GitHub serves
+          # /releases/download/release/<network>-v<version>/<asset> with the
+          # slash either literal or percent-encoded. Minting bought nothing and
+          # left mainnet commits carrying two tags, so every network now hangs
+          # its release off the trigger tag.
           NETWORK="${{ needs.version.outputs.network }}"
           ASSET_STEM="${NETWORK}-${VERSION}"
-          if [ "$NETWORK" = "mainnet" ]; then
-            RELEASE_TAG="${NETWORK}-${VERSION}"
-          else
-            RELEASE_TAG="${{ github.ref_name }}"
-          fi
+          RELEASE_TAG="${{ github.ref_name }}"
           echo "ASSET_STEM=${ASSET_STEM}" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
           for dir in artifacts/*/; do
@@ -607,7 +607,7 @@ jobs:
 
           # gh can download from draft releases with GITHUB_TOKEN
           mkdir -p /tmp/release-assets
-          gh release download "mainnet-v${VERSION}" \
+          gh release download "release/mainnet-v${VERSION}" \
             --repo "${{ github.repository }}" \
             --dir /tmp/release-assets \
             --pattern "ika-mainnet-v${VERSION}-*.tar.gz"
