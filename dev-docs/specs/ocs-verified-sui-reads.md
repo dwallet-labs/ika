@@ -251,6 +251,20 @@ committee.)
 configured genesis seed is ignored on every later boot. Re-bootstrapping
 requires manually clearing the OCS committee tables.
 
+**The persisted anchor is the cross-restart verification root.** Every
+successful ratchet/follower/pusher install persists the verified transition
+summary and advances `sui_committee_head` in the perpetual tables
+(`sui_committee_summaries`, `sui_committees`, `sui_committee_head`), and boot
+resumes verification from that head — a validator that has ever been synced
+never needs historical Sui epochs again. The anchor is
+machine/identity-independent (plain rows keyed by Sui epoch, nothing derived
+from the host or the validator identity), so a snapshot-restored or mirrored
+DB is exactly as bootable as the original. It fails **closed**: an
+unresolvable head fails `CommitteeStore::open` fast, and a tampered/hand-
+edited summary or committee makes every genuine summary fail terminal BLS
+verification (`BadSignature`) — a forged root can stall the node, never make
+it accept forged state.
+
 The ratchet advances the trusted head strictly **+1 per step** up to the
 relay-claimed current epoch. For each step it fetches the end-of-epoch
 checkpoint of epoch `head`, BLS-verifies it against `committee[head]`,
@@ -260,17 +274,58 @@ side fetch. The store is keyed by each committee's own `.epoch`, so the
 relay never chooses the install key. Only one ratchet runs at a time
 (concurrent callers coalesce).
 
-If the end-of-epoch checkpoint has been pruned upstream (`NotFound`), the
-ratchet first tries a configured **Sui checkpoint archive**
+A pruned epoch boundary — the source answers `NotFound` for either the
+**epoch record** (`last_checkpoint_of_epoch(head)`, "Epoch N not found": a
+pruned fullnode, or `sui-state-direct` which serves current state + a change
+stream only) or the end-of-epoch **checkpoint** itself — routes to one shared
+fallback chain. The gRPC client maps the epoch-record "not found" status to
+`TransportError::NotFound` for exactly this reason: it used to collapse into
+a retryable `Network` error, which made a boot against a history-less source
+spin forever in a 30-second retry loop with no health signal (the 2026-07
+testnet incident: three validators restarted on `sui_state_direct` and their
+entire MPC stacks sat dead behind `MissingCommittee` retries). The chain:
+the ratchet first tries a configured **Sui checkpoint archive**
 (`sui_checkpoint_archive`): it fetches the end-of-epoch checkpoint from the
-object store (`epochs.json` + `{seq}.binpb.zst`) and BLS-verifies it the same
-way — a *verified* fallback (a forged archive summary fails closed; the
-`epochs.json` enumeration is an untrusted hint, so omission/reorder can stall
-but never forge). Only if no archive is configured (or it also lacks the
-checkpoint) does the legacy `allow_unverified_committee_fallback` path apply
-(default **false** → terminal `ProofChainBroken`; true → a degraded direct
-`get_committee(head+1)` fetch, gated by `epoch == head + 1`, logged
-security-critical).
+object store (`epochs.json` + `{seq}.binpb.zst` — when the epoch record was
+pruned, the sequence comes from the archive's own enumeration) and
+BLS-verifies it the same way — a *verified* fallback (a forged archive
+summary fails closed; the `epochs.json` enumeration is an untrusted hint, so
+omission/reorder can stall but never forge). Only if no archive is configured
+(or it also lacks the checkpoint) does the legacy
+`allow_unverified_committee_fallback` path apply (default **false** →
+terminal `ProofChainBroken`; true → a degraded direct `get_committee(head+1)`
+fetch, gated by `epoch == head + 1`, logged security-critical).
+
+### Anchor staleness bound and boot posture
+
+**Maximum anchor staleness the source must bridge**: the forward walk needs,
+for every epoch from the persisted anchor to the current one, the epoch
+record *and* the full end-of-epoch checkpoint. So the bridgeable staleness is
+exactly the source's retention window for those two artifacts — unbounded on
+a full-retention fullnode; the fullnode's pruning window on a pruned one; on
+the p2p relay, the serving direct node's retained end-of-epoch store (kept
+back to its own bootstrap anchor, pruned with the verified-cache retention);
+and unbounded when a `sui_checkpoint_archive` is configured (the verified
+archive bridges any gap). Beyond the window the outcome is **defined and
+loud**: terminal, non-retryable `ProofChainBroken` whose message names the
+remediation (boot once against a full-retention Sui RPC so the anchor
+catches up, configure an archive, or accept the degraded unverified
+fallback) — never a silent retry loop.
+
+**Boot posture (all roles: direct, mirrored-with-fallback, peer-only)**: the
+initial ratchet failing with a **non-retryable** error fails node startup
+with that remediation in the error — at boot the node holds no in-flight
+duties, and a supervisor-visible crash loop beats a zombie whose MPC stack is
+invisibly dead. Retryable (transport) failures only warn; the periodic
+ratchet retries. An anchor-less cold start on a history-less source (fresh
+DB, genesis-only anchor) is therefore a defined loud startup failure, not an
+emergent hang. **Mid-run** the node is never torn down: a determinate
+periodic-ratchet failure escalates to an `error!` log and sets
+`ika_ocs_ratchet_stalled` to 1 (with `ika_ocs_ratchet_failures_total{reason}`
+counting attempts; only `reason="transport"` is retryable) — set at the
+ratchet chokepoint itself, cleared on the next success — so a wedged ratchet
+is directly alertable instead of presenting only as absent downstream
+series.
 
 ## Freshness and rollback protection
 
@@ -585,8 +640,11 @@ mirror reads remains future work — see
    verified path `committee[head+1]` is only ever derived from a
    BLS-verified end-of-epoch summary signed by `committee[head]`. The
    store is keyed by each committee's own epoch.
-3. Trust is rooted in a single operator-pinned end-of-epoch digest;
-   persisted committee state always overrides a reconfigured anchor.
+3. Trust is rooted in the compiled-in chain identifier (the verified genesis
+   blob) on first boot, and thereafter in the persisted, machine-independent
+   committee anchor in the perpetual tables; persisted committee state always
+   overrides a configured genesis seed, and a corrupted/tampered anchor fails
+   closed (verification failure and a stall — never silent acceptance).
 4. Freshness is measured against a process-monotonic observed head,
    never the relay's per-response claim; per-object version high-water is
    monotone and recorded only after proof success.
