@@ -350,6 +350,41 @@ pub struct SuiCheckpointArchiveConfig {
     pub options: Vec<(String, String)>,
 }
 
+/// The public Sui checkpoint stores for the well-known networks. They retain
+/// the complete **end-of-epoch** checkpoint history (a root `epochs.json` plus
+/// `{seq}.binpb.zst` blobs) needed for committee-chain proofs, even though they
+/// don't promise retention of every ordinary checkpoint.
+pub const SUI_MAINNET_CHECKPOINT_ARCHIVE_URL: &str = "https://checkpoints.mainnet.sui.io";
+pub const SUI_TESTNET_CHECKPOINT_ARCHIVE_URL: &str = "https://checkpoints.testnet.sui.io";
+
+/// Resolve the end-of-epoch checkpoint archive the verified OCS connector
+/// stack should use. An explicit `sui-checkpoint-archive` config always wins,
+/// verbatim (URL and options untouched). With none configured, the known
+/// public chains fall back to their public Sui checkpoint store; there is no
+/// default to guess for `Devnet`/`Custom` (localnet), so those resolve to
+/// `None`.
+///
+/// Trust is unaffected either way: the archive is an untrusted availability
+/// source, and every checkpoint fetched from it is BLS-verified against the
+/// genesis-rooted committee chain (see [`SuiCheckpointArchiveConfig`]).
+pub fn resolve_sui_checkpoint_archive(
+    chain_identifier: SuiChainIdentifier,
+    configured: Option<&SuiCheckpointArchiveConfig>,
+) -> Option<SuiCheckpointArchiveConfig> {
+    if let Some(explicit) = configured {
+        return Some(explicit.clone());
+    }
+    let url = match chain_identifier {
+        SuiChainIdentifier::Mainnet => SUI_MAINNET_CHECKPOINT_ARCHIVE_URL,
+        SuiChainIdentifier::Testnet => SUI_TESTNET_CHECKPOINT_ARCHIVE_URL,
+        SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => return None,
+    };
+    Some(SuiCheckpointArchiveConfig {
+        url: url.to_string(),
+        options: vec![],
+    })
+}
+
 /// The Sui read-transport a node boots, decided by [`select_sui_transport`]
 /// purely from config shape + role — never from chain state, so a protocol
 /// flag can't halt running validators en masse at an upgrade boundary.
@@ -519,7 +554,10 @@ pub struct SuiConnectorConfig {
     /// Optional Sui checkpoint archive used as a *verified fallback* source of
     /// end-of-epoch checkpoints when the upstream fullnode has pruned them (and
     /// for cold genesis bootstrap). Verified, never trusted — see
-    /// [`SuiCheckpointArchiveConfig`].
+    /// [`SuiCheckpointArchiveConfig`]. When unset, the verified OCS connector
+    /// defaults to the public Sui checkpoint store on `mainnet`/`testnet`
+    /// (see [`resolve_sui_checkpoint_archive`]); an explicit value here always
+    /// wins.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_checkpoint_archive: Option<SuiCheckpointArchiveConfig>,
     /// When the committee ratchet reaches an end-of-epoch checkpoint that the
@@ -1326,6 +1364,61 @@ mod tests {
             Some(custom_v2),
             "explicit v2 must win"
         );
+    }
+
+    // ---- default end-of-epoch checkpoint archive resolution ----
+
+    /// An explicit archive config wins verbatim on every chain — URL and
+    /// options untouched, never merged with or replaced by the network default.
+    #[test]
+    fn explicit_archive_wins_on_every_chain() {
+        let explicit = SuiCheckpointArchiveConfig {
+            url: "s3://my-own-archive".to_string(),
+            options: vec![("aws-region".to_string(), "us-west-2".to_string())],
+        };
+        for chain in [
+            SuiChainIdentifier::Mainnet,
+            SuiChainIdentifier::Testnet,
+            SuiChainIdentifier::Devnet,
+            SuiChainIdentifier::Custom,
+        ] {
+            let resolved = resolve_sui_checkpoint_archive(chain, Some(&explicit))
+                .expect("explicit config must resolve");
+            assert_eq!(resolved.url, explicit.url, "{chain}");
+            assert_eq!(resolved.options, explicit.options, "{chain}");
+        }
+    }
+
+    /// With no archive configured, the known public chains default to their
+    /// public Sui checkpoint store.
+    #[test]
+    fn public_chains_default_to_public_checkpoint_store() {
+        for (chain, url) in [
+            (
+                SuiChainIdentifier::Mainnet,
+                SUI_MAINNET_CHECKPOINT_ARCHIVE_URL,
+            ),
+            (
+                SuiChainIdentifier::Testnet,
+                SUI_TESTNET_CHECKPOINT_ARCHIVE_URL,
+            ),
+        ] {
+            let resolved =
+                resolve_sui_checkpoint_archive(chain, None).expect("public chain must default");
+            assert_eq!(resolved.url, url, "{chain}");
+            assert!(resolved.options.is_empty(), "{chain}");
+        }
+    }
+
+    /// No default is guessed for chains without a known public store.
+    #[test]
+    fn no_default_archive_for_devnet_or_custom() {
+        for chain in [SuiChainIdentifier::Devnet, SuiChainIdentifier::Custom] {
+            assert!(
+                resolve_sui_checkpoint_archive(chain, None).is_none(),
+                "{chain}: must not guess an archive"
+            );
+        }
     }
 
     // ---- old-style config (no `sui-data-source`) ----

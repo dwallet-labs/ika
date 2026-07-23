@@ -284,13 +284,19 @@ a retryable `Network` error, which made a boot against a history-less source
 spin forever in a 30-second retry loop with no health signal (the 2026-07
 testnet incident: three validators restarted on `sui_state_direct` and their
 entire MPC stacks sat dead behind `MissingCommittee` retries). The chain:
-the ratchet first tries a configured **Sui checkpoint archive**
-(`sui_checkpoint_archive`): it fetches the end-of-epoch checkpoint from the
+the ratchet first tries the resolved **Sui checkpoint archive** — an explicit
+`sui_checkpoint_archive` config wins verbatim; with none configured, mainnet
+and testnet default to the network's public checkpoint store
+(`https://checkpoints.{mainnet,testnet}.sui.io`, which retains the complete
+end-of-epoch history; no default is guessed for devnet/custom — see
+`resolve_sui_checkpoint_archive` in `ika-config`, applied only where the
+verified connector stack is built, so legacy JSON-RPC configs are untouched).
+The ratchet fetches the end-of-epoch checkpoint from the
 object store (`epochs.json` + `{seq}.binpb.zst` — when the epoch record was
 pruned, the sequence comes from the archive's own enumeration) and
 BLS-verifies it the same way — a *verified* fallback (a forged archive
 summary fails closed; the `epochs.json` enumeration is an untrusted hint, so
-omission/reorder can stall but never forge). Only if no archive is configured
+omission/reorder can stall but never forge). Only if no archive resolved
 (or it also lacks the checkpoint) does the legacy
 `allow_unverified_committee_fallback` path apply (default **false** →
 terminal `ProofChainBroken`; true → a degraded direct `get_committee(head+1)`
@@ -305,8 +311,9 @@ exactly the source's retention window for those two artifacts — unbounded on
 a full-retention fullnode; the fullnode's pruning window on a pruned one; on
 the p2p relay, the serving direct node's retained end-of-epoch store (kept
 back to its own bootstrap anchor, pruned with the verified-cache retention);
-and unbounded when a `sui_checkpoint_archive` is configured (the verified
-archive bridges any gap). Beyond the window the outcome is **defined and
+and unbounded when a checkpoint archive resolved (the verified archive
+bridges any gap; on mainnet/testnet one resolves by default — the public
+checkpoint store). Beyond the window the outcome is **defined and
 loud**: terminal, non-retryable `ProofChainBroken` whose message names the
 remediation (boot once against a full-retention Sui RPC so the anchor
 catches up, configure an archive, or accept the degraded unverified
