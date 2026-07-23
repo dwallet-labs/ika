@@ -128,22 +128,16 @@ pub fn run_node_with_name(
 
     // Determine the mode to run in
     let node_mode = match mode {
-        Some(explicit_mode) => {
-            // Validate the config matches the expected mode
-            if let Err(e) = explicit_mode.validate_config(&config) {
-                eprintln!(
-                    "Configuration validation failed for {} mode: {}",
-                    explicit_mode, e
-                );
-                std::process::exit(1);
-            }
-            explicit_mode
-        }
-        None => {
-            // Auto-detect mode from config
-            NodeMode::detect_from_config(&config)
-        }
+        Some(explicit_mode) => explicit_mode,
+        None => NodeMode::detect_from_config(&config),
     };
+    if let Err(e) = node_mode.validate_and_prepare_config(&mut config) {
+        eprintln!(
+            "Configuration validation failed for {} mode: {}",
+            node_mode, e
+        );
+        std::process::exit(1);
+    }
 
     let runtimes = IkaRuntimes::new(&config, node_mode);
     let metrics_rt = runtimes.metrics.enter();

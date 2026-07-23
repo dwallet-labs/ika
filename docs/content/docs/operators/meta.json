@@ -1,5 +1,5 @@
 {
 	"title": "Operators",
 	"root": true,
-	"pages": ["index", "upgrading-to-1-2-1"]
+	"pages": ["index", "upgrading-to-1-2-1", "notifier-root-seed"]
 }

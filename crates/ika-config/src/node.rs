@@ -38,7 +38,7 @@ use sui_types::multiaddr::Multiaddr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeMode {
     /// Validator mode: participates in consensus and MPC operations.
-    /// Requires `consensus_config` to be set in NodeConfig.
+    /// Requires `consensus_config` and `root_seed_key_pair` to be set in NodeConfig.
     Validator,
     /// Fullnode mode: syncs state via P2P but doesn't participate in consensus.
     /// Requires `consensus_config` to be None and `notifier_client_key_pair` to be None.
@@ -73,6 +73,11 @@ impl NodeMode {
                 if config.consensus_config().is_none() {
                     return Err(anyhow!(
                         "Validator mode requires consensus_config to be set in NodeConfig"
+                    ));
+                }
+                if config.root_seed_key_pair.is_none() {
+                    return Err(anyhow!(
+                        "Validator mode requires root_seed_key_pair to be set in NodeConfig"
                     ));
                 }
                 if config
@@ -124,6 +129,20 @@ impl NodeMode {
                 Ok(())
             }
         }
+    }
+
+    /// Validates the role-specific configuration and removes key material that
+    /// the selected role must never use.
+    ///
+    /// Legacy notifier configurations may still contain a validator root-seed
+    /// path. Discard the descriptor without resolving it so no notifier
+    /// initialization path can open or derive values from that file.
+    pub fn validate_and_prepare_config(&self, config: &mut NodeConfig) -> Result<()> {
+        self.validate_config(config)?;
+        if self.is_notifier() {
+            config.root_seed_key_pair = None;
+        }
+        Ok(())
     }
 
     /// Returns true if this mode participates in consensus.
@@ -708,6 +727,8 @@ impl SuiConnectorConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct NodeConfig {
+    /// Validator-only seed for MPC key derivation. Notifiers accept this field
+    /// for backward compatibility but discard it before initialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_seed_key_pair: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
@@ -1302,6 +1323,117 @@ mod tests {
             notifier_client_key_pair: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
+    }
+
+    fn config_for_mode(mode: NodeMode) -> NodeConfig {
+        let mut sui_connector_config = config_for_chain(SuiChainIdentifier::Mainnet);
+        if mode.is_notifier() {
+            sui_connector_config.notifier_client_key_pair = Some(default_key_pair());
+        }
+        let consensus_config = mode.is_validator().then(|| ConsensusConfig {
+            db_path: "consensus-db".into(),
+            db_retention_epochs: None,
+            db_pruner_period_secs: None,
+            max_pending_transactions: None,
+            max_submit_position: None,
+            submit_delay_step_override_millis: None,
+            parameters: None,
+        });
+
+        NodeConfig {
+            root_seed_key_pair: mode
+                .is_validator()
+                .then(|| RootSeedWithPath::new(RootSeed::random_seed())),
+            protocol_key_pair: default_authority_key_pair(),
+            consensus_key_pair: default_key_pair(),
+            account_key_pair: default_key_pair(),
+            network_key_pair: default_key_pair(),
+            db_path: "node-db".into(),
+            network_address: default_grpc_address(),
+            sui_connector_config,
+            metrics_address: default_metrics_address(),
+            admin_interface_port: default_admin_interface_port(),
+            consensus_config,
+            remove_deprecated_tables: false,
+            p2p_config: P2pConfig::default(),
+            end_of_epoch_broadcast_channel_capacity:
+                default_end_of_epoch_broadcast_channel_capacity(),
+            metrics: None,
+            supported_protocol_versions: None,
+            state_archive_write_config: StateArchiveConfig::default(),
+            state_archive_read_config: vec![],
+            authority_overload_config: AuthorityOverloadConfig::default(),
+            run_with_range: None,
+            authority_db_retention_epochs: None,
+            authority_db_pruner_period_secs: None,
+            max_mpc_computation_cores: None,
+        }
+    }
+
+    fn unreadable_root_seed() -> RootSeedWithPath {
+        serde_yaml::from_str("path: notifier-root-seed-must-not-be-read\n")
+            .expect("a root-seed path descriptor must deserialize without reading the path")
+    }
+
+    #[test]
+    fn notifier_config_without_root_seed_is_accepted() {
+        let config = config_for_mode(NodeMode::Notifier);
+        let yaml = serde_yaml::to_string(&config).expect("notifier config must serialize");
+        assert!(!yaml.contains("root-seed-key-pair"));
+        let mut parsed: NodeConfig =
+            serde_yaml::from_str(&yaml).expect("notifier config without a root seed must parse");
+
+        NodeMode::Notifier
+            .validate_and_prepare_config(&mut parsed)
+            .expect("notifier configuration must not require a validator root seed");
+    }
+
+    #[test]
+    fn legacy_notifier_config_with_root_seed_still_parses() {
+        let mut config = config_for_mode(NodeMode::Notifier);
+        config.root_seed_key_pair = Some(unreadable_root_seed());
+        let yaml = serde_yaml::to_string(&config).expect("legacy notifier config must serialize");
+
+        let parsed: NodeConfig =
+            serde_yaml::from_str(&yaml).expect("legacy notifier config must deserialize");
+        assert!(parsed.root_seed_key_pair.is_some());
+    }
+
+    #[test]
+    fn validator_config_without_root_seed_is_rejected() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        config.root_seed_key_pair = None;
+
+        let error = NodeMode::Validator
+            .validate_and_prepare_config(&mut config)
+            .expect_err("validator configuration must require a root seed");
+        assert!(
+            error.to_string().contains("root_seed_key_pair"),
+            "unexpected validation error: {error}"
+        );
+    }
+
+    #[test]
+    fn notifier_preparation_discards_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Notifier);
+        config.root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Notifier
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable legacy root-seed path must not affect notifier initialization");
+        assert!(config.root_seed_key_pair.is_none());
+    }
+
+    #[test]
+    fn prepared_notifier_config_omits_root_seed_when_serialized() {
+        let mut config = config_for_mode(NodeMode::Notifier);
+        config.root_seed_key_pair = Some(unreadable_root_seed());
+        NodeMode::Notifier
+            .validate_and_prepare_config(&mut config)
+            .unwrap();
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(!yaml.contains("root-seed-key-pair"));
     }
 
     #[test]

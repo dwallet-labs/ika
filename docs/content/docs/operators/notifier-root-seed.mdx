@@ -1,0 +1,19 @@
+---
+id: notifier-root-seed
+title: Remove validator root seeds from notifiers
+description: Migration note for dedicated ika-notifier deployments
+sidebar_position: 3
+sidebar_label: Notifier root-seed migration
+---
+
+# Remove validator root seeds from notifiers
+
+The dedicated `ika-notifier` process does not use validator root-seed
+material. After upgrading to a release containing this change, remove
+`root-seed-key-pair` from the notifier configuration and remove the
+`root-seed.key` file or secret mount from the notifier workload.
+
+Legacy notifier configurations that still contain `root-seed-key-pair`
+continue to parse, but `ika-notifier` ignores the field without opening the
+referenced file. Validator configurations are unchanged: `ika-validator`
+still requires `root-seed-key-pair` for MPC operations.
