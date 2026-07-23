@@ -303,7 +303,15 @@ next epoch inherits.
      epoch), where the epoch's own freeze is the only agreed set. A
      cert READ ERROR retries without falling back to the channel; a
      missing cert-pinned blob defers ingestion (retry as propagation
-     converges), never downgrades to the channel bundle.
+     converges), never downgrades to the channel bundle. The deferral
+     has an active repair (issue #1881): each per-epoch peer-blob
+     fetcher pass also fetches the prior cert's `ValidatorMpcData`
+     blobs missing locally from committee peers (any holder is
+     authoritative — content-addressed, verified against the
+     quorum-signed cert digest) into the perpetual store, so a store
+     that never held a long-dark carried-forward member's blob heals
+     instead of deferring forever; the missing count is exported as
+     `ika_dwallet_mpc_prior_cert_blobs_missing`.
    - The hydration-clobber variant (issue #1852, never-instantiated
      shape) and its three defenses. Post-restart, until the per-epoch
      blob source installs, the sync task's full chain read publishes an

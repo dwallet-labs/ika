@@ -239,6 +239,24 @@ validator latched for the whole epoch. Sourcing rules
    ingesting it would byte-diverge this validator's VSS presign public
    inputs from the committee's. Cert read errors retry; missing
    cert-pinned blobs defer ingestion until propagation converges.
+4. **Deferral repair — prior-cert blob refetch**: announcement-driven
+   fetching cannot converge a cert-pinned blob whose owner has been
+   dark for epochs — the owner never re-announces (carry-forward
+   re-pins its old digest into every cert instead), so a host whose
+   perpetual store post-dates the owner's last announcement holds no
+   copy and has no announcement to fetch by; the deferral in rule 3
+   would retry the same local store forever, MPC-wedging the validator
+   for this and every following epoch (issue #1881). Each peer-blob
+   fetcher pass therefore also fetches the prior cert's
+   `ValidatorMpcData` digests (∩ current committee) missing locally
+   from committee peers (`fetch_missing_prior_cert_mpc_data_blobs`):
+   any holder is authoritative — blobs are content-addressed and
+   verified (digest + structural decode) against the quorum-signed
+   cert digest before the write-through persist — and the manager's
+   next retry assembles from the repaired store. The missing-blob
+   count is exported as the `ika_dwallet_mpc_prior_cert_blobs_missing`
+   gauge (0 once assembly completes), so a stuck ingest is visible
+   without log access.
 
 ## Next-committee assembly
 

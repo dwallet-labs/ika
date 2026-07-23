@@ -34,13 +34,25 @@
 //! Anemo server — the in-memory write is what lets *other* peers
 //! fetch the blob from this validator without a restart, turning
 //! every honest receiver into a relay.
+//!
+//! Each pass also repairs the prior epoch's handoff-cert
+//! `ValidatorMpcData` blobs
+//! ([`fetch_missing_prior_cert_mpc_data_blobs`]): carried-forward
+//! members that have been dark for epochs never announce in the
+//! current epoch, so the announcement-driven pass cannot cover
+//! them, yet the MPC manager's current-epoch key ingestion needs
+//! exactly their cert-pinned blobs (issue #1881).
 
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use crate::blob_cache::BlobCache;
+use crate::validator_metadata::{PeerBlobVerdict, verify_peer_blob_for_relay};
 use anemo::{Network, PeerId};
 use ika_network::mpc_artifacts::fetch_blob;
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
+use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
 use prometheus::IntCounterVec;
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
@@ -123,8 +135,47 @@ impl PeerBlobFetcher {
         }
         loop {
             self.fetch_missing_blobs_once().await;
+            self.fetch_missing_prior_cert_blobs_once().await;
             tokio::time::sleep(poll_interval).await;
         }
+    }
+
+    /// Single prior-cert repair pass: read the prior epoch's handoff cert
+    /// (if any) and fetch every cert-pinned `ValidatorMpcData` blob missing
+    /// locally from committee peers — see
+    /// [`fetch_missing_prior_cert_mpc_data_blobs`] for why the
+    /// announcement-driven pass alone cannot cover these blobs.
+    async fn fetch_missing_prior_cert_blobs_once(&self) {
+        let Some(prior_epoch) = self.epoch_id.checked_sub(1) else {
+            return;
+        };
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return;
+        };
+        let cert = match epoch_store.get_certified_handoff_attestation(prior_epoch) {
+            Ok(Some(cert)) => cert,
+            // No cert (genesis, a pre-v4 prior epoch, or the bootstrap
+            // anchor still fetching) — nothing to repair from; the next
+            // pass re-checks.
+            Ok(None) => return,
+            Err(e) => {
+                debug!(
+                    prior_epoch,
+                    error = ?e,
+                    "peer blob fetcher: prior handoff cert read failed; retrying next pass"
+                );
+                return;
+            }
+        };
+        fetch_missing_prior_cert_mpc_data_blobs(
+            &cert,
+            self.own_authority,
+            &self.blob_cache,
+            &self.p2p_network,
+            &self.authority_names_to_peer_ids,
+            &self.fetch_outcomes,
+        )
+        .await;
     }
 
     /// Single pass over the per-epoch announcement table. Fetches any
@@ -333,4 +384,164 @@ impl PeerBlobFetcher {
             }
         }
     }
+}
+
+/// Fetch the prior handoff cert's `ValidatorMpcData` blobs (∩ current
+/// committee) that are missing from the local stores, from committee peers.
+///
+/// The announcement-driven pass only covers blobs someone announced THIS
+/// epoch. A carried-forward committee member that has been dark for epochs
+/// never re-announces — its digest re-enters each epoch's cert via
+/// carry-forward — so a validator whose perpetual store post-dates that
+/// member's last announcement (binary upgraded to the blob-writing version
+/// later, DB restored, writes lost in a crash window) holds no local copy
+/// and has no announcement to fetch by. The MPC manager sources the CURRENT
+/// epoch's validator key bundle from exactly these cert digests against the
+/// perpetual store and correctly defers ingestion while any pinned blob is
+/// missing (never falling back to the freeze channel); without this repair
+/// the deferral retries the same local store forever and the validator is
+/// MPC-dead for this and every following epoch (issue #1881).
+///
+/// Byte-safe by construction: the digests come from the quorum-signed cert
+/// and blobs are content-addressed, so ANY holder is authoritative. The
+/// blob's owner is asked first, but it is typically exactly the dark member,
+/// so every other committee peer follows in shuffled order. Fetched bytes
+/// are verified (digest + structural decode) before the write-through
+/// insert into the perpetual + in-memory stores; every fetch outcome
+/// increments the same `fetch_outcomes` counter as the announcement pass,
+/// so a peer serving garbage on this path is equally visible. Returns the
+/// number of blobs fetched and persisted this pass; still-missing blobs
+/// are retried on the next pass.
+pub async fn fetch_missing_prior_cert_mpc_data_blobs(
+    cert: &CertifiedHandoffAttestation,
+    own_authority: AuthorityName,
+    blob_cache: &BlobCache,
+    p2p_network: &Network,
+    authority_names_to_peer_ids: &HashMap<AuthorityName, PeerId>,
+    fetch_outcomes: &IntCounterVec,
+) -> usize {
+    let missing: Vec<(AuthorityName, [u8; 32])> = cert
+        .attestation
+        .items
+        .iter()
+        .filter_map(|(key, digest)| match key {
+            HandoffItemKey::ValidatorMpcData { validator } => Some((*validator, *digest)),
+            _ => None,
+        })
+        // Only current committee members feed the manager's key bundle; a
+        // departed validator's carried digest is dead weight here.
+        .filter(|(validator, _)| {
+            *validator == own_authority || authority_names_to_peer_ids.contains_key(validator)
+        })
+        .filter(|(_, digest)| !blob_cache.contains(digest))
+        .collect();
+    if missing.is_empty() {
+        return 0;
+    }
+    let mut other_peers: Vec<(AuthorityName, PeerId)> = authority_names_to_peer_ids
+        .iter()
+        .filter(|(authority, _)| **authority != own_authority)
+        .map(|(authority, peer_id)| (*authority, *peer_id))
+        .collect();
+    other_peers.shuffle(&mut rand::rng());
+
+    let mut fetched_count = 0;
+    for (owner, digest) in missing {
+        let owner_peer = authority_names_to_peer_ids.get(&owner).copied();
+        let candidates = owner_peer
+            .map(|peer_id| (owner, peer_id))
+            .into_iter()
+            .chain(
+                other_peers
+                    .iter()
+                    .filter(|(_, peer_id)| Some(*peer_id) != owner_peer)
+                    .copied(),
+            );
+        let mut fetched = false;
+        for (candidate_authority, peer_id) in candidates {
+            match fetch_blob(p2p_network, peer_id, digest).await {
+                Ok(Some(bytes)) => {
+                    match verify_peer_blob_for_relay(&bytes, &digest) {
+                        PeerBlobVerdict::Accept => {}
+                        PeerBlobVerdict::HashMismatch => {
+                            fetch_outcomes.with_label_values(&["hash_mismatch"]).inc();
+                            debug!(
+                                ?owner,
+                                ?candidate_authority,
+                                ?peer_id,
+                                expected = ?digest,
+                                "prior-cert blob repair: candidate served bytes that don't \
+                                 match the cert digest; trying next peer"
+                            );
+                            continue;
+                        }
+                        PeerBlobVerdict::DecodeFailed => {
+                            // Hash matched but the bytes fail structural
+                            // decode — only the blob's producer could
+                            // craft hash-matching bad bytes, so this is a
+                            // byzantine signal, distinguished from a
+                            // plain mismatch in metrics and logs.
+                            fetch_outcomes.with_label_values(&["decode_failed"]).inc();
+                            debug!(
+                                ?owner,
+                                ?candidate_authority,
+                                ?peer_id,
+                                "prior-cert blob repair: candidate served hash-matching bytes \
+                                 that fail structural decode; refusing to persist"
+                            );
+                            continue;
+                        }
+                    }
+                    if let Err(e) = blob_cache.insert(digest, bytes) {
+                        fetch_outcomes
+                            .with_label_values(&["cache_insert_failed"])
+                            .inc();
+                        warn!(
+                            error = ?e,
+                            ?owner,
+                            ?candidate_authority,
+                            "prior-cert blob repair: cache insert failed; trying next peer"
+                        );
+                        continue;
+                    }
+                    fetch_outcomes.with_label_values(&["ok"]).inc();
+                    info!(
+                        ?owner,
+                        served_by = ?candidate_authority,
+                        ?peer_id,
+                        "prior-cert blob repair: fetched + persisted missing mpc_data blob"
+                    );
+                    fetched = true;
+                    fetched_count += 1;
+                    break;
+                }
+                Ok(None) => {
+                    fetch_outcomes.with_label_values(&["not_found"]).inc();
+                    debug!(
+                        ?owner,
+                        ?candidate_authority,
+                        ?peer_id,
+                        "prior-cert blob repair: candidate doesn't have the blob; trying next"
+                    );
+                }
+                Err(e) => {
+                    fetch_outcomes.with_label_values(&["transport_error"]).inc();
+                    debug!(
+                        ?owner,
+                        ?candidate_authority,
+                        ?peer_id,
+                        error = ?e,
+                        "prior-cert blob repair: transport error; trying next peer"
+                    );
+                }
+            }
+        }
+        if !fetched {
+            debug!(
+                ?owner,
+                "prior-cert blob repair: no candidate served the blob this pass; will retry"
+            );
+        }
+    }
+    fetched_count
 }
