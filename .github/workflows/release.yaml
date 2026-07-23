@@ -457,19 +457,25 @@ jobs:
       - name: Package release assets
         run: |
           VERSION="v${{ needs.version.outputs.version }}"
-          # Mainnet mints the bare v-tag: the Homebrew formula's download URL
-          # and asset glob interpolate it. Other networks attach the release
-          # to the TRIGGER tag itself (release/<network>-v<version>, already
-          # pointing at this run's commit) — publishing a release on an
-          # existing tag creates no tag and fires no push event, so it cannot
-          # re-trigger this workflow. Asset filenames use the network-qualified
-          # slash-free stem — GitHub asset names cannot contain '/'.
+          # Every network names its release and assets <network>-v<version>,
+          # so a release page is self-describing about which network it is for.
+          # Asset filenames use that same slash-free stem — GitHub asset names
+          # cannot contain '/'.
+          #
+          # They differ only in which tag the release hangs off. Non-mainnet
+          # attaches to the TRIGGER tag itself (release/<network>-v<version>,
+          # already pointing at this run's commit). Mainnet instead mints its
+          # own slash-free <network>-v<version> tag on publish, because the
+          # Homebrew formula's download URL interpolates the tag, and a tag
+          # containing '/' would make that URL's path ambiguous. Minting it is
+          # safe: the push trigger is `release/*-*`, which a bare
+          # mainnet-v<version> tag does not match, so publishing cannot
+          # re-trigger this workflow.
           NETWORK="${{ needs.version.outputs.network }}"
+          ASSET_STEM="${NETWORK}-${VERSION}"
           if [ "$NETWORK" = "mainnet" ]; then
-            ASSET_STEM="$VERSION"
-            RELEASE_TAG="$VERSION"
+            RELEASE_TAG="${NETWORK}-${VERSION}"
           else
-            ASSET_STEM="${NETWORK}-${VERSION}"
             RELEASE_TAG="${{ github.ref_name }}"
           fi
           echo "ASSET_STEM=${ASSET_STEM}" >> "$GITHUB_ENV"
@@ -601,13 +607,13 @@ jobs:
 
           # gh can download from draft releases with GITHUB_TOKEN
           mkdir -p /tmp/release-assets
-          gh release download "v${VERSION}" \
+          gh release download "mainnet-v${VERSION}" \
             --repo "${{ github.repository }}" \
             --dir /tmp/release-assets \
-            --pattern "ika-v${VERSION}-*.tar.gz"
+            --pattern "ika-mainnet-v${VERSION}-*.tar.gz"
 
           for platform in macos-arm64 macos-x64 linux-arm64 linux-x64; do
-            FILE="/tmp/release-assets/ika-v${VERSION}-${platform}.tar.gz"
+            FILE="/tmp/release-assets/ika-mainnet-v${VERSION}-${platform}.tar.gz"
             if [ ! -f "$FILE" ]; then
               echo "::error::Release asset not found: ${FILE}"
               exit 1
