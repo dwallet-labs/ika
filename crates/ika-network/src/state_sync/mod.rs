@@ -884,6 +884,12 @@ where
                 .as_ref()
                 .map(|x| x.sequence_number())
         {
+            debug!(
+                local_highest = ?highest_processed_checkpoint.as_ref().map(|x| x.sequence_number()),
+                target = ?highest_known_checkpoint.as_ref().map(|x| x.sequence_number()),
+                on_chain_cursor,
+                "starting dwallet checkpoint sync job"
+            );
             // Start a sync job.
             let task = sync_to_checkpoint(
                 self.network.clone(),

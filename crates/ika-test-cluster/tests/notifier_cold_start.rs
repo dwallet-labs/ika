@@ -58,7 +58,43 @@ async fn notifier_resumes_writing_after_full_db_wipe() {
     let notifier_db_path = notifier.config().db_path();
     notifier.stop();
     std::fs::remove_dir_all(&notifier_db_path).expect("wipe notifier database directory");
+    assert!(
+        !notifier_db_path.exists(),
+        "notifier db directory still exists after remove_dir_all: {}",
+        notifier_db_path.display()
+    );
     notifier.start().await.expect("restart notifier");
+
+    // Diagnostic snapshot immediately after the restart: the store must be
+    // empty (proves the wipe hit the directory the node actually opens).
+    {
+        let handle = notifier
+            .get_node_handle()
+            .expect("restarted notifier has a node handle");
+        let (highest_synced_at_boot, first_present_at_boot) = handle.with(|node| {
+            let store = node.dwallet_checkpoint_store_for_testing();
+            (
+                store
+                    .get_highest_synced_dwallet_checkpoint()
+                    .expect("read highest synced checkpoint")
+                    .map(|checkpoint| checkpoint.sequence_number),
+                store
+                    .get_dwallet_checkpoint_by_sequence_number(1)
+                    .expect("read checkpoint 1")
+                    .is_some(),
+            )
+        });
+        println!(
+            "post-restart snapshot: db_path={} highest_synced={highest_synced_at_boot:?} \
+             checkpoint_1_present={first_present_at_boot}",
+            notifier_db_path.display()
+        );
+        assert!(
+            !first_present_at_boot,
+            "checkpoint 1 present immediately after restart: the wipe did not clear the \
+             store the node opens (db path mismatch or store held elsewhere)"
+        );
+    }
 
     // The chain must keep closing epochs, which only the (now history-less)
     // notifier can drive. Two closes from the epoch observed after the

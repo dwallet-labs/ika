@@ -343,8 +343,14 @@ impl SuiConnectorService {
                     );
                     if let Some(cursor) = cursor {
                         let advanced = Some(cursor) > *dwallet_cursor_sender.borrow();
-                        if advanced && dwallet_cursor_sender.send(Some(cursor)).is_err() {
-                            return;
+                        if advanced {
+                            info!(
+                                cursor,
+                                "on-chain dwallet checkpoint cursor advanced (state-sync floor)"
+                            );
+                            if dwallet_cursor_sender.send(Some(cursor)).is_err() {
+                                return;
+                            }
                         }
                     }
                 }
