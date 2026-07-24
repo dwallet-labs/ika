@@ -115,6 +115,23 @@ four fixed; kept for the diagnostic shapes):
   adoption guard in `../specs/handoff.md`); if the shape recurs, check
   for the "network key stranded after a mid-epoch restart" log and that
   read path first.
+- **`all_epoch_sessions_finished=false` with `checkpoint_writer_lag > 0`
+  — the checkpoint WRITER is the blocker, not MPC (issue #1892; both
+  2026-07 testnet epoch-close outages).** Sessions completed and were
+  certified into local dwallet checkpoints, but the notifier never landed
+  them on Sui, so the on-chain `completed_sessions_count` can never reach
+  the lock target. Check the gate warn's `checkpoint_writer_lag` field
+  (also the `ika_sui_connector_chain_dwallet_checkpoint_writer_lag`
+  gauge and the `checkpoint_writer_lag` blocked-reason label) — positive
+  and growing means go look at the notifier, not the MPC pipeline. On
+  the notifier itself, grep for `checkpoint sync is STALLED` (the
+  known−synced self-report; `ika_dwallet_checkpoint_sync_stall_seconds`
+  > 0) — a sync-side stall gives the writer *nothing to submit*, so the
+  submission-failure log never fires. If a fallback writer is deployed
+  (`../specs/checkpoint-writer-failover.md`), a takeover shows as
+  `fallback writer taking over` warns and a positive
+  `ika_sui_connector_fallback_writer_actions_total`; the close then
+  completes on its own — the stall was still real, fix the notifier.
 - **`all_epoch_sessions_finished=false` — a locked user session that is
   never re-pulled (WAS the open core of #1736; root-caused and fixed in
   PR #1809).** All other gate conditions read true; the epoch locked its
