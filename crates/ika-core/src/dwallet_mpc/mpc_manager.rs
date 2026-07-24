@@ -1836,6 +1836,47 @@ impl DWalletMPCManager {
                      metadata disabled; no handoff cert exists)"
                 );
             }
+            // Off-chain disabled (protocol v3) chain-read robustness: never
+            // let an EMPTY overlay reconfiguration output clobber a non-empty
+            // adopted one. With no certs at v3, nothing else stops it, and an
+            // empty read is real: the on-chain writer fills the epoch's
+            // reconfiguration entry in chunks across transactions (and empties
+            // it before a rejected-output retry), so a lagging or
+            // load-balanced RPC replica can serve the entry mid-write.
+            // Clobbering would re-instantiate DKG-derived parameters the
+            // committee never agreed to run this epoch — byte-divergent MPC
+            // outputs, convicted malicious by the output-quorum byte-equality
+            // tally. Keep the adopted value; the legitimate next output
+            // arrives non-empty and overwrites it normally. (Under off-chain
+            // mode the cert-pinned skip above already covers this shape.)
+            if !off_chain_on
+                && data.current_reconfiguration_public_output.is_empty()
+                && self
+                    .adopted_network_key_data
+                    .get(key_id)
+                    .is_some_and(|existing| {
+                        !existing.current_reconfiguration_public_output.is_empty()
+                    })
+            {
+                if self
+                    .warned_cert_digest_mismatches
+                    .insert((*key_id, mpc_data_blob_hash(&[])))
+                {
+                    warn!(
+                        ?key_id,
+                        "overlay reconfiguration output is empty while a non-empty value \
+                         is adopted (torn or lagging chain read) — keeping the adopted \
+                         value"
+                    );
+                } else {
+                    debug!(
+                        ?key_id,
+                        "overlay reconfiguration output still empty — keeping the \
+                         adopted value"
+                    );
+                }
+                continue;
+            }
             self.adopted_network_key_data.insert(*key_id, data.clone());
         }
         // A deferred unmapped key resolves via the background NetworkKeyId

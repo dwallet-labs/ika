@@ -1090,7 +1090,17 @@ where
                                 merged.state,
                                 DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
                             ) && merged.current_reconfiguration_public_output.is_empty();
+                        // Validators only: a non-validator (notifier/fullnode)
+                        // has no producer cache, so under off-chain mode its
+                        // fast-path entry stays metadata-only FOREVER — that
+                        // is its complete, by-design shape (no non-validator
+                        // consumer reads the blob bytes; the epoch-switch gate
+                        // counts entries, and decode-side consumers guard
+                        // `is_empty`). Treating it as incomplete would pin the
+                        // incomplete gauge at the key count and re-merge every
+                        // tick for blobs that can never arrive.
                         let overlay_incomplete = off_chain_on
+                            && mode.is_validator()
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);
                         // Publish the entry even when the overlay is
