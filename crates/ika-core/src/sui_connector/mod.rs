@@ -33,7 +33,7 @@ use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionDa
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub mod bag_event_pump;
 pub mod changeset_receiver;
@@ -344,10 +344,17 @@ impl SuiConnectorService {
                     if let Some(cursor) = cursor {
                         let advanced = Some(cursor) > *dwallet_cursor_sender.borrow();
                         if advanced {
-                            info!(
-                                cursor,
-                                "on-chain dwallet checkpoint cursor advanced (state-sync floor)"
-                            );
+                            // First reading at info (the cold-start unblock signal);
+                            // steady-state advances at debug — one per processed
+                            // checkpoint, far too chatty for info.
+                            if dwallet_cursor_sender.borrow().is_none() {
+                                info!(
+                                    cursor,
+                                    "on-chain dwallet checkpoint cursor known (state-sync floor active)"
+                                );
+                            } else {
+                                debug!(cursor, "on-chain dwallet checkpoint cursor advanced");
+                            }
                             if dwallet_cursor_sender.send(Some(cursor)).is_err() {
                                 return;
                             }
