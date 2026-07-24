@@ -36,6 +36,11 @@ them has a bug — determine which before changing either.
 - [`specs/epoch-close-session-lock.md`](specs/epoch-close-session-lock.md)
   — the frozen session-completion target, the strict-equality close
   predicate, the gate-consensus-submission rule, batch-processing rules.
+- [`specs/checkpoint-writer-failover.md`](specs/checkpoint-writer-failover.md)
+  — writer roles (primary notifier vs. fallback writers), the
+  staleness-gated takeover rules, duplicate-submission safety, and the
+  writer-stall observability signals (sync-stall self-report,
+  `checkpoint_writer_lag` blocked-reason).
 - [`specs/cross-binary-upgrade.md`](specs/cross-binary-upgrade.md) —
   the in-place protocol-version upgrade contract: the stake-weighted
   version vote, the wire/on-disk compatibility invariants for mixed

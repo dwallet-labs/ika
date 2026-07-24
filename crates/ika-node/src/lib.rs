@@ -497,6 +497,10 @@ impl IkaNode {
             config.sui_connector_config.sui_rpc_url.is_some(),
             has_anchor,
             mode,
+            config
+                .sui_connector_config
+                .fallback_notifier_client_key_pair
+                .is_some(),
         )
         .map_err(|e| anyhow!(e))?;
         let legacy_json_rpc = matches!(plan, SuiTransportPlan::LegacyJsonRpc);
@@ -1485,6 +1489,12 @@ impl IkaNode {
 
     pub fn current_epoch_for_testing(&self) -> EpochId {
         self.state.current_epoch_for_testing()
+    }
+
+    /// The node's Prometheus registry service, so in-process tests can read
+    /// metric values (e.g. the fallback-writer takeover counter).
+    pub fn registry_service_for_testing(&self) -> &RegistryService {
+        &self.registry_service
     }
 
     /// Protocol version of the validator's current epoch store. Useful for

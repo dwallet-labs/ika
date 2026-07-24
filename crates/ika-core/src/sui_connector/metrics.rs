@@ -96,9 +96,24 @@ pub struct SuiConnectorMetrics {
     /// Labels: `reason` in {`not_locked`, `user_sessions_lag`,
     /// `system_sessions_lag`, `next_committee_missing`,
     /// `network_keys_reconfig_lag`, `noa_checkpoints_unfinalized`,
-    /// `pricing_votes_open`}. 1 means that condition is currently *blocking*
-    /// end-of-publish from firing.
+    /// `pricing_votes_open`, `checkpoint_writer_lag`}. 1 means that condition
+    /// is currently *blocking* end-of-publish from firing.
     pub(crate) end_of_publish_blocked_reason: IntGaugeVec,
+
+    /// Actions (checkpoint submissions or epoch-switch calls) this node
+    /// performed as a FALLBACK checkpoint writer, i.e. after the primary
+    /// notifier left them pending past the activation delay. Stays 0 on a
+    /// healthy network; any increase is a primary-notifier outage signal.
+    pub(crate) fallback_writer_actions_total: IntCounter,
+
+    /// `highest locally-certified dwallet checkpoint - coordinator's
+    /// last_processed_checkpoint_sequence_number`. Positive means completions
+    /// are certified locally but their checkpoints have not landed on Sui —
+    /// the checkpoint writer (notifier) is behind. Sustained positive values
+    /// while `user_sessions_lag` blocks the close mean the WRITER is the
+    /// blocker, not the MPC pipeline. Negative means our local certified
+    /// store trails the chain (local sync lag), which is a different problem.
+    pub(crate) chain_dwallet_checkpoint_writer_lag: IntGauge,
 
     /// Number of uncompleted session events observed on chain on the most
     /// recent pull (legacy v≤3 poller) or bag-walk snapshot (v4 BagEventPump).
@@ -255,6 +270,22 @@ impl SuiConnectorMetrics {
             uncompleted_events_backlog: register_int_gauge_with_registry!(
                 "ika_sui_connector_uncompleted_events_backlog",
                 "Uncompleted session events observed on chain on the most recent pull",
+                registry,
+            )
+            .unwrap(),
+            fallback_writer_actions_total: register_int_counter_with_registry!(
+                "ika_sui_connector_fallback_writer_actions_total",
+                "Actions performed as a FALLBACK checkpoint writer (primary notifier \
+                 left them pending past the activation delay); 0 on a healthy network",
+                registry,
+            )
+            .unwrap(),
+            chain_dwallet_checkpoint_writer_lag: register_int_gauge_with_registry!(
+                "ika_sui_connector_chain_dwallet_checkpoint_writer_lag",
+                "Highest locally-certified dwallet checkpoint minus the coordinator's \
+                 last processed checkpoint sequence number; sustained positive values \
+                 mean certified checkpoints are not landing on Sui (checkpoint writer \
+                 stalled)",
                 registry,
             )
             .unwrap(),

@@ -65,6 +65,14 @@ pub struct ValidatorConfigBuilder {
     /// combine with a trust anchor or a data-source override (the node
     /// fails closed at boot on those mixed shapes).
     legacy_sui_rpc_only: bool,
+    /// Optional FALLBACK checkpoint-writer key for this validator, pasted into
+    /// `NodeConfig.sui_connector_config.fallback_notifier_client_key_pair`.
+    /// The derived address must be funded with SUI and must differ from the
+    /// primary notifier's.
+    fallback_notifier_client_key_pair: Option<KeyPairWithPath>,
+    /// Activation delay (seconds) for the fallback writer; `None` keeps the
+    /// production default, which is far too slow for tests.
+    fallback_notifier_activation_delay_secs: Option<u64>,
 }
 
 impl ValidatorConfigBuilder {
@@ -109,6 +117,16 @@ impl ValidatorConfigBuilder {
 
     pub fn with_unsafe_genesis_committee(mut self, committee: Committee) -> Self {
         self.unsafe_genesis_committee = Some(committee);
+        self
+    }
+
+    pub fn with_fallback_notifier_key_pair(
+        mut self,
+        key_pair: SuiKeyPair,
+        activation_delay_secs: u64,
+    ) -> Self {
+        self.fallback_notifier_client_key_pair = Some(KeyPairWithPath::new(key_pair));
+        self.fallback_notifier_activation_delay_secs = Some(activation_delay_secs);
         self
     }
 
@@ -224,6 +242,9 @@ impl ValidatorConfigBuilder {
                 ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair: None,
+                fallback_notifier_client_key_pair: self.fallback_notifier_client_key_pair.clone(),
+                fallback_notifier_activation_delay_secs: self
+                    .fallback_notifier_activation_delay_secs,
                 sui_ika_system_module_last_processed_event_id_override: None,
             },
             db_path,
@@ -480,6 +501,8 @@ impl FullnodeConfigBuilder {
                 ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair,
+                fallback_notifier_client_key_pair: None,
+                fallback_notifier_activation_delay_secs: None,
                 sui_ika_system_module_last_processed_event_id_override: None,
             },
             metrics_address: self

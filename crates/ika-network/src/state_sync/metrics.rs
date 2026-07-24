@@ -90,6 +90,22 @@ impl Metrics {
                 .set(sequence_number as i64);
         }
     }
+
+    pub fn set_dwallet_checkpoint_sync_stall_seconds(&self, seconds: u64) {
+        if let Some(inner) = &self.0 {
+            inner
+                .dwallet_checkpoint_sync_stall_seconds
+                .set(seconds as i64);
+        }
+    }
+
+    pub fn set_system_checkpoint_sync_stall_seconds(&self, seconds: u64) {
+        if let Some(inner) = &self.0 {
+            inner
+                .system_checkpoint_sync_stall_seconds
+                .set(seconds as i64);
+        }
+    }
 }
 
 struct Inner {
@@ -100,6 +116,9 @@ struct Inner {
     highest_known_system_checkpoint: IntGauge,
     highest_verified_system_checkpoint: IntGauge,
     highest_synced_system_checkpoint: IntGauge,
+
+    dwallet_checkpoint_sync_stall_seconds: IntGauge,
+    system_checkpoint_sync_stall_seconds: IntGauge,
 }
 
 impl Inner {
@@ -141,6 +160,23 @@ impl Inner {
             highest_synced_system_checkpoint: register_int_gauge_with_registry!(
                 "ika_highest_synced_system_checkpoint",
                 "Highest synced system message",
+                registry
+            )
+            .unwrap(),
+
+            dwallet_checkpoint_sync_stall_seconds: register_int_gauge_with_registry!(
+                "ika_dwallet_checkpoint_sync_stall_seconds",
+                "Seconds dwallet-checkpoint sync has made no progress while peers \
+                 are known to be ahead (0 = healthy). A sustained non-zero value on \
+                 the notifier means the checkpoint writer has nothing to submit and \
+                 the network's epoch close is silently blocked.",
+                registry
+            )
+            .unwrap(),
+            system_checkpoint_sync_stall_seconds: register_int_gauge_with_registry!(
+                "ika_system_checkpoint_sync_stall_seconds",
+                "Seconds system-checkpoint sync has made no progress while peers \
+                 are known to be ahead (0 = healthy).",
                 registry
             )
             .unwrap(),
