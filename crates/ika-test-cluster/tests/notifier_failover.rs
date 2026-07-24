@@ -41,25 +41,32 @@ const FALLBACK_ACTIVATION_DELAY_SECS: u64 = 45;
 /// value at which CI would call the network wedged.
 const FAILOVER_CLOSE_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// Sum of `ika_sui_connector_fallback_writer_actions_total` on validator 0
-/// (the configured fallback writer). Zero means it never took over.
+/// Sum of `ika_sui_connector_fallback_writer_actions_total` across ALL
+/// validators. Only the configured fallback writer can ever increment it, but
+/// summing avoids depending on handle ordering — `validator_node_handles()`
+/// iterates the swarm's node map by authority name, NOT config index, so
+/// "the first handle" is usually not the validator that carries the fallback
+/// key. Zero means no validator ever took over.
 fn fallback_writer_actions(cluster: &IkaTestCluster) -> f64 {
-    let handle = cluster
+    cluster
         .swarm
         .validator_node_handles()
-        .into_iter()
-        .next()
-        .expect("swarm must have validator 0");
-    handle.with(|node| {
-        node.registry_service_for_testing()
-            .default_registry()
-            .gather()
-            .iter()
-            .filter(|family| family.name() == "ika_sui_connector_fallback_writer_actions_total")
-            .flat_map(|family| family.get_metric())
-            .map(|metric| metric.get_counter().value())
-            .sum()
-    })
+        .iter()
+        .map(|handle| {
+            handle.with(|node| {
+                node.registry_service_for_testing()
+                    .default_registry()
+                    .gather()
+                    .iter()
+                    .filter(|family| {
+                        family.name() == "ika_sui_connector_fallback_writer_actions_total"
+                    })
+                    .flat_map(|family| family.get_metric())
+                    .map(|metric| metric.get_counter().value())
+                    .sum::<f64>()
+            })
+        })
+        .sum()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -87,9 +94,19 @@ async fn epoch_close_survives_notifier_death_via_fallback_writer() {
     // Phase 2: kill the notifier — the only primary writer in the cluster.
     // Without the fallback this freezes the network at its current epoch
     // forever.
+    let mut stopped_fullnodes = 0;
     for fullnode in cluster.swarm.fullnodes() {
         fullnode.stop();
+        assert!(
+            !fullnode.is_running(),
+            "notifier fullnode still running after stop()"
+        );
+        stopped_fullnodes += 1;
     }
+    assert_eq!(
+        stopped_fullnodes, 1,
+        "expected exactly the notifier fullnode in the swarm"
+    );
 
     // Phase 3: two more closes must complete, counted from the epoch at kill
     // time — with 30s epochs and a multi-minute boot the cluster is well past
