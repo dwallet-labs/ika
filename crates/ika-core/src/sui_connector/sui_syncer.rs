@@ -9,7 +9,6 @@ use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
-use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
@@ -511,11 +510,6 @@ where
                 continue;
             }
 
-            let off_chain_on = ProtocolConfig::get_for_version(
-                ProtocolVersion::new(system_inner.protocol_version()),
-                Chain::Unknown,
-            )
-            .off_chain_validator_metadata_enabled();
             // Snapshot the source once so the freeze probe and the
             // assembly read the SAME per-epoch store: the freeze flag is
             // monotonic within a store, so `is_frozen == true` here
@@ -532,7 +526,6 @@ where
                 new_next_bls_committee.validity_threshold,
                 true,
                 off_chain_mpc_data_snapshot,
-                off_chain_on,
                 frozen_at_assembly,
                 &mut assembly_log_state,
                 &metrics,
@@ -576,9 +569,8 @@ where
             // its committee — network reconfiguration encrypts under the
             // upcoming parties' PVSS keys. Only once FROZEN, so the manager
             // ingests the consensus-agreed next-epoch set (not a pre-freeze
-            // subset). `None` only on the legacy chain fallback (no off-chain
-            // bundle), where reconfiguration runs the backward-compatible party
-            // that needs no PVSS.
+            // subset). `None` only on the bootstrap-window chain read (no
+            // off-chain bundle assembled yet).
             if frozen_at_assembly && let Some(bundles) = next_epoch_bundles {
                 let _ = next_epoch_mpc_keys_sender.send(Some((committee_epoch, bundles)));
             }
@@ -620,7 +612,6 @@ where
         off_chain_mpc_data_source: Option<
             Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
-        off_chain_on: bool,
         frozen_at_assembly: bool,
         log_state: &mut AssemblyLogState,
         metrics: &SuiConnectorMetrics,
@@ -631,14 +622,12 @@ where
         // Try the off-chain assembly first. The strict
         // `Complete`/`Incomplete` gate inside the source means we
         // only use the off-chain map when every (non-excluded)
-        // committee member resolved successfully. Under off-chain
-        // mode (`off_chain_on == true`) an `Incomplete` result
-        // returns `OffChainAssemblyIncomplete` and the outer sync
-        // loop retries on the next tick — there is no chain
-        // fallback for validator mpc_data; chain is write-only.
-        // Under legacy mode (`off_chain_on == false`) we fall
-        // through to the chain read below so existing clusters
-        // keep working.
+        // committee member resolved successfully. An `Incomplete`
+        // result returns `OffChainAssemblyIncomplete` and the outer
+        // sync loop retries on the next tick — there is no chain
+        // fallback for validator mpc_data; chain is write-only. The
+        // chain read below serves only the bootstrap window before
+        // the off-chain source is installed (`source == None`).
         if let Some(source) = off_chain_mpc_data_source {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
@@ -699,40 +688,28 @@ where
                     return Ok((committee, Some(*bundles)));
                 }
                 crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
-                    if off_chain_on {
-                        // Under v4 there is NO chain fallback. The
-                        // off-chain pipeline (consensus
-                        // announcements + P2P blob delivery +
-                        // attestation-tally freeze) is the only
-                        // path; missing entries here are transient
-                        // (P2P hasn't converged yet) and the
-                        // outer sync loop should retry on the next
-                        // tick — expected every epoch during the
-                        // convergence window, so the per-tick log is
-                        // debug (the caller escalates a persistent
-                        // stall). Return a typed error rather than
-                        // silently reading from chain.
-                        debug!(
-                            epoch,
-                            missing = missing.len(),
-                            ?missing,
-                            "off_chain mode: off-chain validator-mpc_data assembly incomplete; \
-                             no chain fallback — retrying on next sync tick"
-                        );
-                        return Err(DwalletMPCError::OffChainAssemblyIncomplete {
-                            epoch,
-                            missing: missing.len(),
-                        });
-                    } else {
-                        debug!(
-                            epoch,
-                            missing = missing.len(),
-                            "off-chain validator-mpc_data assembly incomplete; falling back to chain"
-                        );
-                    }
+                    // There is NO chain fallback. The off-chain pipeline
+                    // (consensus announcements + P2P blob delivery +
+                    // attestation-tally freeze) is the only path; missing
+                    // entries here are transient (P2P hasn't converged yet)
+                    // and the outer sync loop should retry on the next
+                    // tick — expected every epoch during the convergence
+                    // window, so the per-tick log is debug (the caller
+                    // escalates a persistent stall).
+                    debug!(
+                        epoch,
+                        missing = missing.len(),
+                        ?missing,
+                        "off-chain validator-mpc_data assembly incomplete; \
+                         no chain fallback — retrying on next sync tick"
+                    );
+                    return Err(DwalletMPCError::OffChainAssemblyIncomplete {
+                        epoch,
+                        missing: missing.len(),
+                    });
                 }
                 crate::validator_metadata::OffChainMpcDataAssembly::EverythingExcluded => {
-                    if off_chain_on {
+                    {
                         // PERMANENT, not transient: the freeze excluded
                         // EVERY requested committee member, so there is no
                         // attested mpc_data to assemble from — the off-chain
@@ -770,11 +747,6 @@ where
                             epoch,
                             missing: authorities.len(),
                         });
-                    } else {
-                        debug!(
-                            epoch,
-                            "off-chain assembly EverythingExcluded; falling back to chain"
-                        );
                     }
                 }
             }
@@ -842,8 +814,9 @@ where
             })
             .collect::<DwalletMPCResult<HashMap<_, _>>>()?;
 
-        // Chain fallback (legacy mode): only the bare class-groups key is on
-        // chain, so there are no off-chain PVSS/VSS bundles to deliver.
+        // Bootstrap-window chain read (off-chain source not yet installed):
+        // only the bare class-groups key is on chain, so there are no
+        // off-chain PVSS/VSS bundles to deliver.
         Ok((
             Committee::new(
                 epoch,
@@ -941,16 +914,6 @@ where
                 continue;
             };
             let current_epoch = system_inner.epoch();
-            let protocol_version = ProtocolVersion::new(system_inner.protocol_version());
-            // Off-chain mode: validator mpc_data, network-key DKG
-            // outputs, and reconfiguration outputs are sourced from
-            // consensus + P2P + the local producer cache. Chain is
-            // write-only for these blob fields. The
-            // off_chain_validator_metadata flag is detected from
-            // chain state so the behavior tracks protocol-version
-            // upgrades automatically.
-            let off_chain_on = ProtocolConfig::get_for_version(protocol_version, Chain::Unknown)
-                .off_chain_validator_metadata_enabled();
 
             let network_encryption_keys = sui_client
                 .get_dwallet_mpc_network_keys(&dwallet_coordinator_inner)
@@ -995,7 +958,7 @@ where
                 (*network_keys_sender.borrow().clone()).clone();
             let mut incomplete_overlay_keys_this_pass: i64 = 0;
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
-                // In off-chain mode, synthesize a metadata-only
+                // Synthesize a metadata-only
                 // `DWalletNetworkEncryptionKeyData` from the
                 // lightweight chain object so we skip the heavy
                 // `read_table_vec_as_raw_bytes` chain reads. The
@@ -1027,7 +990,7 @@ where
                 let key_is_stranded = stranded_network_keys
                     .load()
                     .contains(&network_dec_key_shares.id);
-                let chain_fetched = if off_chain_on && !key_is_stranded {
+                let chain_fetched = if !key_is_stranded {
                     Ok(
                         ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
                             id: network_dec_key_shares.id,
@@ -1099,8 +1062,7 @@ where
                         // `is_empty`). Treating it as incomplete would pin the
                         // incomplete gauge at the key count and re-merge every
                         // tick for blobs that can never arrive.
-                        let overlay_incomplete = off_chain_on
-                            && mode.is_validator()
+                        let overlay_incomplete = mode.is_validator()
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);
                         // Publish the entry even when the overlay is

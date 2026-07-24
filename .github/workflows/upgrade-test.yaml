@@ -9,56 +9,31 @@ name: Upgrade Test
 # dev-docs/specs/cross-binary-upgrade.md).
 #
 # Manual dispatch can run any scenario. Relevant pull requests and release-tag
-# workflows run only `v118_mixed_rollout`, avoiding the full expensive matrix
-# on unrelated changes. Pick the scenario with the `test` input:
+# workflows run only `workload`, avoiding the full expensive matrix on
+# unrelated changes. (The historical cross-binary / v1.1.8 / v1.2.1 rollout
+# rehearsals were retired when protocol v3/v4 support was removed — the
+# current binary shares no protocol version with those literal old binaries.
+# Rebuild that machinery from git history when the next version boundary
+# needs a rolling-upgrade rehearsal.) Pick the scenario with the `test` input:
 #
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
 #                  Needs only the current build. Fastest.
-#   workload     — v3 -> v4 upgrade then a full user DKG -> Presign -> Sign
-#                  on-chain. Current build only.
-#   cross_binary — rolling swap with committee churn between two
-#                  wire-compatible builds: an OLD build of `old_ref` pinned
-#                  to MAX_PROTOCOL_VERSION=3 and the current build. Defaults
-#                  to old_ref=<this branch>, old_max_protocol_version=3.
-#   v118_upgrade — the full-committee mainnet rehearsal: boot the literal
-#                  `mainnet-v1.1.8` binary, sequentially swap all to current,
-#                  confirm v4 and continued serving. Defaults to
-#                  old_ref=mainnet-v1.1.8, old_bin_name=ika-node.
-#   v118_churn   — v118_upgrade + post-upgrade committee churn: after the
-#                  full-committee 1.1.8 -> local swap, join a new validator
-#                  so the v4 reshare of the 1.1.8-origin key includes a new
-#                  party (exercises the OCS joiner trust-anchor path from a real
-#                  1.1.8 origin). Same defaults as v118_upgrade.
-#   v118_mixed_rollout — release-blocking decentralized rollout: boot literal
-#                  mainnet-v1.1.8, upgrade exactly one validator, and keep the
-#                  other three literal old binaries through two protocol-v3
-#                  network-key reconfigurations with per-authority convergence.
-#   v121_rollout — the aggregated-outputs (protocol v5) rollout rehearsal:
-#                  boot the literal `release/testnet-v1.2.1` binary (deployed
-#                  testnet, protocol v4), upgrade one validator and converge
-#                  two mixed pre-aggregation (V3) reshares, then swap the
-#                  rest, vote to v5, and confirm the first aggregated (V4)
-#                  reconfiguration output installs everywhere. Defaults to
-#                  old_ref=release/testnet-v1.2.1, old_bin_name=ika-validator.
-#   legacy_config — rollout-day config rehearsal: the current build on
-#                  old-style (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
+#   workload     — full user DKG -> Presign -> Sign on-chain at genesis
+#                  protocol v5. Current build only.
+#   legacy_config — config-compat rehearsal: the current build on old-style
+#                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
 #                  (the legacy JSON-RPC transport nothing else covers). Full
-#                  lifecycle at v3, the v3 -> v4 vote, lifecycle again at v4.
-#                  Current build only.
+#                  lifecycle. Current build only.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
 # `--test` target.
 #
-# The OLD binary for the upgrade scenarios is built here from `old_ref` in an
-# isolated `git worktree`, at that ref's OWN pinned toolchain (rustup honors
-# the worktree's rust-toolchain.toml). Only the OLD binary is built
-# `--no-default-features`: at historical refs `enforce-minimum-cpu` was
-# compile-time-only and panics on cgroup-throttled / <16-core pods. Current
-# binaries build with default features — enforcement is runtime-gated to
-# validators on the ika testnet/mainnet networks, so it is inert on the CI
-# localnet (its ika system object maps to Chain::Unknown).
+# Current binaries build with default features — enforcement
+# (enforce-minimum-cpu) is runtime-gated to validators on the ika
+# testnet/mainnet networks, so it is inert on the CI localnet (its ika
+# system object maps to Chain::Unknown).
 
 on:
   pull_request:
@@ -85,23 +60,11 @@ on:
         description: "Scenario or comma-separated scenarios"
         type: string
         required: false
-        default: "v118_mixed_rollout"
+        default: "workload"
       candidate_sha:
         description: "Exact release-candidate commit SHA to check out and test"
         type: string
         required: true
-      old_ref:
-        type: string
-        required: false
-        default: ""
-      old_bin_name:
-        type: string
-        required: false
-        default: ""
-      old_max_protocol_version:
-        type: string
-        required: false
-        default: ""
       epoch_duration_ms:
         type: string
         required: false
@@ -122,44 +85,23 @@ on:
         type: boolean
         required: false
         default: false
-      test_testing_fault:
-        type: boolean
-        required: false
-        default: false
   workflow_dispatch:
     inputs:
       test:
-        description: "Scenarios: 'all', or a comma-separated subset e.g. 'cross_binary,v118_mixed_rollout'. Each runs as its own parallel job."
+        description: "Scenarios: 'all', or a comma-separated subset e.g. 'smoke,workload'. Each runs as its own parallel job."
         type: string
         required: true
         # Default 'all' = every scenario. Or a comma-separated subset. Each
         # selected scenario is a separate matrix job (separate runner), with
-        # fail-fast disabled. Per-run overrides (old_ref/old_max_protocol_version)
-        # apply to EVERY selected scenario, so leave them empty unless running a
-        # single scenario (each scenario otherwise uses its own defaults).
+        # fail-fast disabled.
         default: "all"
       candidate_sha:
         description: "Exact candidate SHA (empty = SHA captured when the run is dispatched)"
         type: string
         required: false
         default: ""
-      old_ref:
-        description: "Git ref/tag/sha/branch for the OLD binary (empty = per-scenario default; mixed rollout uses literal mainnet-v1.1.8)"
-        type: string
-        required: false
-        default: ""
-      old_bin_name:
-        description: "OLD ika-node bin name (empty = ika-node for v118 scenarios, ika-validator for cross_binary)"
-        type: string
-        required: false
-        default: ""
-      old_max_protocol_version:
-        description: "If set, patch MAX_PROTOCOL_VERSION in the OLD worktree before building (cross_binary uses 3)"
-        type: string
-        required: false
-        default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (mixed rollout requires >=480000; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (empty = scenario default)"
         type: string
         required: false
         default: ""
@@ -179,12 +121,7 @@ on:
         required: false
         default: false
       use_mocks:
-        description: "Build with INSECURE deterministic MPC mocks. Rejected for v118_mixed_rollout; other cross-binary old refs must carry the mock feature. Off by default."
-        type: boolean
-        required: false
-        default: false
-      test_testing_fault:
-        description: "TEST ONLY: build the mixed-rollout current validator with the existing test-testing reconfiguration-message fault; the zero-malicious/convergence gate must fail."
+        description: "Build with INSECURE deterministic MPC mocks. Off by default."
         type: boolean
         required: false
         default: false
@@ -221,10 +158,10 @@ jobs:
     steps:
       - id: pick
         env:
-          TEST: ${{ inputs.test || 'v118_mixed_rollout' }}
+          TEST: ${{ inputs.test || 'workload' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload cross_binary v118_upgrade v118_churn v118_mixed_rollout v121_rollout legacy_config"
+          ALL="smoke workload legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -330,75 +267,19 @@ jobs:
       - name: Resolve test selection
         env:
           TEST: ${{ matrix.test }}
-          IN_OLD_REF: ${{ inputs.old_ref }}
-          IN_OLD_BIN_NAME: ${{ inputs.old_bin_name }}
-          IN_PATCH_MAX: ${{ inputs.old_max_protocol_version }}
         run: |
           set -euo pipefail
           case "$TEST" in
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
-            cross_binary) RUN_FLAG=RUN_CROSS_BINARY ;;
-            v118_upgrade) RUN_FLAG=RUN_V118_UPGRADE ;;
-            v118_churn)   RUN_FLAG=RUN_V118_CHURN ;;
-            v118_mixed_rollout) RUN_FLAG=RUN_V118_MIXED_ROLLOUT ;;
-            v121_rollout) RUN_FLAG=RUN_V121_ROLLOUT ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
-          esac
-          # Per-scenario OLD-binary defaults; explicit inputs override (an
-          # empty input falls through to the default via `:=`).
-          OLD_REF="$IN_OLD_REF"
-          OLD_BIN_NAME="$IN_OLD_BIN_NAME"
-          PATCH_MAX="$IN_PATCH_MAX"
-          case "$TEST" in
-            v118_upgrade | v118_churn)
-              : "${OLD_REF:=mainnet-v1.1.8}"
-              : "${OLD_BIN_NAME:=ika-node}"
-              ;;
-            v118_mixed_rollout)
-              [ -z "$OLD_REF" ] || [ "$OLD_REF" = "mainnet-v1.1.8" ] || {
-                echo "v118_mixed_rollout requires literal old_ref=mainnet-v1.1.8" >&2; exit 1;
-              }
-              [ -z "$OLD_BIN_NAME" ] || [ "$OLD_BIN_NAME" = "ika-node" ] || {
-                echo "v118_mixed_rollout requires the historical ika-node binary" >&2; exit 1;
-              }
-              [ -z "$PATCH_MAX" ] || {
-                echo "v118_mixed_rollout forbids MAX_PROTOCOL_VERSION patching" >&2; exit 1;
-              }
-              OLD_REF=mainnet-v1.1.8
-              OLD_BIN_NAME=ika-node
-              ;;
-            v121_rollout)
-              [ -z "$OLD_REF" ] || [ "$OLD_REF" = "release/testnet-v1.2.1" ] || {
-                echo "v121_rollout requires literal old_ref=release/testnet-v1.2.1" >&2; exit 1;
-              }
-              [ -z "$OLD_BIN_NAME" ] || [ "$OLD_BIN_NAME" = "ika-validator" ] || {
-                echo "v121_rollout requires the ika-validator binary" >&2; exit 1;
-              }
-              [ -z "$PATCH_MAX" ] || {
-                echo "v121_rollout forbids MAX_PROTOCOL_VERSION patching" >&2; exit 1;
-              }
-              OLD_REF=release/testnet-v1.2.1
-              OLD_BIN_NAME=ika-validator
-              ;;
-            cross_binary)
-              # The old side is current source with only the protocol ceiling
-              # patched. Pin it to the same immutable candidate commit instead
-              # of a branch name that can move between setup and compilation.
-              : "${OLD_REF:=$CANDIDATE_SHA}"
-              : "${OLD_BIN_NAME:=ika-validator}"
-              : "${PATCH_MAX:=3}"
-              ;;
           esac
           {
             echo "RUN_FLAG=$RUN_FLAG"
             echo "TEST_NAME=$TEST"
-            echo "OLD_REF=$OLD_REF"
-            echo "OLD_BIN_NAME=$OLD_BIN_NAME"
-            echo "PATCH_MAX=$PATCH_MAX"
           } >> "$GITHUB_ENV"
-          echo "test=$TEST flag=$RUN_FLAG old_ref=${OLD_REF:-<none>} old_bin=${OLD_BIN_NAME:-<none>} patch_max=${PATCH_MAX:-<none>}"
+          echo "test=$TEST flag=$RUN_FLAG"
 
       - name: Build current binaries
         # When heap_profile is on, keep full symbols IN the binary so jeprof can
@@ -413,30 +294,15 @@ jobs:
           CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
           USE_MOCKS: ${{ inputs.use_mocks }}
-          TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if { [ "$TEST_NAME" = "v118_mixed_rollout" ] || [ "$TEST_NAME" = "v121_rollout" ]; } && [ "$USE_MOCKS" = "true" ]; then
-            echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
-            exit 1
-          fi
-          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v118_mixed_rollout" ]; then
-            echo "test_testing_fault is only supported by v118_mixed_rollout" >&2
-            exit 1
-          fi
-          # `use_mocks` builds the NEW binaries with the INSECURE deterministic
-          # mocks. For cross-binary scenarios the OLD binary is built with the
-          # mock too (below), so its ref MUST carry the dwallet-mpc-unsafe-mock
-          # feature or that build fails — mixed mock/real crypto won't interoperate.
+          # `use_mocks` builds the binaries with the INSECURE deterministic
+          # mocks.
           NODE_FEATURES=""
           IKA_FEATURES=""
           if [ "$USE_MOCKS" = "true" ]; then
             NODE_FEATURES="--features dwallet-mpc-unsafe-mock"
             IKA_FEATURES="--features dwallet-mpc-unsafe-mock"
-          fi
-          if [ "$TEST_TESTING_FAULT" = "true" ]; then
-            NODE_FEATURES="--features test-testing"
-            echo "building deliberately faulty current validator; this validation run must fail closed"
           fi
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
@@ -447,65 +313,11 @@ jobs:
           cargo build --release -p ika --bin ika $IKA_FEATURES
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
-      - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' || matrix.test == 'v118_mixed_rollout' || matrix.test == 'v121_rollout' }}
-        env:
-          USE_MOCKS: ${{ inputs.use_mocks }}
-        run: |
-          set -euo pipefail
-          # Under use_mocks the OLD binary must ALSO be mocked to interoperate with
-          # the (mocked) new binary — so OLD_REF must carry dwallet-mpc-unsafe-mock
-          # or this build fails loudly.
-          OLD_FEATURES=""
-          if [ "$USE_MOCKS" = "true" ]; then OLD_FEATURES="--features dwallet-mpc-unsafe-mock"; fi
-          WT="$GITHUB_WORKSPACE/old-build"
-          git worktree remove --force "$WT" 2>/dev/null || true
-          rm -rf "$WT"
-          # Resolve the requested ref to one immutable commit before creating
-          # the worktree. A remote branch is normally present only as
-          # origin/<name>; an arbitrary SHA may need an explicit fetch.
-          if git rev-parse --verify "${OLD_REF}^{commit}" >/dev/null 2>&1; then
-            OLD_COMMIT=$(git rev-parse --verify "${OLD_REF}^{commit}")
-          elif git rev-parse --verify "origin/${OLD_REF}^{commit}" >/dev/null 2>&1; then
-            OLD_COMMIT=$(git rev-parse --verify "origin/${OLD_REF}^{commit}")
-          else
-            git fetch --no-tags origin "$OLD_REF"
-            OLD_COMMIT=$(git rev-parse --verify "FETCH_HEAD^{commit}")
-          fi
-          test -n "$OLD_COMMIT" || { echo "could not resolve old_ref '$OLD_REF' to a commit" >&2; exit 1; }
-          echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
-          git worktree add --force --detach "$WT" "$OLD_COMMIT"
-          if [ -n "$PATCH_MAX" ]; then
-            [[ "$PATCH_MAX" =~ ^[0-9]+$ ]] || { echo "old_max_protocol_version must be numeric, got '$PATCH_MAX'" >&2; exit 1; }
-            SOURCE="$WT/crates/ika-protocol-config/src/lib.rs"
-            MATCHES=$(grep -cE '^const MAX_PROTOCOL_VERSION: u64 = [0-9]+;$' "$SOURCE" || true)
-            [ "$MATCHES" -eq 1 ] || { echo "expected exactly one MAX_PROTOCOL_VERSION assignment, found $MATCHES" >&2; exit 1; }
-            EXPECTED="const MAX_PROTOCOL_VERSION: u64 = ${PATCH_MAX};"
-            if grep -Fxq "$EXPECTED" "$SOURCE"; then
-              echo "MAX_PROTOCOL_VERSION already equals requested value ${PATCH_MAX}; no substitution would occur" >&2
-              exit 1
-            fi
-            sed -i -E "s/^const MAX_PROTOCOL_VERSION: u64 = [0-9]+;/const MAX_PROTOCOL_VERSION: u64 = ${PATCH_MAX};/" \
-              "$SOURCE"
-            AFTER=$(grep -cFx "$EXPECTED" "$SOURCE" || true)
-            [ "$AFTER" -eq 1 ] || { echo "MAX_PROTOCOL_VERSION patch verification failed: expected '$EXPECTED' exactly once, found $AFTER" >&2; exit 1; }
-            echo "patched MAX_PROTOCOL_VERSION -> ${PATCH_MAX}:"
-            grep -n 'const MAX_PROTOCOL_VERSION' "$SOURCE"
-          fi
-          # Build at the OLD ref's own toolchain (rustup reads the worktree's
-          # rust-toolchain.toml). A ref that won't build on its own toolchain
-          # fails loudly here — cherry-pick or use a prebuilt path instead.
-          ( cd "$WT" && cargo build --release --no-default-features $OLD_FEATURES -p ika-node --bin "$OLD_BIN_NAME" )
-          OLD_BIN="$WT/target/release/$OLD_BIN_NAME"
-          test -x "$OLD_BIN" || { echo "OLD binary missing: $OLD_BIN" >&2; exit 1; }
-          echo "OLD_BIN=$OLD_BIN" >> "$GITHUB_ENV"
-          echo "built OLD binary: $OLD_BIN"
-
       - name: Run ${{ matrix.test }}
         env:
-          # smoke/workload read IKA_VALIDATOR_BIN/IKA_NOTIFIER_BIN/IKA_BIN;
-          # Cross-binary/v1.1.8 scenarios read NEW_BIN/NOTIFIER_BIN/OLD_BIN/IKA_BIN.
-          # Setting both naming sets is harmless — each test reads only its own.
+          # The scenarios read IKA_VALIDATOR_BIN/IKA_NOTIFIER_BIN/IKA_BIN;
+          # the NEW_BIN/NOTIFIER_BIN aliases are kept for harness code that
+          # still reads them. Setting both naming sets is harmless.
           IKA_VALIDATOR_BIN: ${{ github.workspace }}/target/release/ika-validator
           NEW_BIN: ${{ github.workspace }}/target/release/ika-validator
           IKA_NOTIFIER_BIN: ${{ github.workspace }}/target/release/ika-notifier
@@ -513,8 +325,6 @@ jobs:
           IKA_BIN: ${{ github.workspace }}/target/release/ika
           # SUI_BIN is set from $HOME in the run script (the install step
           # copied sui to ~/.local/bin/sui).
-          # OLD_BIN comes from the build step via $GITHUB_ENV (unset for
-          # smoke/workload, which ignore it).
           # Persistent per-validator data + logs under the workspace so the
           # uploads below can recover them (the harness default lives on a
           # developer NVMe path that does not exist on the runner).
@@ -525,8 +335,7 @@ jobs:
           # Cap concurrent dwallet-MPC computations per validator. NOTE: this
           # bounds CPU concurrency (each computation already fans out across the
           # whole rayon pool via the `parallel` crypto feature), not memory
-          # directly, and is NOT proven to prevent the cross_binary runner
-          # death — v118 passes with or without it. Empty -> node default.
+          # directly. Empty -> node default.
           MAX_MPC_COMPUTATION_CORES: ${{ inputs.max_mpc_computation_cores }}
           # Shrink the per-curve presign pools (production maxima 30k-150k each x
           # 10 pools, RocksDB-backed) for the out-of-process test validators —
@@ -554,23 +363,16 @@ jobs:
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
-          # Keep production pool sizing/timing for the release gate. The
-          # reduced-pool override remains a resource concession for the wider
-          # workload/churn matrix, not compatibility evidence.
-          if [ "$TEST_NAME" = "v118_mixed_rollout" ]; then
-            unset IKA_ENABLE_SMALL_PRESIGN_POOLS
-          fi
           mkdir -p "$UPGRADE_TEST_DIR"
-          echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"
+          echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN"
           # Resource sampler (CPU + MEMORY) -> resource-sampler.log, BACKGROUNDED
           # so the test runs in the FOREGROUND and its [flow N/total] progress +
           # logs stream LIVE to the step log (via tee), not only the artifact.
           # Every 15s: effective CPUs, loadavg, mem current/max/pct, swap, the
           # cgroup oom_kill counter, top-RSS. (This file is lost on a "runner
-          # lost communication" death — the cross_binary OOM — which also wipes
-          # any runner-emitted annotations, so we don't emit them; that death is
-          # an OOMKilled/137 at the pod's 96 GiB cgroup limit, captured off-pod
-          # via `kubectl top`/describe or node dmesg. Idle validators ~7.5-8 GB.)
+          # lost communication" death — an OOMKilled/137 at the pod's 96 GiB
+          # cgroup limit, captured off-pod via `kubectl top`/describe or node
+          # dmesg. Idle validators ~7.5-8 GB.)
           ( set +eu
             CG=/sys/fs/cgroup
             prev=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo 0)

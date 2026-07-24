@@ -1,18 +1,18 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! End-to-end workload check: bring up a single-binary cluster at protocol v3,
-//! upgrade it to v4 through the capability vote, then drive a full
-//! **DKG → Presign → Sign** dWallet lifecycle (via the `ika` CLI) and confirm
-//! a signature is produced on-chain. Proves the session-lifecycle invariant
-//! the upgrade harness depends on — sessions started in an epoch actually
-//! complete — independently of the cross-binary scenario.
+//! End-to-end workload check: bring up a single-binary cluster and drive a
+//! full **DKG → Presign → Sign** dWallet lifecycle (via the `ika` CLI),
+//! confirming a signature is produced on-chain. Proves the session-lifecycle
+//! invariant the upgrade harness depends on — sessions started in an epoch
+//! actually complete.
 //!
-//! Genesis is v3, never v4: at v4 the network DKG needs PVSS keys which only
-//! arrive through the off-chain assembly, and that assembly is
-//! next-committee-only — so a v4 *genesis* DKG is rejected forever (4/4
-//! class-groups keys, 0/4 PVSS). The supported path is genesis v3 → upgrade
-//! into v4, which is also the path mainnet takes.
+//! Genesis is `ProtocolVersion::MIN` (= MAX = 5): the network DKG runs the
+//! main (PVSS) party from genesis via the current-epoch off-chain key
+//! assembly. (The genesis-v3 → vote-into-v4 flavor of this scenario was
+//! retired when protocol v3/v4 support was removed — no supported version
+//! boundary remains to cross; resurrect the vote steps from git history when
+//! a v6 exists.)
 //!
 //! Opt-in via `RUN_WORKLOAD_TEST=1` (set `HOLD_CLUSTER=1` to hold the cluster
 //! up at the workload step for manual `ika dwallet` driving instead):
@@ -68,21 +68,14 @@ async fn workload_dkg_presign_sign() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
-    // Genesis v3 → upgrade into v4 (the mainnet path), then a full
-    // DKG → Presign → Sign lifecycle, via the Scenario DSL:
     // - wait_for_epoch(2): epoch 1 is genesis (reached *before* the network
     //   DKG runs), so the counter advancing to 2 is itself the signal that the
-    //   genesis DKG finished and the v3 network key is readable on-chain.
-    // - set_buffer_stake(0): with n=4 the default 50% buffer rounds the
-    //   capability-vote threshold up to all four validators; drop it to a bare
-    //   quorum so the v3→v4 vote tallies at the next boundary (the realistic
-    //   behavior on larger committees). Retries across the reconfiguration lag.
-    // - wait_for_epoch(3): crosses the v3→v4 upgrade boundary.
+    //   genesis DKG finished and the network key is readable on-chain.
     // - run_workload: builds a driver and drives the lifecycle, asserting a
     //   signature is produced. With HOLD_CLUSTER set it holds the cluster up
     //   here (config paths printed) for manual driving instead.
-    // Epochs are 3 minutes so the lifecycle fits inside a post-upgrade epoch
-    // before its own reconfiguration window.
+    // Epochs are 3 minutes so the lifecycle fits inside an epoch before its
+    // own reconfiguration window.
     Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
         .with_epoch_duration_ms(180_000)
@@ -90,9 +83,7 @@ async fn workload_dkg_presign_sign() {
         .with_ika_cli(ika_cli)
         .start_all(validator)
         .wait_for_epoch(2)
-        .set_buffer_stake(0)
-        .wait_for_epoch(3)
-        .expect_protocol_version_at_least(4)
+        .expect_protocol_version_at_least(5)
         .run_workload("dkg-presign-sign")
         .run()
         .await

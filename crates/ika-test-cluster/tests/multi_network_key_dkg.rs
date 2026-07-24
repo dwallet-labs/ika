@@ -52,7 +52,7 @@ async fn multi_network_keys_dkg_across_epochs() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(epoch_duration_ms)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");

@@ -6,15 +6,11 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
-use crate::dwallet_mpc::network_dkg::{
-    DwalletMPCNetworkKeys, network_dkg_bwd_compat_public_input, network_dkg_v2_public_input,
-};
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
 use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
-use crate::dwallet_mpc::reconfiguration::{
-    ReconfigurationPartyPublicInputGenerator, reconfiguration_bwd_compat_public_input,
-};
+use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -27,8 +23,6 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
-use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
-use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -38,30 +32,15 @@ pub(crate) enum PublicInput {
     DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
-    /// Backward-compatible network DKG public input
-    /// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicInput`).
-    /// Selected when `ProtocolConfig::is_network_encryption_key_version_v3()` is
-    /// `false` — peers may still publish bare `ClassGroupsEncryptionKeyAndProof`
-    /// without PVSS HPKE keys.
-    NetworkEncryptionKeyDkgBwdCompat(<bwd_compat_dkg::Party as mpc::Party>::PublicInput),
-    /// Main network DKG public input
-    /// (`twopc_mpc::decentralized_party::dkg::Party::PublicInput`). Selected when
-    /// `ProtocolConfig::is_network_encryption_key_version_v3()` is `true`.
+    /// Network DKG public input
+    /// (`twopc_mpc::decentralized_party::dkg::Party::PublicInput`).
     NetworkEncryptionKeyDkg(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
     EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
-    /// Backward-compatible network Reconfiguration public input
-    /// (`twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party::PublicInput`).
-    /// Selected when `ProtocolConfig::is_reconfiguration_message_version_v3()` is
-    /// `false`.
-    NetworkEncryptionKeyReconfigurationBwdCompat(
-        <bwd_compat_reconfig::Party as mpc::Party>::PublicInput,
-    ),
-    /// Main network Reconfiguration public input
-    /// (`ReconfigurationParty::PublicInput`). Selected when
-    /// `ProtocolConfig::is_reconfiguration_message_version_v3()` is `true`.
+    /// Network Reconfiguration public input
+    /// (`ReconfigurationParty::PublicInput`).
     NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
@@ -211,20 +190,14 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-            // Pick the network DKG public-input shape that matches the active
-            // protocol_version. At `_version == 2` (mainnet-v1.1.8 era) peers
-            // publish bare `ClassGroupsEncryptionKeyAndProof` and the
-            // bwd-compat DKG `PublicInput::new` takes only the class-groups
-            // CRT map. At `_version == 3` we have per-curve
-            // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
-            let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
-                // No all-committee completeness check: the off-chain key set is
-                // the consensus-frozen agreed set, which may legitimately omit
-                // offline/withholding validators. The DKG deals shares only to
-                // the parties that have keys (the rest stay active in consensus,
-                // just undealt). The freeze gate in `handle_mpc_request` already
-                // ensures the agreed set has been ingested before we get here, so
-                // these maps are the agreed quorum set, not a pre-freeze partial.
+            // No all-committee completeness check: the off-chain key set is
+            // the consensus-frozen agreed set, which may legitimately omit
+            // offline/withholding validators. The DKG deals shares only to
+            // the parties that have keys (the rest stay active in consensus,
+            // just undealt). The freeze gate in `handle_mpc_request` already
+            // ensures the agreed set has been ingested before we get here, so
+            // these maps are the agreed quorum set, not a pre-freeze partial.
+            let dkg_public_input =
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
                     validator_mpc_keys_by_party_id.class_groups,
@@ -232,13 +205,7 @@ pub(crate) fn session_input_from_request(
                     validator_mpc_keys_by_party_id.secp256r1_pvss,
                     validator_mpc_keys_by_party_id.ristretto_pvss,
                     protocol_config.is_network_encryption_key_version_v3(),
-                )?)
-            } else {
-                PublicInput::NetworkEncryptionKeyDkgBwdCompat(network_dkg_bwd_compat_public_input(
-                    access_structure,
-                    validator_mpc_keys_by_party_id.class_groups,
-                )?)
-            };
+                )?);
             Ok((
                 dkg_public_input,
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
@@ -260,38 +227,26 @@ pub(crate) fn session_input_from_request(
             let latest_reconfiguration_public_output =
                 network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
 
-            let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
-                // Main reconfig (network_encryption_key_version == 3): all keys
-                // come from the off-chain consensus-agreed sets, never Sui. The
-                // current set is this epoch's agreed keys (the parties holding
-                // shares from the DKG); the upcoming set is delivered on the
-                // next-epoch channel and is absent until the next-epoch off-chain
-                // assembly completes — error to retry, like a missing next
-                // committee.
-                let upcoming_validator_mpc_keys = next_epoch_validator_mpc_keys.ok_or(
-                    DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
-                )?;
-                PublicInput::NetworkEncryptionKeyReconfiguration(
-                    <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
-                        committee,
-                        next_active_committee,
-                        validator_mpc_keys_by_party_id,
-                        upcoming_validator_mpc_keys,
-                        network_dkg_public_output,
-                        latest_reconfiguration_public_output,
-                        protocol_config.is_reconfiguration_message_version_v3(),
-                    )?,
-                )
-            } else {
-                PublicInput::NetworkEncryptionKeyReconfigurationBwdCompat(
-                    reconfiguration_bwd_compat_public_input(
-                        committee,
-                        next_active_committee,
-                        network_dkg_public_output,
-                        latest_reconfiguration_public_output,
-                    )?,
-                )
-            };
+            // All keys come from the off-chain consensus-agreed sets, never
+            // Sui. The current set is this epoch's agreed keys (the parties
+            // holding shares from the DKG); the upcoming set is delivered on
+            // the next-epoch channel and is absent until the next-epoch
+            // off-chain assembly completes — error to retry, like a missing
+            // next committee.
+            let upcoming_validator_mpc_keys = next_epoch_validator_mpc_keys.ok_or(
+                DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
+            )?;
+            let reconfig_public_input = PublicInput::NetworkEncryptionKeyReconfiguration(
+                <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                    committee,
+                    next_active_committee,
+                    validator_mpc_keys_by_party_id,
+                    upcoming_validator_mpc_keys,
+                    network_dkg_public_output,
+                    latest_reconfiguration_public_output,
+                    protocol_config.is_reconfiguration_message_version_v3(),
+                )?,
+            );
             Ok((
                 reconfig_public_input,
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),

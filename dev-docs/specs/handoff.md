@@ -1,6 +1,8 @@
 # Cross-epoch handoff (attestation, certificate, barrier)
 
-Status: active under protocol v4 (`off_chain_validator_metadata_enabled`).
+Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`
+(`off_chain_validator_metadata_enabled` is always on; the pre-v4
+chain-sourced mode no longer exists in the binary).
 The handoff replaces the removed consensus vote on network-key outputs:
 it is the cross-epoch agreement on exactly which off-chain artifacts the
 next epoch inherits.
@@ -113,16 +115,15 @@ next epoch inherits.
   rows) is heavier schema surgery on a gate the planned sequence-pure
   close-gate rework retires — see
   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`.
-- **Deferred close (v4 only)**: after the EndOfPublish stake quorum is
+- **Deferred close**: after the EndOfPublish stake quorum is
   reached, the epoch close is deferred `end_of_publish_grace_rounds`
   (protocol config, default 50) consensus leader rounds past the
   persisted quorum anchor (`end_of_publish_quorum_round`) so more
   EndOfPublish votes and handoff signatures can land before the final
-  checkpoint. Under v3 the close stays inline at the quorum-crossing
-  message — the deferral MUST NOT change v3 behavior (mixed-binary
-  committees on a v3 network must produce byte-identical close
-  sequences). The close itself is restart-idempotent via a persisted
-  `epoch_close_emitted` marker.
+  checkpoint. (Historically v4-gated — under v3 the close stayed inline
+  at the quorum-crossing message; that inline branch is dead code since
+  `MIN_PROTOCOL_VERSION = 5`.) The close itself is restart-idempotent
+  via a persisted `epoch_close_emitted` marker.
 
 ## Certificate
 
@@ -360,8 +361,8 @@ next epoch inherits.
    the commit fails and replays on restart — rather than degrading to an
    empty (shrunken) carry-forward map that would diverge this validator's
    frozen set from its peers'. An empty map is returned only for the
-   chain-true no-cert epochs (genesis, a v3 prior epoch, the first v4
-   epoch). CAVEAT: the committee-uniformity of that empty-map case rests
+   chain-true no-cert epoch (genesis; historically also the v3→v4
+   boundary epochs). CAVEAT: the committee-uniformity of that empty-map case rests
    on invariant 5 holding on EVERY consensus-start path; today the
    barrier is wired only into the continuing-validator reconfigure path
    (joiner-promotion and cold startup are pending — see

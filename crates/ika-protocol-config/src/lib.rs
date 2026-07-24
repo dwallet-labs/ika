@@ -15,7 +15,7 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 3;
+const MIN_PROTOCOL_VERSION: u64 = 5;
 const MAX_PROTOCOL_VERSION: u64 = 5;
 
 // Record history of protocol version allocations here:
@@ -679,16 +679,11 @@ impl ProtocolConfig {
             consensus_gc_depth: Some(60),
             // The delay is measured in consensus rounds.
             decryption_key_reconfiguration_third_round_delay: Some(10),
-            // None below v4: external Schnorr-family presigns are servable at
-            // v3, where 1.1.8 applies no round delay — a base-config value
-            // would make upgraded validators advance round 2 later than 1.1.8
-            // peers on the SAME session during the rolling window, splitting
-            // the output quorum. The delays activate with the v4 arm below.
-            schnorr_presign_second_round_delay: None,
-            schnorr_presign_third_round_delay: None,
+            schnorr_presign_second_round_delay: Some(8),
+            schnorr_presign_third_round_delay: Some(8),
             network_dkg_third_round_delay: Some(10),
-            network_encryption_key_version: Some(1),
-            reconfiguration_message_version: Some(1),
+            network_encryption_key_version: Some(3),
+            reconfiguration_message_version: Some(3),
             end_of_publish_grace_rounds: Some(50),
             mpc_data_freeze_grace_rounds: Some(50),
 
@@ -747,8 +742,12 @@ impl ProtocolConfig {
             internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
             internal_taproot_presign_pool_maximum_size: Some(30000),
 
-            // Set at v4 (see the version match below).
-            internal_presign_stale_batch_expiry_rounds: None,
+            // ~2.5 minutes at the ~20 rounds/s observed under loaded
+            // CI consensus — far beyond an honest batch's completion
+            // time. Erring short merely risks a one-batch pool
+            // overshoot; erring long only delays the refill of a
+            // starved pool.
+            internal_presign_stale_batch_expiry_rounds: Some(3000),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -756,57 +755,35 @@ impl ProtocolConfig {
         cfg.feature_flags.consensus_zstd_compression = true;
         cfg.feature_flags.consensus_batched_block_sync = true;
         cfg.feature_flags
-            .consensus_skip_gced_blocks_in_direct_finalization = false;
+            .consensus_skip_gced_blocks_in_direct_finalization = true;
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
         cfg.feature_flags.bls_checkpoints = true;
+        cfg.feature_flags.internal_presign_sessions = true;
+        cfg.feature_flags.off_chain_validator_metadata = true;
+        cfg.feature_flags.fast_schnorr_supported = true;
+        cfg.feature_flags.aggregated_network_key_public_outputs = true;
 
-        #[allow(clippy::never_loop)]
-        for cur in 2..=version.0 {
-            match cur {
-                1 => unreachable!(),
-                2 => {
-                    cfg.network_encryption_key_version = Some(2);
-                }
-                3 => {
-                    cfg.reconfiguration_message_version = Some(2);
-                }
-                4 => {
-                    cfg.feature_flags.internal_presign_sessions = true;
-                    cfg.feature_flags
-                        .consensus_skip_gced_blocks_in_direct_finalization = true;
-                    cfg.feature_flags.bls_checkpoints = true;
-                    cfg.feature_flags.off_chain_validator_metadata = true;
-                    cfg.feature_flags.fast_schnorr_supported = true;
-                    // ~2.5 minutes at the ~20 rounds/s observed under loaded
-                    // CI consensus — far beyond an honest batch's completion
-                    // time. Erring short merely risks a one-batch pool
-                    // overshoot; erring long only delays the refill of a
-                    // starved pool.
-                    cfg.internal_presign_stale_batch_expiry_rounds = Some(3000);
-                    cfg.network_encryption_key_version = Some(3);
-                    cfg.reconfiguration_message_version = Some(3);
-                    // The delay is measured in consensus rounds.
-                    cfg.schnorr_presign_second_round_delay = Some(8);
-                    cfg.schnorr_presign_third_round_delay = Some(8);
-                }
-                5 => {
-                    cfg.feature_flags.aggregated_network_key_public_outputs = true;
-                }
-                // 6 => {
-                //     cfg.feature_flags.noa_checkpoints = true;
-                // }
-                // Use this template when making changes:
-                //
-                //     // modify an existing constant.
-                //     existing_constant: Some(7),
-                //
-                //     // Add a new constant (which is set to None in prior versions).
-                //     new_constant: Some(new_value),
-                //
-                //     // Remove a constant (ensure that it is never accessed during this version).
-                //     existing_constant: None,
-                _ => panic!("unsupported version {version:?}"),
-            }
+        // The base config above IS the version-5 config (v1-v4 support was
+        // removed; their arms were folded in — the v5 snapshot test pins that
+        // the fold was value-preserving). When adding a version, reintroduce
+        // the per-version loop in place of this guard:
+        //
+        //     for cur in 6..=version.0 {
+        //         match cur {
+        //             6 => {
+        //                 cfg.feature_flags.noa_checkpoints = true;
+        //                 // modify an existing constant:
+        //                 //     existing_constant: Some(7),
+        //                 // add a new constant (None in prior versions):
+        //                 //     new_constant: Some(new_value),
+        //                 // remove a constant (never accessed at this version):
+        //                 //     existing_constant: None,
+        //             }
+        //             _ => panic!("unsupported version {version:?}"),
+        //         }
+        //     }
+        if version.0 > MAX_PROTOCOL_VERSION {
+            panic!("unsupported version {version:?}");
         }
 
         // Local-swarm opt-in (see

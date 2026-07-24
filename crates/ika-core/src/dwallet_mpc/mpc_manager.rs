@@ -27,8 +27,8 @@ use crate::dwallet_mpc::network_dkg::{
 };
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
-    class_groups_keys_by_party_id, generate_access_structure_from_committee,
-    get_validator_mpc_keys_by_party_id, party_id_to_authority_name,
+    generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
+    party_id_to_authority_name,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::network_key_id_mapping::network_key_id_for;
@@ -604,21 +604,10 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            // Take class_groups straight off the on-chain committee (the bare key
-            // Sui already carries) ONLY at network key version 2 (mainnet-v1.1.8 /
-            // backward-compat): there the DKG needs the on-chain class_groups and
-            // there is no off-chain pipeline. At version 3 ALL keys — class_groups
-            // included — come from the off-chain consensus-agreed set, so start
-            // empty and let the ingest fill them in (taking them from Sui here
-            // would be the full N-party class_groups, the wrong source/shape for
-            // the v3 agreed subset).
-            validator_mpc_keys_by_party_id: if protocol_config
-                .is_network_encryption_key_version_v3()
-            {
-                ValidatorMpcKeysByPartyId::empty()
-            } else {
-                class_groups_keys_by_party_id(&committee)?
-            },
+            // ALL keys — class_groups included — come from the off-chain
+            // consensus-agreed set: start empty and let the ingest fill them
+            // in.
+            validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId::empty(),
             current_epoch_keys_ingested: false,
             next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
@@ -927,9 +916,6 @@ impl DWalletMPCManager {
     /// `session_request.epoch` keying (system sessions are always
     /// current-epoch).
     fn cache_network_key_output_from_quorum(&self, output: &DWalletMPCOutputKind) -> bool {
-        if !self.epoch_store.off_chain_validator_metadata_enabled() {
-            return false;
-        }
         let DWalletMPCOutputKind::External { output: kinds } = output else {
             return false;
         };
@@ -1148,15 +1134,7 @@ impl DWalletMPCManager {
     pub(crate) fn ingest_offchain_mpc_keys(&mut self) -> DwalletMPCResult<()> {
         // Current epoch: fill the within-epoch network DKG key set, once.
         if !self.current_epoch_keys_ingested {
-            // The cert path only applies at network-key version 3 (the
-            // off-chain pipeline); at version 2 the construction already
-            // seeded `class_groups` from the on-chain committee and a cert
-            // ingest would overwrite it with the wrong source/shape.
-            let cert_outcome = if self.protocol_config.is_network_encryption_key_version_v3() {
-                self.try_ingest_current_epoch_keys_from_prior_handoff_cert()?
-            } else {
-                PriorCertKeysOutcome::NoPriorCert
-            };
+            let cert_outcome = self.try_ingest_current_epoch_keys_from_prior_handoff_cert()?;
             match cert_outcome {
                 PriorCertKeysOutcome::Ingested => {}
                 // Transient cert-path miss: retry next iteration WITHOUT
@@ -1488,7 +1466,6 @@ impl DWalletMPCManager {
                 }
             }
         }
-        let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
         let mut deferred_unmapped_key = false;
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
@@ -1505,7 +1482,7 @@ impl DWalletMPCManager {
             // identity at epoch start. In steady-state v4 the cert anchor
             // below rejects it anyway (the prior epoch's handoff cert pins
             // the output produced *for* this epoch); this guard closes the
-            // no-cert windows (genesis epoch, off-chain disabled) the same
+            // no-cert genesis-epoch window the same
             // way instead of blindly adopting the overlay, which flips to
             // the freshly-cached next-epoch output the moment the mid-epoch
             // reconfiguration finalizes locally — and its skip is what feeds
@@ -1648,7 +1625,7 @@ impl DWalletMPCManager {
                 // become locally resolvable. Warn once per cert digest
                 // (deduped), debug on repeats — same pattern as the
                 // mismatch skips below.
-                if off_chain_on && let Some(cert_reconfiguration_digest) = cert_reconfig_digest {
+                if let Some(cert_reconfiguration_digest) = cert_reconfig_digest {
                     if self
                         .warned_cert_digest_mismatches
                         .insert((*key_id, *cert_reconfiguration_digest))
@@ -1701,7 +1678,7 @@ impl DWalletMPCManager {
                     }
                     continue;
                 }
-            } else if off_chain_on && cert.is_some() {
+            } else if cert.is_some() {
                 // Reconfigured key, off-chain mode with a prior handoff cert:
                 // the overlay carries locally-cached blobs, so anchor them
                 // against the prior epoch's cert — the DKG digest and the
@@ -1791,10 +1768,10 @@ impl DWalletMPCManager {
                     }
                     continue;
                 }
-            } else if off_chain_on {
+            } else {
                 // Reconfigured key with NO prior handoff cert to anchor
-                // against, in off-chain mode. A handoff cert is built durably
-                // every off-chain epoch, so a genuinely-absent cert alongside a
+                // against. A handoff cert is built durably
+                // every epoch, so a genuinely-absent cert alongside a
                 // reconfigured overlay entry is anomalous (a cert READ ERROR
                 // already returned above without reaching here). Adopting the
                 // unanchored output would bypass the cert-digest security gate
@@ -1821,58 +1798,6 @@ impl DWalletMPCManager {
                         ?key_id,
                         "reconfigured network key still has no prior handoff cert — \
                          rejecting adoption"
-                    );
-                }
-                continue;
-            } else if self.adopted_network_key_data.get(key_id) != Some(data) {
-                // Off-chain disabled (protocol v3): no handoff certs exist and
-                // the overlay IS the authoritative chain copy (the chain
-                // reconfiguration output is quorum-processed on-chain), so
-                // adopt it directly. Gated on the adopted value actually
-                // changing so overlay republishes don't re-log.
-                info!(
-                    ?key_id,
-                    "adopting reconfigured network key from the chain copy (off-chain \
-                     metadata disabled; no handoff cert exists)"
-                );
-            }
-            // Off-chain disabled (protocol v3) chain-read robustness: never
-            // let an EMPTY overlay reconfiguration output clobber a non-empty
-            // adopted one. With no certs at v3, nothing else stops it, and an
-            // empty read is real: the on-chain writer fills the epoch's
-            // reconfiguration entry in chunks across transactions (and empties
-            // it before a rejected-output retry), so a lagging or
-            // load-balanced RPC replica can serve the entry mid-write.
-            // Clobbering would re-instantiate DKG-derived parameters the
-            // committee never agreed to run this epoch — byte-divergent MPC
-            // outputs, convicted malicious by the output-quorum byte-equality
-            // tally. Keep the adopted value; the legitimate next output
-            // arrives non-empty and overwrites it normally. (Under off-chain
-            // mode the cert-pinned skip above already covers this shape.)
-            if !off_chain_on
-                && data.current_reconfiguration_public_output.is_empty()
-                && self
-                    .adopted_network_key_data
-                    .get(key_id)
-                    .is_some_and(|existing| {
-                        !existing.current_reconfiguration_public_output.is_empty()
-                    })
-            {
-                if self
-                    .warned_cert_digest_mismatches
-                    .insert((*key_id, mpc_data_blob_hash(&[])))
-                {
-                    warn!(
-                        ?key_id,
-                        "overlay reconfiguration output is empty while a non-empty value \
-                         is adopted (torn or lagging chain read) — keeping the adopted \
-                         value"
-                    );
-                } else {
-                    debug!(
-                        ?key_id,
-                        "overlay reconfiguration output still empty — keeping the \
-                         adopted value"
                     );
                 }
                 continue;
@@ -2776,8 +2701,7 @@ impl DWalletMPCManager {
 
     /// Whether this validator has every frozen-set member's
     /// mpc_data blob locally available and decode-validated.
-    /// Returns `true` under v3 (off_chain disabled — no frozen set
-    /// to check), under v4 when the frozen set is still empty
+    /// Returns `true` when the frozen set is still empty
     /// (freeze hasn't fired — caller's gate is purely additive,
     /// other gates govern session start), or when every authority
     /// in the frozen set has a blob whose hash matches the frozen
@@ -2792,9 +2716,6 @@ impl DWalletMPCManager {
         // Once the gate has converged (all frozen-set blobs present + valid) it
         // stays converged for this epoch, so skip the per-tick reads+decodes.
         if self.local_mpc_data_ready_latched.load(Ordering::Relaxed) {
-            return true;
-        }
-        if !self.epoch_store.off_chain_validator_metadata_enabled() {
             return true;
         }
         let Ok(frozen) = self.epoch_store.get_frozen_mpc_data_input_set_trait() else {
@@ -3056,9 +2977,6 @@ impl DWalletMPCManager {
                         validator_name: self.validator_name,
                         access_structure: self.access_structure.clone(),
                         protocol_cryptographic_data,
-                        aggregated_network_key_public_outputs: self
-                            .protocol_config
-                            .aggregated_network_key_public_outputs(),
                     };
 
                     (computation_id, computation_request)

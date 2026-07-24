@@ -2519,12 +2519,7 @@ impl DWalletMPCService {
                 // reconfig output bytes locally before they get
                 // moved into the message builder. The handoff
                 // trigger reads these back at EndOfPublish.
-                //
-                // Skipped entirely when the off-chain validator
-                // metadata feature is disabled — leaves the cache
-                // empty and the syncer overlay path naturally
-                // falls through to chain-only reads.
-                if !rejected && self.epoch_store.off_chain_validator_metadata_enabled() {
+                if !rejected {
                     match &session_request.protocol_data {
                         ProtocolData::NetworkEncryptionKeyDkg {
                             dwallet_network_encryption_key_id,

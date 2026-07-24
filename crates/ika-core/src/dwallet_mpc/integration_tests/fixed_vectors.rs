@@ -20,11 +20,11 @@
 //!   anchor's class-group DKG output combined with the aggregated
 //!   reconfiguration output → exact V4 anchor bytes.
 //!
-//! The fixtures are INPUTS captured once (`generate_aggregated_output_fixed_vectors`,
-//! `#[ignore]`d — rerun it only when the fixture format itself legitimately
-//! changes, and commit the regenerated files) plus the PINNED derived bytes.
-
-use std::path::PathBuf;
+//! The fixtures are INPUTS captured once plus the PINNED derived bytes. The
+//! generator that produced them was removed together with protocol-v4
+//! support (it needed the deleted pre-aggregation reconfiguration-output
+//! production path); the fixtures are frozen historical state from the
+//! deployed networks' v4→v5 flip and must never be regenerated.
 
 use dwallet_mpc_types::dwallet_mpc::{
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
@@ -127,144 +127,8 @@ fn v3_start_anchor_migration_matches_fixed_vector() {
     );
 }
 
-/// One-time fixture capture: runs a real 4-party network DKG plus a
-/// same-committee pre-aggregation reconfiguration (the deployed protocol-v4
-/// configuration) and writes the input fixtures and the pinned derived bytes.
-/// Rerun only when the fixture format itself legitimately changes (e.g. an
-/// intentional wire-format bump), and commit the regenerated files —
-/// regenerating to "fix" a red pin defeats the tests above.
-#[tokio::test]
-#[ignore = "fixture generator — run once manually and commit the outputs"]
-async fn generate_aggregated_output_fixed_vectors() {
-    use ika_types::message::DWalletCheckpointMessageKind;
-    use tracing::info;
-
-    use crate::dwallet_mpc::integration_tests::network_dkg::{
-        create_network_key_test, send_start_network_key_reconfiguration_event,
-    };
-    use crate::dwallet_mpc::integration_tests::network_dkg_bwd_compat::pin_pre_aggregation_outputs_overrides;
-    use crate::dwallet_mpc::integration_tests::utils;
-    use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
-
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _pre_aggregation_override = pin_pre_aggregation_outputs_overrides();
-
-    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        network_owned_address_sign_request_senders,
-        network_owned_address_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
-        committee.clone(),
-        seeds,
-        bundles.clone(),
-    );
-    let mut state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-        network_owned_address_sign_request_senders,
-        network_owned_address_sign_output_receivers,
-    };
-    let (consensus_round, anchor_bytes, key_id) = create_network_key_test(&mut state).await;
-
-    let mut next_committee = (*state.dwallet_mpc_services[0].committee).clone();
-    next_committee.epoch = 2;
-    for sui_data_sender in &state.sui_data_senders {
-        let _ = sui_data_sender
-            .next_epoch_committee_sender
-            .send(next_committee.clone());
-        let _ = sui_data_sender
-            .next_epoch_mpc_keys_sender
-            .send(Some((next_committee.epoch, bundles.clone())));
-    }
-    send_start_network_key_reconfiguration_event(
-        1,
-        &mut state.sui_data_senders,
-        [10u8; 32],
-        10,
-        key_id,
-    );
-    let (_, reconfiguration_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut state, consensus_round).await;
-    let mut reconfiguration_output_bytes = vec![];
-    for message in reconfiguration_checkpoint.messages() {
-        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
-            message
-        else {
-            continue;
-        };
-        assert!(!message.rejected, "reconfiguration should not be rejected");
-        reconfiguration_output_bytes.extend(message.public_output.clone());
-    }
-
-    let VersionedDecryptionKeyReconfigurationOutput::V3(non_aggregated_reconfiguration_bytes) =
-        bcs::from_bytes(&reconfiguration_output_bytes)
-            .expect("decode the versioned reconfiguration output")
-    else {
-        panic!("the pre-aggregation-pinned reconfiguration must produce a V3-tagged output");
-    };
-    let VersionedNetworkDkgOutput::V4(aggregated_anchor_bytes) =
-        bcs::from_bytes(&anchor_bytes).expect("decode the versioned anchor")
-    else {
-        panic!("the network DKG must produce a V4-tagged anchor");
-    };
-    let aggregated_anchor: twopc_mpc::decentralized_party::dkg::PublicOutput =
-        bcs::from_bytes(&aggregated_anchor_bytes).expect("decode the aggregated anchor");
-    let core_bytes = bcs::to_bytes(&aggregated_anchor.core).expect("serialize the anchor core");
-
-    let non_aggregated: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
-        bcs::from_bytes(&non_aggregated_reconfiguration_bytes)
-            .expect("decode the pre-aggregation reconfiguration output");
-    let aggregated_reconfiguration_bytes = bcs::to_bytes(
-        &non_aggregated
-            .upgrade()
-            .expect("upgrade the reconfiguration output"),
-    )
-    .expect("serialize the aggregated reconfiguration output");
-
-    let aggregated_reconfiguration: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
-        bcs::from_bytes(&aggregated_reconfiguration_bytes)
-            .expect("decode the aggregated reconfiguration output");
-    let anchor =
-        twopc_mpc::decentralized_party::dkg::PublicOutput::new_from_reconfiguration_output(
-            aggregated_anchor.core.class_group_dkg_output(),
-            aggregated_reconfiguration,
-        )
-        .expect("rebuild the anchor from the aggregated reconfiguration output");
-    let pinned_anchor_bytes = bcs::to_bytes(&anchor).expect("serialize the rebuilt anchor");
-
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/dwallet_mpc/integration_tests/fixtures");
-    std::fs::create_dir_all(&dir).expect("create the fixtures directory");
-    std::fs::write(
-        dir.join("reconfiguration_output_non_aggregated.bcs"),
-        &non_aggregated_reconfiguration_bytes,
-    )
-    .expect("write the pre-aggregation reconfiguration fixture");
-    std::fs::write(
-        dir.join("reconfiguration_output_aggregated.bcs"),
-        &aggregated_reconfiguration_bytes,
-    )
-    .expect("write the aggregated reconfiguration fixture");
-    std::fs::write(dir.join("dkg_output_core.bcs"), &core_bytes)
-        .expect("write the anchor core fixture");
-    std::fs::write(dir.join("dkg_anchor_aggregated.bcs"), &pinned_anchor_bytes)
-        .expect("write the pinned aggregated anchor fixture");
-    info!(
-        non_aggregated = non_aggregated_reconfiguration_bytes.len(),
-        aggregated = aggregated_reconfiguration_bytes.len(),
-        core = core_bytes.len(),
-        anchor = pinned_anchor_bytes.len(),
-        "fixed-vector fixtures written"
-    );
-}
+// The one-time fixture GENERATOR that produced the committed fixture bytes
+// was removed together with protocol-v4 support: it needed the deleted
+// pre-aggregation (V3-tagged) reconfiguration-output production path. The
+// fixtures are frozen historical state (the deployed networks' v4->v5 flip)
+// and must never be regenerated.

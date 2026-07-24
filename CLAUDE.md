@@ -276,20 +276,21 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   the commit/round semantics ika's freeze and epoch-close logic rely on
   (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
   in ika (see the upstream reference above)
-- **Mainnet AND testnet both run protocol v5**: protocol v4 behavior —
-  off-chain validator metadata (`off_chain_validator_metadata_enabled()`),
-  the cross-epoch handoff (`dev-docs/specs/handoff.md`), the deferred
-  epoch close, the version-3 network-key crypto — and protocol v5
-  (aggregated network-key public outputs) are LIVE on both deployed
-  networks. v4/v5-gated behavior therefore HAS deployed-network
-  backward-compatibility constraints: the networks persist v4/v5-era
-  state (e.g. V3-tagged pre-aggregation network-key public outputs from
-  before the v5 flip), and MPC outputs must reach byte-identical quorum
-  across a mixed-binary committee, so serialization changes to active
-  paths need a new protocol version gate, never a binary-driven flip.
-  The v3→v4 migration scaffolding is removed (issue #1751): current
-  binaries cannot carry a network with keys DKG'd under protocol v3
-  across the v3→v4 boundary.
+- **Protocol v5 ONLY (`MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 5`)**:
+  mainnet and testnet both run protocol v5, and the binary supports
+  nothing older — protocol v3/v4 support, the v3→v4 migration
+  scaffolding (issue #1751), the backward-compatible (class-groups-only)
+  network DKG/reconfiguration parties, and pre-aggregation (V3-tagged)
+  output PRODUCTION are all removed. Everything formerly v4/v5-gated
+  (off-chain validator metadata, the cross-epoch handoff, deferred epoch
+  close, aggregated network-key outputs) is unconditionally on. What
+  REMAINS constrained: the networks persist pre-v5 state (V1-tagged
+  chain DKG anchors, V2/V3-tagged outputs), so old `Versioned*` enum
+  variants must stay (BCS variant indices are wire format) and their
+  DECODE paths must keep working; and MPC outputs must reach
+  byte-identical quorum across a mixed-binary committee, so
+  serialization changes to active paths need a new protocol version
+  gate, never a binary-driven flip.
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward
