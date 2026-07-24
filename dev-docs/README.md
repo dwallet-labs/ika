@@ -36,6 +36,10 @@ them has a bug — determine which before changing either.
 - [`specs/epoch-close-session-lock.md`](specs/epoch-close-session-lock.md)
   — the frozen session-completion target, the strict-equality close
   predicate, the gate-consensus-submission rule, batch-processing rules.
+- [`specs/checkpoint-sync-floor.md`](specs/checkpoint-sync-floor.md)
+  — why pull-mode checkpoint sync starts from the on-chain processed
+  cursor (a fresh-DB notifier can never fetch deep history from peers),
+  the cold-start deferral, and the gap-tolerant store invariants.
 - [`specs/cross-binary-upgrade.md`](specs/cross-binary-upgrade.md) —
   the in-place protocol-version upgrade contract: the stake-weighted
   version vote, the wire/on-disk compatibility invariants for mixed

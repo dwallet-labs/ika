@@ -425,6 +425,19 @@ impl IkaNode {
         let archive_readers =
             ArchiveReaderBalancer::new(config.archive_reader_config(), &prometheus_registry)?;
         let (trusted_peer_change_tx, trusted_peer_change_rx) = watch::channel(Default::default());
+        // On-chain processed checkpoint cursors: written by the Sui connector
+        // service (built later), read by p2p state sync as its pull-mode sync
+        // floor (`None` until the first successful chain read) — a notifier on
+        // a fresh DB must sync from the chain cursor, not from sequence 1,
+        // which no long-lived network's peers can serve.
+        let (dwallet_checkpoint_cursor_tx, dwallet_checkpoint_cursor_rx) =
+            watch::channel::<Option<u64>>(None);
+        let (system_checkpoint_cursor_tx, system_checkpoint_cursor_rx) =
+            watch::channel::<Option<u64>>(None);
+        let on_chain_checkpoint_cursors = ika_network::state_sync::OnChainCheckpointCursors {
+            dwallet: dwallet_checkpoint_cursor_rx,
+            system: system_checkpoint_cursor_rx,
+        };
 
         // Shared metrics for the OCS subsystem. Created here so all consumers
         // (verifier, pusher, push handler) report into the same registry.
@@ -546,6 +559,7 @@ impl IkaNode {
                 archive_readers.clone(),
                 &prometheus_registry,
                 mode.is_notifier(),
+                on_chain_checkpoint_cursors.clone(),
                 perpetual_tables.clone(),
                 None,
             )?;
@@ -874,6 +888,7 @@ impl IkaNode {
                 archive_readers.clone(),
                 &prometheus_registry,
                 !epoch_store.committee().authority_exists(&authority_name),
+                on_chain_checkpoint_cursors.clone(),
                 perpetual_tables.clone(),
                 sui_state_mirror_server,
             )?
@@ -1147,6 +1162,8 @@ impl IkaNode {
             stranded_network_keys.clone(),
             reader_opt.clone(),
             ocs_metrics.clone(),
+            dwallet_checkpoint_cursor_tx,
+            system_checkpoint_cursor_tx,
         )
         .await?;
 
@@ -1487,6 +1504,12 @@ impl IkaNode {
         self.state.current_epoch_for_testing()
     }
 
+    /// The node's dwallet checkpoint store, so in-process tests can assert on
+    /// sync watermarks and per-sequence presence.
+    pub fn dwallet_checkpoint_store_for_testing(&self) -> Arc<DWalletCheckpointStore> {
+        self.dwallet_checkpoint_store.clone()
+    }
+
     /// Protocol version of the validator's current epoch store. Useful for
     /// asserting on protocol-version transitions across reconfigurations.
     pub fn current_protocol_version_for_testing(&self) -> ika_protocol_config::ProtocolVersion {
@@ -1576,6 +1599,7 @@ impl IkaNode {
         archive_readers: ArchiveReaderBalancer,
         prometheus_registry: &Registry,
         is_notifier: bool,
+        on_chain_checkpoint_cursors: ika_network::state_sync::OnChainCheckpointCursors,
         perpetual_tables: Arc<AuthorityPerpetualTables>,
         sui_state_mirror_server: Option<
             ika_network::sui_state_mirror::SuiStateMirrorServer<
@@ -1588,6 +1612,7 @@ impl IkaNode {
             .store(state_sync_store)
             .archive_readers(archive_readers)
             .with_metrics(prometheus_registry)
+            .with_on_chain_cursors(on_chain_checkpoint_cursors)
             .build();
 
         let (discovery, discovery_server) = discovery::Builder::new(trusted_peer_change_rx)
