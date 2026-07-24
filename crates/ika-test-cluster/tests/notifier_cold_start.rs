@@ -160,16 +160,19 @@ async fn notifier_resumes_writing_after_full_db_wipe() {
     let notifier_handle = notifier
         .get_node_handle()
         .expect("restarted notifier has a node handle");
-    let (first_checkpoint_present, highest_synced) = notifier_handle.with(|node| {
+    let (first_checkpoint_present, highest_verified) = notifier_handle.with(|node| {
         let store = node.dwallet_checkpoint_store_for_testing();
         (
             store
                 .get_dwallet_checkpoint_by_sequence_number(1)
                 .expect("read checkpoint 1")
                 .is_some(),
+            // The VERIFIED watermark is the one the pull path bumps; the
+            // synced watermark only advances on validators (consensus output
+            // path feeds it), so it stays None on a notifier by design.
             store
-                .get_highest_synced_dwallet_checkpoint()
-                .expect("read highest synced checkpoint")
+                .get_highest_verified_dwallet_checkpoint()
+                .expect("read highest verified checkpoint")
                 .map(|checkpoint| checkpoint.sequence_number),
         )
     });
@@ -179,7 +182,7 @@ async fn notifier_resumes_writing_after_full_db_wipe() {
          starting at the on-chain cursor — the cold-start floor did not engage"
     );
     assert!(
-        highest_synced.is_some(),
+        highest_verified.is_some(),
         "notifier synced nothing after the restart despite epochs closing"
     );
 }
