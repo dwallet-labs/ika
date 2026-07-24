@@ -158,7 +158,7 @@ const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
 /// seconds scale — immaterial against these hours-scale terms (issue
 /// #1868); the epoch store's running max makes the observed clock
 /// monotone locally regardless.
-fn ready_signal_deadline_ms(
+pub(crate) fn ready_signal_deadline_ms(
     first_commit_ts_ms: Option<u64>,
     epoch_duration_ms: u64,
     next_committee_first_seen_ms: Option<u64>,
@@ -293,6 +293,8 @@ impl MpcDataAnnouncementSender {
             );
         }
         loop {
+            self.export_ready_signal_deadline_metric();
+
             // (Re-)submit our announcement until it's confirmed in
             // the per-epoch table. `send_announcement` self-gates on
             // confirmation, so this is a cheap no-op once landed.
@@ -306,6 +308,44 @@ impl MpcDataAnnouncementSender {
 
             tokio::time::sleep(poll_interval).await;
         }
+    }
+
+    /// Metrics-only per-tick export of the ready-signal deadline
+    /// (`ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds`):
+    /// the same pure formula the emit gate uses
+    /// ([`ready_signal_deadline_ms`]), evaluated READ-ONLY — it must not
+    /// perform the first-seen compare-and-swap that `ready_to_finalize`
+    /// owns, because recording the publication anchor on a metrics tick
+    /// (which runs before the gate's own preconditions) would move the
+    /// grace anchor earlier and change emit timing. Consequence: the
+    /// gauge shows the 3/4-epoch backstop until the gate first records
+    /// the publication observation, then tightens on the next tick; after
+    /// a mid-epoch restart the in-memory anchor resets, so the gauge
+    /// (like the gate itself) reverts to the backstop until
+    /// re-observation. Values are on the epoch's consensus clock
+    /// (leader-proposed commit timestamps, unix seconds scale) — never
+    /// this machine's wall clock. `-1` while no deadline exists yet (no
+    /// consensus commit processed this epoch).
+    fn export_ready_signal_deadline_metric(&self) {
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return;
+        };
+        // A table read error only skips this tick's export.
+        let first_commit_ts_ms = epoch_store.epoch_first_commit_timestamp_ms().ok().flatten();
+        let first_seen = match self.next_committee_first_seen_ms.load(Ordering::Acquire) {
+            0 => None,
+            first_seen_ms => Some(first_seen_ms),
+        };
+        let deadline = ready_signal_deadline_ms(
+            first_commit_ts_ms,
+            epoch_store.epoch_start_state().epoch_duration_ms(),
+            first_seen,
+        );
+        epoch_store
+            .metrics
+            .dwallet_mpc_data_ready_signal_deadline_timestamp_seconds
+            .set(deadline.map_or(-1, |deadline_ms| (deadline_ms / 1000) as i64));
     }
 
     /// Whether our own announcement is recorded in the per-epoch
@@ -921,6 +961,124 @@ mod tests {
             ready_signal_deadline_ms(Some(1_000_000), 24 * HOUR_MS, None),
             Some(1_000_000 + 18 * HOUR_MS)
         );
+    }
+
+    /// Wiring test for the per-tick deadline export: the gauge reads `-1`
+    /// while no consensus commit has been processed, restores the
+    /// 3/4-epoch backstop from the epoch store's persisted first-commit
+    /// anchor, and tightens to the publication grace once the (in-memory)
+    /// first-seen anchor is recorded — all values in consensus-clock
+    /// seconds, computed by the same pure formula the emit gate uses.
+    #[tokio::test]
+    async fn deadline_metric_export_tracks_gate_anchors() {
+        use crate::authority::AuthorityMetrics;
+        use crate::authority::authority_per_epoch_store::{
+            ConsensusStats, ExecutionIndices, ExecutionIndicesWithStats,
+        };
+        use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+        use crate::consensus_handler::ConsensusCommitInfo;
+        use crate::dwallet_checkpoints::DWalletCheckpointService;
+        use crate::epoch::epoch_metrics::EpochMetrics;
+        use crate::system_checkpoints::SystemCheckpointService;
+        use ika_types::committee::Committee;
+        use ika_types::digests::ChainIdentifier;
+        use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+        use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
+        use prometheus::Registry;
+
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(1);
+        let committee = Arc::new(committee);
+        let member = *committee.names().next().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            member,
+            committee,
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        let perpetual_dir = tempfile::TempDir::new().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+        let next_committee = CommitteeMembership {
+            epoch: 1,
+            voting_rights: vec![(member, 1u64)],
+            quorum_threshold: 1,
+            validity_threshold: 1,
+        };
+        let (_next_committee_sender, next_committee_receiver) =
+            tokio::sync::watch::channel(next_committee);
+        let sender = MpcDataAnnouncementSender::new(
+            Arc::downgrade(&epoch_store),
+            0,
+            member,
+            Arc::new(NoopAdapter),
+            BlobCache::new(InMemoryBlobStore::new(), perpetual),
+            RootSeed::new([4; 32]),
+            next_committee_receiver,
+        );
+
+        let deadline_gauge = &epoch_store
+            .metrics
+            .dwallet_mpc_data_ready_signal_deadline_timestamp_seconds;
+
+        // No consensus commit processed yet: no deadline exists.
+        sender.export_ready_signal_deadline_metric();
+        assert_eq!(deadline_gauge.get(), -1);
+
+        // Process the epoch's first commit (consensus clock 1_000_000 ms)
+        // through the real commit boundary, persisting the backstop anchor.
+        let first_commit_ts_ms = 1_000_000u64;
+        let commit_info = ConsensusCommitInfo::new_for_test(1, first_commit_ts_ms, true);
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![],
+                &ExecutionIndicesWithStats {
+                    index: ExecutionIndices {
+                        last_committed_round: 1,
+                        sub_dag_index: 0,
+                        transaction_index: 0,
+                    },
+                    hash: 0,
+                    stats: ConsensusStats::default(),
+                },
+                &None::<Arc<DWalletCheckpointService>>,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &Arc::new(AuthorityMetrics::new(&Registry::new())),
+            )
+            .await
+            .unwrap();
+        sender.export_ready_signal_deadline_metric();
+        let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
+        let backstop_ms =
+            ready_signal_deadline_ms(Some(first_commit_ts_ms), epoch_duration_ms, None).unwrap();
+        assert_eq!(deadline_gauge.get(), (backstop_ms / 1000) as i64);
+
+        // Publication anchor recorded (a value low enough that the
+        // clamped grace beats the backstop, so a broken export that
+        // ignored the anchor would fail this assertion): the export
+        // tightens to the same value the gate's formula yields.
+        let first_seen_ms = 1_000u64;
+        sender
+            .next_committee_first_seen_ms
+            .store(first_seen_ms, Ordering::Release);
+        sender.export_ready_signal_deadline_metric();
+        let tightened_ms = ready_signal_deadline_ms(
+            Some(first_commit_ts_ms),
+            epoch_duration_ms,
+            Some(first_seen_ms),
+        )
+        .unwrap();
+        assert_ne!(
+            tightened_ms, backstop_ms,
+            "test setup must make the publication-grace term the binding one"
+        );
+        assert_eq!(deadline_gauge.get(), (tightened_ms / 1000) as i64);
     }
 
     #[tokio::test]

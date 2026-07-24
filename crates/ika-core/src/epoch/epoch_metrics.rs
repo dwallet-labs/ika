@@ -96,6 +96,49 @@ pub struct EpochMetrics {
     /// MPC working set this epoch. Alert > 0.
     pub dwallet_mpc_data_excluded_validators: IntGauge,
 
+    /// The consensus leader round at which this epoch's mpc_data
+    /// ready-signal stake quorum was first observed (the freeze-grace
+    /// anchor), or `-1` before quorum. Round 0 is valid, so the sentinel
+    /// is `-1`, not 0. Re-seeded from the persisted anchor at epoch-store
+    /// open, so a mid-epoch restart doesn't misreport a fresh countdown.
+    /// Freeze-ETA estimate: `clamp_min(this + grace_rounds -
+    /// ika_consensus_last_committed_leader_round, 0)`.
+    pub dwallet_mpc_data_ready_quorum_round: IntGauge,
+
+    /// The leader round of the latest consensus commit processed at the
+    /// commit boundary — the SAME round domain the freeze / epoch-close
+    /// grace countdowns are measured in (`consensus_commit_info.round`),
+    /// unlike `ika_last_process_mpc_consensus_round` (the MPC service's
+    /// consumed round, which lags this one). `-1` before the epoch's
+    /// first commit; re-seeded from the persisted consensus stats at
+    /// epoch-store open.
+    pub consensus_last_committed_leader_round: IntGauge,
+
+    /// The configured `mpc_data_freeze_grace_rounds` for the current
+    /// protocol version, or `-1` when the protocol version doesn't define
+    /// it. Constant within an epoch.
+    pub dwallet_mpc_data_freeze_grace_rounds: IntGauge,
+
+    /// The consensus leader round at which this epoch's mpc_data input
+    /// set was frozen, or `-1` until the freeze fires. Persisted with the
+    /// freeze commit's batch and re-seeded at epoch-store open (left `-1`
+    /// if the freeze predates the binary that persists it — never
+    /// invented from the current round).
+    pub dwallet_mpc_data_freeze_round: IntGauge,
+
+    /// The ready-signal emit deadline currently anchored by
+    /// `mpc_data_announcement_sender` (`ready_signal_deadline_ms`), in
+    /// seconds. On the epoch's CONSENSUS clock — leader-proposed
+    /// `commit_timestamp_ms` (unix ms scale) — never this machine's
+    /// wall clock. `-1` while no deadline exists (no consensus commit
+    /// processed this epoch, or the off-chain-metadata feature is off).
+    /// Shows the 3/4-epoch backstop until the sender observes the
+    /// next-epoch committee published, then tightens to the publication
+    /// grace; after a restart the (local-only) publication anchor resets,
+    /// so the gauge reverts to the backstop until re-observation —
+    /// mirroring the emit gate's actual behavior.
+    pub dwallet_mpc_data_ready_signal_deadline_timestamp_seconds: IntGauge,
+
     /// Number of distinct `EpochMpcDataReadySignal` signers recorded this
     /// epoch. Re-seeded from the per-epoch table at epoch-store open.
     pub dwallet_mpc_data_ready_signals: IntGauge,
@@ -254,6 +297,41 @@ impl EpochMetrics {
             dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_excluded_validators",
                 "Number of validators the mpc_data freeze partition excluded this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_ready_quorum_round: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_data_ready_quorum_round",
+                "Leader round where the mpc_data ready-signal stake quorum was first observed \
+                 (freeze-grace anchor); -1 before quorum",
+                registry
+            )
+            .unwrap(),
+            consensus_last_committed_leader_round: register_int_gauge_with_registry!(
+                "ika_consensus_last_committed_leader_round",
+                "Leader round of the latest consensus commit processed at the commit boundary \
+                 (the freeze-grace round domain); -1 before the epoch's first commit",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_freeze_grace_rounds: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_data_freeze_grace_rounds",
+                "Configured mpc_data_freeze_grace_rounds for the current protocol version; \
+                 -1 when undefined",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_freeze_round: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_data_freeze_round",
+                "Leader round where the mpc_data input set was frozen; -1 until the freeze",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_ready_signal_deadline_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds",
+                "Ready-signal emit deadline on the epoch's consensus clock (leader-proposed \
+                 commit timestamps, unix seconds scale, NOT local wall clock); -1 while not \
+                 yet computable",
                 registry
             )
             .unwrap(),

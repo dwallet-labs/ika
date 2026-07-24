@@ -49,6 +49,7 @@ use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
 use crate::epoch::epoch_metrics::EpochMetrics;
+use crate::epoch_tasks::mpc_data_announcement_sender::ready_signal_deadline_ms;
 use crate::stake_aggregator::{InsertResult, StakeAggregator};
 use crate::system_checkpoints::{
     BuilderSystemCheckpoint, PendingSystemCheckpoint, PendingSystemCheckpointInfo,
@@ -1144,6 +1145,17 @@ pub struct AuthorityEpochTables {
     /// same round on the same signal set.
     mpc_data_ready_quorum_round: DBMap<u64, u64>,
 
+    /// Single-entry (key `0`) record of the consensus leader round at which
+    /// this epoch's mpc_data input set was frozen. Written atomically with
+    /// the freeze commit's batch (alongside
+    /// `frozen_validator_mpc_data_input_set`). Observability-only: nothing
+    /// in the protocol reads it back — it re-seeds the
+    /// `ika_dwallet_mpc_data_freeze_round` gauge after a restart, so the
+    /// gauge never invents a freeze round from the current round. Absent
+    /// when the freeze hasn't fired (or fired under a binary predating this
+    /// table, in which case the gauge stays at its `-1` sentinel).
+    mpc_data_freeze_round: DBMap<u64, u64>,
+
     /// Single-key (0) table holding the `commit_timestamp_ms` of the FIRST
     /// consensus commit this validator processed this epoch — the
     /// consensus-clock anchor of the mpc_data ready-signal 3/4-epoch
@@ -1919,6 +1931,64 @@ impl AuthorityPerEpochStore {
             .protocol_version();
         let protocol_config =
             ProtocolConfig::get_for_version(protocol_version, chain_identifier.chain());
+        // Freeze-progress gauges. `-1` is the "not reached / not available"
+        // sentinel throughout — epoch 0 and round 0 are valid values, so a
+        // zero default would read as a plausible-but-wrong anchor. Round
+        // anchors are re-seeded from the per-epoch tables so a mid-epoch
+        // restart restores the true countdown state instead of resetting it.
+        metrics.dwallet_mpc_data_ready_quorum_round.set(
+            tables
+                .mpc_data_ready_quorum_round
+                .get(&0)?
+                .map_or(-1, |round| round as i64),
+        );
+        metrics.dwallet_mpc_data_freeze_round.set(
+            tables
+                .mpc_data_freeze_round
+                .get(&0)?
+                .map_or(-1, |round| round as i64),
+        );
+        metrics.dwallet_mpc_data_freeze_grace_rounds.set(
+            protocol_config
+                .mpc_data_freeze_grace_rounds_as_option()
+                .map_or(-1, |grace| grace as i64),
+        );
+        let last_committed_leader_round = match tables.get_last_consensus_stats()? {
+            Some(stats) => Some(stats.index.last_committed_round),
+            None => tables
+                .get_last_consensus_index()?
+                .map(|index| index.last_committed_round),
+        };
+        metrics
+            .consensus_last_committed_leader_round
+            .set(last_committed_leader_round.map_or(-1, |round| round as i64));
+        // Ready-signal deadline: restore the persisted 3/4-epoch backstop
+        // anchor. The publication-grace term is deliberately absent here —
+        // its anchor is local in-memory sender state that resets on restart,
+        // and the sender re-tightens the gauge once it re-observes the
+        // next-epoch committee (matching the emit gate's actual post-restart
+        // behavior). Consensus-clock seconds, not local wall clock.
+        let ready_signal_deadline_seconds =
+            if protocol_config.off_chain_validator_metadata_enabled() {
+                tables
+                    .epoch_first_commit_timestamp_ms
+                    .get(&0)?
+                    .and_then(|first_commit_ts_ms| {
+                        ready_signal_deadline_ms(
+                            Some(first_commit_ts_ms),
+                            epoch_start_configuration
+                                .epoch_start_state()
+                                .epoch_duration_ms(),
+                            None,
+                        )
+                    })
+                    .map_or(-1, |deadline_ms| (deadline_ms / 1000) as i64)
+            } else {
+                -1
+            };
+        metrics
+            .dwallet_mpc_data_ready_signal_deadline_timestamp_seconds
+            .set(ready_signal_deadline_seconds);
         let end_of_publish =
             StakeAggregator::from_iter(committee.clone(), tables.end_of_publish.safe_iter())?;
         // Restore the closed state across a restart: the deferred (v4) close
@@ -4383,6 +4453,15 @@ impl AuthorityPerEpochStore {
     )> {
         let _scope = monitored_scope("ConsensusCommitHandler::process_consensus_transactions");
 
+        // The freeze / epoch-close grace countdowns below are leader-round
+        // deltas against `consensus_commit_info.round`; export the same
+        // round so dashboards subtract in the identical domain (NOT
+        // `ika_last_process_mpc_consensus_round`, the MPC service's consumed
+        // round, which lags this one).
+        self.metrics
+            .consensus_last_committed_leader_round
+            .set(consensus_commit_info.round as i64);
+
         let mut verified_dwallet_checkpoint_certificates =
             VecDeque::with_capacity(transactions.len() + 1);
         let mut verified_system_checkpoint_certificates =
@@ -4642,6 +4721,9 @@ impl AuthorityPerEpochStore {
                              countdown anchored",
                         );
                         output.set_mpc_data_ready_quorum_round(consensus_commit_info.round);
+                        self.metrics
+                            .dwallet_mpc_data_ready_quorum_round
+                            .set(consensus_commit_info.round as i64);
                         consensus_commit_info.round
                     }
                 };
@@ -4656,6 +4738,9 @@ impl AuthorityPerEpochStore {
                     >= self.protocol_config().mpc_data_freeze_grace_rounds();
                 if full_coverage || grace_elapsed {
                     self.freeze_mpc_data_if_first(&tables, output)?;
+                    self.metrics
+                        .dwallet_mpc_data_freeze_round
+                        .set(consensus_commit_info.round as i64);
                     info!(
                         validator = ?self.name,
                         quorum_round,
@@ -5658,6 +5743,14 @@ impl ConsensusCommitOutput {
             batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
         }
         if let Some(partition) = self.mpc_data_freeze_partition {
+            // The freeze fires at THIS commit's boundary, so the commit's
+            // leader round IS the freeze round; persisted in the same batch
+            // so a crash replays the whole commit and re-records the same
+            // round.
+            batch.insert_batch(
+                &tables.mpc_data_freeze_round,
+                [(0u64, self.consensus_round)],
+            )?;
             batch.insert_batch(
                 &tables.frozen_validator_mpc_data_input_set,
                 partition.frozen,
@@ -6562,6 +6655,479 @@ mod tests {
                 .get(&key)
                 .unwrap(),
             Some([0xBB; 32])
+        );
+    }
+
+    // ---- mpc_data freeze-progress metrics ----
+
+    /// 4-member unit-stake committee (quorum 3, validity 2) for the
+    /// freeze-metrics tests. Generated ONCE per test and re-derived per
+    /// epoch/open from the same base — the restart tests reopen the
+    /// store, and the persisted signal/anchor rows must still belong to
+    /// the committee (fresh random test keys would zero out every
+    /// signer's weight on reopen).
+    fn freeze_test_committee() -> (Committee, Vec<AuthorityName>) {
+        let (base_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let names: Vec<AuthorityName> = base_committee.names().copied().collect();
+        (base_committee, names)
+    }
+
+    fn open_freeze_test_store(
+        dir: &Path,
+        base_committee: &Committee,
+        epoch: u64,
+        metrics: Arc<EpochMetrics>,
+    ) -> Arc<AuthorityPerEpochStore> {
+        let committee = Arc::new(Committee::new(
+            epoch,
+            base_committee.voting_rights.clone(),
+            HashMap::new(),
+            HashMap::new(),
+            base_committee.quorum_threshold,
+            base_committee.validity_threshold,
+        ));
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(epoch))
+                .unwrap();
+        AuthorityPerEpochStore::new(
+            *base_committee.names().next().unwrap(),
+            committee,
+            dir,
+            None,
+            metrics,
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap()
+    }
+
+    fn ready_signal(
+        signer: AuthorityName,
+        epoch: u64,
+        peers: &[AuthorityName],
+    ) -> ika_types::validator_metadata::EpochMpcDataReadySignal {
+        ika_types::validator_metadata::EpochMpcDataReadySignal {
+            authority: signer,
+            epoch,
+            sequence_number: 0,
+            validated_peers: peers.iter().map(|peer| (*peer, [7u8; 32])).collect(),
+        }
+    }
+
+    /// Drives one consensus commit at `round` through the REAL commit
+    /// boundary (where the freeze decision and the batch persistence
+    /// live), with `commit_timestamp_ms = round * 1000` so the
+    /// first-commit deadline anchor gets a realistic consensus-clock
+    /// value.
+    async fn drive_freeze_commit(epoch_store: &Arc<AuthorityPerEpochStore>, round: u64) {
+        let commit_info = ConsensusCommitInfo::new_for_test(round, round * 1000, true);
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        let stats = ExecutionIndicesWithStats {
+            index: ExecutionIndices {
+                last_committed_round: round,
+                sub_dag_index: 0,
+                transaction_index: 0,
+            },
+            hash: 0,
+            stats: ConsensusStats::default(),
+        };
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![],
+                &stats,
+                &None::<Arc<DWalletCheckpointService>>,
+                &None,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Reads a gauge's current value straight from the Prometheus
+    /// registry, so the tests assert what a scrape would actually see.
+    fn registry_gauge(registry: &Registry, name: &str) -> i64 {
+        registry
+            .gather()
+            .into_iter()
+            .find(|family| family.name() == name)
+            .unwrap_or_else(|| panic!("metric {name} not registered"))
+            .get_metric()[0]
+            .get_gauge()
+            .value() as i64
+    }
+
+    /// Before ready-signal quorum every round anchor sits at its `-1`
+    /// sentinel — round 0 / epoch 0 are valid values, so a 0 default
+    /// would be a plausible-but-wrong reading — and the grace gauge
+    /// carries the protocol-config value.
+    #[tokio::test]
+    async fn freeze_metrics_initial_state_before_quorum() {
+        let registry = Registry::new();
+        let dir = tempfile::tempdir().unwrap();
+        let (base_committee, _names) = freeze_test_committee();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(
+                &registry,
+                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
+            ),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_grace_rounds"),
+            epoch_store.protocol_config().mpc_data_freeze_grace_rounds() as i64
+        );
+    }
+
+    /// The quorum anchor latches at the first quorum-observing commit and
+    /// never slides; the freeze gauge stays `-1` through the grace window
+    /// and records the commit round where the freeze fires. The frozen
+    /// TABLE is asserted alongside the gauges at every step, pinning the
+    /// freeze to exactly the pre-metrics rounds and set — i.e. the metric
+    /// wiring provably changed no protocol behavior.
+    #[tokio::test]
+    async fn freeze_metrics_track_quorum_anchor_grace_and_freeze() {
+        let registry = Registry::new();
+        let dir = tempfile::tempdir().unwrap();
+        let (base_committee, names) = freeze_test_committee();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        assert!(
+            epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled(),
+            "the freeze block is gated on the off-chain-metadata flag"
+        );
+        let grace = epoch_store.protocol_config().mpc_data_freeze_grace_rounds();
+        assert!(grace > 1, "test needs a non-trivial grace window");
+
+        // 3 of 4 signers (stake quorum = 3) attesting the same 3 peers:
+        // enough stake for quorum, but signals.len() < committee size
+        // keeps the full-coverage fast path closed, so the grace path is
+        // what's under test.
+        let signers: Vec<AuthorityName> = names[..3].to_vec();
+        for signer in &signers {
+            epoch_store
+                .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &signers))
+                .unwrap();
+        }
+
+        drive_freeze_commit(&epoch_store, 100).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signal_stake"),
+            3
+        );
+        assert!(!epoch_store.is_mpc_data_frozen().unwrap());
+
+        // One leader round short of the grace: still counting.
+        drive_freeze_commit(&epoch_store, 100 + grace - 1).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            100,
+            "the quorum anchor must not slide on later commits"
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            (100 + grace - 1) as i64
+        );
+        assert!(!epoch_store.is_mpc_data_frozen().unwrap());
+
+        // Grace elapsed: the freeze fires at exactly anchor + grace.
+        drive_freeze_commit(&epoch_store, 100 + grace).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            (100 + grace) as i64
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_epoch"),
+            0
+        );
+        assert!(epoch_store.is_mpc_data_frozen().unwrap());
+        let mut frozen: Vec<AuthorityName> = epoch_store
+            .get_frozen_validator_mpc_data_input_set()
+            .unwrap()
+            .into_keys()
+            .collect();
+        frozen.sort();
+        let mut expected_frozen = signers.clone();
+        expected_frozen.sort();
+        assert_eq!(
+            frozen, expected_frozen,
+            "metric wiring must not change WHAT freezes: exactly the attested set"
+        );
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .mpc_data_freeze_round
+                .get(&0)
+                .unwrap(),
+            Some(100 + grace),
+            "the freeze round must be persisted with the freeze batch"
+        );
+
+        // Later commits leave the frozen anchors untouched.
+        drive_freeze_commit(&epoch_store, 100 + grace + 5).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            (100 + grace) as i64
+        );
+    }
+
+    /// With every committee member signaling and no exclusions, the
+    /// freeze fires at the SAME commit that anchors the quorum — the
+    /// full-coverage fast path, well inside the grace window.
+    #[tokio::test]
+    async fn freeze_metrics_full_coverage_freezes_before_grace() {
+        let registry = Registry::new();
+        let dir = tempfile::tempdir().unwrap();
+        let (base_committee, names) = freeze_test_committee();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        for signer in &names {
+            epoch_store
+                .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &names))
+                .unwrap();
+        }
+
+        drive_freeze_commit(&epoch_store, 200).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            200
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            200,
+            "full coverage must freeze without waiting out the grace"
+        );
+        assert!(epoch_store.is_mpc_data_frozen().unwrap());
+    }
+
+    /// Mid-grace restart: reopening the epoch store re-seeds the quorum
+    /// anchor, leader round, signal count, and deadline backstop from the
+    /// persisted tables (no plausible-but-wrong zeros, no fresh
+    /// countdown), keeps the freeze at `-1`, and the reopened store then
+    /// freezes at the same anchored round its peers do.
+    #[tokio::test]
+    async fn freeze_metrics_restored_after_restart_before_freeze() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base_committee, names) = freeze_test_committee();
+        {
+            let registry = Registry::new();
+            let epoch_store = open_freeze_test_store(
+                dir.path(),
+                &base_committee,
+                0,
+                EpochMetrics::new(&registry),
+            );
+            let signers: Vec<AuthorityName> = names[..3].to_vec();
+            for signer in &signers {
+                epoch_store
+                    .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &signers))
+                    .unwrap();
+            }
+            drive_freeze_commit(&epoch_store, 100).await;
+            epoch_store.release_db_handles();
+        }
+
+        // "Restart": a fresh registry + store over the same DB.
+        let registry = Registry::new();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
+            3
+        );
+        // Deadline backstop restored from the persisted first-commit
+        // anchor (commit 100 stamped 100_000 ms by the drive helper).
+        let expected_deadline_seconds = ready_signal_deadline_ms(
+            Some(100_000),
+            epoch_store.epoch_start_state().epoch_duration_ms(),
+            None,
+        )
+        .unwrap()
+            / 1000;
+        assert_eq!(
+            registry_gauge(
+                &registry,
+                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
+            ),
+            expected_deadline_seconds as i64
+        );
+
+        // The restarted validator freezes at the same anchored round.
+        let grace = epoch_store.protocol_config().mpc_data_freeze_grace_rounds();
+        drive_freeze_commit(&epoch_store, 100 + grace).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            (100 + grace) as i64
+        );
+        assert!(epoch_store.is_mpc_data_frozen().unwrap());
+    }
+
+    /// Restart after the freeze: the persisted freeze round re-seeds the
+    /// gauge. If the freeze round row is absent (a freeze recorded by a
+    /// binary predating its persistence), the gauge stays at `-1` — it is
+    /// never invented from the current round — while the frozen set and
+    /// freeze-epoch gauge still restore.
+    #[tokio::test]
+    async fn freeze_metrics_restored_after_restart_after_freeze() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base_committee, names) = freeze_test_committee();
+        {
+            let registry = Registry::new();
+            let epoch_store = open_freeze_test_store(
+                dir.path(),
+                &base_committee,
+                0,
+                EpochMetrics::new(&registry),
+            );
+            for signer in &names {
+                epoch_store
+                    .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &names))
+                    .unwrap();
+            }
+            drive_freeze_commit(&epoch_store, 200).await;
+            assert!(epoch_store.is_mpc_data_frozen().unwrap());
+            epoch_store.release_db_handles();
+        }
+
+        let registry = Registry::new();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            200
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            200
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_epoch"),
+            0
+        );
+
+        // Simulate a freeze recorded by a pre-persistence binary: the
+        // round row is missing while the frozen set is present.
+        epoch_store
+            .tables()
+            .unwrap()
+            .mpc_data_freeze_round
+            .remove(&0)
+            .unwrap();
+        epoch_store.release_db_handles();
+        drop(epoch_store);
+        let registry = Registry::new();
+        let epoch_store =
+            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        assert!(epoch_store.is_mpc_data_frozen().unwrap());
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1,
+            "an unrecoverable freeze round must stay -1, never be invented"
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_epoch"),
+            0
+        );
+    }
+
+    /// `EpochMetrics` is node-lifetime: opening the NEXT epoch's store on
+    /// the same metrics instance must reset every freeze-progress gauge
+    /// to its start-of-epoch state.
+    #[tokio::test]
+    async fn freeze_metrics_reset_on_next_epoch() {
+        let registry = Registry::new();
+        let metrics = EpochMetrics::new(&registry);
+        let dir_epoch_zero = tempfile::tempdir().unwrap();
+        let (base_committee, names) = freeze_test_committee();
+        let epoch_store =
+            open_freeze_test_store(dir_epoch_zero.path(), &base_committee, 0, metrics.clone());
+        for signer in &names {
+            epoch_store
+                .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &names))
+                .unwrap();
+        }
+        drive_freeze_commit(&epoch_store, 200).await;
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            200
+        );
+
+        let dir_epoch_one = tempfile::tempdir().unwrap();
+        let _next_epoch_store =
+            open_freeze_test_store(dir_epoch_one.path(), &base_committee, 1, metrics);
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(
+                &registry,
+                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
+            ),
+            -1
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
+            0
         );
     }
 }

@@ -165,7 +165,18 @@ which bytes* deterministic in consensus order.
   non-emptiness, and the commit replays dedup-skipped), leaving this
   validator on a divergent shrunken set (issue #1829). A crash before
   the batch lands replays the whole commit and the freeze re-fires
-  identically.
+  identically. The same batch also records the freeze commit's leader
+  round (`mpc_data_freeze_round`, single-key table) — observability
+  only, nothing in the protocol reads it back; it restores the
+  `ika_dwallet_mpc_data_freeze_round` gauge after a restart. Freeze
+  progress is scrapable end to end: `ika_dwallet_mpc_data_ready_quorum_round`
+  (the persisted quorum anchor, `-1` pre-quorum),
+  `ika_dwallet_mpc_data_freeze_grace_rounds` (the protocol-config grace),
+  `ika_consensus_last_committed_leader_round` (the commit-boundary
+  leader round the grace delta is measured against), and
+  `ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds` (the
+  sender's emit-gate deadline, consensus-clock seconds, `-1` before the
+  epoch's first commit).
 - **Carry-forward (stable mpc_data)**: a validator's blob is a pure
   function of its root seed (`derive_mpc_data_blob`), so a continuing
   validator's blob is byte-identical every epoch. At the freeze, a
