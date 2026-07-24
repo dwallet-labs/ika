@@ -183,6 +183,7 @@ use simulator::*;
 
 pub struct IkaNode {
     config: NodeConfig,
+    mode: NodeMode,
     validator_components: Mutex<Option<ValidatorComponents>>,
 
     state: Arc<AuthorityState>,
@@ -279,13 +280,15 @@ impl IkaNode {
     /// Start the node in a specific mode with validation.
     /// This method validates that the configuration matches the expected mode.
     pub async fn start_with_mode(
-        config: NodeConfig,
+        mut config: NodeConfig,
         registry_service: RegistryService,
         _software_version: &'static str,
         mode: NodeMode,
     ) -> Result<Arc<IkaNode>> {
-        // Validate the configuration matches the expected mode
-        mode.validate_config(&config)?;
+        // Keep role-specific key loading at the process boundary. In
+        // particular, discard a legacy notifier root-seed path before any
+        // initialization can resolve it.
+        mode.validate_and_prepare_config(&mut config)?;
 
         info!("Starting Ika node in {} mode", mode);
         NodeConfigMetrics::new(&registry_service.default_registry()).record_metrics(&config);
@@ -1193,7 +1196,16 @@ impl IkaNode {
             end_of_publish_receiver,
             uncompleted_requests_receiver,
         };
-        let validator_components = if state.is_validator(&epoch_store) {
+        let is_committee_member = state.is_validator(&epoch_store);
+        if is_committee_member && !mode.is_validator() {
+            warn!(
+                %mode,
+                epoch = epoch_store.epoch(),
+                "This node's protocol key is in the committee, but the process is not running in \
+                 validator mode; validator duties will not start"
+            );
+        }
+        let validator_components = if mode.is_validator() && is_committee_member {
             let components = Self::construct_validator_components(
                 config.clone(),
                 state.clone(),
@@ -1242,6 +1254,7 @@ impl IkaNode {
 
         let node = Self {
             config,
+            mode,
             validator_components: Mutex::new(validator_components),
             state,
             registry_service,
@@ -1281,22 +1294,25 @@ impl IkaNode {
         // Joiner-side announcement fan-out: a node selected into the
         // next-epoch committee but not yet in the current one isn't a
         // consensus participant, so it relays its mpc_data
-        // announcement to current-committee peers over P2P. Runs on
-        // all nodes; it only acts when it observes itself as a true
-        // joiner. Spawned alongside (not inside) reconfiguration
+        // announcement to current-committee peers over P2P. Runs only in
+        // validator mode and acts when it observes itself as a true joiner.
+        // Spawned alongside (not inside) reconfiguration
         // because it must fire mid-epoch when `V_{e+1}` is published,
         // not at the epoch boundary.
-        let joiner_node = node.clone();
-        // Use the CHAIN next-epoch committee (published before the
-        // off-chain assembly), not the assembled one — otherwise the
-        // joiner can't learn it's a joiner until after the freeze has
-        // already excluded it (see the channel's doc on SuiDataReceivers).
-        let joiner_next_committee_receiver = sui_data_receivers
-            .chain_next_epoch_committee_receiver
-            .clone();
-        spawn_monitored_task!(async move {
-            Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver).await;
-        });
+        if mode.is_validator() {
+            let joiner_node = node.clone();
+            // Use the CHAIN next-epoch committee (published before the
+            // off-chain assembly), not the assembled one — otherwise the
+            // joiner can't learn it's a joiner until after the freeze has
+            // already excluded it (see the channel's doc on SuiDataReceivers).
+            let joiner_next_committee_receiver = sui_data_receivers
+                .chain_next_epoch_committee_receiver
+                .clone();
+            spawn_monitored_task!(async move {
+                Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver)
+                    .await;
+            });
+        }
 
         spawn_monitored_task!(async move {
             let result = Self::monitor_reconfiguration(
@@ -1348,8 +1364,9 @@ impl IkaNode {
         };
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 
-        // Without a root seed we can't derive our mpc_data blob, so
-        // we can't be a joiner — nothing to do.
+        // Validator-mode validation requires the root seed before this task is
+        // spawned. Keep this guard as defense in depth for future direct
+        // callers or startup-path changes.
         let Some(root_seed_kp) = node.config.root_seed_key_pair.as_ref() else {
             return;
         };
@@ -2944,7 +2961,17 @@ impl IkaNode {
                     )
                     .await;
 
-                if self.state.is_validator(&new_epoch_store) {
+                let is_committee_member = self.state.is_validator(&new_epoch_store);
+                if is_committee_member && !self.mode.is_validator() {
+                    warn!(
+                        mode = %self.mode,
+                        epoch = new_epoch_store.epoch(),
+                        "This node's protocol key entered the committee, but the process is not \
+                         running in validator mode; validator duties will not start"
+                    );
+                }
+
+                if self.mode.is_validator() && is_committee_member {
                     info!("Promoting the node from fullnode to validator, starting grpc server");
 
                     Some(

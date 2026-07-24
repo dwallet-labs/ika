@@ -1,7 +1,3 @@
-# NOTE: this value is fake because of wrong validation,
-# it will be removed later.
-class-groups-key-pair-and-proof:
-  path: fake.key
 # Update this value to the location you want Sui to store its database.
 db-path: '/opt/ika/db'
 
