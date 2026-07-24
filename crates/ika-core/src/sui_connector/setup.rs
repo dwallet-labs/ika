@@ -108,10 +108,10 @@ pub enum SetupError {
     ArtifactsDigestUnsupported,
     #[error(
         "persisted OCS committee state could not be deserialized ({0}); this usually \
-         means a Sui version upgrade changed its on-disk format. To recover, clear the \
-         node's OCS committee tables and restart so it re-bootstraps from the genesis \
-         blob and re-ratchets — or set `auto_reanchor_on_format_change = true` to do \
-         this automatically."
+         means a Sui version upgrade changed its on-disk format. Recovery is automatic \
+         when a `sui_genesis` blob is configured (the committee tables are wiped and \
+         the chain re-bootstraps from genesis); without one, clear the node's OCS \
+         committee tables manually and configure `sui_genesis`."
     )]
     PersistedCommitteeUnreadable(String),
     #[error("transport: {0}")]
@@ -129,13 +129,10 @@ pub enum SetupError {
 /// What the operator gave us for OCS bootstrap, post-disambiguation:
 ///
 /// - `Hydrated`: perpetual tables already have committees; ignore any
-///   configured genesis seed (we've already verified past it).
-/// - `UnsafeGenesis(committee)`: install this committee[0] directly.
+///   configured genesis blob (we've already verified past it).
 /// - `Genesis`: bootstrap committee[0] from the verified `sui_genesis` blob.
 pub enum BootstrapPlan {
     Hydrated,
-    /// Localnet/test: install this epoch-0 committee directly.
-    UnsafeGenesis(sui_types::committee::Committee),
     /// Genesis-rooted: load the configured `sui_genesis` blob, verify its
     /// genesis checkpoint digest against the compiled-in chain identifier, and
     /// install `committee[0]`. The caller does the I/O.
@@ -155,7 +152,7 @@ pub fn resolve_bootstrap_plan(
         // re-reading it on every restart would re-bootstrap the node each time.
         // To force a re-bootstrap, clear the OCS committee tables — say so out
         // loud instead of silently ignoring a config change.
-        if cfg.sui_genesis.is_some() || cfg.sui_unsafe_genesis_committee.is_some() {
+        if cfg.sui_genesis.is_some() {
             tracing::info!(
                 perpetual_head_epoch = head,
                 "OCS bootstrap: using the perpetual committee chain; the configured \
@@ -168,10 +165,6 @@ pub fn resolve_bootstrap_plan(
     // Genesis-rooted bootstrap: load + verify the configured genesis blob.
     if cfg.sui_genesis.is_some() {
         return Ok(BootstrapPlan::Genesis);
-    }
-    // Localnet/test: an explicit epoch-0 committee seed.
-    if let Some(committee) = cfg.sui_unsafe_genesis_committee.clone() {
-        return Ok(BootstrapPlan::UnsafeGenesis(committee));
     }
     // Caller treats this as "no OCS configured; skip" only when the
     // node mode permits it. For validators we error in node startup.
@@ -271,21 +264,24 @@ pub async fn build_sui_connector_stack(
 
     // 2b. Recover from a stale persisted committee format before resolving the
     //     bootstrap plan. A Sui version upgrade can change the on-disk BCS
-    //     layout of the committee / summary columns; rather than halt on boot,
-    //     either wipe and re-bootstrap the committee chain from genesis (opt-in)
-    //     or surface an actionable error. The rebuildable verified-object cache
-    //     recovers itself inside `VerifiedStateCache::open`; this handles the
-    //     trust chain. (A transient RocksDB IO error is not format rot and still
-    //     propagates.)
+    //     layout of the committee / summary columns; when a genesis blob is
+    //     configured the recovery is automatic — wipe the committee tables and
+    //     re-bootstrap the chain from genesis (worst case a full genesis→now
+    //     re-ratchet; the public checkpoint stores retain every end-of-epoch
+    //     checkpoint since epoch 0, so the walk always has a verified source).
+    //     Without a genesis blob there is nothing to re-bootstrap from, so
+    //     surface an actionable error instead of silently wiping the only
+    //     anchor. The rebuildable verified-object cache recovers itself inside
+    //     `VerifiedStateCache::open`; this handles the trust chain. (A
+    //     transient RocksDB IO error is not format rot and still propagates.)
     if let Err(e) = perpetual.probe_head_committee_readable() {
         match e {
-            TypedStoreError::SerializationError(reason) if cfg.auto_reanchor_on_format_change => {
+            TypedStoreError::SerializationError(reason) if cfg.sui_genesis.is_some() => {
                 warn!(
                     reason,
                     "persisted Sui committee state could not be deserialized (likely a Sui \
-                     version upgrade); auto_reanchor_on_format_change is set — wiping the \
-                     committee tables and re-bootstrapping the committee chain from the genesis \
-                     blob"
+                     version upgrade); wiping the committee tables and re-bootstrapping the \
+                     committee chain from the configured genesis blob"
                 );
                 perpetual
                     .wipe_sui_committee_state_for_format_recovery()
@@ -302,19 +298,10 @@ pub async fn build_sui_connector_stack(
 
     // 3. Resolve the bootstrap plan → the genesis blob (verified against the
     //    compiled-in chain identifier) yields committee[0] → committee store →
-    //    ratchet client. If no genesis is configured, the
-    //    unsafe-genesis-committee path takes over (localnet only).
+    //    ratchet client.
     let plan = resolve_bootstrap_plan(cfg, &perpetual)?;
     let bootstrap = match plan {
         BootstrapPlan::Hydrated => None,
-        BootstrapPlan::UnsafeGenesis(committee) => {
-            warn!(
-                epoch = committee.epoch,
-                "USING `sui_unsafe_genesis_committee` — bypassing the digest-anchored \
-                 trust model. This MUST NOT be used in production."
-            );
-            Some(CommitteeBootstrap::UnsafeGenesis(committee))
-        }
         BootstrapPlan::Genesis => {
             let path = cfg
                 .sui_genesis
@@ -327,7 +314,7 @@ pub async fn build_sui_connector_stack(
                 "OCS bootstrap: genesis-rooted committee[0] loaded; Sui chain identifier \
                  verified against the compiled-in constant"
             );
-            Some(CommitteeBootstrap::UnsafeGenesis(boot.committee))
+            Some(CommitteeBootstrap::Genesis(boot.committee))
         }
     };
     let committees = Arc::new(CommitteeStore::open(perpetual.clone(), bootstrap)?);
@@ -360,13 +347,8 @@ pub async fn build_sui_connector_stack(
             )) as Arc<dyn ika_sui_client::archive::CheckpointArchive>
         });
     let ratchet = Arc::new(
-        OcsVerifyingClient::new(
-            raw_for_ratchet,
-            committees.clone(),
-            metrics.clone(),
-            cfg.allow_unverified_committee_fallback,
-        )
-        .with_archive(archive),
+        OcsVerifyingClient::new(raw_for_ratchet, committees.clone(), metrics.clone())
+            .with_archive(archive),
     );
 
     // Mirrored / peer-only currency: a changeset index the reader consults,
@@ -570,8 +552,7 @@ mod tests {
     use sui_types::committee::Committee;
 
     /// Minimal `SuiConnectorConfig` for `resolve_bootstrap_plan`: only the
-    /// genesis / unsafe-genesis / chain-identifier fields it reads matter; the
-    /// rest are filler.
+    /// genesis / chain-identifier fields it reads matter; the rest are filler.
     fn minimal_config(sui_genesis: Option<std::path::PathBuf>) -> SuiConnectorConfig {
         SuiConnectorConfig {
             sui_rpc_url: None,
@@ -580,11 +561,8 @@ mod tests {
                 serve_mirror: false,
             }),
             sui_state_mirror_peers: vec![],
-            sui_unsafe_genesis_committee: None,
             sui_genesis,
             sui_checkpoint_archive: None,
-            allow_unverified_committee_fallback: false,
-            auto_reanchor_on_format_change: false,
             sui_chain_identifier: SuiChainIdentifier::Custom,
             ika_package_id: ObjectID::random(),
             ika_common_package_id: ObjectID::random(),
@@ -613,8 +591,8 @@ mod tests {
         );
     }
 
-    /// A fresh node with neither a genesis blob nor an unsafe-genesis committee
-    /// is `Hydrated` (the caller decides whether that's an error for its role).
+    /// A fresh node without a genesis blob is `Hydrated` (the caller decides
+    /// whether that's an error for its role).
     #[tokio::test]
     async fn fresh_node_without_bootstrap_is_hydrated() {
         let dir = tempfile::tempdir().unwrap();

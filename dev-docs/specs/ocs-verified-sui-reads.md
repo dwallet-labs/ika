@@ -224,7 +224,7 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
 | present | — | new-style: gRPC + OCS; a **validator** additionally requires a Sui committee trust root |
 
 `has_anchor` (the gRPC/OCS opt-in) is: persisted committees OR a configured
-`sui_genesis` blob OR `sui_unsafe_genesis_committee` (localnet). A new-style
+`sui_genesis` blob. A new-style
 validator without any of these is rejected — on the gRPC path it has no MPC
 event source (no JSON-RPC `query_events`; the verified `BagEventPump` needs
 the committee chain). `SuiDataSource` must carry `rename_all_fields =
@@ -243,13 +243,23 @@ no compiled-in identifier, so the blob's own digest is the root (the
 swarm/operator supplies a trusted blob). `committee[0]` is extracted from the
 verified genesis and the ratchet walks forward from there. So the trust root
 shrinks to a **32-byte compiled-in constant** — no weak-subjectivity anchor,
-no out-of-band digest. (`sui_unsafe_genesis_committee` remains a localnet/test
-seed that installs `committee[0]` directly from the chain's epoch-0
-committee.)
+no out-of-band digest. Localnet/test harnesses that boot against an
+externally started Sui localnet reconstruct the genesis blob from the chain's
+genesis checkpoint over gRPC (`ika_sui_client::genesis::fetch_genesis_blob`),
+write it to disk, and point `sui_genesis` at it — same config path as
+production, with the trust placed in the queried endpoint (fine on a chain
+you just started yourself).
 
 **Perpetual state always wins**: once any committee is persisted, the
 configured genesis seed is ignored on every later boot. Re-bootstrapping
-requires manually clearing the OCS committee tables.
+requires manually clearing the OCS committee tables — with one exception:
+when the persisted committee state fails to *deserialize* on boot (a Sui
+version upgrade changed the on-disk BCS layout) and a `sui_genesis` blob is
+configured, the node wipes the committee tables and re-bootstraps from
+genesis automatically (worst case a full genesis→now re-ratchet; the public
+checkpoint stores retain every end-of-epoch checkpoint since epoch 0).
+Without a configured genesis the same condition is a loud, actionable boot
+error, never a silent wipe.
 
 **The persisted anchor is the cross-restart verification root.** Every
 successful ratchet/follower/pusher install persists the verified transition
@@ -296,11 +306,10 @@ object store (`epochs.json` + `{seq}.binpb.zst` — when the epoch record was
 pruned, the sequence comes from the archive's own enumeration) and
 BLS-verifies it the same way — a *verified* fallback (a forged archive
 summary fails closed; the `epochs.json` enumeration is an untrusted hint, so
-omission/reorder can stall but never forge). Only if no archive resolved
-(or it also lacks the checkpoint) does the legacy
-`allow_unverified_committee_fallback` path apply (default **false** →
-terminal `ProofChainBroken`; true → a degraded direct `get_committee(head+1)`
-fetch, gated by `epoch == head + 1`, logged security-critical).
+omission/reorder can stall but never forge). If no archive resolved (or it
+also lacks the checkpoint), the ratchet fails closed with the terminal
+`ProofChainBroken` — there is **no** unverified committee fetch anywhere in
+the ratchet; the proof chain is BLS-verified end to end or it stops.
 
 ### Anchor staleness bound and boot posture
 
@@ -316,8 +325,8 @@ bridges any gap; on mainnet/testnet one resolves by default — the public
 checkpoint store). Beyond the window the outcome is **defined and
 loud**: terminal, non-retryable `ProofChainBroken` whose message names the
 remediation (boot once against a full-retention Sui RPC so the anchor
-catches up, configure an archive, or accept the degraded unverified
-fallback) — never a silent retry loop.
+catches up, or configure an archive retaining the epoch) — never a silent
+retry loop.
 
 **Boot posture (all roles: direct, mirrored-with-fallback, peer-only)**: the
 initial ratchet failing with a **non-retryable** error fails node startup

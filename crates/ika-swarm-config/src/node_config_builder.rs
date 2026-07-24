@@ -15,7 +15,6 @@ use ika_config::node::{
 };
 use std::path::PathBuf;
 use sui_types::base_types::ObjectID;
-use sui_types::committee::Committee;
 
 use ika_config::p2p::{P2pConfig, SeedPeer, StateSyncConfig};
 
@@ -41,10 +40,6 @@ pub struct ValidatorConfigBuilder {
     max_mpc_computation_cores: Option<usize>,
     max_submit_position: Option<usize>,
     submit_delay_step_override_millis: Option<u64>,
-    /// Optional epoch-0 committee, pasted into
-    /// `NodeConfig.sui_connector_config.sui_unsafe_genesis_committee`.
-    /// Mutually exclusive with `trusted_anchor` — see the config docs.
-    unsafe_genesis_committee: Option<Committee>,
     /// Override for `NodeConfig.sui_connector_config.sui_data_source`.
     /// When `Some`, replaces the swarm default of
     /// `SuiStateDirect { serve_mirror: true }`. Use this to flip a
@@ -56,8 +51,7 @@ pub struct ValidatorConfigBuilder {
     sui_state_mirror_peers_override: Option<Vec<String>>,
     /// Optional path to a Sui genesis blob, pasted into
     /// `NodeConfig.sui_connector_config.sui_genesis`. When set, the validator
-    /// genesis-bootstraps the OCS committee chain from it (preferred over the
-    /// unsafe-genesis-committee path).
+    /// genesis-bootstraps the OCS committee chain from it.
     sui_genesis: Option<PathBuf>,
     /// Emit an old-style (1.1.8-shape) Sui connector config: `sui-rpc-url`
     /// only, no `sui-data-source` — the shape every mainnet node runs on
@@ -104,11 +98,6 @@ impl ValidatorConfigBuilder {
         submit_delay_step_override_millis: u64,
     ) -> Self {
         self.submit_delay_step_override_millis = Some(submit_delay_step_override_millis);
-        self
-    }
-
-    pub fn with_unsafe_genesis_committee(mut self, committee: Committee) -> Self {
-        self.unsafe_genesis_committee = Some(committee);
         self
     }
 
@@ -209,11 +198,8 @@ impl ValidatorConfigBuilder {
                     .sui_state_mirror_peers_override
                     .clone()
                     .unwrap_or_default(),
-                sui_unsafe_genesis_committee: self.unsafe_genesis_committee.clone(),
                 sui_genesis: self.sui_genesis.clone(),
                 sui_checkpoint_archive: None,
-                allow_unverified_committee_fallback: false,
-                auto_reanchor_on_format_change: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 ika_package_id,
                 ika_common_package_id,
@@ -255,9 +241,8 @@ impl ValidatorConfigBuilder {
     /// Like [`Self::build`], this emits a new-style (`SuiStateDirect`) config,
     /// which the node boot gate requires to carry a Sui committee trust root.
     /// The caller MUST seed one first via [`Self::with_sui_genesis`] (a Sui
-    /// genesis blob) or [`Self::with_unsafe_genesis_committee`] (the Sui chain's
-    /// epoch-0 committee, e.g. from
-    /// `ika_sui_client::anchor::fetch_genesis_committee`); otherwise the
+    /// genesis blob, e.g. reconstructed from the running chain with
+    /// `ika_sui_client::genesis::fetch_genesis_blob`); otherwise the
     /// resulting validator is rejected at boot with "`sui-data-source` is set
     /// but no Sui trust anchor is configured". The swarm path does this in
     /// `network_config_builder`.
@@ -465,11 +450,8 @@ impl FullnodeConfigBuilder {
                     }
                 }),
                 sui_state_mirror_peers: Vec::new(),
-                sui_unsafe_genesis_committee: None,
                 sui_genesis: None,
                 sui_checkpoint_archive: None,
-                allow_unverified_committee_fallback: false,
-                auto_reanchor_on_format_change: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 ika_package_id,
                 ika_common_package_id,

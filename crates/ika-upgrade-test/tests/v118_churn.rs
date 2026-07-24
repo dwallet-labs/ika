@@ -13,7 +13,7 @@
 //! real 1.1.8 → v4 on-disk + crypto continuity (`v118_upgrade`) AND a
 //! committee-churn reshare that exercises the OCS joiner trust-anchor path
 //! (`cross_binary`'s `add_joiner_validator`, which seeds the joiner's
-//! `sui_unsafe_genesis_committee` so a v4/OCS validator boots).
+//! `sui_genesis` blob so a v4/OCS validator boots).
 //!
 //! The churn runs only after every validator has been replaced, so its tested
 //! reshare has no mixed 1.1.8/current committee. The sequential replacement

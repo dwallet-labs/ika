@@ -1,7 +1,6 @@
 # OCS: replace the trusted anchor with a genesis-rooted committee chain (plan)
 
-**Status:** implemented — see "Implementation outcome" below for the
-deliberate deviations from this plan's removal list.
+**Status:** implemented, including the full removal list.
 **Depends on:** the OCS verified-Sui-reads subsystem
 ([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
 
@@ -12,32 +11,28 @@ Shipped as planned: the `sui_genesis` config and verified blob loader
 verified fallback with per-chain public defaults, the genesis-rooted
 `resolve_bootstrap_plan`, and the deletion of the operator-pinned anchor
 (`sui_trusted_anchor`, `compiled_in_trusted_anchor()`,
-`verify_anchor_summary()`, `CommitteeBootstrap::EndOfEpoch`).
+`verify_anchor_summary()`, `CommitteeBootstrap::EndOfEpoch`). The rest of
+the removal list landed in a follow-up:
 
-Deliberate deviations from the "removed" list below — all three config
-fields were **kept**:
+- `sui_unsafe_genesis_committee` **removed**. Localnet/test harnesses that
+  boot against an externally started Sui localnet now reconstruct the
+  genesis blob from the chain's genesis checkpoint over gRPC
+  (`ika_sui_client::genesis::fetch_genesis_blob`), write it to disk, and
+  point `sui_genesis` at it — one bootstrap path everywhere.
+- `allow_unverified_committee_fallback` **removed**. A pruned end-of-epoch
+  boundary that the verified archive also misses is a terminal
+  `ProofChainBroken`; no unverified committee fetch exists anywhere in the
+  ratchet. Sound because the public stores retain every EOP checkpoint
+  since epoch 0 (see the retention note below).
+- `auto_reanchor_on_format_change` **removed** (subsumed, not dropped):
+  when persisted committee state fails to deserialize on boot and a
+  `sui_genesis` blob is configured, the node wipes the committee tables
+  and re-bootstraps from genesis automatically — no flag; worst case a
+  full genesis→now re-ratchet from the archive. Without a configured
+  genesis it stays a loud boot error.
 
-- `sui_unsafe_genesis_committee` stays: swarm/test tooling that boots
-  against an externally started Sui localnet can only obtain
-  `committee[0]` over RPC (`fetch_genesis_committee`); a genesis blob
-  cannot be reconstructed over RPC. `sui_genesis` takes priority
-  whenever both are configured, and the unsafe path logs a loud
-  not-for-production warning.
-- `allow_unverified_committee_fallback` stays: the premise "the Remote
-  Store makes every EOP checkpoint available" does not hold on the
-  default config — the default archive is the public HTTPS store
-  (~30-day retention; full history needs the requester-pays buckets),
-  and Devnet/Custom get no default archive at all. A gap that both the
-  fullnode and the archive miss still needs the opt-in degraded path.
-  Default remains `false` (fail closed with `ProofChainBroken`).
-- `auto_reanchor_on_format_change` stays, re-rooted: it wipes persisted
-  committee state that no longer deserializes (a Sui bump changing the
-  on-disk BCS layout) and re-bootstraps from the genesis blob — the
-  genesis-rooted successor of "re-anchor", needed because perpetual
-  committee state always wins over the configured genesis seed.
-
-Also deviating: the mainnet/testnet genesis blobs are **not** embedded
-in the release; `sui_genesis` is a path-only config today.
+One deviation stands: the mainnet/testnet genesis blobs are **not**
+embedded in the release; `sui_genesis` is a path-only config today.
 
 ## What this changes, in one sentence
 
@@ -127,19 +122,20 @@ it came from, so the source is purely an availability concern.
   it is what lets an air-gapped peer-only validator (no outbound internet, only
   the p2p mesh) obtain its committee chain.
 
-**Fallback — Sui Remote Store (two tiers; see the format note below)**
+**Fallback — Sui Remote Store**
 
-| Need | Source |
-|---|---|
-| Recent checkpoints (≤ 30 days) | `https://checkpoints.{mainnet,testnet}.sui.io` (free HTTPS; **30-day retention only**) |
-| Full genesis→latest EOP chain (cold bootstrap) | the **requester-pays** buckets `gs://mysten-{mainnet,testnet}-checkpoints-use4` (or the S3 mirror), or a self-hosted Remote Store |
-
-Note the correction to a common misconception: the public **HTTPS** endpoints
-retain only the most recent **30 days**, not all EOP checkpoints since genesis.
-Full history (including every EOP checkpoint) lives in the requester-pays GCS
-buckets. A cold genesis bootstrap that cannot use the relay must therefore reach
-the full-history bucket; for most nodes the relay + a non-pruned local full node
-covers it.
+`https://checkpoints.{mainnet,testnet}.sui.io` (free HTTPS). **Retention,
+verified empirically 2026-07-24**: every **end-of-epoch** checkpoint since
+epoch 0 is retained, along with the root `epochs.json` enumeration — epoch
+0's EOP checkpoint (mainnet seq `9769`, testnet seq `5543`) still serves
+HTTP 200, with all ~1200 epochs enumerated. The ~**30-day** retention window
+applies to **ordinary** checkpoints only (mainnet seq `1` is 404). The OCS
+ratchet needs exactly the EOP checkpoints, so the free HTTPS store covers a
+full genesis→latest cold bootstrap on both public chains; the requester-pays
+buckets (`gs://mysten-{mainnet,testnet}-checkpoints-use4`) are only needed
+for full *ordinary*-checkpoint history, which OCS never reads. (An earlier
+revision of this doc claimed the HTTPS store was 30-day-only for everything —
+that was wrong for EOP checkpoints.)
 
 **Format (verified against the pinned Sui `mainnet-v1.73.2`).** The store layout
 the light-client reader expects is `{seq}.binpb.zst` (zstd-compressed protobuf

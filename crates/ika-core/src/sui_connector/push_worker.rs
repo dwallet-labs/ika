@@ -804,7 +804,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -848,7 +848,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -906,7 +906,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -965,7 +965,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -1057,7 +1057,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -1176,7 +1176,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );
@@ -1231,7 +1231,7 @@ mod tests {
         let committees = Arc::new(
             CommitteeStore::open(
                 perpetual.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         );

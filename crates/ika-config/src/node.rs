@@ -374,6 +374,14 @@ pub struct SuiCheckpointArchiveConfig {
 /// the complete **end-of-epoch** checkpoint history (a root `epochs.json` plus
 /// `{seq}.binpb.zst` blobs) needed for committee-chain proofs, even though they
 /// don't promise retention of every ordinary checkpoint.
+/// The public Sui checkpoint stores. Retention (verified empirically
+/// 2026-07-24): **every end-of-epoch checkpoint since epoch 0 is retained**,
+/// along with the root `epochs.json` enumeration — epoch 0's EOP checkpoint
+/// (`9769.binpb.zst` on mainnet, `5543.binpb.zst` on testnet) still serves
+/// HTTP 200. The ~30-day retention window applies to *ordinary* checkpoints
+/// only (e.g. mainnet `1.binpb.zst` is 404). The OCS committee ratchet needs
+/// exactly the EOP checkpoints, so these stores cover a full genesis→latest
+/// bootstrap on both public chains.
 pub const SUI_MAINNET_CHECKPOINT_ARCHIVE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const SUI_TESTNET_CHECKPOINT_ARCHIVE_URL: &str = "https://checkpoints.testnet.sui.io";
 
@@ -488,7 +496,7 @@ pub fn select_sui_transport(
                     "`sui-data-source` is set but no Sui trust anchor is configured: a \
                      validator on the gRPC path has no MPC event source without one (no JSON-RPC \
                      `query_events`, and the verified BagEventPump requires the committee chain); \
-                     configure sui_genesis (or sui_unsafe_genesis_committee on private nets)"
+                     configure sui_genesis"
                         .to_string(),
                 );
             }
@@ -550,18 +558,6 @@ pub struct SuiConnectorConfig {
     /// don't implement the service to error fast).
     #[serde(default)]
     pub sui_state_mirror_peers: Vec<String>,
-    /// Genesis bootstrap committee for chains that haven't reached
-    /// their first end-of-epoch yet (brand-new localnets, fresh-init
-    /// testnet). Used as `committee[0]`. `sui_genesis` takes priority over
-    /// this when both are set.
-    ///
-    /// **UNSAFE for production.** Bypasses the genesis-blob trust root — the
-    /// operator pins the committee directly, with no cross-check against the
-    /// compiled-in chain identifier. Production deployments should always use
-    /// `sui_genesis`. The `unsafe_` prefix is the universal convention for
-    /// "this opt-out skips a safety property."
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
     /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root. On
     /// boot the node loads this blob, recomputes its genesis checkpoint digest,
     /// verifies it against the compiled-in chain identifier for
@@ -580,29 +576,6 @@ pub struct SuiConnectorConfig {
     /// wins.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_checkpoint_archive: Option<SuiCheckpointArchiveConfig>,
-    /// When the committee ratchet reaches an end-of-epoch checkpoint that the
-    /// upstream has pruned, it cannot BLS-verify the `committee[E] →
-    /// committee[E+1]` transition. If this is `true` it falls back to fetching
-    /// `committee[E+1]` directly from the (untrusted) endpoint — trust degrades
-    /// to "what the endpoint says." Default `false`: the ratchet instead returns
-    /// `OcsError::ProofChainBroken` and the operator must re-anchor closer to
-    /// the current epoch. Only enable on chains/operators that accept the
-    /// degraded trust to preserve liveness from a stale anchor.
-    #[serde(default)]
-    pub allow_unverified_committee_fallback: bool,
-    /// When the persisted OCS committee state cannot be deserialized on boot —
-    /// typically after a Sui version upgrade changed its on-disk BCS layout —
-    /// automatically wipe the committee tables and re-bootstrap the committee
-    /// chain from the genesis blob (re-ratcheting forward to the current epoch)
-    /// instead of failing to boot. Default `false`: rebuilding the trust chain
-    /// is normally a deliberate operator action (clear the OCS committee tables,
-    /// then restart so the next boot re-bootstraps from genesis). Requires a
-    /// genesis blob (`sui_genesis`), or an unsafe-genesis committee on private
-    /// nets, to be configured. The rebuildable verified-object cache always
-    /// self-recovers regardless of this flag; only the committee trust chain is
-    /// gated by it.
-    #[serde(default)]
-    pub auto_reanchor_on_format_change: bool,
     /// The expected sui chain identifier connecting to.
     pub sui_chain_identifier: SuiChainIdentifier,
     /// The move package ID of ika (IKA) on sui. Omit on mainnet/testnet to use
@@ -1308,11 +1281,8 @@ mod tests {
             sui_rpc_url: None,
             sui_data_source: Some(direct()),
             sui_state_mirror_peers: vec![],
-            sui_unsafe_genesis_committee: None,
             sui_genesis: None,
             sui_checkpoint_archive: None,
-            allow_unverified_committee_fallback: false,
-            auto_reanchor_on_format_change: false,
             sui_chain_identifier: chain,
             ika_package_id: ObjectID::ZERO,
             ika_common_package_id: ObjectID::ZERO,

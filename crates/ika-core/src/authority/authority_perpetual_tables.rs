@@ -668,9 +668,9 @@ impl AuthorityPerpetualTables {
     }
 
     /// Wipe the Sui committee trust columns (committees, summaries, head) so the
-    /// next bootstrap re-anchors from the operator-pinned trust anchor. Used only
-    /// by the opt-in `auto_reanchor_on_format_change` recovery after a committee
-    /// value fails to deserialize on boot. Sui epochs are small and sequential, so
+    /// next bootstrap re-seeds from the configured `sui_genesis` blob. Used only
+    /// by the automatic format-rot recovery after a committee value fails to
+    /// deserialize on boot. Sui epochs are small and sequential, so
     /// the committee columns are swept by point-deleting their known key space
     /// `0..=head` (this typed_store build's range deletes are no-ops); the
     /// singleton head is reset too. Reads only the head (a stable `u64`); never

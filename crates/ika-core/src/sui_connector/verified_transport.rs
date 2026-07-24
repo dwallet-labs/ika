@@ -308,8 +308,7 @@ mod tests {
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
         let committees = Arc::new(
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         let reader = Arc::new(OcsVerifiedReader::new(
             Arc::new(FailingProvider),
@@ -626,8 +625,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         let reader = Arc::new(OcsVerifiedReader::new(
             provider,

@@ -15,6 +15,7 @@ path = "src/bin/upgrade-test.rs"
 
 [dependencies]
 anyhow.workspace = true
+bcs.workspace = true
 clap.workspace = true
 fastcrypto.workspace = true
 futures.workspace = true

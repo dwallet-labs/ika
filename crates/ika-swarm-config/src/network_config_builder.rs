@@ -355,16 +355,24 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         // Validators built here are new-style (`SuiStateDirect`), and the node
         // boot gate requires every new-style validator to carry a Sui trust
         // anchor (its MPC event source on the gRPC path is the anchor-verified
-        // BagEventPump). Seed each with the Sui chain's epoch-0 committee as its
-        // unsafe-genesis anchor — the same path the test cluster uses. Without
+        // BagEventPump). The Sui localnet was started externally, so its
+        // genesis blob file is not on a known path: reconstruct the blob from
+        // the chain's genesis checkpoint over gRPC, write it into the config
+        // directory, and point every validator's `sui_genesis` at it. Without
         // it the swarm/`ika start`/ts-integration validators are rejected at
         // boot with "`sui-data-source` is set but no Sui trust anchor".
-        let sui_genesis_committee =
-            ika_sui_client::anchor::fetch_genesis_committee(&self.sui_fullnode_rpc_url)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("fetch Sui genesis committee for OCS trust anchor: {e}")
-                })?;
+        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.sui_fullnode_rpc_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for OCS trust anchor: {e}"))?;
+        let sui_genesis_path = self.config_directory.join("sui_genesis.blob");
+        std::fs::write(
+            &sui_genesis_path,
+            bcs::to_bytes(&sui_genesis)
+                .map_err(|e| anyhow::anyhow!("serialize Sui genesis blob: {e}"))?,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!("write Sui genesis blob {}: {e}", sui_genesis_path.display())
+        })?;
 
         let validator_configs = validator_initialization_configs
             .iter()
@@ -372,7 +380,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
             .map(|(idx, validator)| {
                 let mut builder = ValidatorConfigBuilder::new()
                     .with_config_directory(self.config_directory.clone())
-                    .with_unsafe_genesis_committee(sui_genesis_committee.clone());
+                    .with_sui_genesis(sui_genesis_path.clone());
 
                 if let Some(max_submit_position) = self.max_submit_position {
                     builder = builder.with_max_submit_position(max_submit_position);

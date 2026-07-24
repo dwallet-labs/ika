@@ -162,7 +162,7 @@ mod tests {
         Arc::new(
             CommitteeStore::open(
                 perpetual,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
             )
             .unwrap(),
         )

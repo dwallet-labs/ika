@@ -1207,8 +1207,7 @@ mod tests {
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
         let committees = Arc::new(
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         let reader = OcsVerifiedReader::new(
             Arc::new(UnusedProvider),
@@ -1230,8 +1229,7 @@ mod tests {
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
         let committees = Arc::new(
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         let reader = OcsVerifiedReader::new(
             Arc::new(UnusedProvider),
@@ -1486,11 +1484,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let cache_reader = OcsVerifiedReader::new(
             Arc::new(UnusedProvider), // a cache-rejected read must not hit the network
@@ -1574,11 +1569,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
         let reader = OcsVerifiedReader::new(
@@ -1663,11 +1655,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
 
@@ -1783,11 +1772,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
 
@@ -1861,11 +1847,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
 
@@ -1994,8 +1977,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
         let reader = OcsVerifiedReader::new(
@@ -2110,11 +2092,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
         let reader = OcsVerifiedReader::new(
@@ -2181,11 +2160,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
         let reader = OcsVerifiedReader::new(
@@ -2765,11 +2741,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let committees = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         let metrics = OcsMetrics::new_for_testing();
         let reader = OcsVerifiedReader::new(

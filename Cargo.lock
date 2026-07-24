@@ -7071,6 +7071,7 @@ name = "ika-upgrade-test"
 version = "1.2.5"
 dependencies = [
  "anyhow",
+ "bcs",
  "clap",
  "fastcrypto",
  "futures",

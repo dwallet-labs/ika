@@ -106,12 +106,12 @@ pub struct IkaTestCluster {
     /// Next deterministic ika-node port index. Initial validators take
     /// `[0, num_validators)`; each joiner claims the next slot.
     pub next_ika_node_index: AtomicU16,
-    /// The localnet genesis committee the initial validators were anchored
+    /// Path to the Sui genesis blob the initial validators were anchored
     /// on (when `ocs_genesis_anchor` was set). Joiner validators spawned via
-    /// `add_joiner_validator` are seeded with the same anchor so they boot
+    /// `add_joiner_validator` are seeded with the same blob so they boot
     /// the OCS stack too — an anchorless validator fails boot on a
     /// protocol-v4 chain.
-    pub ocs_genesis_committee: Option<sui_types::committee::Committee>,
+    pub ocs_sui_genesis_path: Option<std::path::PathBuf>,
 }
 
 /// Handle to a validator that joined the network after the initial
@@ -326,8 +326,8 @@ impl IkaTestCluster {
         );
 
         let mut joiner_builder = ValidatorConfigBuilder::new();
-        if let Some(committee) = &self.ocs_genesis_committee {
-            joiner_builder = joiner_builder.with_unsafe_genesis_committee(committee.clone());
+        if let Some(path) = &self.ocs_sui_genesis_path {
+            joiner_builder = joiner_builder.with_sui_genesis(path.clone());
         }
         let validator_config = joiner_builder.build(
             &joiner_init,
@@ -1147,9 +1147,9 @@ pub struct IkaTestClusterBuilder {
     /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     /// `Some(v)` must have length `num_validators`.
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
-    /// When true (the default), seed every validator's
-    /// `sui_unsafe_genesis_committee` with the running Sui localnet's epoch-0
-    /// committee, so the OCS verifier bootstraps and validators ingest MPC
+    /// When true (the default), write the Sui localnet's genesis blob to disk
+    /// and seed every validator's `sui_genesis` with it, so the OCS verifier
+    /// bootstraps and validators ingest MPC
     /// session events via the OCS `BagEventPump`. On by default because the
     /// node refuses to run a validator on the deprecated legacy JSON-RPC
     /// path against a protocol-v4 chain — an anchorless validator at v4
@@ -1232,8 +1232,8 @@ impl IkaTestClusterBuilder {
         }
     }
 
-    /// Activate the OCS verified-state path: seed validators with the
-    /// localnet genesis committee as their `sui_unsafe_genesis_committee`
+    /// Activate the OCS verified-state path: write the localnet's genesis
+    /// blob to disk and seed validators with it as their `sui_genesis`
     /// trust anchor. Combine with `with_protocol_version(4)` (or the default
     /// MAX) so `off_chain_validator_metadata_enabled()` is on and the OCS
     /// `BagEventPump` becomes the MPC event source.
@@ -1462,24 +1462,12 @@ impl IkaTestClusterBuilder {
                 validator_initialization_configs.len(),
             );
         }
-        // OCS trust anchor: when requested, every validator boots from the
-        // Sui localnet's epoch-0 committee (the unsafe-genesis path). This is
-        // what makes `has_anchor` true so the OCS stack is built at v4.
-        let ocs_genesis_committee = if self.ocs_genesis_anchor {
-            Some(
-                ika_sui_client::anchor::fetch_genesis_committee(&sui_rpc_url)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("fetch genesis committee for OCS anchor: {e}"))?,
-            )
-        } else {
-            None
-        };
         // Genesis-rooted OCS bootstrap: serialize the in-process Sui genesis to a
         // blob and point every validator's `sui_genesis` at it, so they load
         // committee[0] from the verified genesis blob (chain-id check skipped on
         // the Custom localnet chain) and ratchet forward — exercising the
-        // genesis bootstrap path end-to-end. `sui_genesis` takes priority over
-        // the unsafe-genesis committee in `resolve_bootstrap_plan`.
+        // genesis bootstrap path end-to-end. This is what makes `has_anchor`
+        // true so the OCS stack is built at v4.
         let ocs_sui_genesis_path = if self.ocs_genesis_anchor {
             static OCS_GENESIS_BLOB_SEQ: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
@@ -1545,9 +1533,6 @@ impl IkaTestClusterBuilder {
                     .unwrap_or(SupportedProtocolVersions::SYSTEM_DEFAULT);
                 let mut builder = ValidatorConfigBuilder::new()
                     .with_supported_protocol_versions(supported_versions);
-                if let Some(committee) = &ocs_genesis_committee {
-                    builder = builder.with_unsafe_genesis_committee(committee.clone());
-                }
                 if let Some(path) = &ocs_sui_genesis_path {
                     builder = builder.with_sui_genesis(path.clone());
                 }
@@ -1659,7 +1644,7 @@ impl IkaTestClusterBuilder {
             // Initial validators consumed indices [0, num_validators); joiners
             // claim the next deterministic slots.
             next_ika_node_index: AtomicU16::new(self.num_validators as u16),
-            ocs_genesis_committee,
+            ocs_sui_genesis_path,
         })
     }
 }

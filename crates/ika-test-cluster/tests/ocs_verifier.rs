@@ -395,8 +395,8 @@ async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
 /// anchor and ratchet its Sui committee forward across EVERY elapsed boundary
 /// before it can verify a single read.
 ///
-/// `add_joiner_validator` hands the joiner the same unsafe-genesis committee the
-/// bootstrap validators booted from (`with_unsafe_genesis_committee`), so the
+/// `add_joiner_validator` hands the joiner the same genesis blob the
+/// bootstrap validators booted from (`with_sui_genesis`), so the
 /// joiner's OCS committee store starts at `committee[0]` while the chain is
 /// already several committees ahead. To advance its own epoch view the joiner
 /// must verified-read `system_inner` across each boundary, and each such read
