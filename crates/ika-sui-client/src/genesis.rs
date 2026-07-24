@@ -54,8 +54,6 @@ pub enum GenesisError {
         #[source]
         source: anyhow::Error,
     },
-    #[error("failed to decode embedded Sui genesis blob: {0}")]
-    Decode(#[source] anyhow::Error),
     #[error(
         "Sui genesis chain identifier mismatch for {chain}: blob's genesis \
          checkpoint digest is {got}, but the binary's compiled-in identifier \
@@ -96,16 +94,6 @@ pub fn load_and_verify_sui_genesis(
         path: path.display().to_string(),
         source,
     })?;
-    verify_genesis(genesis, chain)
-}
-
-/// Decode a Sui genesis blob from in-memory bytes (e.g. release-embedded via
-/// `include_bytes!`) and verify it against the compiled-in chain identifier.
-pub fn load_and_verify_sui_genesis_bytes(
-    bytes: &[u8],
-    chain: SuiChainIdentifier,
-) -> Result<SuiGenesisBootstrap, GenesisError> {
-    let genesis: Genesis = bcs::from_bytes(bytes).map_err(|e| GenesisError::Decode(e.into()))?;
     verify_genesis(genesis, chain)
 }
 
@@ -451,32 +439,6 @@ mod tests {
             matches!(err, GenesisError::ChainMismatch { .. }),
             "expected ChainMismatch, got {err:?}"
         );
-    }
-
-    #[test]
-    fn bytes_and_path_loaders_agree() {
-        let from_path = load_and_verify_sui_genesis(FIXTURE, SuiChainIdentifier::Custom).unwrap();
-        let bytes = std::fs::read(FIXTURE).unwrap();
-        let from_bytes =
-            load_and_verify_sui_genesis_bytes(&bytes, SuiChainIdentifier::Custom).unwrap();
-        assert_eq!(from_path.chain_identifier, from_bytes.chain_identifier);
-    }
-
-    #[test]
-    fn corrupt_genesis_bytes_fail_closed() {
-        // Garbage / truncated bytes must not deserialize into a Genesis — the
-        // loader fails closed rather than bootstrapping from junk.
-        let garbage = b"not a valid Sui genesis blob";
-        let err = load_and_verify_sui_genesis_bytes(garbage, SuiChainIdentifier::Custom)
-            .expect_err("garbage bytes must be rejected");
-        assert!(matches!(err, GenesisError::Decode(_)), "got {err:?}");
-
-        // A truncated prefix of a real blob is also rejected.
-        let real = std::fs::read(FIXTURE).unwrap();
-        let truncated = &real[..real.len() / 2];
-        let err = load_and_verify_sui_genesis_bytes(truncated, SuiChainIdentifier::Custom)
-            .expect_err("a truncated blob must be rejected");
-        assert!(matches!(err, GenesisError::Decode(_)), "got {err:?}");
     }
 
     #[test]
