@@ -77,10 +77,6 @@ pub struct ConfigBuilder<R = OsRng> {
     fullnode_supported_protocol_versions_config: Option<ProtocolVersionsConfig>,
     fullnode_run_with_range: Option<RunWithRange>,
     genesis_global_presign_config: GenesisGlobalPresignConfig,
-    /// When set, validator 0 is configured as a FALLBACK checkpoint writer
-    /// (funded via the bootstrap's dedicated fallback keypair) with this
-    /// activation delay in seconds.
-    fallback_notifier_activation_delay_secs: Option<u64>,
 }
 
 impl ConfigBuilder {
@@ -108,7 +104,6 @@ impl ConfigBuilder {
             fullnode_supported_protocol_versions_config: None,
             fullnode_run_with_range: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
-            fallback_notifier_activation_delay_secs: None,
         }
     }
 
@@ -238,13 +233,6 @@ impl<R> ConfigBuilder<R> {
         self
     }
 
-    /// Configure validator 0 as a FALLBACK checkpoint writer with the given
-    /// activation delay (funded from the bootstrap's fallback keypair).
-    pub fn with_fallback_notifier(mut self, activation_delay_secs: u64) -> Self {
-        self.fallback_notifier_activation_delay_secs = Some(activation_delay_secs);
-        self
-    }
-
     pub fn rng<N: rand::RngCore + rand::CryptoRng>(self, rng: N) -> ConfigBuilder<N> {
         ConfigBuilder {
             rng: Some(rng),
@@ -264,7 +252,6 @@ impl<R> ConfigBuilder<R> {
                 .fullnode_supported_protocol_versions_config,
             fullnode_run_with_range: self.fullnode_run_with_range,
             genesis_global_presign_config: self.genesis_global_presign_config,
-            fallback_notifier_activation_delay_secs: self.fallback_notifier_activation_delay_secs,
         }
     }
 }
@@ -364,7 +351,6 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         let ika_system_object_id = bootstrap.system.ika_system_object_id;
         let ika_dwallet_coordinator_object_id = bootstrap.system.ika_dwallet_coordinator_object_id;
         let publisher_keypair = bootstrap.publisher_keypair;
-        let fallback_writer_keypair = bootstrap.fallback_writer_keypair;
 
         // Validators built here are new-style (`SuiStateDirect`), and the node
         // boot gate requires every new-style validator to carry a Sui trust
@@ -387,16 +373,6 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
                 let mut builder = ValidatorConfigBuilder::new()
                     .with_config_directory(self.config_directory.clone())
                     .with_unsafe_genesis_committee(sui_genesis_committee.clone());
-
-                if idx == 0
-                    && let Some(activation_delay_secs) =
-                        self.fallback_notifier_activation_delay_secs
-                {
-                    builder = builder.with_fallback_notifier_key_pair(
-                        fallback_writer_keypair.copy(),
-                        activation_delay_secs,
-                    );
-                }
 
                 if let Some(max_submit_position) = self.max_submit_position {
                     builder = builder.with_max_submit_position(max_submit_position);

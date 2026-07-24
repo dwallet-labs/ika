@@ -3,11 +3,9 @@
 How an epoch decides which user sessions belong to it, why completing
 the wrong set wedges the epoch permanently, and the rules every
 completion path must follow. Actors: the Sui coordinator contract
-(`sessions_manager.move`), the checkpoint writer's `sui_executor`
-(the primary notifier, or a fallback writer during a takeover — see
-`checkpoint-writer-failover.md`), every validator's
-`DWalletMPCService`/`DWalletMPCManager`, and the `sui_syncer`
-EndOfPublish gate.
+(`sessions_manager.move`), the notifier validator's `sui_executor`,
+every validator's `DWalletMPCService`/`DWalletMPCManager`, and the
+`sui_syncer` EndOfPublish gate.
 
 ## The lock target
 

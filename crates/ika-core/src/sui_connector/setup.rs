@@ -596,8 +596,6 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::random(),
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
-            fallback_notifier_client_key_pair: None,
-            fallback_notifier_activation_delay_secs: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }

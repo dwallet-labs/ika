@@ -126,17 +126,6 @@ impl NodeMode {
                         "Notifier mode requires notifier_client_key_pair to be set in SuiConnectorConfig"
                     ));
                 }
-                if config
-                    .sui_connector_config
-                    .fallback_notifier_client_key_pair
-                    .is_some()
-                {
-                    return Err(anyhow!(
-                        "a node cannot be both the primary notifier and a fallback writer: \
-                         unset fallback_notifier_client_key_pair (fallbacks run on OTHER \
-                         nodes so they survive this one's outage)"
-                    ));
-                }
                 Ok(())
             }
         }
@@ -455,15 +444,11 @@ pub enum SuiTransportPlan {
 /// - `has_anchor`: whether a Sui trust anchor is configured (enables OCS).
 /// - `mode`: the node's role. A validator runs MPC and needs a Sui event
 ///   source; a notifier submits transactions; a fullnode does neither.
-/// - `has_fallback_notifier_key`: whether the node carries a fallback
-///   checkpoint-writer key — it then submits transactions like a notifier,
-///   and needs the same direct uplink.
 pub fn select_sui_transport(
     data_source: Option<&SuiDataSource>,
     sui_rpc_url_present: bool,
     has_anchor: bool,
     mode: NodeMode,
-    has_fallback_notifier_key: bool,
 ) -> Result<SuiTransportPlan, String> {
     match data_source {
         // Old-style config (no `sui-data-source` section).
@@ -507,13 +492,12 @@ pub fn select_sui_transport(
                         .to_string(),
                 );
             }
-            // Writers (the notifier, and any fallback-writer node) are the only
-            // roles that submit transactions. Peer-only (`sui-state-mirrored`
-            // with no fallback) has no direct Sui uplink: its relayed submission
-            // path returns *unverified* effects bytes, so the design assumes
-            // writers never run peer-only. Enforce it here rather than let a
-            // misconfigured writer submit through that path.
-            if (mode.is_notifier() || has_fallback_notifier_key)
+            // A notifier is the only role that submits transactions. Peer-only
+            // (`sui-state-mirrored` with no fallback) has no direct Sui uplink:
+            // its relayed submission path returns *unverified* effects bytes, so
+            // the design assumes notifiers never run peer-only. Enforce it here
+            // rather than let a misconfigured notifier submit through that path.
+            if mode.is_notifier()
                 && matches!(
                     source,
                     SuiDataSource::SuiStateMirrored {
@@ -522,11 +506,10 @@ pub fn select_sui_transport(
                 )
             {
                 return Err(
-                    "a checkpoint writer (notifier or fallback-writer key holder) is \
-                     configured peer-only (`sui-state-mirrored` with no `fallback-grpc-url`), \
-                     but a writer submits transactions and a peer-only node has no direct Sui \
-                     uplink — its relayed submission returns unverified effects; set \
-                     `fallback-grpc-url`, or use `sui-state-direct`"
+                    "a notifier is configured peer-only (`sui-state-mirrored` with no \
+                     `fallback-grpc-url`), but a notifier submits transactions and a peer-only \
+                     node has no direct Sui uplink — its relayed submission returns unverified \
+                     effects; set `fallback-grpc-url`, or use `sui-state-direct`"
                         .to_string(),
                 );
             }
@@ -662,27 +645,6 @@ pub struct SuiConnectorConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier_client_key_pair: Option<KeyPairWithPath>,
 
-    /// FALLBACK checkpoint-writer key. A node with this key (validator or
-    /// fullnode — never a node that already has `notifier_client_key_pair`)
-    /// runs the same submission machinery as the notifier, but only acts on a
-    /// step (checkpoint or epoch-switch call) after that step has been
-    /// observably pending on chain for `fallback_notifier_activation_delay_secs`
-    /// — i.e. only when the primary notifier is stalled or dead. The address
-    /// derived from this key must be funded with SUI by the operator; it must
-    /// be a DIFFERENT address from the primary notifier's (two writers sharing
-    /// a gas coin would equivocate). Duplicate submissions when the primary
-    /// races back are safe: every write is sequence-/state-checked on chain and
-    /// the loser's transaction aborts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_notifier_client_key_pair: Option<KeyPairWithPath>,
-
-    /// How long (seconds) a submittable step must stay pending on chain before
-    /// the fallback writer acts on it. Defaults to
-    /// [`DEFAULT_FALLBACK_NOTIFIER_ACTIVATION_DELAY_SECS`]. Only meaningful
-    /// together with `fallback_notifier_client_key_pair`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback_notifier_activation_delay_secs: Option<u64>,
-
     /// Override the last processed EventID for sui module `ika_system`.
     /// When set, SuiSyncer will start from this cursor (exclusively) instead of the one in storage.
     /// If the cursor is not found in storage or override, the query will start from genesis.
@@ -700,23 +662,7 @@ pub struct SuiConnectorConfig {
 /// perpetual `verified_object_cache` and the in-memory map. Tune per chain.
 pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
 
-/// Default pending-time before a fallback writer acts on a step the primary
-/// notifier hasn't performed. Long enough that a briefly-slow primary always
-/// wins the race (steady-state submission latency is seconds); short enough
-/// that a dead/stalled primary delays an epoch close by minutes, not the
-/// indefinite outage it causes today.
-pub const DEFAULT_FALLBACK_NOTIFIER_ACTIVATION_DELAY_SECS: u64 = 300;
-
 impl SuiConnectorConfig {
-    /// The fallback writer's activation delay; see
-    /// [`SuiConnectorConfig::fallback_notifier_activation_delay_secs`].
-    pub fn fallback_notifier_activation_delay(&self) -> Duration {
-        Duration::from_secs(
-            self.fallback_notifier_activation_delay_secs
-                .unwrap_or(DEFAULT_FALLBACK_NOTIFIER_ACTIVATION_DELAY_SECS),
-        )
-    }
-
     pub fn verified_cache_retention_checkpoints(&self) -> u64 {
         self.verified_cache_retention_checkpoints
             .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
@@ -1377,8 +1323,6 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::ZERO,
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
-            fallback_notifier_client_key_pair: None,
-            fallback_notifier_activation_delay_secs: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }
@@ -1630,7 +1574,7 @@ mod tests {
     fn no_endpoint_is_rejected() {
         for has_anchor in [false, true] {
             for mode in ALL_MODES {
-                let err = select_sui_transport(None, false, has_anchor, mode, false).unwrap_err();
+                let err = select_sui_transport(None, false, has_anchor, mode).unwrap_err();
                 assert!(
                     err.contains("no Sui endpoint configured"),
                     "anchor={has_anchor} mode={mode}: {err}"
@@ -1649,7 +1593,7 @@ mod tests {
     fn old_style_keeps_legacy_json_rpc_for_every_role() {
         for mode in ALL_MODES {
             assert_eq!(
-                select_sui_transport(None, true, false, mode, false),
+                select_sui_transport(None, true, false, mode),
                 Ok(SuiTransportPlan::LegacyJsonRpc),
                 "mode={mode}"
             );
@@ -1661,7 +1605,7 @@ mod tests {
     #[test]
     fn anchor_without_data_source_is_rejected() {
         for mode in ALL_MODES {
-            let err = select_sui_transport(None, true, true, mode, false).unwrap_err();
+            let err = select_sui_transport(None, true, true, mode).unwrap_err();
             assert!(
                 err.contains("trust anchor is configured but `sui-data-source` is not"),
                 "mode={mode}: {err}"
@@ -1676,8 +1620,8 @@ mod tests {
     #[test]
     fn new_style_validator_without_anchor_is_rejected() {
         for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
-            let err = select_sui_transport(Some(&source), false, false, NodeMode::Validator, false)
-                .unwrap_err();
+            let err =
+                select_sui_transport(Some(&source), false, false, NodeMode::Validator).unwrap_err();
             assert!(
                 err.contains("no Sui trust anchor is configured"),
                 "{source:?}: {err}"
@@ -1689,7 +1633,7 @@ mod tests {
     #[test]
     fn direct_and_mirrored_with_fallback_use_grpc() {
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator, false),
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
@@ -1697,8 +1641,7 @@ mod tests {
                 Some(&mirrored_with_fallback()),
                 false,
                 true,
-                NodeMode::Validator,
-                false
+                NodeMode::Validator
             ),
             Ok(SuiTransportPlan::Grpc)
         );
@@ -1709,23 +1652,11 @@ mod tests {
     #[test]
     fn peer_only_uses_the_relay() {
         assert_eq!(
-            select_sui_transport(
-                Some(&peer_only_source()),
-                false,
-                true,
-                NodeMode::Validator,
-                false
-            ),
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Validator),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
         assert_eq!(
-            select_sui_transport(
-                Some(&peer_only_source()),
-                false,
-                true,
-                NodeMode::Fullnode,
-                false
-            ),
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
     }
@@ -1736,14 +1667,8 @@ mod tests {
     /// direct) uplink is fine.
     #[test]
     fn a_notifier_configured_peer_only_is_rejected() {
-        let err = select_sui_transport(
-            Some(&peer_only_source()),
-            false,
-            true,
-            NodeMode::Notifier,
-            false,
-        )
-        .unwrap_err();
+        let err = select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Notifier)
+            .unwrap_err();
         assert!(
             err.contains("notifier") && err.contains("peer-only"),
             "{err}"
@@ -1753,42 +1678,12 @@ mod tests {
                 Some(&mirrored_with_fallback()),
                 false,
                 true,
-                NodeMode::Notifier,
-                false
+                NodeMode::Notifier
             ),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, NodeMode::Notifier, false),
-            Ok(SuiTransportPlan::Grpc)
-        );
-    }
-
-    /// A fallback-writer key makes a node a transaction submitter, so peer-only
-    /// is rejected for it exactly like for the notifier — for the roles that may
-    /// carry the key (validator and fullnode). With a direct uplink it's fine.
-    #[test]
-    fn a_fallback_writer_configured_peer_only_is_rejected() {
-        for mode in [NodeMode::Validator, NodeMode::Fullnode] {
-            let err = select_sui_transport(Some(&peer_only_source()), false, true, mode, true)
-                .unwrap_err();
-            assert!(
-                err.contains("fallback-writer") && err.contains("peer-only"),
-                "mode={mode}: {err}"
-            );
-        }
-        assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator, true),
-            Ok(SuiTransportPlan::Grpc)
-        );
-        assert_eq!(
-            select_sui_transport(
-                Some(&mirrored_with_fallback()),
-                false,
-                true,
-                NodeMode::Fullnode,
-                true
-            ),
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Notifier),
             Ok(SuiTransportPlan::Grpc)
         );
     }
@@ -1799,17 +1694,11 @@ mod tests {
     #[test]
     fn a_fullnode_is_exempt_from_the_anchor_requirement() {
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, false, NodeMode::Fullnode, false),
+            select_sui_transport(Some(&direct()), false, false, NodeMode::Fullnode),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(
-                Some(&peer_only_source()),
-                false,
-                false,
-                NodeMode::Fullnode,
-                false
-            ),
+            select_sui_transport(Some(&peer_only_source()), false, false, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
     }
@@ -1821,8 +1710,8 @@ mod tests {
         for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
             for mode in ALL_MODES {
                 assert_eq!(
-                    select_sui_transport(Some(&source), true, true, mode, false),
-                    select_sui_transport(Some(&source), false, true, mode, false),
+                    select_sui_transport(Some(&source), true, true, mode),
+                    select_sui_transport(Some(&source), false, true, mode),
                     "{source:?} mode={mode}: rpc-url presence must not matter"
                 );
             }
@@ -1954,7 +1843,7 @@ mod tests {
     #[test]
     fn old_style_config_with_anchor_is_rejected_message() {
         for mode in ALL_MODES {
-            let err = select_sui_transport(None, true, true, mode, false)
+            let err = select_sui_transport(None, true, true, mode)
                 .expect_err("anchor without sui-data-source must be rejected");
             assert!(
                 err.contains("trust anchor is configured but `sui-data-source` is not"),

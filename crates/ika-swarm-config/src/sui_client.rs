@@ -123,11 +123,6 @@ pub struct IkaSuiBootstrap {
     pub system: InitializedIkaSystem,
     pub publisher_address: SuiAddress,
     pub publisher_keypair: SuiKeyPair,
-    /// A second funded keypair, distinct from the publisher's, for a FALLBACK
-    /// checkpoint writer (two writers must never share a gas address). Always
-    /// provisioned — one extra faucet drip — so tests can wire a fallback
-    /// without re-plumbing the bootstrap.
-    pub fallback_writer_keypair: SuiKeyPair,
     pub wallet_context: WalletContext,
 }
 
@@ -245,13 +240,9 @@ pub async fn init_ika_on_sui(
         .build(context.get_active_env()?.rpc.clone())
         .await?;
 
-    let (fallback_writer_address, fallback_writer_keypair, _, _) =
-        generate_new_key(SignatureScheme::ED25519, None, None)?;
-
     let mut request_tokens_from_faucet_futures = vec![
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
-        request_tokens_from_faucet(fallback_writer_address, sui_faucet_url.clone()),
     ];
     let mut validator_addresses = Vec::new();
     for validator_initialization_config in validator_initialization_configs {
@@ -323,7 +314,6 @@ pub async fn init_ika_on_sui(
         system,
         publisher_address,
         publisher_keypair,
-        fallback_writer_keypair,
         wallet_context: context,
     })
 }

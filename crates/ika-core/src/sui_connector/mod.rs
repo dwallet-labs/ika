@@ -53,17 +53,9 @@ pub mod verified_reader;
 pub mod verified_state_cache;
 pub mod verified_transport;
 
-/// A configured checkpoint writer: the primary notifier's key, or a
-/// fallback writer's key (issue #1892: without a fallback, the notifier is a
-/// single point of failure whose outage blocks the epoch close network-wide).
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,
     sui_address: SuiAddress,
-    /// `None`: this node is the primary notifier and acts immediately.
-    /// `Some(delay)`: this node is a FALLBACK writer — it performs a
-    /// submittable step only after observing it pending on chain for `delay`,
-    /// i.e. only when the primary is stalled or dead.
-    activation_delay: Option<Duration>,
 }
 
 pub struct SuiConnectorService {
@@ -314,23 +306,8 @@ impl SuiConnectorService {
         sui_client: Arc<SuiClient<SuiBackend>>,
         _sui_connector_metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<Option<SuiNotifier>> {
-        let (sui_key_path, activation_delay) = match (
-            &sui_connector_config.notifier_client_key_pair,
-            &sui_connector_config.fallback_notifier_client_key_pair,
-        ) {
-            // Also rejected by `NodeMode::validate_config`; kept here so a
-            // caller that skips mode validation cannot end up with an
-            // ambiguous writer role.
-            (Some(_), Some(_)) => anyhow::bail!(
-                "notifier_client_key_pair and fallback_notifier_client_key_pair are both set; \
-                 a node is either the primary notifier or a fallback writer, never both"
-            ),
-            (Some(primary), None) => (primary, None),
-            (None, Some(fallback)) => (
-                fallback,
-                Some(sui_connector_config.fallback_notifier_activation_delay()),
-            ),
-            (None, None) => return Ok(None),
+        let Some(sui_key_path) = sui_connector_config.notifier_client_key_pair else {
+            return Ok(None);
         };
 
         let sui_key = sui_key_path.keypair().copy();
@@ -366,19 +343,9 @@ impl SuiConnectorService {
         );
 
         let sui_address = SuiAddress::from(&sui_key.public());
-        info!(
-            ?sui_address,
-            role = if activation_delay.is_some() {
-                "fallback"
-            } else {
-                "primary"
-            },
-            "Checkpoint writer configured"
-        );
         Ok(Some(SuiNotifier {
             sui_key,
             sui_address,
-            activation_delay,
         }))
     }
 

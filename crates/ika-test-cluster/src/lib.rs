@@ -1173,12 +1173,6 @@ pub struct IkaTestClusterBuilder {
     /// `with_sui_state_direct_count(_)`. Off by default (mirrored validators
     /// keep a direct gRPC fallback).
     peer_only_mirrored: bool,
-    /// When `Some(delay_secs)`, validator 0 is additionally configured as a
-    /// FALLBACK checkpoint writer with that activation delay: it carries its
-    /// own funded Sui key and takes over checkpoint/epoch-switch submission
-    /// whenever the notifier leaves a step pending past the delay. `None`
-    /// (default) keeps validators submission-free, as in production defaults.
-    fallback_notifier_activation_delay_secs: Option<u64>,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1235,16 +1229,7 @@ impl IkaTestClusterBuilder {
             ocs_genesis_anchor: true,
             sui_state_direct_count: None,
             peer_only_mirrored: false,
-            fallback_notifier_activation_delay_secs: None,
         }
-    }
-
-    /// Configure validator 0 as a FALLBACK checkpoint writer (its own funded
-    /// Sui key; acts only on steps the notifier leaves pending longer than
-    /// `activation_delay_secs`).
-    pub fn with_fallback_notifier(mut self, activation_delay_secs: u64) -> Self {
-        self.fallback_notifier_activation_delay_secs = Some(activation_delay_secs);
-        self
     }
 
     /// Activate the OCS verified-state path: seed validators with the
@@ -1549,15 +1534,6 @@ impl IkaTestClusterBuilder {
             })
             .unwrap_or_default();
 
-        // Optional fallback checkpoint writer on validator 0: its own funded
-        // Sui key (never the notifier's or publisher's — writers sharing a gas
-        // address equivocate).
-        let fallback_writer_keypair = self
-            .fallback_notifier_activation_delay_secs
-            .map(|_| generate_new_key(SignatureScheme::ED25519, None, None))
-            .transpose()?
-            .map(|(address, keypair, _scheme, _phrase)| (address, keypair));
-
         let validator_configs: Vec<_> = validator_initialization_configs
             .iter()
             .enumerate()
@@ -1574,14 +1550,6 @@ impl IkaTestClusterBuilder {
                 }
                 if let Some(path) = &ocs_sui_genesis_path {
                     builder = builder.with_sui_genesis(path.clone());
-                }
-                if i == 0
-                    && let Some((_, keypair)) = &fallback_writer_keypair
-                    && let Some(activation_delay_secs) =
-                        self.fallback_notifier_activation_delay_secs
-                {
-                    builder = builder
-                        .with_fallback_notifier_key_pair(keypair.copy(), activation_delay_secs);
                 }
                 // Validators at index >= direct_count read through the relay.
                 if let Some(direct_count) = direct_count
@@ -1642,16 +1610,6 @@ impl IkaTestClusterBuilder {
         test_cluster
             .sign_and_execute_transaction(&fund_notifier_tx_data)
             .await;
-        if let Some((fallback_writer_address, _)) = &fallback_writer_keypair {
-            let fund_fallback_tx_data = test_cluster
-                .test_transaction_builder_with_sender(publisher_address)
-                .await
-                .transfer_sui(Some(VALIDATOR_FUNDING_MIST), *fallback_writer_address)
-                .build();
-            test_cluster
-                .sign_and_execute_transaction(&fund_fallback_tx_data)
-                .await;
-        }
         let mut notifier_rng = OsRng;
         let notifier_config = FullnodeConfigBuilder::new().build(
             &mut notifier_rng,

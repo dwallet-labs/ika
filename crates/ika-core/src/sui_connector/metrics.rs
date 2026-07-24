@@ -100,12 +100,6 @@ pub struct SuiConnectorMetrics {
     /// is currently *blocking* end-of-publish from firing.
     pub(crate) end_of_publish_blocked_reason: IntGaugeVec,
 
-    /// Actions (checkpoint submissions or epoch-switch calls) this node
-    /// performed as a FALLBACK checkpoint writer, i.e. after the primary
-    /// notifier left them pending past the activation delay. Stays 0 on a
-    /// healthy network; any increase is a primary-notifier outage signal.
-    pub(crate) fallback_writer_actions_total: IntCounter,
-
     /// `highest locally-certified dwallet checkpoint - coordinator's
     /// last_processed_checkpoint_sequence_number`. Positive means completions
     /// are certified locally but their checkpoints have not landed on Sui —
@@ -270,13 +264,6 @@ impl SuiConnectorMetrics {
             uncompleted_events_backlog: register_int_gauge_with_registry!(
                 "ika_sui_connector_uncompleted_events_backlog",
                 "Uncompleted session events observed on chain on the most recent pull",
-                registry,
-            )
-            .unwrap(),
-            fallback_writer_actions_total: register_int_counter_with_registry!(
-                "ika_sui_connector_fallback_writer_actions_total",
-                "Actions performed as a FALLBACK checkpoint writer (primary notifier \
-                 left them pending past the activation delay); 0 on a healthy network",
                 registry,
             )
             .unwrap(),

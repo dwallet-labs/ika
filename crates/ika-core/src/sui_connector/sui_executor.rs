@@ -36,7 +36,6 @@ use move_core_types::ident_str;
 use move_core_types::language_storage::TypeTag;
 use roaring::RoaringBitmap;
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::sync::Arc;
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
@@ -47,7 +46,7 @@ use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
-use tokio::time::{self, Duration, Instant};
+use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 #[derive(PartialEq, Eq, Debug)]
@@ -57,107 +56,6 @@ pub enum StopReason {
 }
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
-
-/// Retry window for a FALLBACK writer's submissions. Deliberately short: a
-/// fallback's submission can be doomed rather than transiently failing (the
-/// recovered primary landed the same step, so every rebuilt attempt aborts on
-/// the chain-side sequence/state check), and the loop re-derives what is still
-/// pending from fresh chain state right after this window.
-const FALLBACK_SUBMISSION_RETRY_SECS: u64 = 120;
-
-/// `FallbackGate` step keys for the two checkpoint streams (the epoch-switch
-/// steps reuse the `EPOCH_SWITCH_STEP_*` labels).
-const WRITER_STEP_DWALLET_CHECKPOINT: &str = "dwallet_checkpoint";
-const WRITER_STEP_SYSTEM_CHECKPOINT: &str = "system_checkpoint";
-
-/// Decides *when* this node's writer acts on a submittable step.
-///
-/// The primary notifier acts the moment a step is actionable. A fallback
-/// writer (issue #1892) holds each step while it is actionable and acts only
-/// once the same step instance has stayed pending for `activation_delay` —
-/// i.e. only when the primary demonstrably isn't doing its job (steady-state
-/// primary submission latency is seconds). Duplicate submissions during a
-/// takeover race are safe: every write is sequence-/state-checked in Move, so
-/// the loser's transaction aborts without effect (beyond its gas).
-struct FallbackGate {
-    /// `None` = primary (act immediately); `Some` = fallback.
-    activation_delay: Option<Duration>,
-    /// Per step key: the instance observed pending (e.g. checkpoint sequence
-    /// number; 0 for the once-per-epoch switch steps) and since when.
-    armed: HashMap<&'static str, (u64, Instant)>,
-}
-
-impl FallbackGate {
-    fn new(activation_delay: Option<Duration>) -> Self {
-        Self {
-            activation_delay,
-            armed: HashMap::new(),
-        }
-    }
-
-    fn is_fallback(&self) -> bool {
-        self.activation_delay.is_some()
-    }
-
-    /// Report the step's current pending-state and decide whether to act now.
-    /// `instance` distinguishes successive instances of the same step (a new
-    /// instance restarts the delay); `actionable = false` disarms the step.
-    fn should_act(&mut self, step: &'static str, instance: u64, actionable: bool) -> bool {
-        let Some(delay) = self.activation_delay else {
-            return actionable;
-        };
-        if !actionable {
-            self.armed.remove(step);
-            return false;
-        }
-        let now = Instant::now();
-        let (armed_instance, armed_since) = self.armed.entry(step).or_insert((instance, now));
-        if *armed_instance != instance {
-            *armed_instance = instance;
-            *armed_since = now;
-        }
-        let acting = now.duration_since(*armed_since) >= delay;
-        if acting {
-            warn!(
-                step,
-                instance,
-                pending_secs = now.duration_since(*armed_since).as_secs(),
-                "fallback writer taking over a step the primary notifier left pending"
-            );
-        }
-        acting
-    }
-
-    /// How long a failing submission is retried before giving up. The primary
-    /// keeps the historical hour (after which it panics — the loudest signal
-    /// available, and the supervisor restarts it); a fallback gives up fast
-    /// and re-derives what is still pending from fresh chain state.
-    fn submission_retry_window(&self) -> Duration {
-        if self.is_fallback() {
-            Duration::from_secs(FALLBACK_SUBMISSION_RETRY_SECS)
-        } else {
-            Duration::from_secs(ONE_HOUR_IN_SECONDS)
-        }
-    }
-
-    /// Terminal failure policy after the retry window is exhausted. The
-    /// primary panics (unchanged behavior). A fallback must NEVER panic here:
-    /// losing a race against a recovering primary looks exactly like a
-    /// persistent submission failure (every attempt aborts on the chain-side
-    /// sequence/state check), and crashing a healthy validator over that
-    /// would turn a benign race into committee attrition.
-    fn handle_submission_failure(&self, step: &str, error: impl Debug) {
-        if self.is_fallback() {
-            error!(
-                step,
-                error = ?error,
-                "fallback writer failed to submit; re-deriving pending work next tick"
-            );
-        } else {
-            panic!("failed to submit {step} for over an hour: {error:?}");
-        }
-    }
-}
 
 /// Submission state for the notifier's single Sui address.
 ///
@@ -293,16 +191,6 @@ where
         }
     }
 
-    /// Count an action performed while acting as a FALLBACK writer (no-op on
-    /// the primary). The counter staying at zero is the healthy state; any
-    /// increase means the primary notifier left work pending past the
-    /// activation delay and this node took over.
-    fn note_writer_action(&self, fallback_gate: &FallbackGate) {
-        if fallback_gate.is_fallback() {
-            self.metrics.fallback_writer_actions_total.inc();
-        }
-    }
-
     /// Retrieve the System wrapper + its inner. OCS-verified when a
     /// reader is wired in; falls back to the legacy JSON-RPC read on
     /// validators without OCS (notifier nodes). Retries forever — same
@@ -418,7 +306,6 @@ where
         ika_system_state_inner: &SystemInner,
         network_encryption_keys: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
         epoch_switch_state: &mut EpochSwitchState,
-        fallback_gate: &mut FallbackGate,
     ) {
         let Ok(clock) = self.sui_client.get_clock().await else {
             error!("failed to get clock when running epoch switch");
@@ -430,12 +317,11 @@ where
             + (ika_system_state_inner.epoch_duration_ms() / 2);
         let next_epoch_committee_is_empty =
             system_inner_v1.validator_set.next_epoch_committee.is_none();
-        let mid_epoch_actionable = clock.timestamp_ms > mid_epoch_time
+        if clock.timestamp_ms > mid_epoch_time
             && next_epoch_committee_is_empty
-            && !epoch_switch_state.ran_mid_epoch;
-        if fallback_gate.should_act(EPOCH_SWITCH_STEP_MID_EPOCH, 0, mid_epoch_actionable) {
+            && !epoch_switch_state.ran_mid_epoch
+        {
             info!("Calling `process_mid_epoch()`");
-            self.note_writer_action(fallback_gate);
             // After mid-epoch reconfiguration, the next epoch committee is set, and
             // we can't call request dkg for the network encryption keys for the epoch.
             let response = retry_with_max_elapsed_time!(
@@ -446,18 +332,20 @@ where
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
                 ),
-                fallback_gate.submission_retry_window()
+                Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
             if response.is_err() {
-                fallback_gate.handle_submission_failure("mid-epoch", response.err());
-            } else {
-                info!("Successfully processed mid-epoch");
-                epoch_switch_state.ran_mid_epoch = true;
-                self.metrics
-                    .epoch_switch_step_done
-                    .with_label_values(&[EPOCH_SWITCH_STEP_MID_EPOCH])
-                    .set(1);
+                panic!(
+                    "failed to submit mid-epoch for over an hour: {:?}",
+                    response.err()
+                );
             }
+            info!("Successfully processed mid-epoch");
+            epoch_switch_state.ran_mid_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_MID_EPOCH])
+                .set(1);
         }
         let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
             self.try_get_dwallet_coordinator_inner().await
@@ -473,20 +361,15 @@ where
 
         let DWalletCoordinatorInner::V1(coordinator_inner) = dwallet_coordinator_inner;
 
-        let network_key_reconfiguration_actionable = clock.timestamp_ms > mid_epoch_time
+        if clock.timestamp_ms > mid_epoch_time
             && coordinator_inner.next_epoch_active_committee.is_some()
             // network_encryption_key_ids holds only keys that finished dkg
             && coordinator_inner.dwallet_network_encryption_keys.size == network_encryption_keys.len() as u64
             // check not all already completed
             && coordinator_inner.epoch_dwallet_network_encryption_keys_reconfiguration_completed != coordinator_inner.dwallet_network_encryption_keys.size
-            && !epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration;
-        if fallback_gate.should_act(
-            EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG,
-            0,
-            network_key_reconfiguration_actionable,
-        ) {
+            && !epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration
+        {
             info!("Running network encryption key mid-epoch reconfiguration");
-            self.note_writer_action(fallback_gate);
 
             let network_encryption_for_reconfiguration_key_ids = network_encryption_keys
                 .iter()
@@ -496,7 +379,6 @@ where
                 .map(|(k, _)| *k)
                 .collect_vec();
 
-            let mut reconfiguration_submitted = true;
             if !network_encryption_for_reconfiguration_key_ids.is_empty() {
                 let result = retry_with_max_elapsed_time!(
                     Self::request_mid_epoch_reconfiguration(
@@ -506,42 +388,32 @@ where
                         sui_notifier,
                         self.notifier_tx_lock.clone(),
                     ),
-                    fallback_gate.submission_retry_window()
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
                 if result.is_err() {
-                    fallback_gate.handle_submission_failure(
-                        "network encryption key mid-epoch reconfiguration",
-                        result.err(),
+                    panic!(
+                        "failed to network encryption key mid-epoch reconfiguration for over an hour: {:?}",
+                        result.err()
                     );
-                    reconfiguration_submitted = false;
-                } else {
-                    info!("Successfully network encryption key mid-epoch reconfiguration");
                 }
+                info!("Successfully network encryption key mid-epoch reconfiguration");
             }
-            if reconfiguration_submitted {
-                epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
-                self.metrics
-                    .epoch_switch_step_done
-                    .with_label_values(&[EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG])
-                    .set(1);
-            }
+            epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG])
+                .set(1);
         }
 
-        let pricing_actionable = clock.timestamp_ms > mid_epoch_time
-            && coordinator_inner
-                .pricing_and_fee_management
-                .calculation_votes
-                .is_some()
-            && coordinator_inner.next_epoch_active_committee.is_some()
-            && !epoch_switch_state.calculated_protocol_pricing;
-        if fallback_gate.should_act(EPOCH_SWITCH_STEP_CALC_PRICING, 0, pricing_actionable)
+        if clock.timestamp_ms > mid_epoch_time
             && let Some(calculation_votes) = coordinator_inner
                 .pricing_and_fee_management
                 .calculation_votes
                 .as_ref()
+            && coordinator_inner.next_epoch_active_committee.is_some()
+            && !epoch_switch_state.calculated_protocol_pricing
         {
             info!("Running calculating protocol pricing");
-            self.note_writer_action(fallback_gate);
 
             let default_pricing_keys = calculation_votes
                 .default_pricing
@@ -566,7 +438,6 @@ where
 
             let default_pricing_keys_chunked =
                 filtered_default_pricing_keys.chunks(5).collect_vec();
-            let mut all_pricing_chunks_submitted = true;
             for default_pricing_keys_chunk in default_pricing_keys_chunked {
                 let result = retry_with_max_elapsed_time!(
                     Self::calculate_protocols_pricing(
@@ -576,23 +447,21 @@ where
                         self.notifier_tx_lock.clone(),
                         default_pricing_keys_chunk
                     ),
-                    fallback_gate.submission_retry_window()
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
                 if result.is_err() {
-                    fallback_gate
-                        .handle_submission_failure("protocols' pricing calculation", result.err());
-                    all_pricing_chunks_submitted = false;
-                    break;
+                    panic!(
+                        "failed to calculate protocols' pricing for over an hour: {:?}",
+                        result.err()
+                    );
                 }
             }
-            if all_pricing_chunks_submitted {
-                info!("Successfully calculated protocols pricing");
-                epoch_switch_state.calculated_protocol_pricing = true;
-                self.metrics
-                    .epoch_switch_step_done
-                    .with_label_values(&[EPOCH_SWITCH_STEP_CALC_PRICING])
-                    .set(1);
-            }
+            info!("Successfully calculated protocols pricing");
+            epoch_switch_state.calculated_protocol_pricing = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_CALC_PRICING])
+                .set(1);
         }
 
         let SystemInner::V1(system_inner_v1) = &ika_system_state_inner;
@@ -606,17 +475,12 @@ where
         let epoch_not_locked = !coordinator_inner
             .sessions_manager
             .locked_last_user_initiated_session_to_complete_in_current_epoch;
-        let lock_last_session_actionable = clock.timestamp_ms > epoch_finish_time
+        if clock.timestamp_ms > epoch_finish_time
             && next_epoch_committee_is_some
             && epoch_not_locked
-            && !epoch_switch_state.ran_lock_last_session;
-        if fallback_gate.should_act(
-            EPOCH_SWITCH_STEP_LOCK_LAST_SESSION,
-            0,
-            lock_last_session_actionable,
-        ) {
+            && !epoch_switch_state.ran_lock_last_session
+        {
             info!("Calling `lock_last_active_session_sequence_number()`");
-            self.note_writer_action(fallback_gate);
             let response = retry_with_max_elapsed_time!(
                 Self::lock_last_session_to_complete_in_current_epoch(
                     ika_system_package_id,
@@ -625,18 +489,20 @@ where
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
                 ),
-                fallback_gate.submission_retry_window()
+                Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
             if response.is_err() {
-                fallback_gate.handle_submission_failure("lock-last session", response.err());
-            } else {
-                epoch_switch_state.ran_lock_last_session = true;
-                self.metrics
-                    .epoch_switch_step_done
-                    .with_label_values(&[EPOCH_SWITCH_STEP_LOCK_LAST_SESSION])
-                    .set(1);
-                info!("Successfully locked last session in current epoch");
+                panic!(
+                    "failed to submit lock-last session for over an hour: {:?}",
+                    response.err()
+                );
             }
+            epoch_switch_state.ran_lock_last_session = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_LOCK_LAST_SESSION])
+                .set(1);
+            info!("Successfully locked last session in current epoch");
         }
         // Mirror the on-chain `all_current_epoch_sessions_completed` assertion in
         // `sessions_manager::advance_epoch`: the locked user-session batch must be
@@ -657,13 +523,8 @@ where
         let advance_gate_open = coordinator_inner.received_end_of_publish
             && system_inner_v1.received_end_of_publish
             && !epoch_switch_state.ran_request_advance_epoch;
-        if fallback_gate.should_act(
-            EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH,
-            0,
-            advance_gate_open && all_current_epoch_sessions_completed,
-        ) {
+        if advance_gate_open && all_current_epoch_sessions_completed {
             info!("Calling `process_request_advance_epoch()`");
-            self.note_writer_action(fallback_gate);
             let response = retry_with_max_elapsed_time!(
                 Self::process_request_advance_epoch(
                     ika_system_package_id,
@@ -672,19 +533,21 @@ where
                     &self.sui_client.clone(),
                     self.notifier_tx_lock.clone(),
                 ),
-                fallback_gate.submission_retry_window()
+                Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
             if response.is_err() {
-                fallback_gate.handle_submission_failure("request advance epoch", response.err());
-            } else {
-                info!("Successfully requested advance epoch");
-                epoch_switch_state.ran_request_advance_epoch = true;
-                self.metrics
-                    .epoch_switch_step_done
-                    .with_label_values(&[EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH])
-                    .set(1);
+                panic!(
+                    "failed to submit request advance epoch for over an hour: {:?}",
+                    response.err()
+                );
             }
-        } else if advance_gate_open && !all_current_epoch_sessions_completed {
+            info!("Successfully requested advance epoch");
+            epoch_switch_state.ran_request_advance_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH])
+                .set(1);
+        } else if advance_gate_open {
             // End-of-publish is in, but sessions are still draining. Hold this
             // tick (do NOT submit a doomed `advance_epoch`); re-check next tick.
             debug!(
@@ -809,15 +672,6 @@ where
             network_encryption_key_mid_epoch_reconfiguration: false,
             calculated_protocol_pricing: false,
         };
-        // Primary notifier: passes every actionable step through immediately.
-        // Fallback writer: holds each step for the activation delay first.
-        // Per-epoch like `epoch_switch_state` — armed timers never survive an
-        // epoch boundary.
-        let mut fallback_gate = FallbackGate::new(
-            self.sui_notifier
-                .as_ref()
-                .and_then(|sui_notifier| sui_notifier.activation_delay),
-        );
         // Zero every step at the start of the epoch so a stale `1` from the previous epoch's run
         // can't mislead an operator into thinking we already advanced for this epoch.
         for step in EPOCH_SWITCH_STEPS {
@@ -875,7 +729,6 @@ where
                     &system_inner,
                     network_encryption_keys,
                     &mut epoch_switch_state,
-                    &mut fallback_gate,
                 )
                 .await;
                 if Some(next_dwallet_checkpoint_sequence_number) > last_submitted_dwallet_checkpoint
@@ -885,14 +738,7 @@ where
                         .get_dwallet_checkpoint_by_sequence_number(
                             next_dwallet_checkpoint_sequence_number,
                         ) {
-                        Ok(Some(dwallet_checkpoint_message))
-                            if fallback_gate.should_act(
-                                WRITER_STEP_DWALLET_CHECKPOINT,
-                                next_dwallet_checkpoint_sequence_number,
-                                true,
-                            ) =>
-                        {
-                            self.note_writer_action(&fallback_gate);
+                        Ok(Some(dwallet_checkpoint_message)) => {
                             debug!(
                                 ?next_dwallet_checkpoint_sequence_number,
                                 "Processing checkpoint sequence number"
@@ -933,30 +779,24 @@ where
                                     &self.metrics.clone(),
                                     self.notifier_tx_lock.clone().clone(),
                                 ),
-                                fallback_gate.submission_retry_window()
+                                Duration::from_secs(ONE_HOUR_IN_SECONDS)
                             );
                             if response.is_err() {
-                                fallback_gate.handle_submission_failure(
-                                    "dwallet checkpoint",
-                                    response.err(),
+                                panic!(
+                                    "failed to submit dwallet checkpoint for over an hour, err: {:?}",
+                                    response.err()
                                 );
-                            } else {
-                                debug!(
-                                    ?next_dwallet_checkpoint_sequence_number,
-                                    "Successfully submitted dwallet checkpoint"
-                                );
-                                self.metrics.dwallet_checkpoint_writes_success_total.inc();
-                                self.metrics
-                                    .last_written_dwallet_checkpoint_sequence
-                                    .set(next_dwallet_checkpoint_sequence_number as i64);
-                                last_submitted_dwallet_checkpoint =
-                                    Some(next_dwallet_checkpoint_sequence_number);
                             }
-                        }
-                        Ok(Some(_)) => {
-                            // Fallback writer with the checkpoint locally
-                            // available but the activation delay not yet
-                            // elapsed — leave the primary its window.
+                            debug!(
+                                ?next_dwallet_checkpoint_sequence_number,
+                                "Successfully submitted dwallet checkpoint"
+                            );
+                            self.metrics.dwallet_checkpoint_writes_success_total.inc();
+                            self.metrics
+                                .last_written_dwallet_checkpoint_sequence
+                                .set(next_dwallet_checkpoint_sequence_number as i64);
+                            last_submitted_dwallet_checkpoint =
+                                Some(next_dwallet_checkpoint_sequence_number);
                         }
                         Err(e) => {
                             error!(
@@ -965,87 +805,61 @@ where
                                 "failed to get checkpoint"
                             );
                         }
-                        Ok(None) => {
-                            // Nothing pending — disarm the takeover timer so a
-                            // later-appearing checkpoint gets a fresh delay.
-                            fallback_gate.should_act(
-                                WRITER_STEP_DWALLET_CHECKPOINT,
-                                next_dwallet_checkpoint_sequence_number,
-                                false,
-                            );
-                        }
+                        Ok(None) => {}
                     }
                 }
 
-                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint {
-                    let next_system_checkpoint = self
+                if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint
+                    && let Ok(Some(system_checkpoint)) = self
                         .system_checkpoint_store
                         .get_system_checkpoint_by_sequence_number(
                             next_system_checkpoint_sequence_number,
-                        );
-                    let system_checkpoint_available = matches!(next_system_checkpoint, Ok(Some(_)));
-                    if let Ok(Some(system_checkpoint)) = next_system_checkpoint
-                        && fallback_gate.should_act(
-                            WRITER_STEP_SYSTEM_CHECKPOINT,
-                            next_system_checkpoint_sequence_number,
-                            true,
                         )
-                    {
-                        self.note_writer_action(&fallback_gate);
-                        self.metrics
-                            .system_checkpoint_sequence
-                            .set(next_system_checkpoint_sequence_number as i64);
+                {
+                    self.metrics
+                        .system_checkpoint_sequence
+                        .set(next_system_checkpoint_sequence_number as i64);
 
-                        let active_members: BlsCommittee =
-                            system_inner.validator_set().clone().active_committee;
-                        let auth_sig = system_checkpoint.auth_sig();
-                        let signature = auth_sig.signature.as_bytes().to_vec();
-                        let signers_bitmap =
-                            Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
-                        let message = bcs::to_bytes::<SystemCheckpointMessage>(
-                            &system_checkpoint.into_message(),
-                        )
-                        .expect("Serializing `system_checkpoint` message cannot fail");
+                    let active_members: BlsCommittee =
+                        system_inner.validator_set().clone().active_committee;
+                    let auth_sig = system_checkpoint.auth_sig();
+                    let signature = auth_sig.signature.as_bytes().to_vec();
+                    let signers_bitmap =
+                        Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
+                    let message =
+                        bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
+                            .expect("Serializing `system_checkpoint` message cannot fail");
 
-                        debug!("Signers_bitmap: {:?}", signers_bitmap);
-                        self.metrics.system_checkpoint_write_requests_total.inc();
-                        let response = retry_with_max_elapsed_time!(
-                            Self::handle_system_checkpoint_execution_task(
-                                ika_system_package_id,
-                                signature.clone(),
-                                signers_bitmap.clone(),
-                                message.clone(),
-                                sui_notifier,
-                                &self.sui_client.clone(),
-                                &self.metrics.clone(),
-                                self.notifier_tx_lock.clone(),
-                            ),
-                            fallback_gate.submission_retry_window()
-                        );
-                        if response.is_err() {
-                            fallback_gate
-                                .handle_submission_failure("system checkpoint", response.err());
-                        } else {
-                            self.metrics.system_checkpoint_writes_success_total.inc();
-                            self.metrics
-                                .last_written_system_checkpoint_sequence
-                                .set(next_system_checkpoint_sequence_number as i64);
-                            last_submitted_system_checkpoint =
-                                Some(next_system_checkpoint_sequence_number);
-                            debug!(
-                                "Sui transaction successfully executed for system_checkpoint sequence number: {}",
-                                next_system_checkpoint_sequence_number
-                            );
-                        }
-                    } else if !system_checkpoint_available {
-                        // Nothing pending — disarm the takeover timer so a
-                        // later-appearing system checkpoint gets a fresh delay.
-                        fallback_gate.should_act(
-                            WRITER_STEP_SYSTEM_CHECKPOINT,
-                            next_system_checkpoint_sequence_number,
-                            false,
+                    debug!("Signers_bitmap: {:?}", signers_bitmap);
+                    self.metrics.system_checkpoint_write_requests_total.inc();
+                    let response = retry_with_max_elapsed_time!(
+                        Self::handle_system_checkpoint_execution_task(
+                            ika_system_package_id,
+                            signature.clone(),
+                            signers_bitmap.clone(),
+                            message.clone(),
+                            sui_notifier,
+                            &self.sui_client.clone(),
+                            &self.metrics.clone(),
+                            self.notifier_tx_lock.clone(),
+                        ),
+                        Duration::from_secs(ONE_HOUR_IN_SECONDS)
+                    );
+                    if response.is_err() {
+                        panic!(
+                            "failed to submit system checkpoint for over an hour, err: {:?}",
+                            response.err()
                         );
                     }
+                    self.metrics.system_checkpoint_writes_success_total.inc();
+                    self.metrics
+                        .last_written_system_checkpoint_sequence
+                        .set(next_system_checkpoint_sequence_number as i64);
+                    last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
+                    debug!(
+                        "Sui transaction successfully executed for system_checkpoint sequence number: {}",
+                        next_system_checkpoint_sequence_number
+                    );
                 }
             }
         }
@@ -1722,83 +1536,5 @@ mod tests {
         // 1<<5 == 32, capped to 30, and stays capped for all higher attempts.
         assert_eq!(verified_read_retry_backoff(6), Duration::from_secs(30));
         assert_eq!(verified_read_retry_backoff(1000), Duration::from_secs(30));
-    }
-
-    const TEST_DELAY: Duration = Duration::from_secs(300);
-
-    #[test]
-    fn primary_gate_passes_actionable_straight_through() {
-        let mut gate = FallbackGate::new(None);
-        assert!(gate.should_act("step", 0, true));
-        assert!(!gate.should_act("step", 0, false));
-        // No delay ever: immediately actionable again.
-        assert!(gate.should_act("step", 0, true));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn fallback_gate_holds_a_step_until_the_activation_delay_elapses() {
-        let mut gate = FallbackGate::new(Some(TEST_DELAY));
-        assert!(!gate.should_act("step", 0, true));
-        tokio::time::advance(TEST_DELAY - Duration::from_secs(1)).await;
-        assert!(!gate.should_act("step", 0, true));
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(gate.should_act("step", 0, true));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn fallback_gate_disarms_when_the_step_stops_being_pending() {
-        let mut gate = FallbackGate::new(Some(TEST_DELAY));
-        assert!(!gate.should_act("step", 0, true));
-        tokio::time::advance(TEST_DELAY).await;
-        // The primary performed the step just in time: pending cleared, and a
-        // NEW pending observation starts a fresh delay.
-        assert!(!gate.should_act("step", 0, false));
-        assert!(!gate.should_act("step", 0, true));
-        tokio::time::advance(TEST_DELAY - Duration::from_secs(1)).await;
-        assert!(!gate.should_act("step", 0, true));
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(gate.should_act("step", 0, true));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn fallback_gate_restarts_the_delay_when_the_instance_changes() {
-        let mut gate = FallbackGate::new(Some(TEST_DELAY));
-        // Checkpoint 5 pending for just under the delay...
-        assert!(!gate.should_act("checkpoint", 5, true));
-        tokio::time::advance(TEST_DELAY - Duration::from_secs(1)).await;
-        assert!(!gate.should_act("checkpoint", 5, true));
-        // ...then the primary lands it and 6 becomes the pending one: the
-        // near-elapsed timer must NOT carry over to checkpoint 6.
-        tokio::time::advance(Duration::from_secs(10)).await;
-        assert!(!gate.should_act("checkpoint", 6, true));
-        tokio::time::advance(TEST_DELAY - Duration::from_secs(1)).await;
-        assert!(!gate.should_act("checkpoint", 6, true));
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(gate.should_act("checkpoint", 6, true));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn fallback_gate_tracks_steps_independently() {
-        let mut gate = FallbackGate::new(Some(TEST_DELAY));
-        assert!(!gate.should_act("dwallet_checkpoint", 5, true));
-        tokio::time::advance(TEST_DELAY / 2).await;
-        assert!(!gate.should_act("system_checkpoint", 2, true));
-        tokio::time::advance(TEST_DELAY / 2).await;
-        assert!(gate.should_act("dwallet_checkpoint", 5, true));
-        assert!(!gate.should_act("system_checkpoint", 2, true));
-    }
-
-    #[test]
-    #[should_panic(expected = "failed to submit test-step for over an hour")]
-    fn primary_submission_failure_still_panics() {
-        let gate = FallbackGate::new(None);
-        gate.handle_submission_failure("test-step", Some("boom"));
-    }
-
-    #[test]
-    fn fallback_submission_failure_never_panics() {
-        let gate = FallbackGate::new(Some(TEST_DELAY));
-        // Losing a race to a recovered primary must not crash the node.
-        gate.handle_submission_failure("test-step", Some("boom"));
     }
 }
