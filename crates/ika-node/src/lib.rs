@@ -1510,6 +1510,12 @@ impl IkaNode {
         self.dwallet_checkpoint_store.clone()
     }
 
+    /// The node's Prometheus registry service, so in-process tests can read
+    /// metric values (e.g. the notifier's last-written checkpoint gauge).
+    pub fn registry_service_for_testing(&self) -> &RegistryService {
+        &self.registry_service
+    }
+
     /// Protocol version of the validator's current epoch store. Useful for
     /// asserting on protocol-version transitions across reconfigurations.
     pub fn current_protocol_version_for_testing(&self) -> ika_protocol_config::ProtocolVersion {

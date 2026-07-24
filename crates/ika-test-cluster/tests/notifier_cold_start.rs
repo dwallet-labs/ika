@@ -13,9 +13,12 @@
 //! the old database (the 2026-07 testnet incidents; the "gRPC migration"
 //! trigger was the fresh deploy that came with it, not the transport).
 //!
-//! This test wipes the notifier's entire database mid-run and restarts it.
-//! The fix makes state sync start from the coordinator's on-chain processed
-//! cursor instead of sequence 1, so the restarted notifier must:
+//! This test waits until the chain has processed a few dwallet checkpoints
+//! (on a young localnet the cursor is still 0 at the first close, and a
+//! floor of 0 correctly syncs from sequence 1 — the live tip), then wipes
+//! the notifier's entire database and restarts it. The fix makes state sync
+//! start from the coordinator's on-chain processed cursor instead of
+//! sequence 1, so the restarted notifier must:
 //! - drive further epoch closes (the writer works from a gap-started store), and
 //! - never backfill deep history (checkpoint 1 stays absent locally — proof
 //!   the floor engaged rather than the test silently exercising the old
@@ -48,13 +51,50 @@ async fn notifier_resumes_writing_after_full_db_wipe() {
     // and the notifier writing normally).
     cluster.wait_for_epoch(1).await;
 
-    // Wipe the notifier's ENTIRE database while it is down — a faithful
-    // "fresh redeploy" of the writer, checkpoint stores included.
     let notifier = cluster
         .swarm
         .fullnodes()
         .next()
         .expect("swarm runs exactly one notifier fullnode");
+
+    // Hold the restart until the chain has processed a few dwallet
+    // checkpoints. On a young localnet the on-chain cursor is still 0 at the
+    // first close — a floor of 0 legitimately syncs from sequence 1 (it IS
+    // the live tip), which would void the "checkpoint 1 absent" assertion
+    // below. The notifier's last-written gauge equals the on-chain cursor
+    // (writes are finalized before it advances), so cursor >= 2 at the wipe
+    // guarantees the post-restart floor starts sync at sequence >= 3.
+    // The handle is scoped per poll tick: a held IkaNodeHandle keeps the old
+    // instance's RocksDB open across the restart below.
+    tokio::time::timeout(Duration::from_secs(300), async {
+        loop {
+            let last_written = notifier
+                .get_node_handle()
+                .expect("notifier is running")
+                .with(|node| {
+                    node.registry_service_for_testing()
+                        .default_registry()
+                        .gather()
+                        .iter()
+                        .filter(|family| {
+                            family.name()
+                                == "ika_sui_connector_last_written_dwallet_checkpoint_sequence"
+                        })
+                        .flat_map(|family| family.get_metric())
+                        .map(|metric| metric.get_gauge().value())
+                        .fold(0.0f64, f64::max)
+                });
+            if last_written >= 2.0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .expect("chain never processed two dwallet checkpoints — no traffic to restart against");
+
+    // Wipe the notifier's ENTIRE database while it is down — a faithful
+    // "fresh redeploy" of the writer, checkpoint stores included.
     let notifier_db_path = notifier.config().db_path();
     notifier.stop();
     std::fs::remove_dir_all(&notifier_db_path).expect("wipe notifier database directory");
