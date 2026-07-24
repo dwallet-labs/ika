@@ -1423,11 +1423,12 @@ impl DWalletMPCManager {
             return;
         }
         // A cert READ ERROR must not be conflated with a genuinely-absent
-        // cert: `cert == None` sends a reconfigured key down the unverified
-        // v3->v4-boundary adoption path below, silently bypassing the
-        // cert-digest gate. A transient store error therefore skips adoption
-        // entirely for this tick (the service loop retries every iteration)
-        // rather than degrading the security gate to blind adoption.
+        // cert: absence is an answer (a reconfigured key is rejected below,
+        // with a warn, as missing its quorum anchor; a DKG-only key adopts
+        // its deterministic local output), while an error is no answer at
+        // all. A transient store error therefore skips adoption entirely for
+        // this tick (the service loop retries every iteration) rather than
+        // mis-classifying keys on a store hiccup.
         let cert = match self.epoch_id.checked_sub(1) {
             Some(prior_epoch) => match self
                 .epoch_store
@@ -1503,11 +1504,12 @@ impl DWalletMPCManager {
             // next epoch's manager adopts and decrypts it with next-epoch
             // identity at epoch start. In steady-state v4 the cert anchor
             // below rejects it anyway (the prior epoch's handoff cert pins
-            // the output produced *for* this epoch); this guard makes the
-            // cert-less v3→v4 boundary path behave the same instead of
-            // blindly adopting the overlay, which flips to the freshly-cached
-            // next-epoch output the moment the mid-epoch reconfiguration
-            // finalizes locally.
+            // the output produced *for* this epoch); this guard closes the
+            // no-cert windows (genesis epoch, off-chain disabled) the same
+            // way instead of blindly adopting the overlay, which flips to
+            // the freshly-cached next-epoch output the moment the mid-epoch
+            // reconfiguration finalizes locally — and its skip is what feeds
+            // the stranded-key detection below.
             if !data.current_reconfiguration_public_output.is_empty() {
                 let reconfiguration_digest =
                     mpc_data_blob_hash(&data.current_reconfiguration_public_output);
@@ -1582,7 +1584,7 @@ impl DWalletMPCManager {
             // either adopts parameters the committee never agreed to
             // (initial-DKG branch) or wedges forever on a phantom digest
             // mismatch (reconfigured branch). The cert-less case (v3, the
-            // v3→v4 boundary, a fresh key before any cert pins it) would
+            // genesis epoch, a fresh key before any cert pins it) would
             // otherwise adopt an unresolvable key and make the top-up loop's
             // should-never-happen skip fire routinely on fresh networks.
             // Break the cycle the same way in both cases: derive this key's
@@ -1789,75 +1791,50 @@ impl DWalletMPCManager {
                     }
                     continue;
                 }
-            }
-            // Reconfigured key with NO prior handoff cert to anchor against —
-            // either off-chain is disabled (protocol v3), or this is the first
-            // off-chain epoch right after the v3→v4 upgrade (the prior epoch
-            // ran v3 and produced no cert). In both cases the overlay IS the
-            // authoritative chain copy (the chain reconfiguration output is
-            // quorum-processed on-chain), so adopt it directly. A handoff cert
-            // is built durably every off-chain epoch, so `cert.is_none()` here
-            // means only the genuine v3→v4 boundary, never a steady-state race.
-            // Requiring a cert match with no cert (`dkg_digests` empty) would
-            // skip every reconfigured key forever and wedge epoch advance.
-            //
-            // TODO(v3->v4 migration): the cert-less adoption of a *reconfigured*
-            // key is the v3→v4 boundary path (a v4-native reconfigured key always
-            // has a prior cert and is anchored by the `else if` branch above).
-            // Once the upgrade is complete and every key is in the off-chain
-            // handoff plane, tighten this so a reconfigured key with no cert is
-            // rejected rather than blindly adopted from chain.
-
-            // TODO(v3->v4 migration): don't let a transiently-empty overlay
-            // DOWNGRADE a reconfiguration output we already hold non-empty this
-            // epoch. At the v3→v4 boundary the syncer imports the pre-v4
-            // reconfiguration output from chain for the few ticks until this
-            // key's DKG output lands in the off-chain handoff; once it does, the
-            // syncer's fast path resumes and synthesizes an EMPTY reconfiguration
-            // output (the off-chain plane has no v3-produced reconfiguration blob
-            // to fill it with). Adopting that empty value would re-instantiate
-            // the key from its DKG output and lose the validator's current
-            // share — re-wedging the first v4 reconfiguration. Keep the last
-            // non-empty reconfiguration output instead; the legitimate next one
-            // (this epoch's v4 reconfiguration) arrives non-empty and overwrites
-            // it normally. Removable with the syncer chain-import once all keys
-            // are off-chain.
-            if data.current_reconfiguration_public_output.is_empty()
-                && self
-                    .adopted_network_key_data
-                    .get(key_id)
-                    .is_some_and(|existing| {
-                        !existing.current_reconfiguration_public_output.is_empty()
-                    })
-            {
-                continue;
-            }
-            // Surface the one place the cert-digest security gate is
-            // bypassed: adopting a RECONFIGURED key without a prior
-            // handoff cert anchoring it. Under v3 (off-chain disabled)
-            // this is the designed every-epoch path; under v4 it is
-            // expected only at the genuine v3→v4 boundary — anywhere
-            // else it indicates a missing cert in steady state. Gated
-            // on the adopted value actually changing so overlay
-            // republishes don't re-log.
-            let reconfigured = !data.current_reconfiguration_public_output.is_empty();
-            let cert_anchored = off_chain_on && cert.is_some();
-            let cert_gate_bypassed = reconfigured && !cert_anchored;
-            if cert_gate_bypassed && self.adopted_network_key_data.get(key_id) != Some(data) {
-                if off_chain_on {
+            } else if off_chain_on {
+                // Reconfigured key with NO prior handoff cert to anchor
+                // against, in off-chain mode. A handoff cert is built durably
+                // every off-chain epoch, so a genuinely-absent cert alongside a
+                // reconfigured overlay entry is anomalous (a cert READ ERROR
+                // already returned above without reaching here). Adopting the
+                // unanchored output would bypass the cert-digest security gate
+                // — installing parameters no quorum certified — so reject it;
+                // the pass retries every service iteration and adopts once the
+                // cert resolves. Warn once per local digest (deduped), debug on
+                // repeats — same pattern as the mismatch skips above.
+                let local_reconfiguration_digest =
+                    mpc_data_blob_hash(&data.current_reconfiguration_public_output);
+                if self
+                    .warned_cert_digest_mismatches
+                    .insert((*key_id, local_reconfiguration_digest))
+                {
                     warn!(
                         ?key_id,
-                        "adopting reconfigured network key without a prior handoff cert — \
-                         expected only at the v3→v4 boundary; in steady-state v4 this \
-                         indicates a missing handoff cert"
+                        ?local_reconfiguration_digest,
+                        "reconfigured network key has no prior handoff cert to anchor \
+                         against — rejecting adoption (a quorum-certified cert exists \
+                         every off-chain epoch; adopting unanchored would bypass the \
+                         cert-digest security gate)"
                     );
                 } else {
-                    info!(
+                    debug!(
                         ?key_id,
-                        "adopting reconfigured network key from the chain copy (off-chain \
-                         metadata disabled; no handoff cert exists)"
+                        "reconfigured network key still has no prior handoff cert — \
+                         rejecting adoption"
                     );
                 }
+                continue;
+            } else if self.adopted_network_key_data.get(key_id) != Some(data) {
+                // Off-chain disabled (protocol v3): no handoff certs exist and
+                // the overlay IS the authoritative chain copy (the chain
+                // reconfiguration output is quorum-processed on-chain), so
+                // adopt it directly. Gated on the adopted value actually
+                // changing so overlay republishes don't re-log.
+                info!(
+                    ?key_id,
+                    "adopting reconfigured network key from the chain copy (off-chain \
+                     metadata disabled; no handoff cert exists)"
+                );
             }
             self.adopted_network_key_data.insert(*key_id, data.clone());
         }
@@ -3237,25 +3214,9 @@ impl DWalletMPCManager {
                         // reconfiguration is excluded from that item by
                         // design (the computing validators are a quorum).
                         //
-                        // TODO(v3->v4 migration): only mirror the DKG into the
-                        // off-chain handoff once off-chain metadata is enabled
-                        // (v4). The handoff itself is v4-only, so mirroring at v3
-                        // is otherwise pointless — but it is load-bearing for the
-                        // v3->v4 boundary: the syncer's temporary chain import
-                        // gates on "DKG present in the off-chain handoff" to tell
-                        // a not-yet-migrated pre-v4 key (DKG only on chain → keep
-                        // importing the chain reconfiguration output) from a
-                        // migrated one. If we mirrored the DKG during the v3
-                        // epochs, that gate would read "present" at the first v4
-                        // epoch and skip the import, leaving the pre-v4
-                        // reconfiguration output undelivered and wedging the
-                        // first v4 reconfiguration. Remove this guard (always
-                        // mirror) once the migration chain import is gone.
                         let key_data = self.adopted_network_key_data.get(&key_id).cloned();
                         if let Some(key_data) = key_data {
-                            if self.epoch_store.off_chain_validator_metadata_enabled()
-                                && !key_data.network_dkg_public_output.is_empty()
-                            {
+                            if !key_data.network_dkg_public_output.is_empty() {
                                 // Mirror the CANONICAL DKG output. Once the
                                 // cert-pinned reconfiguration output's format is
                                 // ahead of the anchor's (V3/V4 over a V1/V2

@@ -190,6 +190,19 @@ or the decentralized rollout contract is explicitly changed outside this test.
 `ika-validator` child processes against an external `sui` localnet and
 drives them across epochs:
 
+> **Post-#1751 caveat:** the v3→v4 migration scaffolding (chain-read
+> fallback for keys DKG'd under v3) is removed from the current binary,
+> so any scenario in which the CURRENT build crosses the v3→v4 boundary
+> over a v3-DKG'd network key no longer passes on it: `workload.rs`,
+> `cross_binary.rs`, `legacy_config.rs`, `v118_upgrade.rs`,
+> `v118_churn.rs`. These rehearse rollouts the deployed networks have
+> completed (both run protocol v5); retire or retarget them (genesis
+> v4 → v5) in a follow-up. `v118_mixed_rollout.rs` — the PR-gating
+> scenario — holds protocol v3 throughout and remains valid, as does
+> `smoke.rs`; in `v121_rollout.rs` the v3→v4 crossing happens on the
+> literal v1.2.1 binaries (which retain the scaffolding), so it is
+> unaffected in principle but rehearses a completed rollout too.
+
 - `tests/smoke.rs` — harness plumbing: four same-binary processes reach
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a v3→v4 upgrade

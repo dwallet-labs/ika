@@ -511,10 +511,13 @@ async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
 /// Drives the REAL adoption path in two phases and asserts the invariant
 /// over the whole adopted set after every pass:
 /// 1. cert-anchored — a cert pins two keys, one mapped, one not;
-/// 2. cert-less (the v3/v3→v4-boundary path) — no cert at all, a fresh
-///    unmapped key must STILL defer (pre-fix it was blindly adopted, so on
-///    any fresh network's first v4 epoch the top-up loop's
-///    should-never-happen skip fired routinely).
+/// 2. cert-less (genesis / fresh-key path) — no cert at all, a fresh
+///    unmapped DKG-only key must STILL defer (pre-fix it was blindly
+///    adopted, so on any fresh network's genesis epoch the top-up loop's
+///    should-never-happen skip fired routinely). A cert-less RECONFIGURED
+///    key is rejected outright: a handoff cert exists every off-chain
+///    epoch, so an unanchored reconfiguration output has no quorum
+///    certification behind it.
 #[tokio::test]
 async fn adopted_keys_always_resolve_a_network_key_id() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
@@ -657,11 +660,11 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     );
     assert_all_adopted_resolve(manager, "after the registration pass");
 
-    // === Phase 2: the CERT-LESS adoption branch (v3 / v3→v4 boundary) ===
-    // Remove the cert entirely: a fresh unmapped key arriving through the
-    // cert-less path must be deferred exactly like the cert-anchored case —
-    // pre-fix this branch blindly adopted it, violating the invariant on any
-    // fresh network's first v4 epoch.
+    // === Phase 2: the CERT-LESS adoption branch (genesis / fresh key) ===
+    // Remove the cert entirely: a fresh unmapped DKG-only key arriving
+    // through the cert-less path must be deferred exactly like the
+    // cert-anchored case — pre-fix this branch blindly adopted it,
+    // violating the invariant on any fresh network's genesis epoch.
     epoch_stores
         .first()
         .unwrap()
@@ -672,14 +675,13 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     let certless_key_id = ObjectID::random();
     let certless_network_key_id = NetworkKeyId([0x63; 32]);
     let certless_dkg_output = b"certless key network dkg public output".to_vec();
-    let certless_reconfiguration_output = b"certless key reconfiguration public output".to_vec();
     let certless_overlay = Arc::new(HashMap::from([(
         certless_key_id,
         network_key_data(
             certless_key_id,
             epoch_id,
             certless_dkg_output.clone(),
-            certless_reconfiguration_output.clone(),
+            vec![],
         ),
     )]));
     let manager = service.dwallet_mpc_manager_mut();
@@ -698,16 +700,44 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     );
     assert_all_adopted_resolve(manager, "after the cert-less deferral pass");
 
-    // Registration unwedges the cert-less branch the same way.
+    // Registration unwedges the cert-less branch the same way: the DKG-only
+    // key adopts its deterministic local DKG output.
     crate::network_key_id_mapping::register(certless_key_id, certless_network_key_id);
     manager.adopt_cert_verified_keys(&certless_overlay);
     assert!(
         manager
             .adopted_network_key_data
             .contains_key(&certless_key_id),
-        "registration must let the cert-less deferred key be adopted on the next pass"
+        "registration must let the cert-less deferred DKG-only key be adopted on the next pass"
     );
     assert_all_adopted_resolve(manager, "after the cert-less registration pass");
+
+    // === Phase 3: a cert-less RECONFIGURED key is rejected outright ===
+    // A handoff cert is built durably every off-chain epoch, so a
+    // reconfigured overlay entry with no prior cert has no quorum anchor —
+    // adoption must reject it even though its NetworkKeyId mapping resolves
+    // (pre-#1751 this was the v3→v4-boundary import path and was adopted
+    // blindly from the chain copy).
+    let reconfigured_key_id = ObjectID::random();
+    let reconfigured_network_key_id = NetworkKeyId([0x64; 32]);
+    crate::network_key_id_mapping::register(reconfigured_key_id, reconfigured_network_key_id);
+    let reconfigured_overlay = Arc::new(HashMap::from([(
+        reconfigured_key_id,
+        network_key_data(
+            reconfigured_key_id,
+            epoch_id,
+            b"reconfigured key network dkg public output".to_vec(),
+            b"reconfigured key reconfiguration public output".to_vec(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&reconfigured_overlay);
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&reconfigured_key_id),
+        "a reconfigured key with no prior handoff cert must be rejected, not adopted"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less reconfigured rejection pass");
 }
 
 /// The mid-epoch-restart strand (#1852), manager side. Once this epoch's

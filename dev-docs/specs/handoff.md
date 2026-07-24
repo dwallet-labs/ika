@@ -223,12 +223,20 @@ next epoch inherits.
    certificate is the security-relevant anomaly (the output-quorum
    byte-equality tally remains the guard against a divergent output). A
    certificate READ ERROR skips adoption for the tick (retry) — it must
-   not be conflated with the genuinely-absent-certificate case, which
-   exists only at the v3→v4 boundary and falls back to the chain copy.
-   Chain reads here are deprecated: v4 keeps chain writes for
-   compatibility, and the certificate-gated off-chain copy is the
-   sanctioned steady-state read path — the one exception is the
-   un-instantiated restart-recovery read (third guard below).
+   not be conflated with a genuinely-absent certificate, which is an
+   answer: a reconfigured key with no prior certificate is REJECTED
+   (its output has no quorum anchor — a certificate is built durably
+   every off-chain epoch, so absence alongside a reconfigured overlay
+   entry is anomalous), while a DKG-only key (genesis, fresh key)
+   adopts its deterministic local DKG output. Chain blob reads are
+   gone from this path: v4 keeps chain writes for compatibility, and
+   the certificate-gated off-chain copy is the sanctioned steady-state
+   read path — the one exception is the un-instantiated
+   restart-recovery read (third guard below). (Until issue #1751 the
+   v3→v4 rolling upgrade bridged keys whose DKG or last
+   reconfiguration ran under v3 by importing their blobs from chain
+   and adopting them cert-less; that scaffolding is removed — a
+   network with keys DKG'd under v3 can no longer upgrade into v4+.)
 
    Three adoption guards keep the installed parameter set identical
    across the committee (a validator that installs anything else
