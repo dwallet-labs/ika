@@ -14,13 +14,13 @@
 //! This test drives both halves of the failover contract
 //! (`dev-docs/specs/checkpoint-writer-failover.md`):
 //!
-//! - **A healthy primary keeps the fallback silent.** The epoch 0 → 1 close
+//! - **A healthy primary keeps the fallback silent.** The first epoch close
 //!   runs with the notifier alive; the fallback validator's takeover counter
 //!   must still read zero afterwards.
 //! - **A dead primary is survived without human intervention.** The notifier
-//!   fullnode is stopped outright; the epoch 1 → 2 close can then only
-//!   happen through the fallback writer on validator 0, and the takeover
-//!   counter must show it acted.
+//!   fullnode is stopped outright; the next TWO closes (counted from the
+//!   epoch observed at kill time) can then only happen through the fallback
+//!   writer on validator 0, and the takeover counter must show it acted.
 //!
 //! `#[tokio::test(flavor = "multi_thread")]` per CLAUDE.md "Picking a test
 //! type": the failover is driven by wall-clock staleness observation against
@@ -35,10 +35,11 @@ use std::time::Duration;
 /// enough that the phase-2 takeover fits comfortably in the test budget.
 const FALLBACK_ACTIVATION_DELAY_SECS: u64 = 45;
 
-/// Ceiling for the post-kill epoch close. Generous: one activation delay per
-/// pending step plus MPC reconfiguration time, far below the value at which
-/// CI would call the network wedged.
-const FAILOVER_CLOSE_TIMEOUT: Duration = Duration::from_secs(600);
+/// Ceiling for the two post-kill epoch closes. Generous: the fallback pays
+/// the activation delay per pending step (the switch steps are sequential
+/// within a close) plus MPC reconfiguration time, twice — still far below the
+/// value at which CI would call the network wedged.
+const FAILOVER_CLOSE_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Sum of `ika_sui_connector_fallback_writer_actions_total` on validator 0
 /// (the configured fallback writer). Zero means it never took over.
@@ -84,18 +85,31 @@ async fn epoch_close_survives_notifier_death_via_fallback_writer() {
     );
 
     // Phase 2: kill the notifier — the only primary writer in the cluster.
-    // Without the fallback this freezes the network at epoch 1 forever.
+    // Without the fallback this freezes the network at its current epoch
+    // forever.
     for fullnode in cluster.swarm.fullnodes() {
         fullnode.stop();
     }
 
-    // Phase 3: the 1 -> 2 close can now only complete through the fallback
-    // writer on validator 0.
-    tokio::time::timeout(FAILOVER_CLOSE_TIMEOUT, cluster.wait_for_epoch(2))
+    // Phase 3: two more closes must complete, counted from the epoch at kill
+    // time — with 30s epochs and a multi-minute boot the cluster is well past
+    // epoch 2 by now, so absolute epoch numbers prove nothing (waiting for
+    // epoch 2 here returns instantly, exercising no takeover at all). One
+    // close is also not proof: the dying primary may already have submitted
+    // that epoch's remaining steps (`advance_epoch` included) before the
+    // kill landed. Two closes guarantee at least one full epoch cycle —
+    // mid-epoch, reconfiguration, pricing, session lock, advance, and every
+    // checkpoint — happened entirely after the primary's death.
+    let epoch_at_kill = cluster
+        .current_epoch_from_chain()
         .await
-        .expect(
-            "epoch did not close after the notifier died — the fallback writer never took over",
-        );
+        .expect("read current epoch after killing the notifier");
+    tokio::time::timeout(
+        FAILOVER_CLOSE_TIMEOUT,
+        cluster.wait_for_epoch(epoch_at_kill + 2),
+    )
+    .await
+    .expect("epoch did not close after the notifier died — the fallback writer never took over");
     let actions_after_failover = fallback_writer_actions(&cluster);
     assert!(
         actions_after_failover > 0.0,
