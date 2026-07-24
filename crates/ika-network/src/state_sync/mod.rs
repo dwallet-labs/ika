@@ -1299,15 +1299,18 @@ const SYNC_STALL_REPORT_AFTER: Duration = Duration::from_secs(120);
 const SYNC_STALL_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Tracks whether checkpoint sync is making progress toward what peers
-/// advertise. "Stalled" means peers are known to be ahead of our synced
-/// watermark, yet that watermark has not advanced. This is the writer-side
-/// self-report for a wedged sync pipeline: on the notifier a stalled sync
-/// leaves NOTHING to submit, so the submission-failure log never fires and,
-/// without this signal, a fully-stalled writer is indistinguishable from an
-/// idle one while it silently blocks the network's epoch close.
+/// advertise. "Stalled" means peers are known to be ahead of our VERIFIED
+/// watermark, yet that watermark has not advanced. (The verified watermark is
+/// the one the pull path bumps per fetched checkpoint; the synced watermark
+/// is fed only by the consensus output path and never moves on
+/// notifiers/fullnodes.) This is the writer-side self-report for a wedged
+/// sync pipeline: on the notifier a stalled sync leaves NOTHING to submit,
+/// so the submission-failure log never fires and, without this signal, a
+/// fully-stalled writer is indistinguishable from an idle one while it
+/// silently blocks the network's epoch close.
 #[derive(Default)]
 struct SyncStallTracker {
-    last_synced: Option<u64>,
+    last_verified: Option<u64>,
     last_progress: Option<Instant>,
     last_log: Option<Instant>,
 }
@@ -1317,14 +1320,14 @@ impl SyncStallTracker {
     /// `stall_seconds` is 0 while healthy or until the stall has lasted
     /// `SYNC_STALL_REPORT_AFTER`; `should_log` rate-limits the error log to
     /// once per `SYNC_STALL_LOG_INTERVAL`.
-    fn observe(&mut self, known: Option<u64>, synced: Option<u64>, now: Instant) -> (u64, bool) {
-        let synced_advanced = synced != self.last_synced;
-        self.last_synced = synced;
+    fn observe(&mut self, known: Option<u64>, verified: Option<u64>, now: Instant) -> (u64, bool) {
+        let verified_advanced = verified != self.last_verified;
+        self.last_verified = verified;
         // `known` is the max height advertised by same-chain peers; `None`
         // means no peer has told us anything yet, which is a peering problem,
         // not a sync stall.
-        let peers_are_ahead = known.is_some_and(|known| known > synced.unwrap_or(0));
-        if synced_advanced || !peers_are_ahead {
+        let peers_are_ahead = known.is_some_and(|known| known > verified.unwrap_or(0));
+        if verified_advanced || !peers_are_ahead {
             self.last_progress = Some(now);
             self.last_log = None;
             return (0, false);
@@ -1359,9 +1362,10 @@ where
         tokio::select! {
              _now = interval.tick() => {
                 let highest_verified_checkpoint = store.get_highest_verified_dwallet_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|checkpoint| checkpoint.sequence_number);
                 if let Some(highest_verified_checkpoint) = highest_verified_checkpoint {
-                    metrics.set_highest_verified_dwallet_checkpoint(highest_verified_checkpoint.sequence_number);
+                    metrics.set_highest_verified_dwallet_checkpoint(highest_verified_checkpoint);
                 }
                 let highest_synced_checkpoint = store.get_highest_synced_dwallet_checkpoint()
                     .expect("store operation should not fail")
@@ -1380,16 +1384,22 @@ where
                 if let Some(highest_known_checkpoint) = highest_known_checkpoint {
                     metrics.set_highest_known_dwallet_checkpoint(highest_known_checkpoint);
                 }
+                // The tracker watches the VERIFIED watermark: it is the one
+                // the pull path bumps on every fetched checkpoint. The synced
+                // watermark is fed only by the consensus output path, so on a
+                // notifier/fullnode it never advances even when sync is
+                // perfectly healthy — tracking it would report a permanent
+                // false stall on exactly the node this detector protects.
                 let (stall_seconds, should_log) = stall_tracker.observe(
                     highest_known_checkpoint,
-                    highest_synced_checkpoint,
+                    highest_verified_checkpoint,
                     Instant::now(),
                 );
                 metrics.set_dwallet_checkpoint_sync_stall_seconds(stall_seconds);
                 if should_log {
                     error!(
                         highest_known = ?highest_known_checkpoint,
-                        highest_synced = ?highest_synced_checkpoint,
+                        highest_verified = ?highest_verified_checkpoint,
                         stall_seconds,
                         "dwallet-checkpoint sync is STALLED: peers advertise checkpoints \
                          we are not syncing. On the notifier this silently blocks the \
@@ -1746,9 +1756,10 @@ where
         tokio::select! {
              _now = interval.tick() => {
                 let highest_verified_system_checkpoint = store.get_highest_verified_system_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|system_checkpoint| system_checkpoint.sequence_number);
                 if let Some(highest_verified_system_checkpoint) = highest_verified_system_checkpoint {
-                    metrics.set_highest_verified_system_checkpoint(highest_verified_system_checkpoint.sequence_number);
+                    metrics.set_highest_verified_system_checkpoint(highest_verified_system_checkpoint);
                 }
                 let highest_synced_system_checkpoint = store.get_highest_synced_system_checkpoint()
                     .expect("store operation should not fail")
@@ -1764,16 +1775,17 @@ where
                 if let Some(highest_known_system_checkpoint) = highest_known_system_checkpoint {
                     metrics.set_highest_known_system_checkpoint(highest_known_system_checkpoint);
                 }
+                // VERIFIED watermark, not synced — see the dwallet twin above.
                 let (stall_seconds, should_log) = stall_tracker.observe(
                     highest_known_system_checkpoint,
-                    highest_synced_system_checkpoint,
+                    highest_verified_system_checkpoint,
                     Instant::now(),
                 );
                 metrics.set_system_checkpoint_sync_stall_seconds(stall_seconds);
                 if should_log {
                     error!(
                         highest_known = ?highest_known_system_checkpoint,
-                        highest_synced = ?highest_synced_system_checkpoint,
+                        highest_verified = ?highest_verified_system_checkpoint,
                         stall_seconds,
                         "system-checkpoint sync is STALLED: peers advertise system \
                          checkpoints we are not syncing. On the notifier this silently \
