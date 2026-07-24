@@ -1196,7 +1196,16 @@ impl IkaNode {
             end_of_publish_receiver,
             uncompleted_requests_receiver,
         };
-        let validator_components = if mode.is_validator() && state.is_validator(&epoch_store) {
+        let is_committee_member = state.is_validator(&epoch_store);
+        if is_committee_member && !mode.is_validator() {
+            warn!(
+                %mode,
+                epoch = epoch_store.epoch(),
+                "This node's protocol key is in the committee, but the process is not running in \
+                 validator mode; validator duties will not start"
+            );
+        }
+        let validator_components = if mode.is_validator() && is_committee_member {
             let components = Self::construct_validator_components(
                 config.clone(),
                 state.clone(),
@@ -1285,9 +1294,9 @@ impl IkaNode {
         // Joiner-side announcement fan-out: a node selected into the
         // next-epoch committee but not yet in the current one isn't a
         // consensus participant, so it relays its mpc_data
-        // announcement to current-committee peers over P2P. Runs on
-        // all nodes; it only acts when it observes itself as a true
-        // joiner. Spawned alongside (not inside) reconfiguration
+        // announcement to current-committee peers over P2P. Runs only in
+        // validator mode and acts when it observes itself as a true joiner.
+        // Spawned alongside (not inside) reconfiguration
         // because it must fire mid-epoch when `V_{e+1}` is published,
         // not at the epoch boundary.
         if mode.is_validator() {
@@ -1355,8 +1364,9 @@ impl IkaNode {
         };
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 
-        // Without a root seed we can't derive our mpc_data blob, so
-        // we can't be a joiner — nothing to do.
+        // Validator-mode validation requires the root seed before this task is
+        // spawned. Keep this guard as defense in depth for future direct
+        // callers or startup-path changes.
         let Some(root_seed_kp) = node.config.root_seed_key_pair.as_ref() else {
             return;
         };
@@ -2951,7 +2961,17 @@ impl IkaNode {
                     )
                     .await;
 
-                if self.mode.is_validator() && self.state.is_validator(&new_epoch_store) {
+                let is_committee_member = self.state.is_validator(&new_epoch_store);
+                if is_committee_member && !self.mode.is_validator() {
+                    warn!(
+                        mode = %self.mode,
+                        epoch = new_epoch_store.epoch(),
+                        "This node's protocol key entered the committee, but the process is not \
+                         running in validator mode; validator duties will not start"
+                    );
+                }
+
+                if self.mode.is_validator() && is_committee_member {
                     info!("Promoting the node from fullnode to validator, starting grpc server");
 
                     Some(

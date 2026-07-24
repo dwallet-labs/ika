@@ -134,12 +134,13 @@ impl NodeMode {
     /// Validates the role-specific configuration and removes key material that
     /// the selected role must never use.
     ///
-    /// Legacy notifier configurations may still contain a validator root-seed
-    /// path. Discard the descriptor without resolving it so no notifier
-    /// initialization path can open or derive values from that file.
+    /// Legacy non-validator configurations may still contain a validator
+    /// root-seed path. Discard the descriptor without resolving it so no
+    /// non-validator initialization path can open or derive values from that
+    /// file.
     pub fn validate_and_prepare_config(&self, config: &mut NodeConfig) -> Result<()> {
         self.validate_config(config)?;
-        if self.is_notifier() {
+        if !self.is_validator() {
             config.root_seed_key_pair = None;
         }
         Ok(())
@@ -727,8 +728,9 @@ impl SuiConnectorConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct NodeConfig {
-    /// Validator-only seed for MPC key derivation. Notifiers accept this field
-    /// for backward compatibility but discard it before initialization.
+    /// Validator-only seed for MPC key derivation. Non-validator processes
+    /// accept this field for backward compatibility but discard it before
+    /// initialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_seed_key_pair: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
@@ -1421,6 +1423,17 @@ mod tests {
         NodeMode::Notifier
             .validate_and_prepare_config(&mut config)
             .expect("an unreadable legacy root-seed path must not affect notifier initialization");
+        assert!(config.root_seed_key_pair.is_none());
+    }
+
+    #[test]
+    fn fullnode_preparation_discards_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Fullnode);
+        config.root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Fullnode
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable root-seed path must not affect fullnode initialization");
         assert!(config.root_seed_key_pair.is_none());
     }
 
