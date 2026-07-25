@@ -1,8 +1,8 @@
 # Cross-epoch handoff (attestation, certificate, barrier)
 
-Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`
-(`off_chain_validator_metadata_enabled` is always on; the pre-v4
-chain-sourced mode no longer exists in the binary).
+Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`. The
+feature flag that used to gate it is gone from the code; the pre-v4
+chain-sourced mode no longer exists in the binary.
 The handoff replaces the removed consensus vote on network-key outputs:
 it is the cross-epoch agreement on exactly which off-chain artifacts the
 next epoch inherits.

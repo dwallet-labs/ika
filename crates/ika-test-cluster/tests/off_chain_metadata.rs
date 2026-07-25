@@ -1,10 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Verifies the `off_chain_validator_metadata` protocol flag (active
-//! from v4) actually severs the chain-read paths for validator
-//! `mpc_data`, network DKG output, and network reconfiguration
-//! output. Under the off-chain pipeline these blobs flow over
+//! Verifies the off-chain validator-metadata pipeline actually severs
+//! the chain-read paths for validator `mpc_data`, network DKG output,
+//! and network reconfiguration output. Under that pipeline these blobs flow over
 //! consensus + P2P + the local producer cache — chain is
 //! write-only for them. Counts process-wide chain-read calls via
 //! `ika_sui_client::metrics::chain_blob_read_counts` and asserts

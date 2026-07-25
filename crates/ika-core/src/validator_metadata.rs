@@ -1004,11 +1004,9 @@ pub struct OffChainCommitteeBundles {
 /// Outcome of trying to assemble the committee's class-groups
 /// public-keys map from off-chain announcements + the local blob
 /// store. `Complete` means every supplied authority resolved
-/// successfully. `Incomplete` means *at least one* didn't; under
-/// off-chain mode (`off_chain_validator_metadata_enabled`) the
+/// successfully. `Incomplete` means *at least one* didn't; the
 /// caller returns `OffChainAssemblyIncomplete` and the outer sync
-/// loop retries on the next tick, while in legacy mode the caller
-/// falls back to reading mpc_data from chain. Partial maps are
+/// loop retries on the next tick. Partial maps are
 /// never returned — reconfig MPC reads
 /// `Committee.class_groups_public_keys_and_proofs` directly and a
 /// missing entry silently drops that validator's share.
@@ -2060,9 +2058,9 @@ mod tests {
 
     #[test]
     fn end_of_publish_v1_and_v2_have_distinct_keys() {
-        // Keep V1 and V2 keyed under different variants so the
-        // consensus dedupe layer doesn't conflate the two during a
-        // protocol-flag flip.
+        // Both variants remain on the wire (V1 is still decoded, and
+        // dropped, on receipt). Keep them keyed under different
+        // variants so the consensus dedupe layer never conflates the two.
         use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
         let kps = random_committee_key_pairs_of_size(1);
         let signer = name_of(&kps[0]);

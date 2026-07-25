@@ -178,13 +178,17 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     fast_schnorr_supported: bool,
 
-    // If true, enables the off-chain validator-metadata pipeline:
-    // per-epoch `ValidatorMpcDataAnnouncement` + ready signals
-    // broadcast over consensus, the step-14 kickoff gate, the
-    // sui_syncer DKG/reconfig blob and class-groups overlays,
-    // and the handoff cert produced at EndOfPublish. False means
-    // legacy chain-only behavior; flipping to true at a protocol
-    // version boundary ensures every validator switches together.
+    // Enabled the off-chain validator-metadata pipeline: per-epoch
+    // `ValidatorMpcDataAnnouncement` + ready signals broadcast over
+    // consensus, the step-14 kickoff gate, the sui_syncer DKG/reconfig
+    // blob and class-groups overlays, and the handoff cert produced at
+    // EndOfPublish. Set at version 4 and therefore true at every
+    // supported version, so nothing reads it anymore — the pipeline is
+    // unconditional. Kept because the flag set is part of the
+    // BCS-serialized `ProtocolConfig` whose digest rides
+    // `AuthorityCapabilitiesV1` through consensus: dropping a field
+    // changes every supported version's config digest relative to the
+    // binaries already deployed.
     #[serde(skip_serializing_if = "is_false")]
     off_chain_validator_metadata: bool,
 
@@ -457,10 +461,6 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
-    }
-
-    pub fn off_chain_validator_metadata_enabled(&self) -> bool {
-        self.feature_flags.off_chain_validator_metadata
     }
 
     /// True iff network-key reconfiguration public outputs are persisted in

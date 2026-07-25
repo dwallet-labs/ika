@@ -118,16 +118,6 @@ impl PeerBlobFetcher {
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
         let mut poll_interval = Duration::from_secs(2);
         if let Some(epoch_store) = self.epoch_store.upgrade() {
-            if !epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled()
-            {
-                info!(
-                    epoch = self.epoch_id,
-                    "off-chain validator metadata disabled; peer blob fetcher exiting"
-                );
-                return;
-            }
             poll_interval = crate::validator_metadata::epoch_scaled_poll_interval(
                 epoch_store.epoch_start_state().epoch_duration_ms(),
                 poll_interval,

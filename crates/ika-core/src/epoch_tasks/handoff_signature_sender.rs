@@ -85,17 +85,6 @@ impl HandoffSignatureSender {
     }
 
     pub async fn run(&self) {
-        if let Some(epoch_store) = self.epoch_store.upgrade()
-            && !epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled()
-        {
-            info!(
-                epoch = self.epoch_id,
-                "off-chain validator metadata disabled; handoff signature sender exiting"
-            );
-            return;
-        }
         // Throttle the failure-path warn: the loop ticks every 1s, so a
         // persistent submit error would otherwise warn per second. Warn on
         // the first failure and every 30th consecutive one (~30s), debug in

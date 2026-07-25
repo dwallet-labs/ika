@@ -1246,9 +1246,8 @@ impl IkaTestClusterBuilder {
 
     /// Activate the OCS verified-state path: write the localnet's genesis
     /// blob to disk and seed validators with it as their `sui_genesis`
-    /// trust anchor. Combine with `with_protocol_version(4)` (or the default
-    /// MAX) so `off_chain_validator_metadata_enabled()` is on and the OCS
-    /// `BagEventPump` becomes the MPC event source.
+    /// trust anchor. The OCS `BagEventPump` then becomes the MPC event
+    /// source.
     pub fn with_ocs_genesis_anchor(mut self, enabled: bool) -> Self {
         self.ocs_genesis_anchor = enabled;
         self

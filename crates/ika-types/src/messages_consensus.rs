@@ -119,10 +119,8 @@ pub enum ConsensusTransactionKey {
     /// V2 of `EndOfPublish`, keyed only by `AuthorityName` (like V1).
     /// V1 and V2 are *distinct* keys (different enum variants), so
     /// they do not dedupe against each other — but they never need
-    /// to: the `off_chain_validator_metadata` flag makes emission
-    /// mutually exclusive (the standalone V1 sender exits when the
-    /// flag is on, and V2 is emitted only then), so a given authority
-    /// submits exactly one form per epoch. The bundled handoff
+    /// to: V2 is the only form any supported binary emits, so a given
+    /// authority submits exactly one form per epoch. The bundled handoff
     /// signature inside V2 is not separately keyed; the consumer
     /// routes it through the handoff aggregator after extraction.
     EndOfPublishV2(AuthorityName),
@@ -367,10 +365,7 @@ pub enum ConsensusTransactionKind {
     /// Why a new variant rather than a field on `EndOfPublish`:
     /// the existing variant has shipped — older peers won't decode
     /// the extra field. A new variant is wire-additive (older peers
-    /// reject as unknown rather than mis-decoding existing data) and
-    /// lets producers gate emission on the existing
-    /// `off_chain_validator_metadata` protocol flag (which already
-    /// gates the rest of the off-chain pipeline that V2 is part of).
+    /// reject as unknown rather than mis-decoding existing data).
     ///
     /// Routing on the consumer side:
     /// 1. Treat the `authority` as the EndOfPublish sender — same
@@ -406,9 +401,8 @@ impl ConsensusTransaction {
     /// V2 of [`Self::new_end_of_publish`] — bundles the validator's
     /// signed handoff attestation alongside its EndOfPublish vote in a
     /// single consensus message, so the two always arrive together and
-    /// can't be reordered at peers. Producers emit this in place of
-    /// plain V1 when the `off_chain_validator_metadata` protocol flag
-    /// is on; the consumer side splits the message back into its two
+    /// can't be reordered at peers. This is the only form producers
+    /// emit; the consumer side splits the message back into its two
     /// parts and routes each through the existing v1 processing paths.
     pub fn new_end_of_publish_v2(
         authority: AuthorityName,
