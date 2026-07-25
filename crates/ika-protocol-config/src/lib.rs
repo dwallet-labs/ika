@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 5;
-const MAX_PROTOCOL_VERSION: u64 = 5;
+const MAX_PROTOCOL_VERSION: u64 = 6;
 
 // Record history of protocol version allocations here:
 //
@@ -33,7 +33,15 @@ const MAX_PROTOCOL_VERSION: u64 = 5;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6 (planned): noa_checkpoints on.
+// Version 6: consensus-key authority names. No Rust-side config change: the
+//            behavior is armed ON CHAIN — ika_system's `advance_epoch` records
+//            the authority-name flip epoch in `extra_fields` once the version
+//            reaches 6, and name derivation keys on that persisted marker
+//            (NEVER on the protocol version; a version comparison diverges at
+//            the epoch boundary — see dev-docs/specs/committee-consensus-keys.md).
+//            The version bump is the coordination point: quorum must run
+//            marker-aware binaries before the network can vote to 6.
+// Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -801,7 +809,15 @@ impl ProtocolConfig {
                 5 => {
                     cfg.feature_flags.aggregated_network_key_public_outputs = true;
                 }
-                // 6 => {
+                6 => {
+                    // Consensus-key authority names. Deliberately NO config
+                    // change: ika_system arms the flip marker on chain at
+                    // version >= 6, and derivation reads the marker. Keying
+                    // any Rust derivation on this version instead would
+                    // re-create the boundary divergence that sank the first
+                    // (version-gated) attempt.
+                }
+                // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
                 // }
                 // Use this template when making changes:
