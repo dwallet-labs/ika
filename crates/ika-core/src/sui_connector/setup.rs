@@ -128,11 +128,10 @@ pub enum SetupError {
 
 /// What the operator gave us for OCS bootstrap, post-disambiguation:
 ///
-/// - `Hydrated`: perpetual tables already have committees; ignore the
-///   anchor entirely (we've already verified past it).
-/// - `Anchor(digest)`: fetch this digest's summary and bootstrap from
-///   its `end_of_epoch_data`.
+/// - `Hydrated`: perpetual tables already have committees; ignore any
+///   configured genesis seed (we've already verified past it).
 /// - `UnsafeGenesis(committee)`: install this committee[0] directly.
+/// - `Genesis`: bootstrap committee[0] from the verified `sui_genesis` blob.
 pub enum BootstrapPlan {
     Hydrated,
     /// Localnet/test: install this epoch-0 committee directly.

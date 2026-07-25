@@ -1,9 +1,43 @@
 # OCS: replace the trusted anchor with a genesis-rooted committee chain (plan)
 
-**Status:** proposed — design approved, not yet implemented.
-**Branch:** `feat/ocs-genesis-anchor-removal` (off `dev`, after #1744 landed the OCS subsystem).
+**Status:** implemented — see "Implementation outcome" below for the
+deliberate deviations from this plan's removal list.
 **Depends on:** the OCS verified-Sui-reads subsystem
 ([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
+
+## Implementation outcome
+
+Shipped as planned: the `sui_genesis` config and verified blob loader
+(`crates/ika-sui-client/src/genesis.rs`), the `SuiCheckpointArchive`
+verified fallback with per-chain public defaults, the genesis-rooted
+`resolve_bootstrap_plan`, and the deletion of the operator-pinned anchor
+(`sui_trusted_anchor`, `compiled_in_trusted_anchor()`,
+`verify_anchor_summary()`, `CommitteeBootstrap::EndOfEpoch`).
+
+Deliberate deviations from the "removed" list below — all three config
+fields were **kept**:
+
+- `sui_unsafe_genesis_committee` stays: swarm/test tooling that boots
+  against an externally started Sui localnet can only obtain
+  `committee[0]` over RPC (`fetch_genesis_committee`); a genesis blob
+  cannot be reconstructed over RPC. `sui_genesis` takes priority
+  whenever both are configured, and the unsafe path logs a loud
+  not-for-production warning.
+- `allow_unverified_committee_fallback` stays: the premise "the Remote
+  Store makes every EOP checkpoint available" does not hold on the
+  default config — the default archive is the public HTTPS store
+  (~30-day retention; full history needs the requester-pays buckets),
+  and Devnet/Custom get no default archive at all. A gap that both the
+  fullnode and the archive miss still needs the opt-in degraded path.
+  Default remains `false` (fail closed with `ProofChainBroken`).
+- `auto_reanchor_on_format_change` stays, re-rooted: it wipes persisted
+  committee state that no longer deserializes (a Sui bump changing the
+  on-disk BCS layout) and re-bootstraps from the genesis blob — the
+  genesis-rooted successor of "re-anchor", needed because perpetual
+  committee state always wins over the configured genesis seed.
+
+Also deviating: the mainnet/testnet genesis blobs are **not** embedded
+in the release; `sui_genesis` is a path-only config today.
 
 ## What this changes, in one sentence
 
