@@ -10,12 +10,15 @@ upgrade-test workaround.
 A peer-only validator (`SuiStateMirrored { fallback_grpc_url: None }`) reads all
 Sui state over the OCS verified relay — but at boot it has no committee on disk
 and no uplink, so it cannot dial anyone. Its only path onto the p2p network is an
-**inbound** dial: `wait_for_specific_peers` (`ika-node/src/lib.rs`) returns once
-anemo `network.peer(id).is_some()` for one of its `sui_state_mirror_peers`, and an
-inbound connection satisfies that. So *something already on the network must dial
-the joiner first*. A just-registered joiner is in the on-chain `pending_active_set`
-but not yet in any committee, so the existing startup/reconfig peer pushes (which
-feed only the active committee) never mention it.
+**inbound** dial: `wait_for_mirror_peers` (`ika-node/src/lib.rs`) returns once a
+usable relay peer is connected — with a pinned `sui_state_mirror_peers` override,
+anemo `network.peer(id).is_some()` for one of the configured ids; without one
+(automatic discovery), once a connected peer answers a cheap SuiStateMirror probe
+— and an inbound connection satisfies either. So *something already on the
+network must dial the joiner first*. A just-registered joiner is in the on-chain
+`pending_active_set` but not yet in any committee, so the existing
+startup/reconfig peer pushes (which feed only the active committee) never mention
+it.
 
 ## The mechanism
 
@@ -40,7 +43,10 @@ Every **3 s** (`REFRESH_INTERVAL` — wall-clock, NOT epoch-scaled) it:
 The discovery service (`ika-network/src/discovery/mod.rs`) **merges** the event into
 anemo `known_peers` (insert-only; it never prunes). A direct validator therefore
 dials the registered-but-not-yet-active joiner within ~3 s; that inbound dial
-satisfies the joiner's `wait_for_specific_peers` gate and it boots.
+satisfies the joiner's `wait_for_mirror_peers` gate and it boots. (In automatic
+discovery mode the gate additionally needs the dialing peer to answer a
+SuiStateMirror probe, so a joiner dialed first by a *mirrored* validator keeps
+waiting until a serving — sui-state-direct — validator's dial arrives.)
 
 The read rides the node's own `SuiConnectorClient` (`self.inner` dispatches to direct
 gRPC on a direct node, the OCS verified relay on a peer-only node), so there is no

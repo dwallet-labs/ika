@@ -230,6 +230,17 @@ pub async fn build_sui_connector_stack(
             for raw_id in &cfg.sui_state_mirror_peers {
                 peer_ids.push(parse_peer_id(raw_id)?);
             }
+            if peer_ids.is_empty() {
+                info!(
+                    "no sui-state-mirror-peers configured; SuiStateMirror reads use automatic \
+                     peer discovery (every operation tries the currently-connected p2p peers)"
+                );
+            } else {
+                info!(
+                    peer_count = peer_ids.len(),
+                    "SuiStateMirror reads pinned to the configured sui-state-mirror-peers"
+                );
+            }
             let peers = SuiMirrorPeers::new(net, peer_ids, provider_metrics.clone());
 
             let provider: Arc<dyn ProofProvider> = Arc::new(SuiMirrorProofProvider::new(

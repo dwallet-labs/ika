@@ -1173,6 +1173,14 @@ pub struct IkaTestClusterBuilder {
     /// `with_sui_state_direct_count(_)`. Off by default (mirrored validators
     /// keep a direct gRPC fallback).
     peer_only_mirrored: bool,
+    /// When true, the `SuiStateMirrored` validators get NO pinned
+    /// `sui_state_mirror_peers` list: they must find serving relay peers via
+    /// automatic discovery (every relay operation tries the currently-connected
+    /// p2p peers, skipping those that don't serve `SuiStateMirror`). Only
+    /// meaningful together with `with_sui_state_direct_count(_)`. Off by
+    /// default (mirrored validators get the direct validators' peer ids
+    /// pinned).
+    automatic_mirror_peers: bool,
     /// When true, the notifier fullnode pays gas from its SUI ADDRESS BALANCE
     /// (SIP-58) instead of gas-coin objects. Its funding still arrives as
     /// coin objects, so boot exercises the automatic migration sweep too.
@@ -1233,6 +1241,7 @@ impl IkaTestClusterBuilder {
             ocs_genesis_anchor: true,
             sui_state_direct_count: None,
             peer_only_mirrored: false,
+            automatic_mirror_peers: false,
             notifier_gas_from_address_balance: false,
         }
     }
@@ -1273,6 +1282,14 @@ impl IkaTestClusterBuilder {
     /// one direct validator serving the relay).
     pub fn with_peer_only_mirrored(mut self, enabled: bool) -> Self {
         self.peer_only_mirrored = enabled;
+        self
+    }
+
+    /// Leave the `SuiStateMirrored` validators' `sui_state_mirror_peers` EMPTY
+    /// so they find serving relay peers via automatic discovery instead of a
+    /// pinned list. Requires `with_sui_state_direct_count(_)`.
+    pub fn with_automatic_mirror_peers(mut self, enabled: bool) -> Self {
+        self.automatic_mirror_peers = enabled;
         self
     }
 
@@ -1524,6 +1541,11 @@ impl IkaTestClusterBuilder {
             "with_peer_only_mirrored requires with_sui_state_direct_count(_) \
              (peer-only validators need at least one direct validator serving the relay)"
         );
+        anyhow::ensure!(
+            !self.automatic_mirror_peers || direct_count.is_some(),
+            "with_automatic_mirror_peers requires with_sui_state_direct_count(_) \
+             (there are no mirrored validators to discover peers without a split)"
+        );
         let direct_mirror_peer_ids: Vec<String> = direct_count
             .map(|direct_count| {
                 validator_initialization_configs
@@ -1559,9 +1581,16 @@ impl IkaTestClusterBuilder {
                     } else {
                         Some(sui_rpc_url.clone())
                     };
-                    builder = builder
-                        .with_sui_data_source(SuiDataSource::SuiStateMirrored { fallback_grpc_url })
-                        .with_sui_state_mirror_peers(direct_mirror_peer_ids.clone());
+                    builder = builder.with_sui_data_source(SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url,
+                    });
+                    // Automatic discovery mode leaves `sui_state_mirror_peers`
+                    // empty: the mirrored validators must find the serving
+                    // (direct) validators through discovery at each operation.
+                    if !self.automatic_mirror_peers {
+                        builder =
+                            builder.with_sui_state_mirror_peers(direct_mirror_peer_ids.clone());
+                    }
                 }
                 builder.build(
                     v,

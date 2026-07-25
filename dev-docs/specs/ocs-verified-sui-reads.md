@@ -521,20 +521,65 @@ entirely**, so a relay/peer transport doesn't even pretend to offer them:
 - **`get_transaction_checkpoint`** — `tx → checkpoint` lookup whose sole user is
   the *direct* proof builder, so it's an inherent `SuiGrpcClient` method.
 
-The client (`SuiMirrorPeers::try_peers`) is the failover engine: it
-rotates the peer list round-robin but every pass visits all peers,
-returns the first success, and demotes failing peers to the back.
+The client (`SuiMirrorPeers::try_peers`) is the failover engine: every
+pass visits all peers, returns the first success, and demotes failing
+peers to the back.
 Crucially, each per-peer request carries a **30s timeout** — anemo sets
 no default outbound timeout and QUIC keep-alives keep an idle-but-hung
 peer "connected", so without it one peer that accepts the stream and
 never replies would hang every read forever and starve failover. A
 timeout counts as a peer failure, not a `NotFound`.
 
+The peer set comes in two modes, selected by whether
+`sui-state-mirror-peers` is configured:
+
+- **Pinned** (non-empty list): the operator's explicit override. Only
+  the configured peer ids are used; configured peers that aren't
+  currently connected are skipped within a pass. Passes rotate their
+  start round-robin: the fleet shares one operator-written list, so
+  without rotation every node would hammer `peers[0]`.
+- **Automatic** (empty list, the preferred default): every operation
+  snapshots the peers *currently connected* through Ika's discovery
+  system — never a boot-time capture, since peers connect, disconnect,
+  and change across epoch transitions. A preference order is kept on
+  top of the live set (demoted peers stay at the back while connected;
+  newly-connected peers append behind proven ones), so failover memory
+  survives across passes. Automatic passes do **not** rotate — rotation
+  would cycle the pass start through the demoted tail (non-serving
+  committee peers, or a stalling one costing the full 30s timeout),
+  taxing a 1/n share of every read and neutralizing demotion. Each
+  pass starts at the preference-order head; fleet load still spreads
+  because each node's order is emergent, not a shared list.
+
+Automatic mode routinely reaches peers that don't serve `SuiStateMirror`
+at all (discovery connects every committee peer, mirrored/peer-only
+ones included). Such a peer fails fast with anemo's **route-miss**
+`NotFound` — distinguishable from the service's own data-absence
+`NotFound` because the service always attaches a status message (the
+`status-message` header on the wire) and the router fallback never
+does. A route miss is treated like a not-connected peer: demoted and
+skipped *without counting as reached*, so non-serving peers can neither
+manufacture an all-peers-`NotFound` verdict nor destroy one produced by
+genuinely-serving peers.
+
 `NotFound` is returned only when at least one peer was reached AND every
-reached peer returned `NotFound` — any non-`NotFound` error or any
-timeout downgrades the verdict to a network failure. The committee
-ratchet keys its "data really doesn't exist → consider fallback"
-decision on exactly this distinction, so the rule must hold.
+reached peer returned a data-absence `NotFound` — any non-`NotFound`
+error, any timeout, or an all-route-miss pass downgrades the verdict to
+a network failure. The committee ratchet keys its "data really doesn't
+exist → consider fallback" decision on exactly this distinction, so the
+rule must hold.
+
+At startup, a sui-state-mirrored node waits (bounded, 60s) for a usable
+relay peer before building the OCS stack — in pinned mode until a
+configured peer is connected, in automatic mode until a connected peer
+answers a cheap `get_chain_identifier` probe (`find_serving_mirror_peer`;
+mere connectivity is not enough, see above). To make automatic
+discovery converge before that wait, the node publishes the initial
+committee trusted-peer set to discovery as soon as the p2p network is
+up, *before* the wait/stack build (a mirrored-with-fallback node has
+already read the committee over its fallback uplink; a peer-only node
+has nothing to publish yet and relies on p2p seeds plus the inbound
+dials of the trusted-peer refresh loop).
 
 ## The cache fast path (sui-state-direct only)
 
@@ -772,6 +817,18 @@ because the bytes came from a peer's disk rather than its fullnode.
   asserted explicitly on the verified install path
   (`install_next_from_verified_summary`), not only on the unverified
   fallback.
+- **Byzantine relay tax in automatic peer discovery** (liveness-only): with
+  no pinned list, any connected committee peer can mount a `SuiStateMirror`
+  service and *stall* (accept, never reply), costing the 30s per-request
+  timeout whenever a pass reaches it, and — because a timeout counts as
+  `Unreachable` — persistently downgrading a genuine all-peers-`NotFound`
+  verdict to `Network`, deferring the ratchet's archive fallback. In pinned
+  mode the attacker had to be on the operator's list; automatic mode widens
+  that to the connected set. Demotion plus head-anchored (non-rotating)
+  passes confine the steady-state cost to passes where every peer ahead of
+  the staller failed; all bytes remain committee-verified, so this is delay
+  and withholding — the relay's already-documented privilege — never
+  forgery.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 (verification, freshness/high-water, bag-membership binding),
