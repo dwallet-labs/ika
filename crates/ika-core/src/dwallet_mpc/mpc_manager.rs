@@ -1469,7 +1469,48 @@ impl DWalletMPCManager {
         let mut deferred_unmapped_key = false;
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
-                continue; // nothing computed/fetched locally yet
+                // Nothing computed/fetched locally yet. For a key DKG'd in a
+                // PRIOR epoch this is not a convergence window — the local
+                // producer cache will never fill (this validator never
+                // computed the key's outputs): the JOINER / cold-start shape.
+                // The cert-pinned blob install (barrier) covers only the
+                // continuing-validator path today, so without intervention the
+                // overlay stays empty and the key is never adopted — parking
+                // every session on it for this validator. Flag it for the
+                // syncer's stranded-key chain read (#1852 machinery): the
+                // chain holds the real blobs (written at DKG/reconfiguration
+                // regardless of the off-chain plane), the cert digest gates
+                // below still verify whatever the read returns, and a
+                // confirmed instantiation un-flags the key. A key DKG'd THIS
+                // epoch is excluded — that is the healthy fresh-key bootstrap
+                // window, where the producer cache converges within ticks.
+                // (Before issue #1751 removed the migration chain-read
+                // fallback, this state was silently covered by it: an empty
+                // local handoff cache took the full chain read. This flag
+                // restores that recovery through the audited stranded path.)
+                let stranded = data.dkg_at_epoch < self.epoch_id
+                    && !self
+                        .network_keys
+                        .network_encryption_keys
+                        .contains_key(key_id)
+                    && !self.pending_network_key_instantiations.contains_key(key_id)
+                    && !self.adopted_network_key_data.contains_key(key_id);
+                if stranded && !self.stranded_network_keys.load().contains(key_id) {
+                    info!(
+                        ?key_id,
+                        dkg_at_epoch = data.dkg_at_epoch,
+                        current_epoch = self.epoch_id,
+                        "network key overlay is empty for a prior-epoch key this validator \
+                         holds nothing for (joiner / cold-start) — requesting a \
+                         chain-sourced read from the syncer"
+                    );
+                    self.stranded_network_keys.rcu(|keys| {
+                        let mut keys = (**keys).clone();
+                        keys.insert(*key_id);
+                        Arc::new(keys)
+                    });
+                }
+                continue;
             }
             // A reconfiguration output recorded under the CURRENT epoch was
             // produced by this epoch's reconfiguration MPC *for the next

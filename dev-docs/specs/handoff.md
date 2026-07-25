@@ -256,7 +256,18 @@ next epoch inherits.
      otherwise burns the instantiation and blocks the same key's
      correct data behind the in-flight entry, widening the
      epoch-entry key gap during which sessions park.
-   - Stranded-key recovery (mid-epoch restart, issue #1852). Once this
+   - Stranded-key recovery — two trigger shapes, one mechanism. First
+     (joiner / cold start): an overlay entry with NO blobs at all for a
+     key DKG'd in a PRIOR epoch, on a validator that holds nothing for
+     it. The producer cache can never fill (this validator never
+     computed the key's outputs) and the cert-pinned blob install
+     (barrier) covers only continuing validators today, so adoption
+     flags the key for the syncer's chain-sourced read instead of
+     skipping it forever. (Until issue #1751 removed the migration
+     chain-read fallback, that fallback covered this shape implicitly;
+     the `v125_churn` scenario's mirrored joiner caught the regression.)
+     A key DKG'd THIS epoch is excluded — the healthy fresh-key
+     bootstrap window. Second (mid-epoch restart, issue #1852). Once this
      epoch's reconfiguration completes, the off-chain copy of a key's
      reconfiguration output is the just-produced NEXT-committee output;
      adoption's produced-this-epoch guard correctly skips it (a running

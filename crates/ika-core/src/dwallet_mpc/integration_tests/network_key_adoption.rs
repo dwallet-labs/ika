@@ -894,3 +894,79 @@ async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_r
         "the adopted current-epoch output must spawn instantiation"
     );
 }
+
+/// The joiner / cold-start strand: a key DKG'd in a PRIOR epoch whose overlay
+/// entry carries no blobs at all, on a validator that holds nothing for it.
+/// The producer cache can never fill (this validator never computed the key's
+/// outputs) and the cert-pinned blob install covers only continuing
+/// validators, so without intervention the key is never adopted. Adoption
+/// must flag it for the syncer's stranded-key chain read — the recovery that
+/// the removed v3→v4 chain-read fallback used to provide implicitly (caught
+/// live by the `v125_churn` scenario's mirrored joiner). A key DKG'd THIS
+/// epoch must NOT be flagged: that is the healthy fresh-key bootstrap window.
+#[tokio::test]
+async fn empty_overlay_for_prior_epoch_key_flags_stranded() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        _epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+
+    // A prior-epoch key with an entirely empty overlay entry (the joiner
+    // shape: chain metadata present, no blobs anywhere locally).
+    let stranded_key_id = ObjectID::random();
+    // A key DKG'd this epoch with the same empty entry (fresh-key bootstrap).
+    let fresh_key_id = ObjectID::random();
+    let overlay = Arc::new(HashMap::from([
+        (
+            stranded_key_id,
+            DWalletNetworkEncryptionKeyData {
+                id: stranded_key_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: 0,
+                network_dkg_public_output: vec![],
+                current_reconfiguration_public_output: vec![],
+                state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+            },
+        ),
+        (
+            fresh_key_id,
+            DWalletNetworkEncryptionKeyData {
+                id: fresh_key_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: epoch_id,
+                network_dkg_public_output: vec![],
+                current_reconfiguration_public_output: vec![],
+                state: DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG,
+            },
+        ),
+    ]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&overlay);
+    assert!(
+        manager
+            .stranded_network_keys
+            .load()
+            .contains(&stranded_key_id),
+        "an empty overlay entry for a prior-epoch key the validator holds nothing for \
+         must be flagged for the syncer's chain-sourced recovery read"
+    );
+    assert!(
+        !manager.stranded_network_keys.load().contains(&fresh_key_id),
+        "a key DKG'd this epoch must NOT be flagged — its empty overlay is the healthy \
+         DKG-bootstrap convergence window"
+    );
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&stranded_key_id),
+        "flagging must not adopt anything — adoption waits for the chain-read overlay"
+    );
+}
