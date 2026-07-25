@@ -209,6 +209,7 @@ impl SuiConnectorService {
             network_keys_sender,
             syncer_new_requests,
             end_of_publish_sender,
+            checkpoint_store,
             last_session_to_complete_in_current_epoch_sender,
             syncer_uncompleted,
             noa_checkpoints_finalized,

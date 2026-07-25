@@ -3,6 +3,7 @@
 
 //! The SuiSyncer module handles synchronizing Events emitted
 //! on the Sui blockchain from concerned modules of `ika_system` package.
+use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
@@ -102,6 +103,7 @@ where
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         new_requests_sender: Option<tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>>,
         end_of_publish_sender: Sender<Option<u64>>,
+        dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Option<Sender<(Vec<DWalletSessionRequest>, EpochId)>>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -156,6 +158,7 @@ where
                 system_object_receiver.clone(),
                 dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
+                dwallet_checkpoint_store,
                 noa_checkpoints_finalized,
                 self.metrics.clone(),
             ));
@@ -1234,6 +1237,7 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         end_of_publish_sender: Sender<Option<u64>>,
+        dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
         metrics: Arc<SuiConnectorMetrics>,
     ) {
@@ -1302,6 +1306,27 @@ where
             metrics
                 .chain_user_sessions_lag
                 .set(lock_target - completed_user_sessions);
+
+            // Writer lag: completions this validator has already CERTIFIED
+            // (they sit in local certified dwallet checkpoints) that have not
+            // been processed by the coordinator on Sui. `user_sessions_lag`
+            // alone cannot distinguish "MPC hasn't completed the sessions"
+            // from "the sole checkpoint writer isn't landing them on chain";
+            // both 2026-07 epoch-close outages lost their first debugging
+            // phase to exactly that ambiguity.
+            let local_certified_head = dwallet_checkpoint_store
+                .get_latest_certified_checkpoint()
+                .unwrap_or_else(|err| {
+                    warn!(error=?err, "failed to read latest certified dwallet checkpoint");
+                    None
+                })
+                .map(|checkpoint| checkpoint.sequence_number);
+            let chain_checkpoint_cursor = coordinator.last_processed_checkpoint_sequence_number;
+            let checkpoint_writer_lag =
+                local_certified_head.map_or(0, |head| head.saturating_sub(chain_checkpoint_cursor));
+            metrics.chain_dwallet_checkpoint_writer_lag.set(
+                local_certified_head.map_or(0, |head| head as i64 - chain_checkpoint_cursor as i64),
+            );
 
             // chain_epoch_overdue_seconds — best effort; if the clock fetch fails we
             // leave the previous value in place rather than zeroing it (zero is
@@ -1381,6 +1406,15 @@ where
                     !all_noa_checkpoints_finalized,
                 ),
                 ("pricing_votes_open", !no_pricing_calculation_votes),
+                // Names the WRITER when session lag is (at least partly) a
+                // submission problem: sessions are unfinished on chain while
+                // certified checkpoints sit unlanded. Lights up alongside
+                // `user_sessions_lag`, pointing the operator at the notifier
+                // instead of the MPC pipeline.
+                (
+                    "checkpoint_writer_lag",
+                    !all_epoch_sessions_finished && checkpoint_writer_lag > 0,
+                ),
             ];
             for (reason, is_blocking) in blocked_by {
                 metrics
@@ -1403,6 +1437,7 @@ where
                     all_network_encryption_keys_reconfiguration_completed,
                     all_noa_checkpoints_finalized,
                     no_pricing_calculation_votes,
+                    checkpoint_writer_lag,
                     "end-of-publish gate not yet satisfied; epoch cannot advance",
                 );
                 // Escalate to WARN only once the epoch has COMMITTED to closing
@@ -1427,9 +1462,12 @@ where
                             all_network_encryption_keys_reconfiguration_completed,
                             all_noa_checkpoints_finalized,
                             no_pricing_calculation_votes,
+                            checkpoint_writer_lag,
                             "end-of-publish gate STUCK after the epoch locked to close: the \
                              false condition(s) above are blocking advance (a persistent \
-                             reconfiguration/session-output stall — see issue #1736)",
+                             reconfiguration/session-output stall — see issue #1736; if \
+                             checkpoint_writer_lag > 0 the checkpoint WRITER is not landing \
+                             locally-certified completions on Sui — check the notifier)",
                         );
                     }
                 } else {

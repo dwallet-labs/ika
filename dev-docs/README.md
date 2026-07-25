@@ -40,6 +40,11 @@ them has a bug — determine which before changing either.
   — why pull-mode checkpoint sync starts from the on-chain processed
   cursor (a fresh-DB notifier can never fetch deep history from peers),
   the cold-start deferral, and the gap-tolerant store invariants.
+- [`specs/checkpoint-writer-observability.md`](specs/checkpoint-writer-observability.md)
+  — the deliberate single-notifier write path, why a stalled writer
+  blocks the epoch close, and the two stall signals (the notifier's
+  sync-stall self-report; validators' `checkpoint_writer_lag`
+  blocked-reason attribution).
 - [`specs/cross-binary-upgrade.md`](specs/cross-binary-upgrade.md) —
   the in-place protocol-version upgrade contract: the stake-weighted
   version vote, the wire/on-disk compatibility invariants for mixed
