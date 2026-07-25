@@ -56,6 +56,11 @@ them has a bug — determine which before changing either.
   off-chain transport, the V3 presign/sign flow, the
   `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
   still-gated external path.
+- [`specs/committee-consensus-keys.md`](specs/committee-consensus-keys.md)
+  — a validator's BLS identity vs its Ed25519 consensus key: why the
+  mapping is `Committee` data and not derivable, the same-snapshot rule
+  binding a signer's key to its stake, and the mainnet-v1.1.8 on-disk
+  migration for the mid-struct field.
 - [`specs/ocs-verified-sui-reads.md`](specs/ocs-verified-sui-reads.md) —
   object-checkpoint-state: reading Sui without trusting the relay
   (genesis-rooted committee trust root, the epoch ratchet,

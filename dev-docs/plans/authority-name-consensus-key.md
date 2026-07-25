@@ -1,6 +1,10 @@
 # Plan: consensus keys reachable by name (toward consensus-key-signed certs)
 
-Status: landed (2026-07-01, PR #1762 — `c875d88795`).
+Status: landed (2026-07-01, PR #1762 — `c875d88795`). The durable
+behavioral contract now lives in
+[`../specs/committee-consensus-keys.md`](../specs/committee-consensus-keys.md);
+this file is kept for the INTENT and, in particular, for the record of the
+rejected identity-flip approach and why it was abandoned.
 
 **SHIPPED DESIGN: consensus keys are carried as `Committee` data; the
 identity (`AuthorityName`) stays the BLS key.** Jump to the

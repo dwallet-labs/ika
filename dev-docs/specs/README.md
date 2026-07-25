@@ -34,6 +34,10 @@ here.
   strict-equality close predicate, the gate-consensus-submission rule
   every user-session completion path must follow, and the
   batch-processing rule for computation results.
+- [`committee-consensus-keys.md`](committee-consensus-keys.md) — the two
+  per-validator keys (BLS identity vs Ed25519 consensus key), why the
+  mapping is carried as `Committee` data rather than derived, the
+  same-snapshot rule for key and stake, and the 1.1.8 on-disk migration.
 - [`cross-binary-upgrade.md`](cross-binary-upgrade.md) — the in-place
   protocol-version upgrade contract: the stake-weighted version vote, the
   wire/on-disk compatibility invariants a mixed committee must preserve,

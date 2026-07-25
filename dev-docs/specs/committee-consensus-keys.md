@@ -1,0 +1,153 @@
+# Committee consensus keys
+
+Status: active (protocol v4+). Landed 2026-07-01, PR #1762. The design
+record — including the identity-flip approach that was rejected and why —
+is [`../plans/authority-name-consensus-key.md`](../plans/authority-name-consensus-key.md).
+
+A validator has **two** long-lived public keys with different jobs:
+
+| Key | Type | Role |
+|---|---|---|
+| BLS (`AuthorityPublicKey`) | aggregatable | the validator's **identity**; `AuthorityName` is its byte encoding, and aggregate stake certificates verify against it |
+| consensus (`NetworkPublicKey`, Ed25519) | not aggregatable | signs **individually-signed** messages — handoff attestation signatures today, more certificate kinds later |
+
+A signer identifies itself by `AuthorityName` (BLS-derived), but an
+Ed25519 signature must verify against the consensus key. **The BLS name
+cannot recover the consensus key** — they are independent keypairs. So
+the mapping has to be carried as data, and this spec is the contract for
+where it comes from, who may trust it, and what happens when it is
+missing.
+
+## The decision rule
+
+**`Committee` carries the mapping; `AuthorityName` stays the BLS key.**
+
+```rust
+// ika-types/src/committee.rs
+expanded_keys:  HashMap<AuthorityName, AuthorityPublicKey>,  // BLS
+consensus_keys: HashMap<AuthorityName, NetworkPublicKey>,    // Ed25519
+```
+
+A committee is the natural home because verification is *always* relative
+to a committee: "did a quorum of epoch N's members sign this?" needs
+membership, stake, the quorum threshold, and each member's verifying key —
+four facts that must describe the *same* snapshot. Splitting the keys into
+a side channel invites verifying a signature against one epoch's key while
+counting stake from another's.
+
+That is expressed directly:
+
+```rust
+// ika-core/src/handoff_cert.rs
+impl ConsensusPubkeyProvider for Committee {
+    fn consensus_pubkey(&self, signer: &AuthorityName) -> Option<Ed25519PublicKey>
+}
+```
+
+`ConsensusPubkeyProvider` returning `None` means **"I have no consensus key
+for this signer"**, and every caller must then **drop the signature**
+(`HandoffSignatureVerdict::UnknownSigner`). An unknown signer is never
+treated as valid and never fails the whole verification — it simply does
+not count toward quorum.
+
+## Invariants
+
+1. **The mapping is chain-sourced, never derived.** `consensus_keys` is
+   supplied at construction from on-chain validator metadata. No code path
+   may synthesize, guess, or default a consensus key for a member.
+
+2. **Key and stake come from the same snapshot.** When building a committee
+   for verification, the map KEY must be the `AuthorityName` from *that
+   epoch's* committee snapshot. The consensus pubkey VALUE is fixed at
+   validator registration, so reading the current on-chain value is
+   correct — but the name it is filed under is not, because names are
+   per-snapshot. Getting this backwards produces a weight-0 signer whose
+   signature silently fails to count.
+
+3. **A missing key costs one signature, never the read.** A member whose
+   `validator_info` fails to decode is skipped with a warning, not
+   propagated as an error. `verify()` rejects on ANY malformed metadata
+   field (addresses, next-epoch keys), and a departed member may have a
+   stale record nobody can fix; failing the whole fetch would block joiner
+   bootstrap forever on a deterministic error. The certificate only needs a
+   quorum of members that DO verify.
+
+4. **An empty map is legal, and only for committees that never verify.**
+   Test committees, legacy committees, and stake-only aggregation paths may
+   carry an empty map. It is a bug for a committee that will verify
+   individually-signed messages to carry one — every signer resolves to
+   `None`, every signature drops, and the certificate fails quorum. The
+   failure is fail-closed but far from its cause, so treat "cert never
+   forms" as a signal to check this map first.
+
+## Where committees are built
+
+Three sites populate `consensus_keys`, all from chain:
+
+- **`EpochStartSystem::get_ika_committee`** (`ika-types/src/sui/epoch_start_system.rs`)
+  — the current epoch's committee, from each active validator's
+  `consensus_pubkey`. This is the CHAIN view; see the two-committee-objects
+  warning in [`../learnings/pitfalls.md`](../learnings/pitfalls.md).
+- **`SuiSyncer::new_committee`** — the next epoch's committee.
+- **The prior-committee fetch** (`sui_connector/pubkey_provider_updater.rs`)
+  — reconstructs the *previous* committee for handoff-certificate
+  verification, reading each member's
+  `StakingPool.validator_info.consensus_pubkey_bytes` and filing it under
+  the name from the `previous_committee` snapshot (invariant 2). Members
+  absent from that snapshot, or whose `validator_info` fails `verify()`,
+  are skipped (invariant 3).
+
+`StaticConsensusPubkeyProvider` exists for tests and as the empty default
+before the syncer is up. It is not a production source.
+
+## On-disk compatibility
+
+`consensus_keys` was added mid-struct at protocol v4, and `Committee`
+derives bcs (positional, no field skips). A `committee_map` record written
+by mainnet-v1.1.8 therefore **cannot** be decoded by a v4 `Committee`.
+
+`CommitteeStore` migrates at store open (`migrate_legacy_records`): a
+record that fails the current decode but decodes as `LegacyCommittee` is
+rewritten in the current layout with an **empty** `consensus_keys`. The
+migration is:
+
+- **idempotent** — already-migrated records pass the current decode and are
+  skipped, so it is crash-safe;
+- **marker-guarded**, with the marker written AFTER the scan completes, so
+  a crash mid-migration re-scans rather than stranding unmigrated rows
+  behind the marker;
+- **generation-tracked** — the 1.1.8 layout is generation 1, the current
+  layout generation 2.
+
+The empty map is sound only because a legacy record always DESCRIBES a ≤v3
+epoch, for which no handoff certificate can exist (cert minting is
+v4-gated), so those keys are never asked to verify anything. That relies on
+a three-link chain spelled out in
+[`cross-binary-upgrade.md`](cross-binary-upgrade.md) (1.1.8 caps at
+`MAX_PROTOCOL_VERSION = 3`; its `reconfigure` checks the version before
+persisting a committee; the state-sync `insert_committee` path has no live
+callers). **If a future change breaks any link, re-verify this before
+reusing the legacy migration for anything else** — a pre-`consensus_keys`
+record describing a cert-minting epoch would make every signer unresolvable
+and fail quorum.
+
+**Rollback is one-way.** A `committee_map` record written by a v4 binary is
+NOT readable by mainnet-v1.1.8 (same positional-bcs reason; 1.1.8 has no
+fallback). Rolling back requires clearing the `committee_map` column
+family — see the rollback caveat in
+[`cross-binary-upgrade.md`](cross-binary-upgrade.md).
+
+`LegacyCommittee` and this migration are deletable together once no fleet
+upgrades directly from 1.1.8 data dirs.
+
+## Direction of travel
+
+The BLS key is still the identity because aggregate stake certificates
+need aggregatability. The plan records the intended end state: once those
+are replaced by consensus-key-signed certificates, `expanded_keys` /
+`public_key()` and the validators' BLS key can be dropped entirely and
+`AuthorityName` can become the consensus key. Until then, **both keys are
+load-bearing and neither may be treated as derivable from the other.**
+
+Consumer today: [`handoff.md`](handoff.md) (attestation signatures and
+certificate verification).

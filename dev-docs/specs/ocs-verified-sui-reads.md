@@ -652,6 +652,59 @@ the cache-first serve beyond the singleton anchors to *all* slowly-changing
 mirror reads remains future work — see
 [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
 
+## Retained state: surviving a restart and a pruning fullnode
+
+Two independent durability mechanisms keep a direct node useful after a
+restart and keep a mirrored peer's ratchet advancing after the direct
+node's own Sui fullnode has pruned. Both live in
+`AuthorityPerpetualTables`.
+
+### The verified cache is durable, and so is its head
+
+`verified_object_cache` (`ObjectID → VerifiedSnapshot { object, proof,
+summary, source seq }`) is written through on every checkpoint the pusher
+folds. A restart rehydrates the cache from RocksDB instead of re-fetching
+from a fullnode that may since have pruned the proving checkpoint.
+
+`verified_object_cache_head` — the highest checkpoint sequence the cache
+reflects — is persisted **and restored alongside it**. That is not
+bookkeeping: the staleness tripwire compares the cache against the head, so
+a rehydrated cache restored *without* its head reads as stale and the fast
+path silently disables itself. Restore both or neither.
+
+The parent→children index is **rebuilt from the objects' owners on load**,
+not persisted — it is derived state, so persisting it would create a second
+thing to keep consistent.
+
+### A direct node serves the ratchet from its own retained store
+
+`RetainedFullnodeTransport` (`sui_connector/retained_transport.rs`) is a
+`SuiTransport` decorator a sui-state-direct node places in front of its
+mirror server's gRPC transport. It answers exactly the two committee-ratchet
+primitives from local state — `last_checkpoint_of_epoch` and the
+end-of-epoch `get_full_checkpoint` — and delegates **every** other method
+straight through.
+
+The data comes from the pusher's **eager capture**: as it streams past an
+end-of-epoch checkpoint it persists it (`persist_end_of_epoch` →
+`sui_end_of_epoch_seqs`, `sui_end_of_epoch_checkpoints`), including
+checkpoints recovered by gap repair. One entry per Sui epoch, so the table
+is sparse despite each value being a full `CheckpointData`; it is pruned
+with the verified-cache retention floor.
+
+Why it exists: a mirrored peer bootstrapping or catching up must walk the
+committee ratchet, which needs each epoch's end-of-epoch checkpoint. Sui
+fullnodes prune those. Without retention the mirrored peer's ratchet stalls
+at the first pruned boundary — and the direct node's fullnode is exactly the
+thing OCS is trying to stop being a dependency on.
+
+**This is a serving optimization, not a trust change.** The mirrored peer
+re-verifies the committee-signed summary it gets back, exactly as it would
+from any relay. A direct node that serves a wrong or forged checkpoint here
+is caught by the same verification that catches a byzantine relay — see
+[Relay protocol](#relay-protocol). Nothing about the trust chain changes
+because the bytes came from a peer's disk rather than its fullnode.
+
 ## Key invariants
 
 1. A returned `VerifiedObject` is committee-BLS-attested at the byte
