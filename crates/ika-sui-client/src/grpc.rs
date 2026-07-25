@@ -16,7 +16,7 @@ use sui_rpc_api::client::ExecutedTransaction;
 use sui_rpc_api::proto::sui::rpc::v2 as proto;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::full_checkpoint_content::CheckpointData;
-use sui_types::gas_coin::GasCoin;
+use sui_types::gas_coin::{GAS, GasCoin};
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
 use sui_types::transaction::Transaction;
@@ -374,8 +374,11 @@ impl SuiWriter for SuiGrpcClient {
         address: SuiAddress,
     ) -> Result<SuiFundsBreakdown, TransportError> {
         let rpc = self.rpc.clone();
+        // NB: GetBalance takes the COIN type (`0x2::sui::SUI`, `GAS::type_()`),
+        // not the coin OBJECT type (`Coin<SUI>`, `GasCoin::type_()`) — the
+        // latter silently reads as a zero balance of a nonexistent coin type.
         let balance = rpc
-            .get_balance(address, &GasCoin::type_())
+            .get_balance(address, &GAS::type_())
             .await
             .map_err(Self::rpc_err)?;
         Ok(SuiFundsBreakdown {
