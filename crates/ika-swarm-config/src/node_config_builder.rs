@@ -9,9 +9,9 @@ use crate::validator_initialization_config::{
 use fastcrypto::encoding::{Encoding, Hex};
 use fastcrypto::traits::KeyPair;
 use ika_config::node::{
-    AuthorityKeyPairWithPath, AuthorityOverloadConfig, KeyPairWithPath, RootSeedWithPath,
-    RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig, SuiDataSource,
-    default_end_of_epoch_broadcast_channel_capacity,
+    AuthorityKeyPairWithPath, AuthorityOverloadConfig, IkaIdentityOverride, KeyPairWithPath,
+    RootSeedWithPath, RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig,
+    SuiDataSource, default_end_of_epoch_broadcast_channel_capacity,
 };
 use std::path::PathBuf;
 use sui_types::base_types::ObjectID;
@@ -201,13 +201,27 @@ impl ValidatorConfigBuilder {
                 sui_genesis: self.sui_genesis.clone(),
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
-                ika_package_id,
-                ika_common_package_id,
-                ika_dwallet_2pc_mpc_package_id,
+                // Localnet (`Custom`): the freshly-published ids travel in the
+                // unsafe override — the only config-surface source on chains
+                // with no compiled-in identity. The flat id fields are
+                // resolution outputs; `resolve_ika_on_chain_identity` fills
+                // them at node startup.
+                ika_unsafe_identity_override: Some(IkaIdentityOverride {
+                    ika_package_id,
+                    ika_common_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
+                    ika_dwallet_2pc_mpc_package_id_v2: None,
+                    ika_system_package_id,
+                    ika_system_object_id,
+                    ika_dwallet_coordinator_object_id,
+                }),
+                ika_package_id: ObjectID::ZERO,
+                ika_common_package_id: ObjectID::ZERO,
+                ika_dwallet_2pc_mpc_package_id: ObjectID::ZERO,
                 ika_dwallet_2pc_mpc_package_id_v2: None,
-                ika_system_package_id,
-                ika_system_object_id,
-                ika_dwallet_coordinator_object_id,
+                ika_system_package_id: ObjectID::ZERO,
+                ika_system_object_id: ObjectID::ZERO,
+                ika_dwallet_coordinator_object_id: ObjectID::ZERO,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair: None,
                 notifier_gas_from_address_balance: false,
@@ -463,13 +477,25 @@ impl FullnodeConfigBuilder {
                 sui_genesis: None,
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
-                ika_package_id,
-                ika_common_package_id,
-                ika_dwallet_2pc_mpc_package_id,
+                // Localnet (`Custom`): ids travel in the unsafe override; the
+                // flat fields are resolution outputs (see the validator
+                // builder above).
+                ika_unsafe_identity_override: Some(IkaIdentityOverride {
+                    ika_package_id,
+                    ika_common_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
+                    ika_dwallet_2pc_mpc_package_id_v2: None,
+                    ika_system_package_id,
+                    ika_system_object_id,
+                    ika_dwallet_coordinator_object_id,
+                }),
+                ika_package_id: ObjectID::ZERO,
+                ika_common_package_id: ObjectID::ZERO,
+                ika_dwallet_2pc_mpc_package_id: ObjectID::ZERO,
                 ika_dwallet_2pc_mpc_package_id_v2: None,
-                ika_system_package_id,
-                ika_system_object_id,
-                ika_dwallet_coordinator_object_id,
+                ika_system_package_id: ObjectID::ZERO,
+                ika_system_object_id: ObjectID::ZERO,
+                ika_dwallet_coordinator_object_id: ObjectID::ZERO,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair,
                 notifier_gas_from_address_balance: self.notifier_gas_from_address_balance,
