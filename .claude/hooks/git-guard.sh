@@ -6,6 +6,12 @@
 #   - git push targeting dev / main / master
 #   - git commit while ON dev / main / master
 #   - git commit including .rs files while `cargo fmt --all --check` is dirty
+# Known limits (see dev-docs/learnings/pitfalls.md, "Repo guard hooks"):
+#   - Runs BEFORE the command: checks keyed on repo state (staged index,
+#     current branch) see pre-command state, so a compound command that
+#     mutates that state first slips through. Backstop, not contract.
+#   - The fmt gate discards cargo's output/exit detail: a cargo missing
+#     from this hook's PATH is reported as "rustfmt is dirty".
 set -uo pipefail
 
 input=$(cat)
