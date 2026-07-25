@@ -290,6 +290,25 @@ validator latched for the whole epoch. Sourcing rules
   content-addressed), so identical pairs are served from a cache and a
   post-freeze `Complete` assembly is final for the epoch: the sync loop
   sends it once and stops re-assembling (`sync_next_committee`).
+- Assembly retries are observable without exposing committee identities:
+  `ika_off_chain_assembly_incomplete` and
+  `ika_off_chain_assembly_consecutive_incomplete_ticks` describe current
+  state, `ika_off_chain_assembly_incomplete_duration_seconds` describes the
+  current period, and `ika_off_chain_assembly_missing{reason}` reports the
+  latest missing count under the fixed reasons `announcement`,
+  `blob_missing_or_invalid`, `source_unavailable`, `no_input`, and
+  `everything_excluded`. A successful assembly clears all current-state
+  gauges and updates
+  `ika_off_chain_assembly_last_success_timestamp_seconds`; startup leaves the
+  timestamp at zero until a real success. Ordinary convergence logs at debug.
+  Five minutes of continuous incompleteness warns at most once every five
+  minutes; an incomplete assembly after the 3/4-epoch backstop (or after the
+  freeze is already visible locally) warns immediately. A warned period emits
+  one info-level recovery transition. `EverythingExcluded`
+  retains its immediate, once-per-epoch error and
+  `ika_off_chain_assembly_wedged` signal. This severity-only backstop compares
+  the chain-published epoch timestamps with local unix time; it does not feed
+  the consensus-clock freeze decision or change any retry behavior.
 - The **chain view** of the next committee (membership + stake, no
   crypto material) is published on a separate watch channel as soon as
   Sui has it. It deliberately precedes the assembled view: a joiner only

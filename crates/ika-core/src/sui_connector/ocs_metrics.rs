@@ -56,6 +56,9 @@ pub struct OcsMetrics {
     pub proof_verify_total: IntCounterVec, // labels: ["kind"]
     pub proof_verify_failures_total: IntCounterVec, // labels: ["kind", "reason"]
     pub high_water_violations_total: IntCounter,
+    /// Unix timestamp of the latest successfully verified read served through
+    /// an untrusted relay, or zero until the first success in this process.
+    pub last_successful_relay_timestamp_seconds: IntGauge,
     /// Cache-first verified-object reads, by outcome (`hit` served from the
     /// locally pusher-populated cache; `miss` fell through to the network).
     /// Only incremented on sui-state-direct (the cache is complete there).
@@ -157,6 +160,12 @@ impl OcsMetrics {
             high_water_violations_total: register_int_counter_with_registry!(
                 "ika_ocs_high_water_violations_total",
                 "Per-object version-monotonicity violations: relay served an older valid version of a tracked object",
+                registry,
+            )
+            .unwrap(),
+            last_successful_relay_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_ocs_last_successful_relay_timestamp_seconds",
+                "Unix timestamp of the latest OCS relay read that completed proof verification successfully in this process; 0 until the first success",
                 registry,
             )
             .unwrap(),

@@ -1017,6 +1017,7 @@ pub enum OffChainMpcDataAssembly {
     Complete(Box<OffChainCommitteeBundles>),
     Incomplete {
         missing: Vec<AuthorityName>,
+        reason: OffChainAssemblyMissingReason,
     },
     /// Permanent for this epoch: the freeze partition excluded EVERY
     /// requested committee member, so there is no attested mpc_data to
@@ -1026,6 +1027,35 @@ pub enum OffChainMpcDataAssembly {
     /// escalates this to `error!` instead of retrying it as a transient
     /// `Incomplete` miss.
     EverythingExcluded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OffChainAssemblyMissingReason {
+    Announcement,
+    BlobMissingOrInvalid,
+    SourceUnavailable,
+    NoInput,
+    EverythingExcluded,
+}
+
+impl OffChainAssemblyMissingReason {
+    pub const ALL: [Self; 5] = [
+        Self::Announcement,
+        Self::BlobMissingOrInvalid,
+        Self::SourceUnavailable,
+        Self::NoInput,
+        Self::EverythingExcluded,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Announcement => "announcement",
+            Self::BlobMissingOrInvalid => "blob_missing_or_invalid",
+            Self::SourceUnavailable => "source_unavailable",
+            Self::NoInput => "no_input",
+            Self::EverythingExcluded => "everything_excluded",
+        }
+    }
 }
 
 /// Tries to assemble a committee's class-groups public-keys-and-
@@ -1105,6 +1135,7 @@ where
     if !saw_any {
         return OffChainMpcDataAssembly::Incomplete {
             missing: Vec::new(),
+            reason: OffChainAssemblyMissingReason::NoInput,
         };
     }
     if missing.is_empty() {
@@ -1116,7 +1147,10 @@ where
             vss_hpke,
         }))
     } else {
-        OffChainMpcDataAssembly::Incomplete { missing }
+        OffChainMpcDataAssembly::Incomplete {
+            missing,
+            reason: OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+        }
     }
 }
 
@@ -1386,6 +1420,7 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             // caller retries or falls back per its own policy.
             return OffChainMpcDataAssembly::Incomplete {
                 missing: committee_authorities.to_vec(),
+                reason: OffChainAssemblyMissingReason::SourceUnavailable,
             };
         };
         let frozen = store
@@ -1403,7 +1438,10 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             }) {
                 AssemblyInputDecision::Pairs(pairs) => pairs,
                 AssemblyInputDecision::AnnouncementMissing(missing) => {
-                    return OffChainMpcDataAssembly::Incomplete { missing };
+                    return OffChainMpcDataAssembly::Incomplete {
+                        missing,
+                        reason: OffChainAssemblyMissingReason::Announcement,
+                    };
                 }
                 AssemblyInputDecision::EverythingExcluded => {
                     return OffChainMpcDataAssembly::EverythingExcluded;
@@ -1430,18 +1468,22 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
                 .expect("assembled_cache lock poisoned") =
                 Some((pairs.clone(), (**bundles).clone()));
         }
-        if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
-            let blob_only_missing: Vec<_> = missing
+        if let OffChainMpcDataAssembly::Incomplete {
+            ref missing,
+            reason,
+        } = result
+        {
+            let blob_only_missing = missing
                 .iter()
                 .filter(|m| pairs.iter().any(|(a, _)| a == *m))
-                .collect();
+                .count();
             tracing::debug!(
                 store_epoch = store.epoch(),
                 requested = committee_authorities.len(),
                 excluded = excluded.len(),
                 announcement_present = pairs.len(),
-                blob_missing_in_perpetual = blob_only_missing.len(),
-                ?blob_only_missing,
+                blob_missing_in_perpetual = blob_only_missing,
+                reason = reason.label(),
                 "off-chain validator-mpc_data assembly incomplete; \
                  waiting for P2P propagation to converge"
             );
@@ -2533,7 +2575,7 @@ mod tests {
                 store.get(d).cloned()
             });
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert_eq!(missing, vec![name_b]);
             }
             other => panic!("expected Incomplete, got {other:?}"),
@@ -2734,7 +2776,7 @@ mod tests {
         let outcome =
             assemble_committee_mpc_data_off_chain(std::iter::empty(), |d| store.get(d).cloned());
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert!(
                     missing.is_empty(),
                     "pure helper has no committee context; missing is empty"
@@ -2761,7 +2803,7 @@ mod tests {
             store.get(d).cloned()
         });
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert_eq!(missing, vec![name]);
             }
             other => panic!("expected Incomplete, got {other:?}"),

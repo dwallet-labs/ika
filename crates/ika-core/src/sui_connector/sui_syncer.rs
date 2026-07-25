@@ -7,6 +7,7 @@ use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
+use crate::validator_metadata::OffChainAssemblyMissingReason;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
@@ -26,6 +27,7 @@ use mysten_metrics::spawn_logged_monitored_task;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use sui_types::base_types::ObjectID;
 use sui_types::{Identifier, event::EventID};
@@ -57,6 +59,105 @@ struct AssemblyLogState {
     /// already logged at error — repeats demote to debug (the
     /// `off_chain_assembly_wedged` gauge carries the ongoing state).
     wedge_logged_for_epoch: Option<EpochId>,
+    /// Latest incomplete outcome passed back to the outer retry loop without
+    /// retaining any authority identifier.
+    last_incomplete: Option<(usize, OffChainAssemblyMissingReason)>,
+}
+
+const ASSEMBLY_STALL_WARN_AFTER: Duration = Duration::from_secs(300);
+const ASSEMBLY_STALL_WARN_INTERVAL: Duration = Duration::from_secs(300);
+
+#[derive(Debug, Eq, PartialEq)]
+enum AssemblyHealthAction {
+    None,
+    Warn {
+        duration_seconds: u64,
+        consecutive_ticks: u64,
+        missing: usize,
+        reason: OffChainAssemblyMissingReason,
+        post_deadline: bool,
+    },
+    Recovered {
+        duration_seconds: u64,
+        consecutive_ticks: u64,
+    },
+}
+
+#[derive(Default)]
+struct AssemblyHealthState {
+    incomplete_since: Option<time::Instant>,
+    consecutive_ticks: u64,
+    warning_active: bool,
+    last_warning: Option<time::Instant>,
+}
+
+impl AssemblyHealthState {
+    fn record_incomplete(
+        &mut self,
+        now: time::Instant,
+        missing: usize,
+        reason: OffChainAssemblyMissingReason,
+        post_deadline: bool,
+    ) -> AssemblyHealthAction {
+        let incomplete_since = *self.incomplete_since.get_or_insert(now);
+        self.consecutive_ticks += 1;
+        let duration = now.duration_since(incomplete_since);
+        let warning_due = post_deadline || duration >= ASSEMBLY_STALL_WARN_AFTER;
+        let interval_elapsed = self
+            .last_warning
+            .is_none_or(|last| now.duration_since(last) >= ASSEMBLY_STALL_WARN_INTERVAL);
+        if warning_due && interval_elapsed {
+            self.warning_active = true;
+            self.last_warning = Some(now);
+            AssemblyHealthAction::Warn {
+                duration_seconds: duration.as_secs(),
+                consecutive_ticks: self.consecutive_ticks,
+                missing,
+                reason,
+                post_deadline,
+            }
+        } else {
+            AssemblyHealthAction::None
+        }
+    }
+
+    fn record_success(&mut self, now: time::Instant) -> AssemblyHealthAction {
+        let action = if self.warning_active {
+            AssemblyHealthAction::Recovered {
+                duration_seconds: self
+                    .incomplete_since
+                    .map_or(0, |started| now.duration_since(started).as_secs()),
+                consecutive_ticks: self.consecutive_ticks,
+            }
+        } else {
+            AssemblyHealthAction::None
+        };
+        self.incomplete_since = None;
+        self.consecutive_ticks = 0;
+        self.warning_active = false;
+        self.last_warning = None;
+        action
+    }
+
+    fn duration_seconds(&self, now: time::Instant) -> u64 {
+        self.incomplete_since
+            .map_or(0, |started| now.duration_since(started).as_secs())
+    }
+}
+
+fn set_assembly_missing_metrics(
+    metrics: &SuiConnectorMetrics,
+    current: Option<(OffChainAssemblyMissingReason, usize)>,
+) {
+    for reason in OffChainAssemblyMissingReason::ALL {
+        let count = current
+            .filter(|(current_reason, _)| *current_reason == reason)
+            .map_or(0, |(_, count)| count as i64);
+        metrics
+            .off_chain_assembly_missing
+            .with_label_values(&[reason.label()])
+            .set(count);
+    }
 }
 
 impl<C> SuiSyncer<C>
@@ -386,11 +487,7 @@ where
         // of the immutable frozen set, so re-assembling and re-sending
         // every tick is pure waste — skip until the epoch advances.
         let mut final_committee_sent_for_epoch: Option<EpochId> = None;
-        // Consecutive ticks the off-chain assembly returned Incomplete —
-        // expected benign retry while announcements/blobs converge, so
-        // the per-tick log is debug; escalate to warn every 30th
-        // consecutive tick so a genuine stall still surfaces.
-        let mut consecutive_incomplete_ticks: u64 = 0;
+        let mut assembly_health = AssemblyHealthState::default();
         // Dedup/latch state for the assembly logging inside `new_committee`.
         let mut assembly_log_state = AssemblyLogState::default();
         // Last `(epoch, frozen)` committee send logged at info — the
@@ -518,6 +615,14 @@ where
             let frozen_at_assembly = off_chain_mpc_data_snapshot
                 .as_ref()
                 .is_some_and(|source| source.is_frozen());
+            let assembly_backstop_ms = system_inner
+                .epoch_start_timestamp_ms()
+                .saturating_add(system_inner.epoch_duration_ms().saturating_mul(3) / 4);
+            let post_deadline = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                >= u128::from(assembly_backstop_ms);
             let (committee, next_epoch_bundles) = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
@@ -533,28 +638,80 @@ where
             .await
             {
                 Ok(committee_and_bundles) => {
-                    consecutive_incomplete_ticks = 0;
+                    let now = time::Instant::now();
+                    metrics.off_chain_assembly_incomplete.set(0);
+                    metrics
+                        .off_chain_assembly_consecutive_incomplete_ticks
+                        .set(0);
+                    metrics
+                        .off_chain_assembly_incomplete_duration_seconds
+                        .set(0);
+                    set_assembly_missing_metrics(&metrics, None);
+                    if committee_and_bundles.1.is_some() {
+                        metrics
+                            .off_chain_assembly_last_success_timestamp_seconds
+                            .set(
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64,
+                            );
+                    }
+                    if let AssemblyHealthAction::Recovered {
+                        duration_seconds,
+                        consecutive_ticks,
+                    } = assembly_health.record_success(now)
+                    {
+                        info!(
+                            duration_seconds,
+                            consecutive_ticks, "off-chain validator-mpc_data assembly recovered"
+                        );
+                    }
                     committee_and_bundles
                 }
-                Err(e @ DwalletMPCError::OffChainAssemblyIncomplete { .. }) => {
-                    // Expected per-tick retry while the off-chain pipeline
-                    // converges (every epoch, even with zero churn) — the
-                    // assembly outcome was already logged inside
-                    // `new_committee`. Demote the per-tick wrapper to
-                    // debug; escalate every 30th consecutive tick so a
-                    // genuine stall still surfaces at warn.
-                    consecutive_incomplete_ticks += 1;
+                Err(DwalletMPCError::OffChainAssemblyIncomplete { .. }) => {
+                    let now = time::Instant::now();
+                    let (missing, reason) = assembly_log_state
+                        .last_incomplete
+                        .unwrap_or((0, OffChainAssemblyMissingReason::NoInput));
+                    let action = assembly_health.record_incomplete(
+                        now,
+                        missing,
+                        reason,
+                        post_deadline || frozen_at_assembly,
+                    );
                     metrics.off_chain_assembly_incomplete_ticks_total.inc();
-                    if consecutive_incomplete_ticks.is_multiple_of(30) {
+                    metrics.off_chain_assembly_incomplete.set(1);
+                    metrics
+                        .off_chain_assembly_consecutive_incomplete_ticks
+                        .set(assembly_health.consecutive_ticks as i64);
+                    metrics
+                        .off_chain_assembly_incomplete_duration_seconds
+                        .set(assembly_health.duration_seconds(now) as i64);
+                    set_assembly_missing_metrics(&metrics, Some((reason, missing)));
+                    if let AssemblyHealthAction::Warn {
+                        duration_seconds,
+                        consecutive_ticks,
+                        missing,
+                        reason,
+                        post_deadline,
+                    } = action
+                        && reason != OffChainAssemblyMissingReason::EverythingExcluded
+                    {
                         warn!(
-                            consecutive_incomplete_ticks,
-                            "off-chain validator-mpc_data assembly still incomplete after \
-                             many consecutive sync ticks: {e}"
+                            duration_seconds,
+                            consecutive_incomplete_ticks = consecutive_ticks,
+                            missing,
+                            reason = reason.label(),
+                            post_deadline,
+                            "off-chain validator-mpc_data assembly is persistently incomplete"
                         );
                     } else {
                         debug!(
-                            consecutive_incomplete_ticks,
-                            "failed to initiate the next committee: {e}"
+                            consecutive_incomplete_ticks = assembly_health.consecutive_ticks,
+                            missing,
+                            reason = reason.label(),
+                            "off-chain validator-mpc_data assembly incomplete; retrying"
                         );
                     }
                     continue;
@@ -633,6 +790,7 @@ where
                 committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {
                 crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
+                    log_state.last_incomplete = None;
                     metrics.off_chain_assembly_wedged.set(0);
                     // Pre-freeze, the assembly re-runs (and re-succeeds)
                     // every sync tick; log at info only when the assembled
@@ -687,7 +845,11 @@ where
                     );
                     return Ok((committee, Some(*bundles)));
                 }
-                crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
+                crate::validator_metadata::OffChainMpcDataAssembly::Incomplete {
+                    missing,
+                    reason,
+                } => {
+                    log_state.last_incomplete = Some((missing.len(), reason));
                     // There is NO chain fallback. The off-chain pipeline
                     // (consensus announcements + P2P blob delivery +
                     // attestation-tally freeze) is the only path; missing
@@ -699,7 +861,7 @@ where
                     debug!(
                         epoch,
                         missing = missing.len(),
-                        ?missing,
+                        reason = reason.label(),
                         "off-chain validator-mpc_data assembly incomplete; \
                          no chain fallback — retrying on next sync tick"
                     );
@@ -725,6 +887,10 @@ where
                         // `off_chain_assembly_wedged` gauge carries the
                         // ongoing state for alerting.
                         metrics.off_chain_assembly_wedged.set(1);
+                        log_state.last_incomplete = Some((
+                            authorities.len(),
+                            OffChainAssemblyMissingReason::EverythingExcluded,
+                        ));
                         if log_state.wedge_logged_for_epoch != Some(epoch) {
                             error!(
                                 epoch,
@@ -1570,6 +1736,112 @@ fn overlay_network_key_data(
 mod tests {
     use super::*;
     use crate::validator_metadata::StaticNetworkKeyBlobSource;
+
+    #[test]
+    fn assembly_health_warns_on_sustained_incompleteness_and_recovers_once() {
+        let start = time::Instant::now();
+        let mut state = AssemblyHealthState::default();
+        assert_eq!(
+            state.record_incomplete(start, 1, OffChainAssemblyMissingReason::Announcement, false,),
+            AssemblyHealthAction::None
+        );
+        assert_eq!(
+            state.record_incomplete(
+                start + ASSEMBLY_STALL_WARN_AFTER,
+                2,
+                OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+                false,
+            ),
+            AssemblyHealthAction::Warn {
+                duration_seconds: ASSEMBLY_STALL_WARN_AFTER.as_secs(),
+                consecutive_ticks: 2,
+                missing: 2,
+                reason: OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+                post_deadline: false,
+            }
+        );
+        assert_eq!(
+            state.record_incomplete(
+                start + ASSEMBLY_STALL_WARN_AFTER + Duration::from_secs(1),
+                2,
+                OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+                false,
+            ),
+            AssemblyHealthAction::None
+        );
+        assert_eq!(
+            state.record_success(start + ASSEMBLY_STALL_WARN_AFTER + Duration::from_secs(2)),
+            AssemblyHealthAction::Recovered {
+                duration_seconds: ASSEMBLY_STALL_WARN_AFTER.as_secs() + 2,
+                consecutive_ticks: 3,
+            }
+        );
+        assert_eq!(
+            state.record_success(start + ASSEMBLY_STALL_WARN_AFTER + Duration::from_secs(3)),
+            AssemblyHealthAction::None
+        );
+    }
+
+    #[test]
+    fn assembly_health_escalates_post_deadline_without_warning_on_normal_convergence() {
+        let start = time::Instant::now();
+        let mut state = AssemblyHealthState::default();
+        assert_eq!(
+            state.record_incomplete(start, 1, OffChainAssemblyMissingReason::Announcement, false,),
+            AssemblyHealthAction::None
+        );
+        assert_eq!(
+            state.record_success(start + Duration::from_secs(1)),
+            AssemblyHealthAction::None
+        );
+        assert_eq!(
+            state.record_incomplete(
+                start + Duration::from_secs(2),
+                1,
+                OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+                true,
+            ),
+            AssemblyHealthAction::Warn {
+                duration_seconds: 0,
+                consecutive_ticks: 1,
+                missing: 1,
+                reason: OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+                post_deadline: true,
+            }
+        );
+    }
+
+    #[test]
+    fn assembly_missing_metrics_keep_fixed_categories_and_reset() {
+        let metrics = SuiConnectorMetrics::new_for_testing();
+        set_assembly_missing_metrics(
+            &metrics,
+            Some((OffChainAssemblyMissingReason::BlobMissingOrInvalid, 3)),
+        );
+        for reason in OffChainAssemblyMissingReason::ALL {
+            assert_eq!(
+                metrics
+                    .off_chain_assembly_missing
+                    .with_label_values(&[reason.label()])
+                    .get(),
+                if reason == OffChainAssemblyMissingReason::BlobMissingOrInvalid {
+                    3
+                } else {
+                    0
+                }
+            );
+        }
+        set_assembly_missing_metrics(&metrics, None);
+        for reason in OffChainAssemblyMissingReason::ALL {
+            assert_eq!(
+                metrics
+                    .off_chain_assembly_missing
+                    .with_label_values(&[reason.label()])
+                    .get(),
+                0
+            );
+        }
+    }
 
     fn chain_data(key_id: ObjectID) -> DWalletNetworkEncryptionKeyData {
         DWalletNetworkEncryptionKeyData {

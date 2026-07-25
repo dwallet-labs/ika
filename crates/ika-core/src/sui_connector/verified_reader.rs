@@ -21,7 +21,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::{Mutex, RwLock};
 use sui_light_client::proof::base::{
@@ -811,6 +811,14 @@ impl OcsVerifiedReader {
                     .proof_verify_total
                     .with_label_values(&[kind])
                     .inc();
+                if !self.cache_first {
+                    self.metrics.last_successful_relay_timestamp_seconds.set(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64,
+                    );
+                }
             }
             Err(e) => self.record_verify_failure(kind, e),
         }
@@ -1886,11 +1894,20 @@ mod tests {
 
         // currency == Unknown -> the shadow cache is NOT served; the network read
         // returns the fresh v6, not the stale cached v5.
+        assert_eq!(
+            metrics.last_successful_relay_timestamp_seconds.get(),
+            0,
+            "restart must not invent a relay-success timestamp"
+        );
         let read = reader.verified_anchor_object(id).await.unwrap();
         assert_eq!(
             read.object.version(),
             SequenceNumber::from(6u64),
             "without a Current verdict the mirror reads the network, not the stale cache"
+        );
+        assert!(
+            metrics.last_successful_relay_timestamp_seconds.get() > 0,
+            "a successfully verified relay read updates the last-success timestamp"
         );
     }
 

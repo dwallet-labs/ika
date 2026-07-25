@@ -56,6 +56,26 @@ pub struct SuiConnectorMetrics {
     /// announcements/blobs converge; a stall shows as sustained growth).
     pub(crate) off_chain_assembly_incomplete_ticks_total: IntCounter,
 
+    /// 1 while the latest off-chain assembly attempt is incomplete, 0 after
+    /// successful assembly.
+    pub(crate) off_chain_assembly_incomplete: IntGauge,
+
+    /// Number of consecutive incomplete assembly ticks; reset to zero on
+    /// success.
+    pub(crate) off_chain_assembly_consecutive_incomplete_ticks: IntGauge,
+
+    /// Whole seconds since the current incomplete period began; reset to zero
+    /// on success.
+    pub(crate) off_chain_assembly_incomplete_duration_seconds: IntGauge,
+
+    /// Missing members in the latest incomplete attempt by a fixed reason
+    /// enum. Authority identifiers are not labels.
+    pub(crate) off_chain_assembly_missing: IntGaugeVec,
+
+    /// Unix timestamp of the latest successful off-chain assembly, or zero
+    /// until the first success in this process.
+    pub(crate) off_chain_assembly_last_success_timestamp_seconds: IntGauge,
+
     /// 1 while the off-chain assembly is PERMANENTLY incomplete (the
     /// freeze excluded every committee member — reconfiguration into the
     /// next epoch is wedged); cleared on the next successful assembly.
@@ -210,6 +230,40 @@ impl SuiConnectorMetrics {
                 registry,
             )
             .unwrap(),
+            off_chain_assembly_incomplete: register_int_gauge_with_registry!(
+                "ika_off_chain_assembly_incomplete",
+                "1 while the latest off-chain validator-mpc_data assembly attempt is incomplete; 0 after success",
+                registry,
+            )
+            .unwrap(),
+            off_chain_assembly_consecutive_incomplete_ticks:
+                register_int_gauge_with_registry!(
+                    "ika_off_chain_assembly_consecutive_incomplete_ticks",
+                    "Consecutive incomplete off-chain validator-mpc_data assembly ticks; reset to 0 on success",
+                    registry,
+                )
+                .unwrap(),
+            off_chain_assembly_incomplete_duration_seconds:
+                register_int_gauge_with_registry!(
+                    "ika_off_chain_assembly_incomplete_duration_seconds",
+                    "Seconds since the current off-chain validator-mpc_data assembly incomplete period began; reset to 0 on success",
+                    registry,
+                )
+                .unwrap(),
+            off_chain_assembly_missing: register_int_gauge_vec_with_registry!(
+                "ika_off_chain_assembly_missing",
+                "Members missing from the latest incomplete off-chain validator-mpc_data assembly attempt by bounded reason",
+                &["reason"],
+                registry,
+            )
+            .unwrap(),
+            off_chain_assembly_last_success_timestamp_seconds:
+                register_int_gauge_with_registry!(
+                    "ika_off_chain_assembly_last_success_timestamp_seconds",
+                    "Unix timestamp of the latest successful off-chain validator-mpc_data assembly in this process; 0 until the first success",
+                    registry,
+                )
+                .unwrap(),
             off_chain_assembly_wedged: register_int_gauge_with_registry!(
                 "ika_off_chain_assembly_wedged",
                 "1 while the off-chain validator-mpc_data assembly is permanently incomplete",
@@ -277,11 +331,62 @@ impl SuiConnectorMetrics {
             )
             .unwrap(),
         };
+        for reason in crate::validator_metadata::OffChainAssemblyMissingReason::ALL {
+            this.off_chain_assembly_missing
+                .with_label_values(&[reason.label()])
+                .set(0);
+        }
         Arc::new(this)
     }
 
     pub fn new_for_testing() -> Arc<Self> {
         let registry = Registry::new();
         Self::new(&registry)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+    use crate::epoch::epoch_metrics::EpochMetrics;
+    use crate::sui_connector::ocs_metrics::OcsMetrics;
+    use crate::validator_metadata::OffChainAssemblyMissingReason;
+
+    #[test]
+    fn operational_metrics_register_together_with_safe_initial_values() {
+        let registry = Registry::new();
+        let metrics = SuiConnectorMetrics::new(&registry);
+        let ocs_metrics = OcsMetrics::new(&registry);
+        let _epoch_metrics = EpochMetrics::new(&registry);
+        let _mpc_metrics = DWalletMPCMetrics::new(&registry);
+
+        assert_eq!(metrics.off_chain_assembly_incomplete.get(), 0);
+        assert_eq!(
+            metrics
+                .off_chain_assembly_consecutive_incomplete_ticks
+                .get(),
+            0
+        );
+        assert_eq!(
+            metrics.off_chain_assembly_incomplete_duration_seconds.get(),
+            0
+        );
+        assert_eq!(
+            metrics
+                .off_chain_assembly_last_success_timestamp_seconds
+                .get(),
+            0
+        );
+        assert_eq!(ocs_metrics.last_successful_relay_timestamp_seconds.get(), 0);
+        for reason in OffChainAssemblyMissingReason::ALL {
+            assert_eq!(
+                metrics
+                    .off_chain_assembly_missing
+                    .with_label_values(&[reason.label()])
+                    .get(),
+                0
+            );
+        }
     }
 }

@@ -4466,6 +4466,9 @@ impl AuthorityPerEpochStore {
         self.metrics
             .consensus_last_committed_leader_round
             .set(consensus_commit_info.round as i64);
+        self.metrics
+            .consensus_last_committed_timestamp_seconds
+            .set((consensus_commit_info.timestamp / 1000) as i64);
 
         let mut verified_dwallet_checkpoint_certificates =
             VecDeque::with_capacity(transactions.len() + 1);
@@ -6788,6 +6791,10 @@ mod tests {
             -1
         );
         assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            0
+        );
+        assert_eq!(
             registry_gauge(
                 &registry,
                 "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
@@ -6847,6 +6854,15 @@ mod tests {
             100
         );
         assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            100,
+            "scraping must not change the last-commit timestamp"
+        );
+        assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signal_stake"),
             3
         );
@@ -6865,6 +6881,10 @@ mod tests {
         );
         assert_eq!(
             registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            (100 + grace - 1) as i64
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
             (100 + grace - 1) as i64
         );
         assert!(!epoch_store.is_mpc_data_frozen().unwrap());
