@@ -973,10 +973,18 @@ impl NodeConfig {
         self.protocol_key_pair().public().into()
     }
 
-    /// The node's own `AuthorityName` (committee identity): its BLS protocol
-    /// public key.
-    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
-        self.protocol_public_key()
+    /// The node's own `AuthorityName` (committee identity) under the given
+    /// identity basis: the zero-padded consensus Ed25519 key past the
+    /// on-chain authority-name flip epoch, the BLS protocol key before it.
+    /// Callers decide the basis from the epoch the name is FOR (usually
+    /// `epoch_start_state.consensus_key_identity()`) — a node crossing the
+    /// flip boundary legitimately has different names in consecutive epochs.
+    pub fn authority_name(&self, consensus_key_identity: bool) -> AuthorityPublicKeyBytes {
+        if consensus_key_identity {
+            AuthorityPublicKeyBytes::from_consensus_key(self.consensus_key_pair().public())
+        } else {
+            self.protocol_public_key()
+        }
     }
 
     pub fn db_path(&self) -> PathBuf {

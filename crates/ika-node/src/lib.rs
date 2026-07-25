@@ -47,7 +47,9 @@ use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
 };
-use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
+use ika_core::authority::epoch_start_configuration::{
+    EpochStartConfigTrait, EpochStartConfiguration,
+};
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
@@ -703,8 +705,14 @@ impl IkaNode {
 
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
 
+        // The node's committee identity for THIS epoch — basis decided by the
+        // epoch's own record (the on-chain flip marker), never the protocol
+        // version.
+        let consensus_key_identity = epoch_start_configuration
+            .epoch_start_state()
+            .consensus_key_identity();
         let epoch_store = AuthorityPerEpochStore::new(
-            config.authority_name(),
+            config.authority_name(consensus_key_identity),
             committee_arc.clone(),
             &config.db_path().join("store"),
             Some(epoch_options.options),
@@ -1394,12 +1402,23 @@ impl IkaNode {
                     && next_epoch == epoch_store.epoch() + 1
                 {
                     let self_name = epoch_store.name;
-                    let in_next = next_committee
+                    // The next committee's names use the NEXT epoch's
+                    // identity basis, which differs from this epoch's at the
+                    // authority-name flip boundary — match either basis and
+                    // announce under the name the next committee actually
+                    // lists (the announcement's `validator` field must live
+                    // in the next epoch's name space).
+                    let self_consensus_name =
+                        AuthorityName::from_consensus_key(consensus_keypair.public());
+                    let next_epoch_self_name = next_committee
                         .voting_rights
                         .iter()
-                        .any(|(name, _)| *name == self_name);
+                        .map(|(name, _)| *name)
+                        .find(|name| *name == self_name || *name == self_consensus_name);
                     let in_current = epoch_store.committee().authority_exists(&self_name);
-                    if in_next && !in_current {
+                    if let Some(next_epoch_self_name) = next_epoch_self_name
+                        && !in_current
+                    {
                         let peer_ids: Vec<anemo::PeerId> = epoch_store
                             .epoch_start_state()
                             .get_authority_names_to_peer_ids()
@@ -1417,6 +1436,15 @@ impl IkaNode {
                             node.p2p_network.clone(),
                             peer_ids,
                         ));
+                        // NOTE(authority-name-flip): the announcement still
+                        // carries the CURRENT-epoch-basis name — the whole
+                        // off-chain announcement/freeze pipeline (providers,
+                        // ready signals, assembly lookups) shares one name
+                        // space per epoch store, and re-keying it to the
+                        // next epoch's basis is the remaining flip work.
+                        // Until then `next_epoch_self_name` is used only for
+                        // membership detection above.
+                        let _ = next_epoch_self_name;
                         let sender = JoinerAnnouncementSender::new(
                             self_name,
                             next_epoch,
@@ -2108,7 +2136,8 @@ impl IkaNode {
             Box::new(SubmitDWalletCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config.authority_name(),
+                authority: config
+                    .authority_name(epoch_store.epoch_start_state().consensus_key_identity()),
                 metrics: checkpoint_metrics.clone(),
             });
 
@@ -2164,7 +2193,8 @@ impl IkaNode {
             Box::new(SubmitSystemCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config.authority_name(),
+                authority: config
+                    .authority_name(epoch_store.epoch_start_state().consensus_key_identity()),
                 metrics: system_checkpoint_metrics.clone(),
             });
 
@@ -3642,7 +3672,9 @@ fn send_trusted_peer_change(
 ) -> Result<(), watch::error::SendError<TrustedPeerChangeEvent>> {
     sender
         .send(TrustedPeerChangeEvent {
-            new_peers: epoch_state_state.get_validator_as_p2p_peers(config.authority_name()),
+            new_peers: epoch_state_state.get_validator_as_p2p_peers(
+                config.authority_name(epoch_state_state.consensus_key_identity()),
+            ),
         })
         .tap_err(|err| {
             warn!(
