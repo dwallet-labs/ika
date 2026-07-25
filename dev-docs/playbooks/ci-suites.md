@@ -118,9 +118,13 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout
 # Test-test the gate with the compiled-in, feature-gated one-validator
 # reconfiguration-message fault. This run is expected to fail; its logs must
 # show the exact zero-malicious or output-convergence assertion firing.
-# (The standalone `malicious_v125` scenario is the local counterpart: honest
-# v1.2.5 committee + one faulty current validator, green = detection works.)
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout -f test_testing_fault=true
+
+# The standalone test-testing counterpart (green = detection works): honest
+# v1.2.5 committee + one faulty current validator (built in-workflow with
+# --features test-testing); honest validators must convict it and reshare
+# without it (committee dips to 3).
+gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v125
 
 # v125_rollout's churn counterpart: full swap, then a mirrored OCS joiner
 # folds into the reshared v1.2.5-origin key (4→5) and a shrink reshare
@@ -150,6 +154,7 @@ notifier + a validator committee:
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
 | `v125_rollout` | **one current + three literal v1.2.5**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `v125_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.5-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
+| `malicious_v125` | three literal v1.2.5 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
 | `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
 
 ### CI runner resources

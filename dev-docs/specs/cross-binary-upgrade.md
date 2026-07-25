@@ -211,7 +211,8 @@ drives them across epochs. The surviving scenarios (current build only):
   convict it and reshare without it, asserted via the malicious-actors
   gauge. Green = the compatibility gates above are not vacuous. The
   workflow's `test_testing_fault` input runs the same fault through
-  `v125_rollout` itself (that run must fail closed).
+  `v125_rollout` itself (that run must fail closed); `malicious_v125` is
+  also directly dispatchable (the workflow builds the faulty binary).
 - `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
   JSON-RPC-only) YAML configs for every role, through a full lifecycle.
 

@@ -32,6 +32,12 @@ name: Upgrade Test
 #                  joiner folds into the reshared v1.2.5-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
 #                  defaults as v125_rollout.
+#   malicious_v125 — test-testing counterpart: honest literal-v1.2.5
+#                  committee + ONE current validator built with the
+#                  test-testing reconfiguration-message fault; honest
+#                  validators must convict it and reshare without it
+#                  (committee dips to 3). Green = the v125 gates are not
+#                  vacuous. Same OLD defaults as v125_rollout.
 #   legacy_config — config-compat rehearsal: the current build on old-style
 #                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
@@ -203,7 +209,7 @@ jobs:
           TEST: ${{ inputs.test || 'v125_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_churn legacy_config"
+          ALL="smoke workload v125_rollout v125_churn malicious_v125 legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -318,6 +324,7 @@ jobs:
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             v125_rollout) RUN_FLAG=RUN_V125_ROLLOUT ;;
             v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
+            malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
@@ -326,7 +333,7 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v125_rollout | v125_churn)
+            v125_rollout | v125_churn | malicious_v125)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -355,7 +362,7 @@ jobs:
           TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if { [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "v125_churn" ]; } && [ "$USE_MOCKS" = "true" ]; then
+          if { [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "v125_churn" ] || [ "$TEST_NAME" = "malicious_v125" ]; } && [ "$USE_MOCKS" = "true" ]; then
             echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
             exit 1
           fi
@@ -384,10 +391,20 @@ jobs:
           # testnet/mainnet networks, so it never fires on this localnet.
           cargo build --release $NODE_FEATURES $NODE_FAULT_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika $IKA_FEATURES
+          if [ "$TEST_NAME" = "malicious_v125" ]; then
+            # The deliberately-faulty validator: current source with the
+            # feature-gated reconfiguration-message fault compiled IN. Built
+            # after the normal binaries and copied aside (the feature build
+            # overwrites target/release/ika-validator; malicious_v125 never
+            # reads the honest current validator, so the overwrite is inert).
+            cargo build --release --features test-testing -p ika-node --bin ika-validator
+            cp target/release/ika-validator "$GITHUB_WORKSPACE/ika-validator-faulty"
+            echo "FAULTY_BIN=$GITHUB_WORKSPACE/ika-validator-faulty" >> "$GITHUB_ENV"
+          fi
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_churn' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
