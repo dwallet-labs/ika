@@ -174,12 +174,13 @@ scenarios that enforced this gate for the v1.1.8→v4 and v1.2.1→v5 rollouts
 (`v118_upgrade`, `v118_churn`, `v118_mixed_rollout`, `v121_rollout`,
 `cross_binary`, `malicious_cross_binary`) were retired with protocol v3/v4
 support — the current binary (`MIN_PROTOCOL_VERSION = 5`) shares no protocol
-version with those old binaries, so their topologies cannot boot. Both
-rollouts completed on the deployed networks. The next release that must
-interoperate with a deployed binary (all v5-capable) needs this machinery
-rebuilt from git history against a v5-capable old ref; the gate-evidence
-methodology below (quorum/straggler classification) is preserved for that
-rebuild.
+version with those old binaries, so their topologies cannot boot; both
+rollouts completed on the deployed networks. Their successor is
+`tests/v125_rollout.rs`: the same one-upgraded-validator mixed topology
+against the literal **v1.2.5** release (deployed on mainnet AND testnet,
+protocol v5), where the boundary under test is a pure binary swap. It is
+the PR-gating scenario and the one a release manager dispatches against
+every release tag.
 
 ## How this is verified
 
@@ -191,11 +192,16 @@ drives them across epochs. The surviving scenarios (current build only):
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a full user
   DKG → Presign → Sign completing on-chain at genesis protocol v5.
+- `tests/v125_rollout.rs` — the deployed-release compatibility gate: boot
+  the literal v1.2.5 release at genesis protocol v5, upgrade exactly one
+  of four validators to the current build, require two mixed network-key
+  reshares to converge byte-identically per authority with zero malicious
+  reports and a served user lifecycle after each, then swap the remaining
+  validators and converge again.
 - `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
   JSON-RPC-only) YAML configs for every role, through a full lifecycle.
 
-The retired mixed-rollout gate's evidence methodology — preserved for the
-next rolling-upgrade rehearsal — weighed the upgraded validator's output: production
+How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the
 quorum discards its own result without submitting it, and ANY honest

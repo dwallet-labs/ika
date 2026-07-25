@@ -8,18 +8,25 @@ name: Upgrade Test
 # protocol-version upgrade contract (see
 # dev-docs/specs/cross-binary-upgrade.md).
 #
-# Manual dispatch can run any scenario. Relevant pull requests and release-tag
-# workflows run only `workload`, avoiding the full expensive matrix on
-# unrelated changes. (The historical cross-binary / v1.1.8 / v1.2.1 rollout
-# rehearsals were retired when protocol v3/v4 support was removed — the
-# current binary shares no protocol version with those literal old binaries.
-# Rebuild that machinery from git history when the next version boundary
-# needs a rolling-upgrade rehearsal.) Pick the scenario with the `test` input:
+# Manual dispatch can run any scenario. Relevant pull requests run only
+# `v125_rollout`, avoiding the full expensive matrix on unrelated changes.
+# (The v3/v4-era rehearsals — cross_binary, v118_*, v121_rollout — were
+# retired when protocol v3/v4 support was removed; v125_rollout is their
+# successor against the CURRENTLY deployed release.) Pick the scenario with
+# the `test` input:
 #
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
 #                  Needs only the current build. Fastest.
 #   workload     — full user DKG -> Presign -> Sign on-chain at genesis
 #                  protocol v5. Current build only.
+#   v125_rollout — the deployed-release compatibility gate: boot the literal
+#                  v1.2.5 release (deployed on mainnet AND testnet, protocol
+#                  v5), upgrade exactly one validator to the current build,
+#                  converge two mixed aggregated reshares with zero malicious
+#                  reports and per-authority output byte-equality, then swap
+#                  the rest and converge again — a pure binary swap, no
+#                  protocol transition. Defaults to
+#                  old_ref=release/mainnet-v1.2.5, old_bin_name=ika-validator.
 #   legacy_config — config-compat rehearsal: the current build on old-style
 #                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
@@ -30,10 +37,13 @@ name: Upgrade Test
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
 # `--test` target.
 #
-# Current binaries build with default features — enforcement
-# (enforce-minimum-cpu) is runtime-gated to validators on the ika
+# The OLD binary for v125_rollout is built from `old_ref` in an isolated
+# `git worktree`, at that ref's OWN pinned toolchain (rustup honors the
+# worktree's rust-toolchain.toml). All binaries build with default features —
+# enforcement (enforce-minimum-cpu) is runtime-gated to validators on the ika
 # testnet/mainnet networks, so it is inert on the CI localnet (its ika
-# system object maps to Chain::Unknown).
+# system object maps to Chain::Unknown), and v1.2.5 already carries the
+# runtime gate.
 
 on:
   pull_request:
@@ -60,11 +70,19 @@ on:
         description: "Scenario or comma-separated scenarios"
         type: string
         required: false
-        default: "workload"
+        default: "v125_rollout"
       candidate_sha:
         description: "Exact release-candidate commit SHA to check out and test"
         type: string
         required: true
+      old_ref:
+        type: string
+        required: false
+        default: ""
+      old_bin_name:
+        type: string
+        required: false
+        default: ""
       epoch_duration_ms:
         type: string
         required: false
@@ -100,8 +118,18 @@ on:
         type: string
         required: false
         default: ""
+      old_ref:
+        description: "Git ref/tag/sha for the OLD binary (empty = per-scenario default; v125_rollout uses release/mainnet-v1.2.5)"
+        type: string
+        required: false
+        default: ""
+      old_bin_name:
+        description: "OLD validator bin name (empty = ika-validator)"
+        type: string
+        required: false
+        default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (v125_rollout requires >=480000; empty = scenario default)"
         type: string
         required: false
         default: ""
@@ -158,10 +186,10 @@ jobs:
     steps:
       - id: pick
         env:
-          TEST: ${{ inputs.test || 'workload' }}
+          TEST: ${{ inputs.test || 'v125_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload legacy_config"
+          ALL="smoke workload v125_rollout legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -267,19 +295,34 @@ jobs:
       - name: Resolve test selection
         env:
           TEST: ${{ matrix.test }}
+          IN_OLD_REF: ${{ inputs.old_ref }}
+          IN_OLD_BIN_NAME: ${{ inputs.old_bin_name }}
         run: |
           set -euo pipefail
           case "$TEST" in
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
+            v125_rollout) RUN_FLAG=RUN_V125_ROLLOUT ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
+          esac
+          # Per-scenario OLD-binary defaults; explicit inputs override (an
+          # empty input falls through to the default via `:=`).
+          OLD_REF="$IN_OLD_REF"
+          OLD_BIN_NAME="$IN_OLD_BIN_NAME"
+          case "$TEST" in
+            v125_rollout)
+              : "${OLD_REF:=release/mainnet-v1.2.5}"
+              : "${OLD_BIN_NAME:=ika-validator}"
+              ;;
           esac
           {
             echo "RUN_FLAG=$RUN_FLAG"
             echo "TEST_NAME=$TEST"
+            echo "OLD_REF=$OLD_REF"
+            echo "OLD_BIN_NAME=$OLD_BIN_NAME"
           } >> "$GITHUB_ENV"
-          echo "test=$TEST flag=$RUN_FLAG"
+          echo "test=$TEST flag=$RUN_FLAG old_ref=${OLD_REF:-<none>} old_bin=${OLD_BIN_NAME:-<none>}"
 
       - name: Build current binaries
         # When heap_profile is on, keep full symbols IN the binary so jeprof can
@@ -296,6 +339,10 @@ jobs:
           USE_MOCKS: ${{ inputs.use_mocks }}
         run: |
           set -euo pipefail
+          if [ "$TEST_NAME" = "v125_rollout" ] && [ "$USE_MOCKS" = "true" ]; then
+            echo "v125_rollout is a rollout gate and must use real cryptography" >&2
+            exit 1
+          fi
           # `use_mocks` builds the binaries with the INSECURE deterministic
           # mocks.
           NODE_FEATURES=""
@@ -313,11 +360,45 @@ jobs:
           cargo build --release -p ika --bin ika $IKA_FEATURES
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
+      - name: Build OLD binary from ${{ env.OLD_REF }}
+        if: ${{ matrix.test == 'v125_rollout' }}
+        run: |
+          set -euo pipefail
+          WT="$GITHUB_WORKSPACE/old-build"
+          git worktree remove --force "$WT" 2>/dev/null || true
+          rm -rf "$WT"
+          # Resolve the requested ref to one immutable commit before creating
+          # the worktree. A tag/branch is normally present only as
+          # origin/<name> or refs/tags/<name>; an arbitrary SHA may need an
+          # explicit fetch.
+          if git rev-parse --verify "${OLD_REF}^{commit}" >/dev/null 2>&1; then
+            OLD_COMMIT=$(git rev-parse --verify "${OLD_REF}^{commit}")
+          elif git rev-parse --verify "origin/${OLD_REF}^{commit}" >/dev/null 2>&1; then
+            OLD_COMMIT=$(git rev-parse --verify "origin/${OLD_REF}^{commit}")
+          else
+            git fetch --no-tags origin "$OLD_REF"
+            OLD_COMMIT=$(git rev-parse --verify "FETCH_HEAD^{commit}")
+          fi
+          test -n "$OLD_COMMIT" || { echo "could not resolve old_ref '$OLD_REF' to a commit" >&2; exit 1; }
+          echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
+          git worktree add --force --detach "$WT" "$OLD_COMMIT"
+          # Build at the OLD ref's own toolchain (rustup reads the worktree's
+          # rust-toolchain.toml). Default features: v1.2.5's
+          # enforce-minimum-cpu is runtime-gated (inert on the CI localnet),
+          # matching its production build.
+          ( cd "$WT" && cargo build --release -p ika-node --bin "$OLD_BIN_NAME" )
+          OLD_BIN="$WT/target/release/$OLD_BIN_NAME"
+          test -x "$OLD_BIN" || { echo "OLD binary missing: $OLD_BIN" >&2; exit 1; }
+          echo "OLD_BIN=$OLD_BIN" >> "$GITHUB_ENV"
+          echo "built OLD binary: $OLD_BIN"
+
       - name: Run ${{ matrix.test }}
         env:
-          # The scenarios read IKA_VALIDATOR_BIN/IKA_NOTIFIER_BIN/IKA_BIN;
-          # the NEW_BIN/NOTIFIER_BIN aliases are kept for harness code that
-          # still reads them. Setting both naming sets is harmless.
+          # smoke/workload/legacy_config read IKA_VALIDATOR_BIN/
+          # IKA_NOTIFIER_BIN/IKA_BIN; v125_rollout reads NEW_BIN/NOTIFIER_BIN/
+          # OLD_BIN/IKA_BIN (OLD_BIN comes from the build step via
+          # $GITHUB_ENV; unset for the others, which ignore it). Setting both
+          # naming sets is harmless — each test reads only its own.
           IKA_VALIDATOR_BIN: ${{ github.workspace }}/target/release/ika-validator
           NEW_BIN: ${{ github.workspace }}/target/release/ika-validator
           IKA_NOTIFIER_BIN: ${{ github.workspace }}/target/release/ika-notifier
@@ -363,8 +444,14 @@ jobs:
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
+          # Keep production pool sizing/timing for the rollout gate. The
+          # reduced-pool override remains a resource concession for the
+          # lighter scenarios, not compatibility evidence.
+          if [ "$TEST_NAME" = "v125_rollout" ]; then
+            unset IKA_ENABLE_SMALL_PRESIGN_POOLS
+          fi
           mkdir -p "$UPGRADE_TEST_DIR"
-          echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN"
+          echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"
           # Resource sampler (CPU + MEMORY) -> resource-sampler.log, BACKGROUNDED
           # so the test runs in the FOREGROUND and its [flow N/total] progress +
           # logs stream LIVE to the step log (via tee), not only the artifact.

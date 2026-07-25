@@ -65,36 +65,32 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 child processes against an external `sui` localnet. Manual dispatch remains
 available. Pull requests that touch MPC, crypto dependencies, serialization,
 protocol configuration, the upgrade harness, or `Cargo.lock` automatically
-run the `workload` scenario rather than the entire matrix.
+run the `v125_rollout` deployed-release gate rather than the entire matrix.
 
 > **The release workflow no longer runs any suite (changed 2026-07-23, PR
 > #1891).** It previously called this workflow with the candidate SHA and
 > blocked tag publication on `v118_mixed_rollout`; that job was removed, so
 > a release tag now builds, uploads and drafts **unconditionally**.
-> Validating a release candidate is a manual step: dispatch this workflow
-> (all three current-build scenarios) plus the cluster and Rust-integration
-> suites against the exact tagged SHA and record the runs in the draft's
-> Validation section (the notes scaffold prompts for it). A release whose
-> notes carry no such record is unvalidated. NOTE: with the rollout
-> rehearsal scenarios retired (below), there is currently NO dispatchable
-> literal-old-binary cross-binary evidence — a release that must
-> interoperate with deployed binaries during a rolling swap needs that
-> machinery rebuilt from git history first.
+> Validating a release candidate is a manual step: dispatch `v125_rollout`
+> (the deployed-release compatibility gate) plus the cluster and
+> Rust-integration suites against the exact tagged SHA and record the runs
+> in the draft's Validation section (the notes scaffold prompts for it). A
+> release whose notes carry no such record is unvalidated.
 
 It is not part of `scheduled-all-suites.yaml`. The contract it verifies is
 [`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
 
-**Retired scenarios (protocol v3/v4 support removal):** the cross-binary /
-literal-old-binary rollout rehearsals — `cross_binary`,
-`malicious_cross_binary`, `v118_upgrade`, `v118_churn`, `v118_mixed_rollout`,
-`v121_rollout` — were deleted when `MIN_PROTOCOL_VERSION` moved to 5: the
-current binary shares no protocol version with those literal old binaries,
-so their topologies cannot boot. They rehearsed the mainnet-v1.1.8→v4 and
-testnet-v1.2.1→v5 rollouts, both long completed. When the next version
-boundary (v6) needs a rolling-upgrade rehearsal, rebuild the OLD-binary
-machinery from git history (this playbook and the workflow before this
-change document it, including the `cross_binary` 96 GiB runner-OOM
-forensics and its infra fix).
+**Retired scenarios (protocol v3/v4 support removal):** the v3/v4-era
+rehearsals — `cross_binary`, `malicious_cross_binary`, `v118_upgrade`,
+`v118_churn`, `v118_mixed_rollout`, `v121_rollout` — were deleted when
+`MIN_PROTOCOL_VERSION` moved to 5: the current binary shares no protocol
+version with those literal old binaries, so their topologies cannot boot.
+They rehearsed the mainnet-v1.1.8→v4 and testnet-v1.2.1→v5 rollouts, both
+completed. Their successor is `v125_rollout` (below), which plays the same
+mixed-committee gate against the CURRENTLY deployed release (v1.2.5, both
+networks, protocol v5) — a pure binary swap with no protocol transition.
+(Historical `cross_binary` 96 GiB runner-OOM forensics and its infra fix:
+this playbook's pre-#1751 history.)
 
 ```bash
 # `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
@@ -111,6 +107,13 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke
 
 # Full user DKG -> Presign -> Sign on-chain (genesis protocol v5).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
+
+# THE DEPLOYED-RELEASE GATE (also the PR default, and the scenario to run
+# by hand on every release tag): boot the literal v1.2.5 release, upgrade
+# one validator to current, converge two mixed aggregated reshares
+# (per-authority byte-equality, zero malicious), then swap the rest.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout
+#   override the old side:  -f old_ref=release/mainnet-v1.2.5 -f old_bin_name=ika-validator
 
 # Old-style (1.1.8-shape, JSON-RPC-only) YAML configs for every role.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=legacy_config
@@ -133,6 +136,7 @@ notifier + a validator committee:
 |---|---|---|
 | `smoke` | current only | process harness reaches epoch 2 |
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
+| `v125_rollout` | **one current + three literal v1.2.5**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
 
 ### CI runner resources
@@ -142,7 +146,8 @@ quota, a **96 GiB pod memory limit**, and no swap. Each idle `ika-validator`
 runs ≈7.5–8 GB RSS, so co-locating many validators approaches the pod limit —
 the deleted `cross_binary` scenario (5–6 validators) reproducibly OOM-killed
 the runner at that limit (`OOMKilled`/137; forensics in this playbook's
-pre-#1751 history). The remaining 4-validator scenarios fit comfortably.
+pre-#1751 history). The current scenarios — including `v125_rollout` — are
+all 4-validator and fit comfortably.
 
 ## Facts that save debugging time
 
