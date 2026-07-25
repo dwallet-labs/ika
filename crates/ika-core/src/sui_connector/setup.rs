@@ -573,6 +573,7 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::random(),
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
+            notifier_gas_from_address_balance: false,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }

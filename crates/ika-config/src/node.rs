@@ -618,6 +618,27 @@ pub struct SuiConnectorConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier_client_key_pair: Option<KeyPairWithPath>,
 
+    /// Pay the notifier's gas from its SUI **Address Balance** (SIP-58)
+    /// instead of owned gas-coin objects. Submissions then carry no gas
+    /// `ObjectRef` at all (`ValidDuring` expiration, empty gas payment), which
+    /// removes the whole class of stale-gas-version wedges the coin path
+    /// fights: the transaction is valid regardless of how far this node's
+    /// fullnode view lags.
+    ///
+    /// Requirements before enabling:
+    /// - The target Sui network must have address-balance gas payments
+    ///   enabled (Sui protocol >= 108 on testnet, >= 124 on mainnet; always
+    ///   on for localnets at max version).
+    /// - The notifier address must hold its SUI in the ADDRESS BALANCE, not
+    ///   (only) in coin objects — deposit via the Sui CLI/SDK balance
+    ///   transfer. Each submission reserves the full gas budget from the
+    ///   balance for the transaction's validity window.
+    ///
+    /// Default `false`: the gas-coin path remains the production default
+    /// until this mode has been canaried on testnet.
+    #[serde(default)]
+    pub notifier_gas_from_address_balance: bool,
+
     /// Override the last processed EventID for sui module `ika_system`.
     /// When set, SuiSyncer will start from this cursor (exclusively) instead of the one in storage.
     /// If the cursor is not found in storage or override, the query will start from genesis.
@@ -1293,6 +1314,7 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::ZERO,
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
+            notifier_gas_from_address_balance: false,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }

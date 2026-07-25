@@ -22,14 +22,25 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
+use move_core_types::ident_str;
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockEffectsAPI};
+use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
-use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
-use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionData};
+use sui_types::digests::{
+    ChainIdentifier as SuiNetworkChainIdentifier, get_mainnet_chain_identifier,
+    get_testnet_chain_identifier,
+};
+use sui_types::gas_coin::GAS;
+use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
+use sui_types::transaction::{
+    Argument, Command, GasData, ProgrammableTransaction, Transaction, TransactionData,
+    TransactionDataV1, TransactionExpiration, TransactionKind,
+};
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -59,6 +70,25 @@ pub mod verified_transport;
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,
     sui_address: SuiAddress,
+    /// SIP-58 mode: pay gas from the notifier address's SUI balance instead
+    /// of owned gas-coin objects. Submissions carry an empty gas payment and
+    /// a `ValidDuring` expiration; the entire stale-gas-version machinery is
+    /// bypassed. Opt-in via `notifier_gas_from_address_balance`.
+    gas_from_address_balance: bool,
+    /// The chain's full genesis-rooted identifier, resolved once at boot.
+    /// `Some` exactly when `gas_from_address_balance` (a `ValidDuring`
+    /// expiration embeds it and validators compare the full identifier).
+    sui_network_chain_identifier: Option<SuiNetworkChainIdentifier>,
+}
+
+impl SuiNotifier {
+    pub(crate) fn gas_from_address_balance(&self) -> bool {
+        self.gas_from_address_balance
+    }
+
+    pub(crate) fn sui_address(&self) -> SuiAddress {
+        self.sui_address
+    }
 }
 
 pub struct SuiConnectorService {
@@ -384,7 +414,7 @@ impl SuiConnectorService {
     async fn prepare_for_sui(
         sui_connector_config: SuiConnectorConfig,
         sui_client: Arc<SuiClient<SuiBackend>>,
-        _sui_connector_metrics: Arc<SuiConnectorMetrics>,
+        sui_connector_metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<Option<SuiNotifier>> {
         let Some(sui_key_path) = sui_connector_config.notifier_client_key_pair else {
             return Ok(None);
@@ -423,9 +453,115 @@ impl SuiConnectorService {
         );
 
         let sui_address = SuiAddress::from(&sui_key.public());
+
+        // SIP-58 address-balance gas: resolve the chain's FULL identifier once
+        // (a `ValidDuring` expiration embeds it verbatim). Fail the boot
+        // loudly if it can't be resolved — a writer silently unable to build
+        // transactions is exactly the failure shape issue #1892 is about.
+        let gas_from_address_balance = sui_connector_config.notifier_gas_from_address_balance;
+        let sui_network_chain_identifier = if gas_from_address_balance {
+            let chain_identifier = sui_client.get_sui_chain_identifier().await.map_err(|e| {
+                anyhow!(
+                    "notifier_gas_from_address_balance is set but the chain identifier \
+                     could not be resolved (required for ValidDuring expirations): {e}"
+                )
+            })?;
+
+            // Preflight the ADDRESS BALANCE (not coin objects — plain coin
+            // transfers don't fund it). An underfunded balance would
+            // otherwise surface as an hour of failed submissions followed by
+            // a panic, with the network's epoch close blocked the whole time
+            // — the issue-#1892 outage shape. Refuse to boot with the exact
+            // remediation instead: a writer that cannot pay must not run.
+            let funds = sui_client.get_sui_funds(sui_address).await.map_err(|e| {
+                anyhow!(
+                    "notifier_gas_from_address_balance is set but the funds of \
+                     {sui_address} could not be read (does the target Sui network \
+                     have accumulators/address-balance gas enabled?): {e}"
+                )
+            })?;
+
+            // Migration sweep: an operator flipping the flag on an existing
+            // notifier still holds its funds as coin objects, which
+            // address-balance gas cannot spend. Deposit them into the address
+            // balance automatically (split off the sweep tx's own gas, then
+            // `coin::send_funds`). Best-effort: a failed sweep only warns —
+            // the preflight below still decides whether the writer can run.
+            let mut address_balance = funds.in_address_balance;
+            if funds.in_coin_objects >= SWEEP_MIN_COIN_TOTAL {
+                match sweep_gas_coins_into_address_balance(
+                    &sui_client,
+                    &sui_key,
+                    sui_address,
+                    funds.in_coin_objects,
+                )
+                .await
+                {
+                    Ok(swept) => {
+                        info!(
+                            swept,
+                            "Swept gas-coin objects into the notifier's address balance"
+                        );
+                        // Count the swept funds directly instead of re-reading:
+                        // the read goes through a fullnode view that can lag
+                        // the just-finalized sweep and would flunk the
+                        // preflight spuriously.
+                        address_balance = address_balance.saturating_add(swept);
+                    }
+                    Err(e) => warn!(
+                        error = ?e,
+                        in_coin_objects = funds.in_coin_objects,
+                        "failed to sweep gas coins into the address balance; \
+                         continuing to the balance preflight without them"
+                    ),
+                }
+            }
+            if address_balance < NOTIFIER_GAS_BUDGET {
+                anyhow::bail!(
+                    "notifier_gas_from_address_balance is set but {sui_address} holds only \
+                     {address_balance} MIST in its ADDRESS BALANCE — below one gas budget \
+                     ({} MIST). Deposit SUI into the address balance (coin-object \
+                     transfers do not fund it), or unset the flag to fall back to gas \
+                     coins.",
+                    NOTIFIER_GAS_BUDGET,
+                );
+            }
+            sui_connector_metrics
+                .gas_coin_balance
+                .set(i64::try_from(address_balance).unwrap_or(i64::MAX));
+            info!(
+                ?chain_identifier,
+                address_balance, "Notifier pays gas from its SUI address balance (SIP-58)"
+            );
+
+            // Keep the writer-funds gauge live: refresh from the address
+            // balance once a minute. (In coin mode this gauge currently has
+            // no writer at all; here funds exhaustion is otherwise invisible
+            // until submissions start failing, so the gauge is the alert
+            // surface for topping up the balance.)
+            let balance_sui_client = sui_client.clone();
+            let balance_metrics = sui_connector_metrics.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    if let Ok(funds) = balance_sui_client.get_sui_funds(sui_address).await {
+                        balance_metrics
+                            .gas_coin_balance
+                            .set(i64::try_from(funds.in_address_balance).unwrap_or(i64::MAX));
+                    }
+                }
+            });
+
+            Some(chain_identifier)
+        } else {
+            None
+        };
+
         Ok(Some(SuiNotifier {
             sui_key,
             sui_address,
+            gas_from_address_balance,
+            sui_network_chain_identifier,
         }))
     }
 
@@ -461,29 +597,184 @@ impl CheckpointMessageSuiNotify for SuiConnectorService {
     }
 }
 
-pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
-    signer: SuiAddress,
-    pt: ProgrammableTransaction,
+/// Gas budget for the one-shot boot sweep that deposits coin objects into
+/// the address balance. The unswept remainder (this budget minus actual
+/// fees) is left behind as a small coin.
+const SWEEP_GAS_BUDGET: u64 = 200_000_000;
+
+/// Don't bother sweeping coin totals below this (1 SUI): repeatedly
+/// re-depositing sweep-fee dust on every boot is churn, not funding.
+const SWEEP_MIN_COIN_TOTAL: u64 = 1_000_000_000;
+
+/// A sweep pays gas with the very coins it sweeps; Sui caps gas payments at
+/// 256 objects per transaction.
+const SWEEP_MAX_GAS_COINS: usize = 256;
+
+/// Deposit the notifier's gas-coin objects into its SIP-58 address balance.
+/// Returns the amount deposited (MIST). The sweep transaction uses ALL owned
+/// gas coins as its own gas payment (Sui merges them into the first), splits
+/// off everything above the sweep's own gas budget, and deposits the split
+/// via `coin::send_funds` — the gas coin itself cannot be passed by value to
+/// a Move call, hence split-then-deposit rather than depositing the coin.
+async fn sweep_gas_coins_into_address_balance<C: SuiClientInner>(
     sui_client: &Arc<SuiClient<C>>,
-    gas_payment: Vec<ObjectRef>,
     sui_key: &SuiKeyPair,
-) -> Transaction {
+    sui_address: SuiAddress,
+    coin_total: u64,
+) -> anyhow::Result<u64> {
+    let gas_coins = sui_client.get_gas_objects(sui_address).await;
+    if gas_coins.is_empty() {
+        anyhow::bail!("coin balance is {coin_total} MIST but no gas-coin objects were listed");
+    }
+    if gas_coins.len() > SWEEP_MAX_GAS_COINS {
+        // The subset's value is unknown, so a correct split amount can't be
+        // computed. This does not happen to a writer address in practice.
+        anyhow::bail!(
+            "{} gas coins exceed the {SWEEP_MAX_GAS_COINS}-object gas payment cap;              consolidate them manually",
+            gas_coins.len()
+        );
+    }
+    let sweep_amount = coin_total.saturating_sub(SWEEP_GAS_BUDGET);
+    if sweep_amount == 0 {
+        anyhow::bail!("coin balance {coin_total} MIST does not exceed the sweep gas budget");
+    }
     let computation_price = sui_client.get_reference_gas_price_until_success().await;
-
-    let tx_data = TransactionData::new_programmable(
-        signer,
-        gas_payment,
-        pt,
-        10_000_000_000,
-        computation_price,
-    );
-
+    let tx_data = sweep_transaction_data(sui_address, gas_coins, sweep_amount, computation_price)?;
     let signature = Signature::new_secure(
         &IntentMessage::new(Intent::sui_transaction(), &tx_data),
         sui_key,
     );
+    let transaction = Transaction::from_data(tx_data, vec![signature]);
+    let response = sui_client
+        .execute_transaction_block_with_effects(transaction)
+        .await
+        .map_err(|e| anyhow!("sweep submission failed: {e}"))?;
+    if !response.errors.is_empty() {
+        anyhow::bail!("sweep transaction failed: {:?}", response.errors);
+    }
+    if let Some(effects) = &response.effects
+        && let SuiExecutionStatus::Failure { error } = effects.status()
+    {
+        anyhow::bail!("sweep transaction executed but aborted: {error:?}");
+    }
+    Ok(sweep_amount)
+}
+
+/// The sweep transaction: all owned gas coins as payment (merged into the
+/// first by the protocol), `SplitCoins(GasCoin, [sweep_amount])`, and
+/// `coin::send_funds<SUI>(split, sender)` to deposit into the sender's own
+/// address balance. Ordinary gas-coin payment — the sweep exists precisely
+/// because the address balance may be empty.
+fn sweep_transaction_data(
+    sender: SuiAddress,
+    gas_coins: Vec<ObjectRef>,
+    sweep_amount: u64,
+    computation_price: u64,
+) -> anyhow::Result<TransactionData> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let amount_arg = ptb.pure(sweep_amount)?;
+    let deposit_coin = ptb.command(Command::SplitCoins(Argument::GasCoin, vec![amount_arg]));
+    let recipient_arg = ptb.pure(sender)?;
+    ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("coin").into(),
+        ident_str!("send_funds").into(),
+        vec![GAS::type_tag()],
+        vec![deposit_coin, recipient_arg],
+    );
+    Ok(TransactionData::new_programmable(
+        sender,
+        gas_coins,
+        ptb.finish(),
+        SWEEP_GAS_BUDGET,
+        computation_price,
+    ))
+}
+
+/// The writer's fixed gas budget. Under address-balance gas the full budget
+/// is reserved from the balance for the transaction's validity window, so the
+/// balance must comfortably cover `budget x in-flight transactions` (the
+/// writer submits serially: one).
+const NOTIFIER_GAS_BUDGET: u64 = 10_000_000_000;
+
+pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
+    sui_notifier: &SuiNotifier,
+    pt: ProgrammableTransaction,
+    sui_client: &Arc<SuiClient<C>>,
+    gas_payment: Vec<ObjectRef>,
+) -> Transaction {
+    let computation_price = sui_client.get_reference_gas_price_until_success().await;
+
+    let tx_data = if sui_notifier.gas_from_address_balance {
+        let sui_epoch = sui_client.get_sui_epoch_until_success().await;
+        let chain_identifier = sui_notifier
+            .sui_network_chain_identifier
+            .expect("gas_from_address_balance implies a resolved chain identifier (set at boot)");
+        balance_gas_transaction_data(
+            sui_notifier.sui_address,
+            pt,
+            computation_price,
+            sui_epoch,
+            chain_identifier,
+            rand::random(),
+        )
+    } else {
+        TransactionData::new_programmable(
+            sui_notifier.sui_address,
+            gas_payment,
+            pt,
+            NOTIFIER_GAS_BUDGET,
+            computation_price,
+        )
+    };
+
+    let signature = Signature::new_secure(
+        &IntentMessage::new(Intent::sui_transaction(), &tx_data),
+        &sui_notifier.sui_key,
+    );
 
     Transaction::from_data(tx_data, vec![signature])
+}
+
+/// SIP-58 address-balance-gas transaction: an EMPTY gas payment is the
+/// protocol-level trigger for paying from the sender's address balance, and
+/// the `ValidDuring` expiration supplies the replay protection that gas-coin
+/// version bumps used to provide. The window is `[current, current + 1]`:
+/// a submission built just before a Sui epoch boundary stays valid into the
+/// next epoch instead of expiring mid-flight and costing a rebuild-retry.
+/// The one-epoch extension is the maximum `is_replay_protected` allows, and
+/// multi-epoch expiration is enabled from Sui protocol 105 — strictly below
+/// every network's address-balance-gas enablement, so wherever this
+/// transaction is legal at all, the window is too. Cost: an abandoned
+/// signed-but-never-executed transaction can hold its balance reservation
+/// for up to two epochs instead of one (irrelevant to a serial writer with
+/// normal float).
+fn balance_gas_transaction_data(
+    sender: SuiAddress,
+    pt: ProgrammableTransaction,
+    computation_price: u64,
+    sui_epoch: u64,
+    chain_identifier: SuiNetworkChainIdentifier,
+    nonce: u32,
+) -> TransactionData {
+    TransactionData::V1(TransactionDataV1 {
+        kind: TransactionKind::ProgrammableTransaction(pt),
+        sender,
+        gas_data: GasData {
+            payment: vec![],
+            owner: sender,
+            price: computation_price,
+            budget: NOTIFIER_GAS_BUDGET,
+        },
+        expiration: TransactionExpiration::ValidDuring {
+            min_epoch: Some(sui_epoch),
+            max_epoch: Some(sui_epoch.saturating_add(1)),
+            min_timestamp: None,
+            max_timestamp: None,
+            chain: chain_identifier,
+            nonce,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -500,6 +791,76 @@ mod tests {
     async fn example_func_err() -> anyhow::Result<()> {
         info!("example_func_err");
         Err(anyhow::anyhow!(""))
+    }
+
+    #[test]
+    fn balance_gas_transaction_has_no_gas_objects_and_is_replay_protected() {
+        let sender = SuiAddress::random_for_testing_only();
+        let pt = sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder::new()
+            .finish();
+        let tx_data =
+            balance_gas_transaction_data(sender, pt, 750, 42, get_testnet_chain_identifier(), 7);
+
+        let v1 = tx_data.as_v1();
+        // An empty gas payment on a programmable transaction IS the SIP-58
+        // trigger for paying gas from the sender's address balance.
+        assert!(sui_types::transaction::is_gas_paid_from_address_balance(
+            &v1.gas_data,
+            &v1.kind
+        ));
+        assert_eq!(v1.sender, sender);
+        assert_eq!(v1.gas_data.owner, sender);
+        assert_eq!(v1.gas_data.price, 750);
+        assert_eq!(v1.gas_data.budget, NOTIFIER_GAS_BUDGET);
+        // The [current, current+1] window survives a Sui epoch boundary and
+        // is the maximum extension is_replay_protected allows (validators
+        // retain executed digests across the expiry range).
+        assert!(v1.expiration.is_replay_protected());
+        assert!(matches!(
+            v1.expiration,
+            TransactionExpiration::ValidDuring {
+                min_epoch: Some(42),
+                max_epoch: Some(43),
+                min_timestamp: None,
+                max_timestamp: None,
+                nonce: 7,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn sweep_transaction_splits_gas_and_deposits_to_sender_balance() {
+        let sender = SuiAddress::random_for_testing_only();
+        let gas_coins = vec![sui_types::base_types::random_object_ref()];
+        let tx_data = sweep_transaction_data(sender, gas_coins.clone(), 5_000, 750).unwrap();
+
+        let v1 = tx_data.as_v1();
+        assert_eq!(v1.sender, sender);
+        // Ordinary gas-coin payment: the sweep runs precisely when the
+        // address balance may be empty.
+        assert_eq!(v1.gas_data.payment, gas_coins);
+        assert_eq!(v1.gas_data.budget, SWEEP_GAS_BUDGET);
+        assert_eq!(v1.expiration, TransactionExpiration::None);
+
+        let TransactionKind::ProgrammableTransaction(pt) = &v1.kind else {
+            panic!("sweep must be a programmable transaction");
+        };
+        // SplitCoins off the (merged) gas coin, then coin::send_funds<SUI>.
+        assert!(matches!(
+            &pt.commands[0],
+            Command::SplitCoins(Argument::GasCoin, amounts) if amounts.len() == 1
+        ));
+        let Command::MoveCall(call) = &pt.commands[1] else {
+            panic!("second command must be the send_funds deposit");
+        };
+        assert_eq!(call.package, SUI_FRAMEWORK_PACKAGE_ID);
+        assert_eq!(call.module.as_str(), "coin");
+        assert_eq!(call.function.as_str(), "send_funds");
+        assert_eq!(
+            call.type_arguments,
+            vec![sui_types::type_input::TypeInput::from(GAS::type_tag())]
+        );
     }
 
     #[tokio::test]

@@ -71,6 +71,11 @@ const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 /// response), so no separate fullnode observability wait is needed.
 #[derive(Default)]
 struct NotifierSubmitState {
+    /// SIP-58 mode (mirrors `SuiNotifier::gas_from_address_balance`): the
+    /// writer pays gas from its address balance, transactions carry no gas
+    /// `ObjectRef`, and ALL of the caching/recovery below is bypassed — the
+    /// stale-gas-version failure class does not exist without gas objects.
+    gas_from_address_balance: bool,
     gas_coins: Option<Vec<ObjectRef>>,
     /// The gas ref(s) handed to the most recent submission, so a failure can
     /// learn which version was rejected without threading it back through the
@@ -94,6 +99,9 @@ impl NotifierSubmitState {
     /// the tx failed for an unrelated reason, and clearing it would force
     /// an unnecessary (and possibly stale) fullnode re-fetch.
     fn handle_possible_stale_gas_rejection(&mut self, error_message: &str) {
+        if self.gas_from_address_balance {
+            return;
+        }
         let is_stale_gas = error_message.contains("unavailable for consumption")
             || error_message.contains("needs to be rebuilt");
         if is_stale_gas {
@@ -183,11 +191,16 @@ where
             dwallet_coordinator_object_sender,
             dwallet_checkpoint_store,
             system_checkpoint_store,
+            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState {
+                gas_from_address_balance: sui_notifier
+                    .as_ref()
+                    .is_some_and(SuiNotifier::gas_from_address_balance),
+                ..Default::default()
+            })),
             sui_notifier,
             sui_client,
             reader,
             metrics,
-            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState::default())),
         }
     }
 
@@ -946,14 +959,8 @@ where
             );
         }
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
@@ -999,14 +1006,8 @@ where
             );
         }
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
@@ -1025,6 +1026,10 @@ where
         // Fast path: the authoritative ref carried by the prior tx's effects.
         {
             let mut state = notifier_tx_lock.lock().await;
+            // SIP-58 address-balance gas: transactions carry no gas objects.
+            if state.gas_from_address_balance {
+                return vec![];
+            }
             if let Some(gas) = state.gas_coins.clone() {
                 state.last_used_gas = Some(gas.clone());
                 return gas;
@@ -1131,15 +1136,19 @@ where
             .into());
         };
 
-        // The tx executed (effects are present), so the gas coin advanced
-        // to a new version regardless of move success/abort. Cache that
-        // authoritative ref for the next tx instead of re-reading the
-        // notifier fullnode, which lags under load and yields stale gas
-        // versions that get rejected and stall epoch advance.
-        state.gas_coins = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
-        // The cached ref is now authoritative again; drop any stale-version
-        // floor a prior rejection left so a future re-fetch isn't over-gated.
-        state.min_gas_version = None;
+        if !state.gas_from_address_balance {
+            // The tx executed (effects are present), so the gas coin advanced
+            // to a new version regardless of move success/abort. Cache that
+            // authoritative ref for the next tx instead of re-reading the
+            // notifier fullnode, which lags under load and yields stale gas
+            // versions that get rejected and stall epoch advance. (Under
+            // address-balance gas there is no gas object; the effects'
+            // gas_object is a placeholder and must not be cached.)
+            state.gas_coins = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
+            // The cached ref is now authoritative again; drop any stale-version
+            // floor a prior rejection left so a future re-fetch isn't over-gated.
+            state.min_gas_version = None;
+        }
 
         if let SuiExecutionStatus::Failure { error } = tx_effects.status() {
             return Err(IkaError::SuiClientTxFailureGeneric(
@@ -1213,14 +1222,8 @@ where
             vec![coordinator_arg, system_current_status_info],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
@@ -1277,14 +1280,8 @@ where
             vec![coordinator_arg, system_current_status_info],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
@@ -1349,14 +1346,8 @@ where
             vec![system_arg, advance_epoch_approver, clock_arg],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
@@ -1421,19 +1412,21 @@ where
             args,
         );
 
-        ptb.command(sui_types::transaction::Command::MergeCoins(
-            Argument::GasCoin,
-            vec![gas_fee_reimbursement_sui],
-        ));
+        if sui_notifier.gas_from_address_balance() {
+            // No gas coin object exists to merge into (SIP-58 balance gas):
+            // send the reimbursement to the writer's address as an owned coin
+            // instead. It accumulates as small coins the operator can sweep
+            // into the address balance.
+            ptb.transfer_arg(sui_notifier.sui_address(), gas_fee_reimbursement_sui);
+        } else {
+            ptb.command(sui_types::transaction::Command::MergeCoins(
+                Argument::GasCoin,
+                vec![gas_fee_reimbursement_sui],
+            ));
+        }
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
             Ok(result) => Ok(result),
@@ -1502,14 +1495,8 @@ where
             args,
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
+        let transaction =
+            super::build_sui_transaction(sui_notifier, ptb.finish(), sui_client, gas_coins).await;
 
         match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
             Ok(_) => Ok(()),

@@ -16,14 +16,14 @@ use sui_rpc_api::client::ExecutedTransaction;
 use sui_rpc_api::proto::sui::rpc::v2 as proto;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::full_checkpoint_content::CheckpointData;
-use sui_types::gas_coin::GasCoin;
+use sui_types::gas_coin::{GAS, GasCoin};
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
 use sui_types::transaction::Transaction;
 
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
-    SuiTransport, SuiWriter, TransportError,
+    SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
 };
 
 pub struct SuiGrpcClient {
@@ -367,6 +367,33 @@ impl SuiWriter for SuiGrpcClient {
             }
         }
         Ok(refs)
+    }
+
+    async fn get_sui_funds(
+        &self,
+        address: SuiAddress,
+    ) -> Result<SuiFundsBreakdown, TransportError> {
+        let rpc = self.rpc.clone();
+        // NB: GetBalance takes the COIN type (`0x2::sui::SUI`, `GAS::type_()`),
+        // not the coin OBJECT type (`Coin<SUI>`, `GasCoin::type_()`) — the
+        // latter silently reads as a zero balance of a nonexistent coin type.
+        let balance = rpc
+            .get_balance(address, &GAS::type_())
+            .await
+            .map_err(Self::rpc_err)?;
+        Ok(SuiFundsBreakdown {
+            in_address_balance: balance.address_balance.unwrap_or(0),
+            in_coin_objects: balance.coin_balance.unwrap_or(0),
+        })
+    }
+
+    async fn get_sui_chain_identifier(
+        &self,
+    ) -> Result<sui_types::digests::ChainIdentifier, TransportError> {
+        let rpc = self.rpc.clone();
+        // The inner client already returns the typed, full identifier
+        // (service-info chain id parsed as the genesis checkpoint digest).
+        rpc.get_chain_identifier().await.map_err(Self::rpc_err)
     }
 
     async fn execute_transaction(

@@ -24,6 +24,7 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use sui_json_rpc_types::CheckpointId;
 use sui_json_rpc_types::{EventFilter, Page, SuiEvent};
 use sui_json_rpc_types::{
     EventPage, SuiObjectDataOptions, SuiTransactionBlockResponse,
@@ -36,6 +37,7 @@ use sui_types::TypeTag;
 use sui_types::base_types::{EpochId, ObjectRef};
 use sui_types::clock::Clock;
 use sui_types::collection_types::{Entry, Table};
+use sui_types::digests::ChainIdentifier as SuiNetworkChainIdentifier;
 use sui_types::dynamic_field::Field;
 use sui_types::gas_coin::GasCoin;
 use sui_types::object::Owner;
@@ -59,6 +61,7 @@ pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
 pub mod transport;
+pub use transport::SuiFundsBreakdown;
 
 #[macro_export]
 macro_rules! retry_with_max_elapsed_time {
@@ -785,6 +788,49 @@ where
         }
     }
 
+    /// Current SUI epoch, retried until it succeeds — the `ValidDuring`
+    /// anchor for address-balance-gas submissions (same retry-forever
+    /// contract as `get_reference_gas_price_until_success`; both feed
+    /// transaction construction on the writer path).
+    pub async fn get_sui_epoch_until_success(&self) -> u64 {
+        loop {
+            let Ok(Ok(epoch)) =
+                retry_with_max_elapsed_time!(self.inner.get_sui_epoch(), Duration::from_secs(30))
+            else {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_sui_epoch_until_success"])
+                    .inc();
+                error!("Failed to get the current SUI epoch");
+                continue;
+            };
+            return epoch;
+        }
+    }
+
+    /// The chain's genesis-rooted `ChainIdentifier` (full identifier, as
+    /// `ValidDuring` requires).
+    pub async fn get_sui_chain_identifier(&self) -> IkaResult<SuiNetworkChainIdentifier> {
+        self.inner.get_sui_chain_identifier().await.map_err(|e| {
+            self.sui_client_metrics
+                .sui_rpc_errors
+                .with_label_values(&["get_sui_chain_identifier"])
+                .inc();
+            IkaError::SuiClientInternalError(format!("Can't get_sui_chain_identifier: {e}"))
+        })
+    }
+
+    /// SUI held by `address`, split into address balance vs. coin objects.
+    pub async fn get_sui_funds(&self, address: SuiAddress) -> IkaResult<SuiFundsBreakdown> {
+        self.inner.get_sui_funds(address).await.map_err(|e| {
+            self.sui_client_metrics
+                .sui_rpc_errors
+                .with_label_values(&["get_sui_funds"])
+                .inc();
+            IkaError::SuiClientInternalError(format!("Can't get_sui_funds: {e}"))
+        })
+    }
+
     pub async fn get_latest_checkpoint_sequence_number(&self) -> IkaResult<u64> {
         self.inner
             .get_latest_checkpoint_sequence_number()
@@ -966,6 +1012,19 @@ pub trait SuiClientInner: Send + Sync {
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error>;
 
+    /// Current SUI epoch — the `ValidDuring` window anchor for
+    /// address-balance-gas transactions (SIP-58).
+    async fn get_sui_epoch(&self) -> Result<u64, Self::Error>;
+
+    /// The chain's genesis-rooted `ChainIdentifier`. `ValidDuring` carries it
+    /// verbatim and validators compare the FULL identifier, so the 4-byte
+    /// short id alone is not enough on chains without a compiled-in constant.
+    async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error>;
+
+    /// SUI held by `address`, split into its ADDRESS BALANCE (SIP-58 — what
+    /// address-balance-gas submissions draw on) and its owned coin objects.
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error>;
+
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error>;
 
     async fn get_latest_checkpoint_sequence_number(&self) -> Result<u64, Self::Error>;
@@ -1081,6 +1140,45 @@ impl SuiClientInner for SuiSdkClient {
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
         self.read_api().get_chain_identifier().await
+    }
+
+    async fn get_sui_epoch(&self) -> Result<u64, Self::Error> {
+        Ok(self
+            .governance_api()
+            .get_latest_sui_system_state()
+            .await?
+            .epoch)
+    }
+
+    async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error> {
+        // Mainnet/testnet resolve from the short id to the compiled-in full
+        // identifier; other chains (localnet) fall back to the genesis
+        // checkpoint digest, which unpruned local fullnodes always serve.
+        let short_id = self.read_api().get_chain_identifier().await?;
+        if let Some(chain_identifier) = SuiNetworkChainIdentifier::from_chain_short_id(&short_id) {
+            return Ok(chain_identifier);
+        }
+        let genesis = self
+            .read_api()
+            .get_checkpoint(CheckpointId::SequenceNumber(0))
+            .await?;
+        Ok(SuiNetworkChainIdentifier::from(genesis.digest))
+    }
+
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {
+        let balance = self.coin_read_api().get_balance(address, None).await?;
+        let in_address_balance =
+            u64::try_from(balance.funds_in_address_balance).unwrap_or(u64::MAX);
+        let in_coin_objects = u64::try_from(
+            balance
+                .total_balance
+                .saturating_sub(balance.funds_in_address_balance),
+        )
+        .unwrap_or(u64::MAX);
+        Ok(SuiFundsBreakdown {
+            in_address_balance,
+            in_coin_objects,
+        })
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
@@ -1725,6 +1823,18 @@ impl SuiClientInner for SuiBackend {
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
         dispatch_backend!(self, get_chain_identifier())
+    }
+
+    async fn get_sui_epoch(&self) -> Result<u64, Self::Error> {
+        dispatch_backend!(self, get_sui_epoch())
+    }
+
+    async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error> {
+        dispatch_backend!(self, get_sui_chain_identifier())
+    }
+
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {
+        dispatch_backend!(self, get_sui_funds(address))
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {

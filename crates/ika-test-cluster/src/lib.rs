@@ -1173,6 +1173,10 @@ pub struct IkaTestClusterBuilder {
     /// `with_sui_state_direct_count(_)`. Off by default (mirrored validators
     /// keep a direct gRPC fallback).
     peer_only_mirrored: bool,
+    /// When true, the notifier fullnode pays gas from its SUI ADDRESS BALANCE
+    /// (SIP-58) instead of gas-coin objects. Its funding still arrives as
+    /// coin objects, so boot exercises the automatic migration sweep too.
+    notifier_gas_from_address_balance: bool,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1229,7 +1233,15 @@ impl IkaTestClusterBuilder {
             ocs_genesis_anchor: true,
             sui_state_direct_count: None,
             peer_only_mirrored: false,
+            notifier_gas_from_address_balance: false,
         }
+    }
+
+    /// Notifier pays gas from its SUI address balance (SIP-58); boot sweeps
+    /// its coin-object funding into the balance first.
+    pub fn with_notifier_gas_from_address_balance(mut self) -> Self {
+        self.notifier_gas_from_address_balance = true;
+        self
     }
 
     /// Activate the OCS verified-state path: write the localnet's genesis
@@ -1596,7 +1608,12 @@ impl IkaTestClusterBuilder {
             .sign_and_execute_transaction(&fund_notifier_tx_data)
             .await;
         let mut notifier_rng = OsRng;
-        let notifier_config = FullnodeConfigBuilder::new().build(
+        let mut notifier_config_builder = FullnodeConfigBuilder::new();
+        if self.notifier_gas_from_address_balance {
+            notifier_config_builder =
+                notifier_config_builder.with_notifier_gas_from_address_balance();
+        }
+        let notifier_config = notifier_config_builder.build(
             &mut notifier_rng,
             &validator_initialization_configs,
             sui_rpc_url.clone(),
