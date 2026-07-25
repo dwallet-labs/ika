@@ -1948,17 +1948,22 @@ impl AuthorityPerEpochStore {
                 .get(&0)?
                 .map_or(-1, |round| round as i64),
         );
+        // Gated like the deadline gauge below: under a protocol version
+        // where the off-chain-metadata feature (and thus the freeze) is
+        // disabled, a healthy-looking grace value beside permanently -1
+        // freeze gauges would mislead.
         metrics.dwallet_mpc_data_freeze_grace_rounds.set(
-            protocol_config
-                .mpc_data_freeze_grace_rounds_as_option()
-                .map_or(-1, |grace| grace as i64),
+            if protocol_config.off_chain_validator_metadata_enabled() {
+                protocol_config
+                    .mpc_data_freeze_grace_rounds_as_option()
+                    .map_or(-1, |grace| grace as i64)
+            } else {
+                -1
+            },
         );
-        let last_committed_leader_round = match tables.get_last_consensus_stats()? {
-            Some(stats) => Some(stats.index.last_committed_round),
-            None => tables
-                .get_last_consensus_index()?
-                .map(|index| index.last_committed_round),
-        };
+        let last_committed_leader_round = tables
+            .get_last_consensus_stats()?
+            .map(|stats| stats.index.last_committed_round);
         metrics
             .consensus_last_committed_leader_round
             .set(last_committed_leader_round.map_or(-1, |round| round as i64));

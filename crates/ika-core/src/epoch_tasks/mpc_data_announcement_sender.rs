@@ -331,8 +331,21 @@ impl MpcDataAnnouncementSender {
         let Some(epoch_store) = self.epoch_store.upgrade() else {
             return;
         };
-        // A table read error only skips this tick's export.
-        let first_commit_ts_ms = epoch_store.epoch_first_commit_timestamp_ms().ok().flatten();
+        // A read error skips this tick's export (leaving the gauge at its
+        // previous value) rather than publishing the -1 sentinel — which
+        // would misread as "no consensus commit processed this epoch"
+        // while the real fault is this node's local DB.
+        let first_commit_ts_ms = match epoch_store.epoch_first_commit_timestamp_ms() {
+            Ok(first_commit_ts_ms) => first_commit_ts_ms,
+            Err(err) => {
+                debug!(
+                    error = ?err,
+                    "failed to read the epoch's first-commit timestamp for the \
+                     ready-signal deadline metric; skipping this tick's export"
+                );
+                return;
+            }
+        };
         let first_seen = match self.next_committee_first_seen_ms.load(Ordering::Acquire) {
             0 => None,
             first_seen_ms => Some(first_seen_ms),

@@ -115,8 +115,9 @@ pub struct EpochMetrics {
     pub consensus_last_committed_leader_round: IntGauge,
 
     /// The configured `mpc_data_freeze_grace_rounds` for the current
-    /// protocol version, or `-1` when the protocol version doesn't define
-    /// it. Constant within an epoch.
+    /// protocol version, or `-1` when the off-chain-metadata feature
+    /// (and thus the freeze) is disabled for it or the value is
+    /// undefined. Constant within an epoch.
     pub dwallet_mpc_data_freeze_grace_rounds: IntGauge,
 
     /// The consensus leader round at which this epoch's mpc_data input
@@ -317,7 +318,7 @@ impl EpochMetrics {
             dwallet_mpc_data_freeze_grace_rounds: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_freeze_grace_rounds",
                 "Configured mpc_data_freeze_grace_rounds for the current protocol version; \
-                 -1 when undefined",
+                 -1 when the freeze feature is disabled or the value is undefined",
                 registry
             )
             .unwrap(),
