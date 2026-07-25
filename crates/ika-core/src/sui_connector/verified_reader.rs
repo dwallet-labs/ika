@@ -117,6 +117,84 @@ pub enum ReaderError {
         anchored_seq: CheckpointSequenceNumber,
         verdict: &'static str,
     },
+    #[error(
+        "compiled-in identity does not match the chain's {kind} object: object {object_id} is \
+         typed by package {chain_package}, but this binary resolved {expected_package}. This \
+         binary was built with a wrong or wrong-role package id (a Sui type tag carries the \
+         ORIGINAL defining package forever — never a later upgrade id). Fix the compiled-in \
+         constant; retrying cannot resolve this."
+    )]
+    IdentityMismatch {
+        kind: &'static str,
+        object_id: ObjectID,
+        chain_package: ObjectID,
+        expected_package: ObjectID,
+    },
+}
+
+impl ReaderError {
+    /// A mismatch between the binary's compiled-in package identity and the
+    /// chain's is permanent — no amount of retrying changes a constant baked
+    /// into this build. Retry loops must treat it as terminal rather than
+    /// spinning forever (which is exactly the silent-failure mode this check
+    /// exists to replace).
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, ReaderError::IdentityMismatch { .. })
+    }
+}
+
+/// Assert that a fetched anchor object is typed by the package this binary
+/// compiled in for that role.
+///
+/// Sui type tags carry the **defining** package forever, so the system object
+/// stays `{original}::system::System` across every package upgrade — which is
+/// what makes this a stable equality check rather than something that needs
+/// bumping on each contract upgrade. It is also chain-authenticated: the type
+/// comes from OCS-verified state, not from the relay's say-so.
+///
+/// `expected` is `None` on localnet (Devnet/Custom), where ids are generated
+/// fresh at each genesis and there is no compiled-in identity to check against.
+fn check_object_identity(
+    kind: &'static str,
+    object: &Object,
+    object_id: ObjectID,
+    expected: Option<ObjectID>,
+) -> Result<(), ReaderError> {
+    // A package (not a Move object) can't carry a type tag; `move_object_contents`
+    // already rejects that case for these anchors, so treat it as nothing to check.
+    let Some(move_obj) = object.data.try_as_move() else {
+        return Ok(());
+    };
+    check_identity_addresses(
+        kind,
+        object_id,
+        ObjectID::from(move_obj.type_().address()),
+        expected,
+    )
+}
+
+/// The decision rule behind [`check_object_identity`], split out so it is
+/// unit-testable without constructing a typed `Object` (the only safe
+/// constructors in the pinned Sui wrap the caller's `StructTag` in an outer
+/// type, and the `unsafe` ones are denied workspace-wide).
+fn check_identity_addresses(
+    kind: &'static str,
+    object_id: ObjectID,
+    chain_package: ObjectID,
+    expected: Option<ObjectID>,
+) -> Result<(), ReaderError> {
+    let Some(expected_package) = expected else {
+        return Ok(());
+    };
+    if chain_package != expected_package {
+        return Err(ReaderError::IdentityMismatch {
+            kind,
+            object_id,
+            chain_package,
+            expected_package,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +264,12 @@ pub struct OcsVerifiedReader {
     /// before the changeset receiver is wired — currency then falls back to the
     /// per-read high-water + freshness defenses.
     changeset_index: Option<SharedChangesetIndex>,
+    /// The package ids this binary compiled in for the two singleton anchors,
+    /// checked against each fetched object's type tag (see
+    /// [`check_object_identity`]). `None` on localnet, where ids are generated
+    /// per genesis. Set via [`Self::with_expected_identity`].
+    expected_system_package: Option<ObjectID>,
+    expected_coordinator_package: Option<ObjectID>,
 }
 
 impl OcsVerifiedReader {
@@ -211,7 +295,22 @@ impl OcsVerifiedReader {
             staleness_bound,
             anchor_refreshed_at: Mutex::new(HashMap::new()),
             changeset_index: None,
+            expected_system_package: None,
+            expected_coordinator_package: None,
         }
+    }
+
+    /// Pin the compiled-in package identity for the two singleton anchors, so
+    /// every verified read of them asserts the chain agrees. Left unset on
+    /// localnet, where there is no compiled-in identity to check against.
+    pub fn with_expected_identity(
+        mut self,
+        system_package: ObjectID,
+        coordinator_package: ObjectID,
+    ) -> Self {
+        self.expected_system_package = Some(system_package);
+        self.expected_coordinator_package = Some(coordinator_package);
+        self
     }
 
     /// Attach a changeset index (a mirrored / peer-only node) so verified reads
@@ -871,6 +970,12 @@ impl OcsVerifiedReader {
         coordinator_id: ObjectID,
     ) -> Result<(DWalletCoordinator, DWalletCoordinatorInner), ReaderError> {
         let outer_obj = self.verified_anchor_object(coordinator_id).await?;
+        check_object_identity(
+            "DWalletCoordinator",
+            &outer_obj.object,
+            coordinator_id,
+            self.expected_coordinator_package,
+        )?;
         let outer_bcs = move_object_contents(&outer_obj.object)?;
         let outer: DWalletCoordinator = bcs::from_bytes(outer_bcs)
             .map_err(|e| ReaderError::Decode(format!("DWalletCoordinator: {e}")))?;
@@ -901,6 +1006,12 @@ impl OcsVerifiedReader {
         system_id: ObjectID,
     ) -> Result<(System, SystemInner), ReaderError> {
         let outer_obj = self.verified_anchor_object(system_id).await?;
+        check_object_identity(
+            "System",
+            &outer_obj.object,
+            system_id,
+            self.expected_system_package,
+        )?;
         let outer_bcs = move_object_contents(&outer_obj.object)?;
         let outer: System =
             bcs::from_bytes(outer_bcs).map_err(|e| ReaderError::Decode(format!("System: {e}")))?;
@@ -1122,6 +1233,7 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
         ReaderError::UnsupportedVersion { .. } => "unsupported_version",
         ReaderError::DynamicFieldMembership { .. } => "dynamic_field_membership",
         ReaderError::NotCurrent { .. } => "not_current",
+        ReaderError::IdentityMismatch { .. } => "identity_mismatch",
     }
 }
 
@@ -1151,6 +1263,98 @@ fn clone_inclusion_proof(
 ) -> Option<sui_light_client::proof::ocs::OCSInclusionProof> {
     let bytes = bcs::to_bytes(p).ok()?;
     bcs::from_bytes(&bytes).ok()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    const SYSTEM_OBJ: u8 = 0x11;
+
+    fn pkg(byte: u8) -> ObjectID {
+        ObjectID::from_single_byte(byte)
+    }
+
+    /// The #1908 failure mode: the binary compiled in a package id that tags
+    /// no live event (there, the system package's v2 UPGRADE id). The chain's
+    /// system object is typed by package A; this build resolved B.
+    #[test]
+    fn mismatched_system_package_is_rejected_and_names_both() {
+        let err = check_identity_addresses(
+            "System",
+            pkg(SYSTEM_OBJ),
+            /* chain   */ pkg(0xAA),
+            /* expected*/ Some(pkg(0xBB)),
+        )
+        .expect_err("a system object typed by a different package must be rejected");
+
+        match err {
+            ReaderError::IdentityMismatch {
+                kind,
+                object_id,
+                chain_package,
+                expected_package,
+            } => {
+                assert_eq!(kind, "System");
+                assert_eq!(object_id, pkg(SYSTEM_OBJ));
+                assert_eq!(chain_package, pkg(0xAA));
+                assert_eq!(expected_package, pkg(0xBB));
+            }
+            other => panic!("expected IdentityMismatch, got {other:?}"),
+        }
+
+        // The operator-facing message must carry BOTH values — the whole point
+        // is that it is actionable without a debugger.
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains(&pkg(0xAA).to_string()),
+            "message must name the chain's package: {rendered}"
+        );
+        assert!(
+            rendered.contains(&pkg(0xBB).to_string()),
+            "message must name the compiled-in package: {rendered}"
+        );
+    }
+
+    #[test]
+    fn matching_package_passes() {
+        check_identity_addresses("System", pkg(SYSTEM_OBJ), pkg(0xAA), Some(pkg(0xAA)))
+            .expect("a matching package id must pass");
+    }
+
+    /// Localnet generates ids per genesis, so there is no compiled-in identity
+    /// to check against — the check must be inert rather than fail closed.
+    #[test]
+    fn absent_expected_identity_skips_the_check() {
+        check_identity_addresses("System", pkg(SYSTEM_OBJ), pkg(0xAA), None)
+            .expect("no compiled-in identity means nothing to assert");
+    }
+
+    /// A mismatch is permanent — retry loops must not spin on it. Every other
+    /// error stays retryable (a pruned anchor resolves on the next tick).
+    #[test]
+    fn only_identity_mismatch_is_terminal() {
+        let mismatch = check_identity_addresses("System", pkg(1), pkg(0xAA), Some(pkg(0xBB)))
+            .expect_err("mismatch");
+        assert!(mismatch.is_terminal());
+
+        assert!(!ReaderError::MissingCommittee(7).is_terminal());
+        assert!(!ReaderError::Decode("boom".into()).is_terminal());
+        assert!(
+            !ReaderError::UnsupportedVersion {
+                kind: "System",
+                version: 9,
+            }
+            .is_terminal()
+        );
+    }
+
+    #[test]
+    fn mismatch_classifies_as_its_own_metric_label() {
+        let err = check_identity_addresses("System", pkg(1), pkg(0xAA), Some(pkg(0xBB)))
+            .expect_err("mismatch");
+        assert_eq!(classify_verify_error(&err), "identity_mismatch");
+    }
 }
 
 #[cfg(test)]

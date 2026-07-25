@@ -801,6 +801,30 @@ because the bytes came from a peer's disk rather than its fullnode.
    modification (or after its deletion/wrapping) returns `NotCurrent`. The
    backing changeset fold is contiguity-enforced, so a skipped modification
    is detectable, not silently dropped.
+10. **A verified read of either singleton anchor asserts that the chain's
+    object is typed by the package this binary compiled in for that role**
+    (`System` → `ika_system_package_id`, `DWalletCoordinator` →
+    `ika_dwallet_2pc_mpc_package_id`). Mismatch is `IdentityMismatch` and is
+    **terminal**: the node refuses to run rather than retrying, because no
+    amount of retrying changes a constant baked into the build.
+
+    This is a stable equality check, not something to bump on contract
+    upgrades: a Sui type tag carries the **defining** package forever, so the
+    system object stays `{original}::system::System` across every upgrade.
+    The expectation therefore comes from `compiled_in_ika_identity` (the
+    ORIGINAL package) and never from the config's `ika_system_package_id`,
+    which on a localnet may legitimately name a later upgrade. It is `None`
+    on Devnet/Custom, where ids are generated per genesis and there is
+    nothing to assert against.
+
+    Why it exists: #1908 shipped the system package's **v2 upgrade id** as the
+    compiled-in identity — a value matching zero live event type tags — and
+    because that PR removed the config escape hatch on public chains, the only
+    remedy was another release. The symptom was a fleet silently deaf to
+    system events. A unit test can pin what a human once verified; it cannot
+    catch the next drift between compiled identity and chain reality. This
+    turns that class of failure into a node that refuses to start with both
+    values in the error. See #1913.
 
 ## Residuals and known gaps
 
