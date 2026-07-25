@@ -56,7 +56,7 @@ and the peer set before bringing it back.
 
 ## Secondary signals worth dashboarding (no page)
 
-- `last_pruned_authority_db_epoch` / `last_pruned_consensus_db_epoch`
+- `ika_last_pruned_authority_db_epoch` / `ika_last_pruned_consensus_db_epoch`
   not advancing across epochs → pruners dead, disk will grow.
 - `ika_dwallet_mpc_global_presign_requests_waiting` climbing without
   draining → presign pool starvation (see

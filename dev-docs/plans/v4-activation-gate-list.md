@@ -1,10 +1,18 @@
-Status: active (updated 2026-07-14) — the fix track is MERGED to main
-(#1809, #1820–#1825, #1827, #1828, #1833); #1826 is the last open code PR.
-Two release-blocker fixes found after the merge are open: #1835 (reshare
-stranded across a restart, issue #1834) and #1837 (legacy-migration panic
-under msim/debug, issue #1836). The barrier/close-gate cluster remains
-deliberately deferred with its own plan (see below). Flip to `landed` when
-the remaining PRs merge and the deferred cluster has an owner.
+Status: landed (2026-07-14) — the whole fix track is merged to main
+(#1809, #1820–#1828, #1833), including the three PRs this plan last named as
+outstanding: #1826, and the two post-merge release blockers #1835 (issue
+#1834) and #1837 (issue #1836) — all merged 2026-07-14, both issues closed.
+
+The **cap-at-v3 decision below was resolved as fix-forward: no cap.**
+`SupportedProtocolVersions::SYSTEM_DEFAULT` is `MIN..=MAX` (uncapped,
+`ika-types/src/supported_protocol_versions.rs`) and `MAX_PROTOCOL_VERSION`
+is now 5. Protocol v4 subsequently activated on testnet, which is the
+event this list existed to make safe.
+
+The barrier/close-gate cluster stays deliberately deferred and is tracked
+by its own plan,
+[`handoff-barrier-escape-and-pure-close-gate.md`](handoff-barrier-escape-and-pure-close-gate.md)
+— that plan, not this one, is where it lives now.
 
 # Protocol-v4 activation gate list
 

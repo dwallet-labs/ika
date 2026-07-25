@@ -1,6 +1,12 @@
 # OCS direct-validator self-sufficiency (finding 17 durable fix)
 
-Status: **all slices done.** Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
+Status: landed — all slices done. The durable behavior of Slices 2 and 3
+(the persisted verified-object cache and its head; `RetainedFullnodeTransport`
+serving a mirrored peer's ratchet from retained end-of-epoch checkpoints) now
+lives in
+[`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)
+under "Retained state"; this file keeps the slice-by-slice intent and the
+Option A/B trade-off. Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
 (cluster-validated). **Slice 3** (serve a mirrored peer's committee ratchet from
 the direct node's retained store) is now done too, via **Option A** — a
 `RetainedFullnodeTransport` decorator that serves the end-of-epoch

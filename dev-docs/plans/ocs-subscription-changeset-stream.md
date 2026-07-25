@@ -1,7 +1,7 @@
 # OCS Subscription-Based Changeset Stream — Design Specification
 
-Status: design, **sound but not yet implementation-ready** (after 6
-design/adversarial-review rounds). Successor to the full-set `changeset_page`
+Status: deferred — design is sound but **not yet implementation-ready**
+(after 6 design/adversarial-review rounds). Successor to the full-set `changeset_page`
 path documented in `dev-docs/plans/ocs-changeset-stream-mirror-currency.md`.
 Branch: `feat/ocs-grpc-migration`.
 

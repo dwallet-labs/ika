@@ -244,6 +244,23 @@ restart — shrinking the serve set and making `Unavailable` more likely.
 
 ## 3. THE FIX
 
+> **RESOLUTION (added 2026-07-25): the primary fix below SHIPPED.** PR #1761
+> ("fix(epoch): couple v4 epoch close to the handoff-cert quorum") merged
+> 2026-06-24 — four days *before* this file was first committed — implementing
+> exactly the mechanism proposed here. It is live in
+> `authority_per_epoch_store.rs` as `handoff_signatures_meet_quorum` (:3447)
+> and `decide_v4_epoch_close` (:3470), with dedicated unit tests. Read
+> everything below as the analysis that motivated a landed change, not as
+> outstanding work.
+>
+> **Scope caveat — this document and issue #1736 are not the same
+> investigation.** #1736 is still OPEN, but its thread tracks a *different*
+> mechanism: the stale-mpc_data double-fetch / VSS empty-key-map race
+> (addressed piecemeal by #1735 and #1807, with an intermittent residual).
+> PR #1761 was tagged against #1736 but the issue thread never references it.
+> Don't read this file's "resolved" status as closing the issue, or the
+> issue's open status as meaning this fix is pending.
+
 Two layers. The **primary** fix removes the state where the cert is born nowhere
 (the upstream root, kills State A and the two-laggard collapse). The
 **secondary** fixes harden the barrier↔overlay coupling (kills State B's window)

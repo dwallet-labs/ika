@@ -35,7 +35,7 @@ modes: `../playbooks/production-alerts.md`.)
 
 Names built dynamically (`format!`) are invisible to the extractor and
 documented in the allowlist by hand — currently the epoch-store pruner
-family (`last_pruned_{consensus,authority}_db_epoch`,
+family (`ika_last_pruned_{consensus,authority}_db_epoch`,
 `successfully_pruned_*_dbs`, `error_pruning_*_dbs`).
 
 ## Types, suffixes, and labels

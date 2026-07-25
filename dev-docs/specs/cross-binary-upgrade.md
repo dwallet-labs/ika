@@ -141,7 +141,17 @@ next-committee assembly, which by construction never serves the genesis
 requirement (4/4 class-groups keys, 0/4 PVSS). This is also the path
 mainnet itself takes, so upgrade testing must follow it.
 
-## Literal previous-release compatibility is a release gate
+## Literal previous-release compatibility is a release requirement
+
+> **Enforcement note (2026-07-23).** This was an automated gate: the release
+> workflow called `upgrade-test.yaml` with `test=v118_mixed_rollout` on every
+> release tag and blocked the draft on it. **PR #1891 removed that job** —
+> release tags no longer block on anything, and the workflow now builds,
+> uploads and drafts unconditionally. The compatibility requirement below is
+> unchanged and still binding; only its enforcement moved from CI to the
+> release manager, who must dispatch the scenario against the exact candidate
+> SHA and record the result in the release notes (the notes scaffold prompts
+> for it). Treat a release whose notes carry no such record as unvalidated.
 
 The decentralized rollout topology is one release-candidate validator and
 the rest of the committee on the literal previous release. That topology must
@@ -157,8 +167,8 @@ v1.1.8 links the former `class_groups`/`inkrypto` dependency while current
 source links `cryptography-private`. The prior assumption was that their MPC
 wire formats were not interchangeable and therefore that every validator had
 to be replaced before the next MPC boundary. That assumption conflicts with
-the deployment contract. The release gate must run the literal binaries with
-real cryptography and either prove compatible canonical output or expose a
+the deployment contract. The scenario must therefore run the literal binaries
+with real cryptography and either prove compatible canonical output or expose a
 release blocker.
 
 Protocol v4 also changes validator-key publication from the bare
@@ -193,20 +203,35 @@ drives them across epochs:
   flow at v3, sequentially restart all validators onto the current build
   before the tested reshare, and confirm the network upgrades to v4 and keeps
   serving through the pre-activation presign window.
-- `tests/v118_mixed_rollout.rs` — the release-blocking deployment topology:
+- `tests/v118_mixed_rollout.rs` — the production deployment topology (the
+  scenario the release manager must run, see the enforcement note above):
   upgrade exactly one member of a four-validator literal v1.1.8 committee,
   hold protocol v3, and require two network-key reconfigurations to complete
   with every validator healthy and locally current, zero reported malicious
   actors, no stranded work, and identical canonical per-authority outputs.
+- `tests/v118_churn.rs` — `v118_upgrade` plus a post-upgrade committee join,
+  so the v4 reshare of a genuine 1.1.8-origin key includes a new party
+  (the lighter, more faithful exercise of the OCS joiner trust-anchor path).
+- `tests/v121_rollout.rs` — the aggregated-outputs (protocol v5) rehearsal:
+  boot the literal `release/testnet-v1.2.1` binary at v4, converge two mixed
+  pre-aggregation reshares, then swap the rest, vote to v5, and confirm the
+  first aggregated reconfiguration output installs everywhere.
+- `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape)
+  YAMLs for validators AND the notifier, covering the legacy JSON-RPC
+  transport nothing else exercises.
+- `tests/malicious_cross_binary.rs` — the deliberate-corruption counterpart:
+  corrupts the outgoing reconfiguration message so the output-quorum tally
+  must convict, which is what proves the compatibility scenarios above would
+  actually react to a real divergence rather than passing vacuously.
 
-How the mixed-rollout gate weighs the upgraded validator's output: production
+How the mixed-rollout scenario weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the
 quorum discards its own result without submitting it, and ANY honest
 validator (including the upgraded one) can be that straggler. Requiring the
 upgraded validator's submitted output at every boundary therefore made the
 gate nondeterministic (the same candidate SHA passed or failed on a
-scheduling race). The gate instead classifies each boundary:
+scheduling race). The scenario instead classifies each boundary:
 
 - the upgraded validator's output appears inside the converged quorum set →
   conclusive byte-level evidence;
@@ -216,7 +241,7 @@ scheduling race). The gate instead classifies each boundary:
   actors) → equally conclusive;
 - the digests differ, the late output reports malicious actors, or any
   submitted output diverges / is rejected / reports malicious actors → hard
-  release-blocking failure;
+  failure, and the release must not ship;
 - clean quorum convergence with no comparable candidate output at all →
   the boundary is *inconclusive*: it does not fail (the ordering is
   legitimate), but quorum-only progress is never accepted as compatibility

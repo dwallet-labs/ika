@@ -106,7 +106,7 @@ late-output-after-completion event, and in two scrapeable gauges:
 and `ika_dwallet_mpc_session_late_output_malicious_actors`. Both digest labels
 are over raw output bytes — comparable with each other, not with
 `ika_dwallet_mpc_session_output_info`'s envelope digests. This is what lets
-the mixed-rollout release gate treat an honest straggler (any validator whose
+the mixed-rollout release-validation scenario treat an honest straggler (any validator whose
 computation legitimately finishes after quorum) as byte-level compatibility
 evidence instead of a nondeterministic failure.
 

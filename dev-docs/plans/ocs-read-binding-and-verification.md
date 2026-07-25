@@ -1,7 +1,8 @@
 # OCS read-path binding & verification (security-model review)
 
-**Status:** active — one hardening item open (`ocs-binding-1`, the `pending_active_set`
-owner-binding); the rest is a record of *current* behavior worth keeping.
+**Status:** landed — the one hardening item (`ocs-binding-1`, the `pending_active_set`
+owner-binding) shipped in `ade5d7cd55`; the rest is a record of the read-path
+trust model worth keeping.
 **Date:** 2026-06-26. **Branch:** feat/ocs-grpc-migration (#1744).
 
 Four reviewer questions on the OCS verified-read trust model, answered against the

@@ -151,7 +151,11 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     `proof_verify_failures_total` (and the high-water gauge). A metric-assert
     test is deferred to the H2 negative-tests work.
 
-### Open
+### Formerly open — all resolved
+
+(Heading kept for stable anchors. Every finding below carries its own
+`RESOLUTION`; nothing from the audit remains open, as the summary above
+states. Re-verified 2026-07-25.)
 
 13. **[medium] Security-critical paths have zero negative/adversarial tests.**
     Proof rejection, high-water rollback, the DynamicFieldMembership binding, and the

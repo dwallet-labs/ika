@@ -55,10 +55,10 @@ gh workflow run simtest.yaml --ref <branch>
 
 # Watch / fetch results
 gh run watch <run-id>
-gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<attempt> / rust-tests-log
+gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<attempt> / rust-tests-log-<attempt>
 ```
 
-## Upgrade test (release gate and focused PR check)
+## Upgrade test (focused PR check; release validation is now MANUAL)
 
 `.github/workflows/upgrade-test.yaml` runs the out-of-process cross-binary
 upgrade harness (`crates/ika-upgrade-test/`) — real, separately-compiled
@@ -66,9 +66,18 @@ upgrade harness (`crates/ika-upgrade-test/`) — real, separately-compiled
 across epochs. Manual dispatch remains available. Pull requests that touch
 MPC, crypto dependencies, serialization, protocol configuration, the upgrade
 harness, or `Cargo.lock` automatically run the focused literal-v1.1.8 mixed
-rollout rather than the entire matrix. The release workflow calls the same
-reusable workflow with the exact candidate SHA and blocks tag publication on
-that scenario. It is not part of `scheduled-all-suites.yaml`. The contract it
+rollout rather than the entire matrix.
+
+> **The release workflow no longer runs any suite (changed 2026-07-23, PR
+> #1891).** It previously called this workflow with the candidate SHA and
+> blocked tag publication on `v118_mixed_rollout`; that job was removed, so
+> a release tag now builds, uploads and drafts **unconditionally**.
+> Validating a release candidate is a manual step: dispatch the scenario
+> below against the exact tagged SHA and record the run in the draft's
+> Validation section (the notes scaffold prompts for it). A release whose
+> notes carry no such record is unvalidated.
+
+It is not part of `scheduled-all-suites.yaml`. The contract it
 verifies is
 [`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
 
@@ -107,18 +116,26 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=cross_binary
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 #   override the old tag:  -f old_ref=tag-or-sha  (defaults to mainnet-v1.1.8)
 
-# Release-blocking decentralized rollout: one current validator and three
+# THE RELEASE-VALIDATION SCENARIO (run this by hand on every release tag —
+# nothing runs it for you any more): one current validator and three
 # literal v1.1.8 validators remain mixed through two protocol-v3 network-key
 # reconfigurations. Real crypto and production presign-pool sizing are forced;
 # its >=8-minute epoch reserves the bounded restart before the midpoint.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_mixed_rollout \
   -f candidate_sha=<exact-candidate-sha>
 
-# Test-test the release gate with the repository's compiled-in, feature-gated
+# Test-test that scenario with the repository's compiled-in, feature-gated
 # one-validator reconfiguration-message fault. This run is expected to fail;
 # its logs must show the exact zero-malicious or output-convergence assertion.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_mixed_rollout \
   -f candidate_sha=<exact-candidate-sha> -f test_testing_fault=true
+
+# Aggregated-outputs (protocol v5) rehearsal: boot the literal deployed
+# testnet release at v4, converge two MIXED pre-aggregation (V3) reshares,
+# then swap the rest, vote to v5, and confirm the first aggregated (V4)
+# reconfiguration output installs everywhere. Use this before activating v5.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v121_rollout
+#   override the old side:  -f old_ref=release/testnet-v1.2.1
 
 # Loaded runner slack: bump epochs for the upgrade scenarios.
 #   -f epoch_duration_ms=600000
@@ -144,6 +161,7 @@ continuity they prove:
 | `v118_upgrade` | literal v1.1.8, then every validator sequentially restarted onto current before the tested reshare | v3 → v4 | historical RocksDB/key continuity and pre-activation global presign |
 | `v118_churn` | current only by the tested churn reshare | v3 → v4 | v1.1.8-origin key reshared to a new post-upgrade validator |
 | `v118_mixed_rollout` | **one current + three literal v1.1.8** for two reshares | held at v3 | exact production rollout topology, zero false-malicious results, no stranded validator/session, canonical 4-of-4 output convergence |
+| `v121_rollout` | **one current + three literal `release/testnet-v1.2.1`**, then all swapped | v4 → v5 | mixed pre-aggregation (V3) reshares converge, then the first aggregated (V4) reconfiguration output installs fleet-wide |
 | `legacy_config` | current only | v3 → v4 | old JSON-RPC-only configuration remains accepted |
 
 `stop_and_swap([0, 1, 2, 3])` is sequential: it restarts and health-checks

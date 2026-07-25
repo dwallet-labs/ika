@@ -1,8 +1,9 @@
 # Plan: carry-forward of stable mpc_data to fix the freeze wedge (#1742)
 
-Status: proposed (2026-06-13). Regression harness: PR #1741
-(`test_validator_restart_mid_end_of_publish_grace`), currently red on
-exactly this wedge.
+Status: landed (2026-06-13, PR #1741) — shipped with the regression harness
+`test_validator_restart_mid_end_of_publish_grace`, which was red on exactly
+this wedge before the fix. The durable behavior lives in
+[`../specs/validator-mpc-data-announcements.md`](../specs/validator-mpc-data-announcements.md).
 
 ## The bug
 

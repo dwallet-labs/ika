@@ -19,12 +19,21 @@ inherited.
 - **Browse online:** github.com/MystenLabs/sui at that tag — the stable
   way to reference a specific file/line.
 - **Local checkout** (fetched by cargo for the git dependencies):
-  `~/.cargo/git/checkouts/sui-<hash>/<rev>/`. The `<rev>` is the commit
-  the tag resolves to; find the directory with
-  `ls -d ~/.cargo/git/checkouts/sui-*/*/` (the `sui-rust-sdk-*` checkout
-  is a different dependency — the one you want has `consensus/`,
-  `crates/`, `sui-execution/` at its root). If it's absent, a
-  `cargo fetch` / build populates it.
+  `~/.cargo/git/checkouts/sui-<hash>/<rev>/`. **Do not pick by eye** —
+  every prior version bump leaves its own `<rev>` behind, so several
+  structurally identical Sui checkouts usually coexist (this machine has
+  three) and reading a stale one means reasoning about year-old upstream
+  behavior. Derive the right one from the lockfile:
+
+  ```bash
+  # the rev cargo actually resolved, then the matching checkout dir
+  REV=$(grep -m1 -oE 'MystenLabs/sui\?tag=[^#]*#[0-9a-f]+' Cargo.lock | cut -d'#' -f2)
+  ls -d ~/.cargo/git/checkouts/sui-*/"${REV:0:7}"/
+  ```
+
+  (The `sui-rust-sdk-*` checkouts are a different dependency — the one you
+  want has `consensus/`, `crates/`, `sui-execution/` at its root.) If it's
+  absent, a `cargo fetch` / build populates it.
 
 ## What to read for what
 
