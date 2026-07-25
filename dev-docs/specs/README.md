@@ -34,3 +34,24 @@ here.
   strict-equality close predicate, the gate-consensus-submission rule
   every user-session completion path must follow, and the
   batch-processing rule for computation results.
+- [`cross-binary-upgrade.md`](cross-binary-upgrade.md) — the in-place
+  protocol-version upgrade contract: the stake-weighted version vote, the
+  wire/on-disk compatibility invariants a mixed committee must preserve,
+  the session-completion wedge, and when a rolling swap is valid vs. when
+  the crypto boundary forces an atomic restart.
+- [`fast-schnorr-vss.md`](fast-schnorr-vss.md) — Fast Schnorr (VSS)
+  signing: the three VSS algorithms and their curve/algorithm numbering,
+  the version-3 PVSS key bundle and its off-chain transport, the V3
+  presign/sign flow, and what is internal-NOA-only vs. still gated.
+- [`checkpoint-sync-floor.md`](checkpoint-sync-floor.md) — why pull-mode
+  checkpoint sync starts from the on-chain processed cursor (a fresh-DB
+  notifier can never fetch deep history from peers), the cold-start
+  deferral, and the gap-tolerant store invariants.
+- [`checkpoint-writer-observability.md`](checkpoint-writer-observability.md)
+  — the deliberate single-notifier write path, why a stalled writer blocks
+  the epoch close, and the two stall signals.
+- [`trusted-peer-discovery.md`](trusted-peer-discovery.md) — how a
+  peer-only validator gets dialed and boots with no static seed peers:
+  the continuous committee + `pending_active_set` feed into anemo
+  `known_peers`, the inbound-dial bootstrap, and the `ExtendedField` BCS
+  framing the read depends on.

@@ -236,8 +236,14 @@ flips a mirrored validator into peer-only).
 The trust root is the **Sui genesis blob** (`sui_genesis`). At boot the node
 loads it, recomputes the genesis checkpoint digest, and asserts it equals the
 binary's **compiled-in chain identifier** for the configured chain
-(`get_mainnet_chain_identifier` / `get_testnet_chain_identifier` — the chain
-identifier *is* the genesis checkpoint digest). On a public chain a
+(`ika_sui_client::genesis::compiled_in_chain_identifier`, `genesis.rs:300` —
+the chain identifier *is* the genesis checkpoint digest). **That constant must
+come from `sui_types::digests::{MAINNET,TESTNET}_CHAIN_IDENTIFIER_BASE58`, not
+from the identically-named getters in `ika_types::digests`** — ika's decode to
+the ika SYSTEM OBJECT IDs, so verifying against them can never succeed for any
+legitimate blob. That was a real bug (#1875): it made this whole path
+unbootable on both public chains until it was fixed, and a regression test now
+pins the two as unequal. On a public chain a
 swapped/forged blob fails this check; on `Custom`/`Devnet` localnets there is
 no compiled-in identifier, so the blob's own digest is the root (the
 swarm/operator supplies a trusted blob). `committee[0]` is extracted from the
@@ -454,7 +460,7 @@ dropping entries are layered:
 
 - **Omission detector** (warn-only, count-only): compares the listed
   count against the authenticated `Bag.size` read from the OCS-verified
-  parent state. It fires `bag_omission_suspected` on `listed < expected`
+  parent state. It fires `bag_omission_suspected_total` on `listed < expected`
   but never halts — `Bag.size` legitimately drifts mid-walk, so only
   *persistent* suspicion is actionable. It is count-only (cannot tell
   *which* entries are missing) and is disabled on direct nodes (where the

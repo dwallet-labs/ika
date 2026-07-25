@@ -140,7 +140,12 @@ class of change that can trigger it, so it's called out.
   `mainnet-v1.72.3`; updated to `mainnet-v1.73.2`. No behavior change (the
   `reputation_score_sorted_desc` no-op was already correct). Listed for completeness.
 
-### 7. (OPEN) Protocol-config snapshots are stale — regenerate all 9
+### 7. (DONE) Protocol-config snapshots are stale — regenerate all 9
+
+> **Resolved.** Re-verified 2026-07-25: all 9 relevant `.snap` files carry
+> `end_of_publish_grace_rounds`, and `cargo test -p ika-protocol-config
+> --release` is green (6/6, including `snapshot_tests`). The RED state
+> described below is historical.
 - **Files**: `crates/ika-protocol-config/src/snapshots/*.snap` (9 files); source of
   truth `crates/ika-protocol-config/src/lib.rs` (the two fields set unconditionally
   to `Some(50)` in the base/min constructor).

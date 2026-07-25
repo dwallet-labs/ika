@@ -43,8 +43,10 @@ rule, not the instance.
   still forms from the honest quorum. A divergent *decryption-key share*
   is worse: threshold signing aborts with
   `FailedToAdvanceMPC(InvalidParameters)` inside
-  `interpolate_decryption_shares` / `combine_decryption_shares_semi_honest`,
-  which is a semi-honest, NON-IDENTIFIABLE abort — the faulty validator
+  `interpolate_decryption_shares` / `combine_decryption_shares_semi_honest`
+  (those two live in the external `inkrypto` dependency, NOT in this repo —
+  `git grep` here finds nothing; `DwalletMPCError::FailedToAdvanceMPC` wraps
+  their `mpc::Error`), which is a semi-honest, NON-IDENTIFIABLE abort — the faulty validator
   emits no output (nothing to tally), every peer that includes its share
   fails the same session, and no malicious set is populated. → Rule:
   absence of a malicious flag is NOT evidence of healthy key material. A
@@ -253,6 +255,33 @@ rule, not the instance.
   semantic in a test (pin the expected value AND pin inequality with the
   look-alike), because the compiler cannot tell you which meaning you
   wanted.
+
+- **serde `rename_all` does NOT cascade to struct-variant fields.** A
+  container-level `rename_all` renames the variants, but fields *inside* an
+  enum's struct variants keep their original names unless the variant also
+  carries `rename_all_fields` (or each field is renamed). Operator-facing
+  config is the blast radius: the documented key silently isn't the key the
+  deserializer accepts. → Rule: test the serde round-trip for any
+  config/wire enum rather than reasoning about attribute inheritance.
+- **An inclusion or authenticity proof is NOT a currency proof.** A validly
+  signed, correctly-proven old checkpoint proves an *old* version — forever.
+  Verification that answers "did the chain ever say this?" cannot answer "is
+  this still true?", and a relay free to choose which proven state to serve
+  can pin a reader in the past without ever forging anything. → Rule: when a
+  read must be current, say what makes it current (a monotone frontier, a
+  freshness bound, a fold over a contiguous stream) — signature validity is
+  not it.
+
+## Verifying other people's claims
+
+- **Commit messages and PR titles overstate fixes.** An OCS audit found
+  "fixed-by" citations that were false (the credited commit didn't fix it),
+  incomplete (fixed one of two paths), or orthogonal. The same review cycle
+  found review documents whose own status lines contradicted their summary
+  tables. → Rule: reconcile every claimed fix against the code before
+  treating a finding as closed — the commit is a hypothesis, the code is the
+  evidence. This applies to docs in this folder too: a status line is a
+  claim, not proof.
 
 ## Dead code & dependencies
 
