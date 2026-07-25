@@ -39,6 +39,7 @@ use sui_types::clock::Clock;
 use sui_types::collection_types::{Entry, Table};
 use sui_types::digests::ChainIdentifier as SuiNetworkChainIdentifier;
 use sui_types::dynamic_field::Field;
+use sui_types::error::SuiObjectResponseError;
 use sui_types::gas_coin::GasCoin;
 use sui_types::object::Owner;
 use sui_types::transaction::ObjectArg;
@@ -575,7 +576,21 @@ where
                     })
                     .collect::<IkaResult<Vec<_>>>()?;
 
-                let epoch_start_system_state = EpochStartSystem::new_v1(
+                let authority_name_flip_epoch = self
+                    .inner
+                    .get_authority_name_flip_epoch(ika_system_state_inner.extra_fields.id.id.bytes)
+                    .await
+                    .map_err(|e| {
+                        self.sui_client_metrics
+                            .sui_rpc_errors
+                            .with_label_values(&["get_authority_name_flip_epoch"])
+                            .inc();
+                        IkaError::SuiClientInternalError(format!(
+                            "Can't get_authority_name_flip_epoch: {e}"
+                        ))
+                    })?;
+
+                let epoch_start_system_state = EpochStartSystem::new_v2(
                     ika_system_state_inner.epoch,
                     ika_system_state_inner.protocol_version,
                     ika_system_state_inner.epoch_start_timestamp_ms,
@@ -589,11 +604,38 @@ where
                         .validator_set
                         .active_committee
                         .validity_threshold,
+                    authority_name_flip_epoch,
                 );
 
                 Ok(epoch_start_system_state)
             }
         }
+    }
+
+    /// The on-chain authority-name flip epoch, or `None` while unset.
+    /// Committees OF epochs `>=` this value derive members' `AuthorityName`
+    /// from the consensus key. Callers deriving a committee for epoch `E`
+    /// from raw on-chain state (rather than through
+    /// [`SuiClient::get_epoch_start_system`]) decide the basis with this.
+    pub async fn get_authority_name_flip_epoch(
+        &self,
+        system_inner: &SystemInner,
+    ) -> IkaResult<Option<EpochId>> {
+        let extra_fields_bag_id = match system_inner {
+            SystemInner::V1(inner) => inner.extra_fields.id.id.bytes,
+        };
+        self.inner
+            .get_authority_name_flip_epoch(extra_fields_bag_id)
+            .await
+            .map_err(|e| {
+                self.sui_client_metrics
+                    .sui_rpc_errors
+                    .with_label_values(&["get_authority_name_flip_epoch"])
+                    .inc();
+                IkaError::SuiClientInternalError(format!(
+                    "Can't get_authority_name_flip_epoch: {e}"
+                ))
+            })
     }
 
     /// Get the validators' info by their IDs.
@@ -1037,6 +1079,17 @@ pub trait SuiClientInner: Send + Sync {
     /// manual dynamic-field-id derivation (used for `pending_active_set`).
     async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
 
+    /// The authority-name flip-epoch marker in `SystemInner.extra_fields`
+    /// (a `Field<vector<u8>, u64>` bag entry), or `None` while the marker is
+    /// unset — the normal state of every network below the arming protocol
+    /// version, so "entry absent" MUST map to `Ok(None)`, never an error.
+    /// Committees OF epochs `>=` the marker derive their members'
+    /// `AuthorityName` from the consensus key.
+    async fn get_authority_name_flip_epoch(
+        &self,
+        extra_fields_bag_id: ObjectID,
+    ) -> Result<Option<u64>, Self::Error>;
+
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
 
     async fn get_dwallet_coordinator(
@@ -1225,6 +1278,37 @@ impl SuiClientInner for SuiSdkClient {
             "Object {object_id:?} is not a MoveObject"
         )))?;
         Ok(raw_move_obj.bcs_bytes)
+    }
+
+    async fn get_authority_name_flip_epoch(
+        &self,
+        extra_fields_bag_id: ObjectID,
+    ) -> Result<Option<u64>, Self::Error> {
+        let field_id = crate::transport::authority_name_flip_epoch_field_id(extra_fields_bag_id)
+            .map_err(Error::DataError)?;
+        let response = self
+            .read_api()
+            .get_object_with_options(field_id, SuiObjectDataOptions::bcs_lossless())
+            .await?;
+        let object = match response.into_object() {
+            Ok(object) => object,
+            // Marker unset — the normal pre-arming state.
+            Err(SuiObjectResponseError::NotExists { .. }) => return Ok(None),
+            Err(e) => {
+                return Err(Error::DataError(format!(
+                    "can't read authority-name flip-epoch field {field_id:?}: {e:?}"
+                )));
+            }
+        };
+        let move_object = object
+            .bcs
+            .ok_or_else(|| Error::DataError(format!("flip-epoch field {field_id:?} has no BCS")))?;
+        let raw_move_obj = move_object.try_into_move().ok_or(Error::DataError(format!(
+            "Object {field_id:?} is not a MoveObject"
+        )))?;
+        let field: Field<Vec<u8>, u64> = bcs::from_bytes(&raw_move_obj.bcs_bytes)
+            .map_err(|e| Error::DataError(format!("decode flip-epoch field: {e}")))?;
+        Ok(Some(field.value))
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
@@ -1851,6 +1935,13 @@ impl SuiClientInner for SuiBackend {
 
     async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
         dispatch_backend!(self, get_extended_field_value_bcs(ef_id))
+    }
+
+    async fn get_authority_name_flip_epoch(
+        &self,
+        extra_fields_bag_id: ObjectID,
+    ) -> Result<Option<u64>, Self::Error> {
+        dispatch_backend!(self, get_authority_name_flip_epoch(extra_fields_bag_id))
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {

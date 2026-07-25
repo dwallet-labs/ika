@@ -307,6 +307,19 @@ impl AuthorityPublicKeyBytes {
 where {
         AuthorityPublicKeyBytes(bytes)
     }
+
+    /// The canonical `AuthorityName` of a validator identified by its
+    /// consensus Ed25519 key: the 32 key bytes zero-padded up to the 48-byte
+    /// container, so the wire encoding (and every name-keyed map) is
+    /// untouched by the identity basis. Zero padding is enforced here — the
+    /// only constructor for consensus-basis names — so equality and hashing
+    /// are consistent. The consensus key is recoverable as the first 32
+    /// bytes, symmetric to how a BLS-basis name decodes to the BLS key.
+    pub fn from_consensus_key(key: &NetworkPublicKey) -> Self {
+        let mut bytes = [0u8; AuthorityPublicKey::LENGTH];
+        bytes[..Ed25519PublicKey::LENGTH].copy_from_slice(key.as_bytes());
+        AuthorityPublicKeyBytes(bytes)
+    }
 }
 
 impl FromStr for AuthorityPublicKeyBytes {

@@ -15,7 +15,7 @@ use ika_types::committee::{
 };
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::error::IkaResult;
+use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -414,6 +414,25 @@ where
                 system_inner.epoch_duration_ms(),
                 Duration::from_secs(10),
             );
+            // The authority-name basis of a committee OF epoch E is decided
+            // by the persisted on-chain flip marker (E >= flip_epoch →
+            // consensus-basis names) — the SAME value every producer and
+            // consumer of that committee reads, which is what keeps the two
+            // sides of an epoch boundary in agreement. Unset means BLS basis
+            // for every epoch.
+            let authority_name_flip_epoch = match sui_client
+                .get_authority_name_flip_epoch(&system_inner)
+                .await
+            {
+                Ok(flip_epoch) => flip_epoch,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        "failed to read the authority-name flip epoch; retrying next tick"
+                    );
+                    continue;
+                }
+            };
             let SystemInner::V1(system_inner) = system_inner;
 
             // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
@@ -446,8 +465,25 @@ where
                 && let Some(source) = off_chain_mpc_data_source.load_full()
                 && source.is_frozen()
             {
-                let current_members: Vec<AuthorityName> = system_inner
-                    .read_bls_committee(&system_inner.get_ika_active_committee())
+                let current_committee = match Self::committee_names_for_epoch(
+                    &sui_client,
+                    system_inner.read_bls_committee(&system_inner.get_ika_active_committee()),
+                    current_epoch,
+                    authority_name_flip_epoch,
+                )
+                .await
+                {
+                    Ok(members) => members,
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            "failed to re-key the current committee to consensus-basis \
+                             names; retrying next tick"
+                        );
+                        continue;
+                    }
+                };
+                let current_members: Vec<AuthorityName> = current_committee
                     .into_iter()
                     .map(|(_, (name, _))| name)
                     .collect();
@@ -471,7 +507,25 @@ where
                 continue;
             };
 
-            let new_next_committee = system_inner.read_bls_committee(&new_next_bls_committee);
+            let next_epoch_for_names = system_inner.epoch() + 1;
+            let new_next_committee = match Self::committee_names_for_epoch(
+                &sui_client,
+                system_inner.read_bls_committee(&new_next_bls_committee),
+                next_epoch_for_names,
+                authority_name_flip_epoch,
+            )
+            .await
+            {
+                Ok(members) => members,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        "failed to re-key the next-epoch committee to consensus-basis \
+                         names; retrying next tick"
+                    );
+                    continue;
+                }
+            };
 
             // Publish the CHAIN view of the next-epoch committee
             // (members + stake, no class-groups) as soon as Sui has it
@@ -600,6 +654,49 @@ where
                 }
             }
         }
+    }
+
+    /// Re-key a chain-read committee (BLS-basis names, as
+    /// `read_bls_committee` mints them) to consensus-basis names when the
+    /// on-chain flip applies to `epoch`. The consensus keys are not in the
+    /// on-chain `BlsCommittee` (it carries `validator_id` + BLS
+    /// `protocol_pubkey` only), so each member's validator record is fetched
+    /// by id. No-op — no fetch — below the flip epoch, which keeps this off
+    /// the rolling-upgrade window: the first consensus-basis epoch begins
+    /// only after the network is stable on the arming protocol version.
+    async fn committee_names_for_epoch(
+        sui_client: &Arc<SuiClient<C>>,
+        members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
+        epoch: EpochId,
+        authority_name_flip_epoch: Option<EpochId>,
+    ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
+        if !authority_name_flip_epoch.is_some_and(|flip_epoch| epoch >= flip_epoch) {
+            return Ok(members);
+        }
+        let validator_ids: Vec<ObjectID> = members.iter().map(|(id, _)| *id).collect();
+        let validators = sui_client.get_validators_info_by_ids(validator_ids).await?;
+        members
+            .into_iter()
+            .map(|(validator_id, (_, stake))| {
+                let validator = validators
+                    .iter()
+                    .find(|v| v.id == validator_id)
+                    .ok_or_else(|| {
+                        IkaError::InvalidCommittee(format!(
+                            "validator {validator_id} missing from the fetched validator \
+                             records while re-keying to consensus-basis names"
+                        ))
+                    })?;
+                let info = validator.verified_validator_info();
+                Ok((
+                    validator_id,
+                    (
+                        AuthorityName::from_consensus_key(&info.consensus_pubkey),
+                        stake,
+                    ),
+                ))
+            })
+            .collect()
     }
 
     async fn new_committee(

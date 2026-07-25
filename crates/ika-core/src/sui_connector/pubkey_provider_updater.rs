@@ -77,8 +77,16 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         .get_system_inner()
         .await
         .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
+    let authority_name_flip_epoch = sui_client
+        .get_authority_name_flip_epoch(&system_inner)
+        .await
+        .map_err(|e| anyhow::anyhow!("get_authority_name_flip_epoch failed: {e}"))?;
     let SystemInner::V1(system_inner) = system_inner;
     let on_chain_epoch = system_inner.epoch();
+    // The identity basis of the PRIOR epoch's committee — the name space its
+    // members signed their handoff attestations under.
+    let consensus_key_identity =
+        authority_name_flip_epoch.is_some_and(|flip_epoch| expected_prior_epoch >= flip_epoch);
     if on_chain_epoch != expected_prior_epoch + 1 {
         anyhow::bail!(
             "on-chain epoch {on_chain_epoch} does not equal expected prior epoch \
@@ -141,10 +149,28 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
              means a corrupt prior-committee record, not wrong peers"
         );
     }
-    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = bls_members
-        .iter()
-        .map(|(id, (name, _))| (*id, *name))
-        .collect();
+    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = if consensus_key_identity {
+        // Consensus-basis prior epoch: the snapshot name derives from the
+        // consensus key, whose VALUE is fixed at registration — so the
+        // current on-chain value IS the snapshot value. A member whose
+        // validator_info fails verify has no resolvable name and drops out
+        // (the verify-failure warn below attributes it).
+        staking_pools
+            .iter()
+            .filter_map(|pool| {
+                let verified = pool.validator_info.verify().ok()?;
+                Some((
+                    pool.id,
+                    AuthorityName::from_consensus_key(&verified.consensus_pubkey),
+                ))
+            })
+            .collect()
+    } else {
+        bls_members
+            .iter()
+            .map(|(id, (name, _))| (*id, *name))
+            .collect()
+    };
     // Tolerate a member whose validator_info fails to decode: `verify()`
     // rejects on ANY malformed metadata field (addresses, next-epoch keys),
     // not just the consensus key needed here, and the member may have
@@ -181,7 +207,7 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     }
     let voting_rights: Vec<(AuthorityName, StakeUnit)> = bls_members
         .into_iter()
-        .map(|(_, (name, stake))| (name, stake))
+        .filter_map(|(id, (_, stake))| Some((*snapshot_name_by_id.get(&id)?, stake)))
         .collect();
     Ok(Committee::new(
         expected_prior_epoch,
