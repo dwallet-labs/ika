@@ -291,6 +291,9 @@ pub struct FullnodeConfigBuilder {
     /// transport, the shape every mainnet notifier/fullnode runs on rollout
     /// day.
     legacy_sui_rpc_only: bool,
+    /// Notifier pays gas from its SUI address balance (SIP-58) — see
+    /// `SuiConnectorConfig::notifier_gas_from_address_balance`.
+    notifier_gas_from_address_balance: bool,
 }
 
 impl FullnodeConfigBuilder {
@@ -305,6 +308,12 @@ impl FullnodeConfigBuilder {
 
     pub fn with_supported_protocol_versions(mut self, versions: SupportedProtocolVersions) -> Self {
         self.supported_protocol_versions = Some(versions);
+        self
+    }
+
+    /// Notifier pays gas from its SUI address balance (SIP-58).
+    pub fn with_notifier_gas_from_address_balance(mut self) -> Self {
+        self.notifier_gas_from_address_balance = true;
         self
     }
 
@@ -463,7 +472,7 @@ impl FullnodeConfigBuilder {
                 ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair,
-                notifier_gas_from_address_balance: false,
+                notifier_gas_from_address_balance: self.notifier_gas_from_address_balance,
                 sui_ika_system_module_last_processed_event_id_override: None,
             },
             metrics_address: self
