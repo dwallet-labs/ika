@@ -23,11 +23,14 @@ the sender's SUI address balance, and a `ValidDuring` expiration replaces the
 replay protection that gas-coin version bumps provided. Decision rules:
 
 1. **Construction** (`balance_gas_transaction_data`): empty `gas_data.payment`,
-   same fixed budget, expiration `ValidDuring { min_epoch == max_epoch ==
-   current SUI epoch, chain: full genesis-rooted ChainIdentifier, nonce:
-   random u32 }`. Single-epoch validity is accepted under every protocol
-   regime; a submission racing a Sui epoch boundary expires harmlessly and
-   the caller's retry rebuilds it against the new epoch.
+   same fixed budget, expiration `ValidDuring { min_epoch: current SUI epoch,
+   max_epoch: current + 1, chain: full genesis-rooted ChainIdentifier, nonce:
+   random u32 }`. The one-epoch extension keeps a submission built just
+   before a Sui epoch boundary valid instead of expiring mid-flight; it is
+   the maximum `is_replay_protected` allows, and multi-epoch expiration
+   (protocol 105) predates every network's address-balance-gas enablement.
+   Trade-off: an abandoned signed-but-never-executed transaction can hold
+   its balance reservation for up to two epochs instead of one.
 2. **Chain identifier** is resolved ONCE at boot (compiled-in for
    mainnet/testnet via the short id; genesis checkpoint digest otherwise) and
    a failure to resolve it fails the boot loudly — a writer silently unable

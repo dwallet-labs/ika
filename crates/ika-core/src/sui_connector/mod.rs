@@ -739,10 +739,16 @@ pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
 /// SIP-58 address-balance-gas transaction: an EMPTY gas payment is the
 /// protocol-level trigger for paying from the sender's address balance, and
 /// the `ValidDuring` expiration supplies the replay protection that gas-coin
-/// version bumps used to provide. `min_epoch == max_epoch` (single-epoch
-/// validity) is accepted under every protocol regime; a submission racing a
-/// Sui epoch boundary simply expires and the caller's retry rebuilds it
-/// against the new epoch.
+/// version bumps used to provide. The window is `[current, current + 1]`:
+/// a submission built just before a Sui epoch boundary stays valid into the
+/// next epoch instead of expiring mid-flight and costing a rebuild-retry.
+/// The one-epoch extension is the maximum `is_replay_protected` allows, and
+/// multi-epoch expiration is enabled from Sui protocol 105 — strictly below
+/// every network's address-balance-gas enablement, so wherever this
+/// transaction is legal at all, the window is too. Cost: an abandoned
+/// signed-but-never-executed transaction can hold its balance reservation
+/// for up to two epochs instead of one (irrelevant to a serial writer with
+/// normal float).
 fn balance_gas_transaction_data(
     sender: SuiAddress,
     pt: ProgrammableTransaction,
@@ -762,7 +768,7 @@ fn balance_gas_transaction_data(
         },
         expiration: TransactionExpiration::ValidDuring {
             min_epoch: Some(sui_epoch),
-            max_epoch: Some(sui_epoch),
+            max_epoch: Some(sui_epoch.saturating_add(1)),
             min_timestamp: None,
             max_timestamp: None,
             chain: chain_identifier,
@@ -806,14 +812,15 @@ mod tests {
         assert_eq!(v1.gas_data.owner, sender);
         assert_eq!(v1.gas_data.price, 750);
         assert_eq!(v1.gas_data.budget, NOTIFIER_GAS_BUDGET);
-        // Single-epoch validity: replay-protected under every protocol regime
-        // (validators retain executed digests across the expiry range).
+        // The [current, current+1] window survives a Sui epoch boundary and
+        // is the maximum extension is_replay_protected allows (validators
+        // retain executed digests across the expiry range).
         assert!(v1.expiration.is_replay_protected());
         assert!(matches!(
             v1.expiration,
             TransactionExpiration::ValidDuring {
                 min_epoch: Some(42),
-                max_epoch: Some(42),
+                max_epoch: Some(43),
                 min_timestamp: None,
                 max_timestamp: None,
                 nonce: 7,
