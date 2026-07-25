@@ -63,7 +63,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tap::{Pipe, TapFallible, TapOptional};
 use tokio::sync::oneshot;
@@ -71,7 +71,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.StateSync.rs"));
@@ -546,6 +546,7 @@ where
         tokio::spawn(update_checkpoint_watermark_metrics(
             receiver,
             self.store.clone(),
+            self.peer_heights.clone(),
             self.metrics.clone(),
         ));
 
@@ -553,6 +554,7 @@ where
         tokio::spawn(update_system_checkpoint_watermark_metrics(
             receiver,
             self.store.clone(),
+            self.peer_heights.clone(),
             self.metrics.clone(),
         ));
 
@@ -1287,28 +1289,124 @@ where
     }
 }
 
+/// A checkpoint-sync stall must persist this long before it is reported
+/// (gauge + error log). Long enough that ordinary sync-job scheduling and
+/// peer churn never trip it; a genuine wedge (the 2026-07 testnet epoch-close
+/// incidents: synced pinned while peers advertised thousands more) exceeds it
+/// within minutes of onset.
+const SYNC_STALL_REPORT_AFTER: Duration = Duration::from_secs(120);
+/// Once stalled, re-log at most this often.
+const SYNC_STALL_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Tracks whether checkpoint sync is making progress toward what peers
+/// advertise. "Stalled" means peers are known to be ahead of our VERIFIED
+/// watermark, yet that watermark has not advanced. (The verified watermark is
+/// the one the pull path bumps per fetched checkpoint; the synced watermark
+/// is fed only by the consensus output path and never moves on
+/// notifiers/fullnodes.) This is the writer-side self-report for a wedged
+/// sync pipeline: on the notifier a stalled sync leaves NOTHING to submit,
+/// so the submission-failure log never fires and, without this signal, a
+/// fully-stalled writer is indistinguishable from an idle one while it
+/// silently blocks the network's epoch close.
+#[derive(Default)]
+struct SyncStallTracker {
+    last_verified: Option<u64>,
+    last_progress: Option<Instant>,
+    last_log: Option<Instant>,
+}
+
+impl SyncStallTracker {
+    /// Feed one observation; returns `(stall_seconds, should_log)`.
+    /// `stall_seconds` is 0 while healthy or until the stall has lasted
+    /// `SYNC_STALL_REPORT_AFTER`; `should_log` rate-limits the error log to
+    /// once per `SYNC_STALL_LOG_INTERVAL`.
+    fn observe(&mut self, known: Option<u64>, verified: Option<u64>, now: Instant) -> (u64, bool) {
+        let verified_advanced = verified != self.last_verified;
+        self.last_verified = verified;
+        // `known` is the max height advertised by same-chain peers; `None`
+        // means no peer has told us anything yet, which is a peering problem,
+        // not a sync stall.
+        let peers_are_ahead = known.is_some_and(|known| known > verified.unwrap_or(0));
+        if verified_advanced || !peers_are_ahead {
+            self.last_progress = Some(now);
+            self.last_log = None;
+            return (0, false);
+        }
+        let last_progress = *self.last_progress.get_or_insert(now);
+        let stalled_for = now.duration_since(last_progress);
+        if stalled_for < SYNC_STALL_REPORT_AFTER {
+            return (0, false);
+        }
+        let should_log = self
+            .last_log
+            .is_none_or(|last| now.duration_since(last) >= SYNC_STALL_LOG_INTERVAL);
+        if should_log {
+            self.last_log = Some(now);
+        }
+        (stalled_for.as_secs(), should_log)
+    }
+}
+
 async fn update_checkpoint_watermark_metrics<S>(
     mut recv: oneshot::Receiver<()>,
     store: S,
+    peer_heights: Arc<RwLock<PeerHeights>>,
     metrics: Metrics,
 ) -> Result<()>
 where
     S: WriteStore + Clone + Send + Sync,
 {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    let mut stall_tracker = SyncStallTracker::default();
     loop {
         tokio::select! {
              _now = interval.tick() => {
                 let highest_verified_checkpoint = store.get_highest_verified_dwallet_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|checkpoint| checkpoint.sequence_number);
                 if let Some(highest_verified_checkpoint) = highest_verified_checkpoint {
-                    metrics.set_highest_verified_dwallet_checkpoint(highest_verified_checkpoint.sequence_number);
+                    metrics.set_highest_verified_dwallet_checkpoint(highest_verified_checkpoint);
                 }
                 let highest_synced_checkpoint = store.get_highest_synced_dwallet_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|checkpoint| checkpoint.sequence_number);
 
                 if let Some(highest_synced_checkpoint) = highest_synced_checkpoint {
-                metrics.set_highest_synced_dwallet_checkpoint(highest_synced_checkpoint.sequence_number);
+                    metrics.set_highest_synced_dwallet_checkpoint(highest_synced_checkpoint);
+                }
+                // Refresh "known" from peer heights every tick — the sync-job
+                // path only updates it when a job actually runs, which is
+                // exactly what stops happening during the stall this detects.
+                let highest_known_checkpoint = peer_heights
+                    .read()
+                    .unwrap()
+                    .highest_known_checkpoint_sequence_number();
+                if let Some(highest_known_checkpoint) = highest_known_checkpoint {
+                    metrics.set_highest_known_dwallet_checkpoint(highest_known_checkpoint);
+                }
+                // The tracker watches the VERIFIED watermark: it is the one
+                // the pull path bumps on every fetched checkpoint. The synced
+                // watermark is fed only by the consensus output path, so on a
+                // notifier/fullnode it never advances even when sync is
+                // perfectly healthy — tracking it would report a permanent
+                // false stall on exactly the node this detector protects.
+                let (stall_seconds, should_log) = stall_tracker.observe(
+                    highest_known_checkpoint,
+                    highest_verified_checkpoint,
+                    Instant::now(),
+                );
+                metrics.set_dwallet_checkpoint_sync_stall_seconds(stall_seconds);
+                if should_log {
+                    error!(
+                        highest_known = ?highest_known_checkpoint,
+                        highest_verified = ?highest_verified_checkpoint,
+                        stall_seconds,
+                        "dwallet-checkpoint sync is STALLED: peers advertise checkpoints \
+                         we are not syncing. On the notifier this silently blocks the \
+                         network's epoch close (nothing reaches the submission path, so \
+                         no submission-failure log will fire) — restart/investigate \
+                         state sync now",
+                    );
                 }
              },
             _ = &mut recv => break,
@@ -1646,29 +1744,167 @@ async fn sync_system_checkpoint_messages_from_archive<S>(
 async fn update_system_checkpoint_watermark_metrics<S>(
     mut recv: oneshot::Receiver<()>,
     store: S,
+    peer_heights: Arc<RwLock<PeerHeights>>,
     metrics: Metrics,
 ) -> Result<()>
 where
     S: WriteStore + Clone + Send + Sync,
 {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    let mut stall_tracker = SyncStallTracker::default();
     loop {
         tokio::select! {
              _now = interval.tick() => {
                 let highest_verified_system_checkpoint = store.get_highest_verified_system_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|system_checkpoint| system_checkpoint.sequence_number);
                 if let Some(highest_verified_system_checkpoint) = highest_verified_system_checkpoint {
-                    metrics.set_highest_verified_system_checkpoint(highest_verified_system_checkpoint.sequence_number);
+                    metrics.set_highest_verified_system_checkpoint(highest_verified_system_checkpoint);
                 }
                 let highest_synced_system_checkpoint = store.get_highest_synced_system_checkpoint()
-                    .expect("store operation should not fail");
+                    .expect("store operation should not fail")
+                    .map(|system_checkpoint| system_checkpoint.sequence_number);
 
                 if let Some(highest_synced_system_checkpoint) = highest_synced_system_checkpoint {
-                metrics.set_highest_synced_system_checkpoint(highest_synced_system_checkpoint.sequence_number);
+                    metrics.set_highest_synced_system_checkpoint(highest_synced_system_checkpoint);
+                }
+                let highest_known_system_checkpoint = peer_heights
+                    .read()
+                    .unwrap()
+                    .highest_known_system_checkpoint_sequence_number();
+                if let Some(highest_known_system_checkpoint) = highest_known_system_checkpoint {
+                    metrics.set_highest_known_system_checkpoint(highest_known_system_checkpoint);
+                }
+                // VERIFIED watermark, not synced — see the dwallet twin above.
+                let (stall_seconds, should_log) = stall_tracker.observe(
+                    highest_known_system_checkpoint,
+                    highest_verified_system_checkpoint,
+                    Instant::now(),
+                );
+                metrics.set_system_checkpoint_sync_stall_seconds(stall_seconds);
+                if should_log {
+                    error!(
+                        highest_known = ?highest_known_system_checkpoint,
+                        highest_verified = ?highest_verified_system_checkpoint,
+                        stall_seconds,
+                        "system-checkpoint sync is STALLED: peers advertise system \
+                         checkpoints we are not syncing. On the notifier this silently \
+                         blocks the network's epoch close — restart/investigate state \
+                         sync now",
+                    );
                 }
              },
             _ = &mut recv => break,
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(start: Instant, secs: u64) -> Instant {
+        start + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn sync_stall_tracker_stays_quiet_while_synced_advances() {
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        for tick in 0..100u64 {
+            let observation = tracker.observe(Some(1_000), Some(tick), at(start, tick * 5));
+            assert_eq!(observation, (0, false));
+        }
+    }
+
+    #[test]
+    fn sync_stall_tracker_stays_quiet_when_caught_up_or_ahead() {
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        assert_eq!(tracker.observe(Some(5), Some(5), start), (0, false));
+        assert_eq!(
+            tracker.observe(Some(5), Some(5), at(start, 600)),
+            (0, false)
+        );
+        assert_eq!(
+            tracker.observe(Some(4), Some(5), at(start, 1200)),
+            (0, false)
+        );
+    }
+
+    #[test]
+    fn sync_stall_tracker_stays_quiet_with_no_peer_heights() {
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        assert_eq!(tracker.observe(None, Some(5), start), (0, false));
+        assert_eq!(tracker.observe(None, Some(5), at(start, 600)), (0, false));
+    }
+
+    #[test]
+    fn sync_stall_tracker_reports_after_grace_and_rate_limits_logs() {
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        // First observation records the baseline.
+        assert_eq!(tracker.observe(Some(100), Some(5), start), (0, false));
+        // Still within the grace period: quiet.
+        assert_eq!(
+            tracker.observe(Some(100), Some(5), at(start, 119)),
+            (0, false)
+        );
+        // Grace elapsed: report and log.
+        assert_eq!(
+            tracker.observe(Some(100), Some(5), at(start, 120)),
+            (120, true)
+        );
+        // Logged 30s ago: gauge updates, log suppressed.
+        assert_eq!(
+            tracker.observe(Some(150), Some(5), at(start, 150)),
+            (150, false)
+        );
+        // A minute after the last log: log again.
+        assert_eq!(
+            tracker.observe(Some(150), Some(5), at(start, 181)),
+            (181, true)
+        );
+    }
+
+    #[test]
+    fn sync_stall_tracker_reports_when_nothing_ever_synced() {
+        // The bootstrap-failure shape: peers advertise thousands of
+        // checkpoints while our synced watermark never leaves `None`.
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        assert_eq!(tracker.observe(Some(21_000), None, start), (0, false));
+        assert_eq!(
+            tracker.observe(Some(21_000), None, at(start, 120)),
+            (120, true)
+        );
+    }
+
+    #[test]
+    fn sync_stall_tracker_resets_on_recovery_then_logs_a_new_stall_promptly() {
+        let start = Instant::now();
+        let mut tracker = SyncStallTracker::default();
+        assert_eq!(tracker.observe(Some(100), Some(5), start), (0, false));
+        assert_eq!(
+            tracker.observe(Some(100), Some(5), at(start, 120)),
+            (120, true)
+        );
+        // Sync recovered: healthy again.
+        assert_eq!(
+            tracker.observe(Some(100), Some(90), at(start, 125)),
+            (0, false)
+        );
+        // A fresh stall re-reports after its own grace period, and logs
+        // immediately (the previous stall's rate limit must not carry over).
+        assert_eq!(
+            tracker.observe(Some(100), Some(90), at(start, 130)),
+            (0, false)
+        );
+        assert_eq!(
+            tracker.observe(Some(100), Some(90), at(start, 245)),
+            (120, true)
+        );
+    }
 }
