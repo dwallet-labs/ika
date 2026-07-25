@@ -24,11 +24,6 @@ pub struct OcsMetrics {
     /// The upstream chain's current epoch, sampled by the ratchet. Lets
     /// operators alert on ratchet lag: `chain_latest_epoch - committee_head_epoch`.
     pub chain_latest_epoch: IntGauge,
-    /// Times the ratchet installed `committee[E+1]` via the *unverified*
-    /// direct-fetch prune fallback (only possible when
-    /// `allow_unverified_committee_fallback` is on). Security-critical: each
-    /// increment is a link of the proof chain trusted on the endpoint's word.
-    pub unverified_committee_fallback_total: IntCounter,
     /// 1 while the last completed committee-ratchet attempt failed, 0 once one
     /// succeeds. The direct health signal for a node that cannot advance its
     /// committee head — e.g. booted against a source that serves no historical
@@ -92,12 +87,6 @@ impl OcsMetrics {
             chain_latest_epoch: register_int_gauge_with_registry!(
                 "ika_ocs_chain_latest_epoch",
                 "Upstream Sui current epoch sampled by the ratchet; alert on (chain_latest_epoch - committee_head_epoch)",
-                registry,
-            )
-            .unwrap(),
-            unverified_committee_fallback_total: register_int_counter_with_registry!(
-                "ika_ocs_unverified_committee_fallback_total",
-                "SECURITY-CRITICAL: committee[E+1] installed via the unverified direct-fetch prune fallback (trust degraded to the endpoint's word)",
                 registry,
             )
             .unwrap(),

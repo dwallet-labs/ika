@@ -44,16 +44,12 @@ pub enum OcsError {
         "proof chain broken at epoch {epoch}: the epoch record or its end-of-epoch checkpoint is \
          pruned upstream (and absent from any configured checkpoint archive) so the next \
          committee cannot be BLS-verified from the persisted anchor. Remediation: boot once \
-         against a full-retention Sui RPC so the persisted committee anchor catches up, \
+         against a full-retention Sui RPC so the persisted committee anchor catches up, or \
          configure a `sui_checkpoint_archive` that retains this epoch's end-of-epoch \
-         checkpoint, or set allow_unverified_committee_fallback to accept degraded trust"
+         checkpoint (the public mainnet/testnet stores retain every end-of-epoch \
+         checkpoint since epoch 0)"
     )]
     ProofChainBroken { epoch: u64 },
-    #[error(
-        "unverified committee fallback returned a committee for epoch {returned} when epoch \
-         {requested} was requested; refusing to install it"
-    )]
-    FallbackEpochMismatch { requested: u64, returned: u64 },
     #[error(
         "the BLS-verified end-of-epoch checkpoint committed to a committee for epoch {returned} \
          when epoch {requested} was expected; refusing to install it"
@@ -77,7 +73,7 @@ impl OcsError {
     /// retry cannot heal — a pruned/broken proof chain (`ProofChainBroken`), a
     /// checkpoint that fails BLS verification (`BadCheckpointSig`) or isn't
     /// end-of-epoch (`NotEndOfEpoch`), a committee installed at the wrong epoch
-    /// (`FallbackEpochMismatch`/`RatchetEpochMismatch`), or a missing local committee
+    /// (`RatchetEpochMismatch`), or a missing local committee
     /// (`MissingCommittee`/`Ika`) — and needs the operator to act (typically
     /// re-anchor). A caller that loops on the ratchet (the peer-only boot
     /// ratchet) MUST stop and surface a fatal error on a non-retryable result
@@ -94,9 +90,7 @@ impl OcsError {
             OcsError::BadCheckpointSig(..) => "bad_checkpoint_sig",
             OcsError::NotEndOfEpoch(_) => "not_end_of_epoch",
             OcsError::ProofChainBroken { .. } => "proof_chain_broken",
-            OcsError::FallbackEpochMismatch { .. } | OcsError::RatchetEpochMismatch { .. } => {
-                "epoch_mismatch"
-            }
+            OcsError::RatchetEpochMismatch { .. } => "epoch_mismatch",
             OcsError::Ika(_) => "store",
         }
     }
@@ -135,16 +129,12 @@ pub struct OcsVerifyingClient {
     transport: Arc<dyn SuiTransport>,
     committees: Arc<CommitteeStore>,
     metrics: Arc<OcsMetrics>,
-    /// When the end-of-epoch checkpoint is pruned upstream, fall back to an
-    /// *unverified* direct committee fetch instead of erroring. Default off —
-    /// the un-verified fallback re-roots the proof chain on the endpoint's
-    /// word (see `OcsError::ProofChainBroken`).
-    allow_unverified_committee_fallback: bool,
     /// Verified fallback source for end-of-epoch checkpoints the upstream
     /// fullnode has pruned: fetch the end-of-epoch checkpoint from a Sui
     /// checkpoint archive (or configured mirror), BLS-verify it against
-    /// `committee[head]`, and install — trust unchanged. Tried *before* the
-    /// degraded unverified fallback. `None` until wired (see `with_archive`).
+    /// `committee[head]`, and install — trust unchanged. When it too misses,
+    /// the ratchet fails closed with `OcsError::ProofChainBroken`. `None`
+    /// until wired (see `with_archive`).
     archive: Option<Arc<dyn CheckpointArchive>>,
     /// Whether the one-time cold-bootstrap-from-archive walk has been attempted.
     /// It runs at the start of the first ratchet, advancing the committee chain
@@ -165,13 +155,11 @@ impl OcsVerifyingClient {
         transport: Arc<dyn SuiTransport>,
         committees: Arc<CommitteeStore>,
         metrics: Arc<OcsMetrics>,
-        allow_unverified_committee_fallback: bool,
     ) -> Self {
         Self {
             transport,
             committees,
             metrics,
-            allow_unverified_committee_fallback,
             archive: None,
             backfill_attempted: AtomicBool::new(false),
             ratchet_lock: Mutex::new(()),
@@ -243,10 +231,9 @@ impl OcsVerifyingClient {
     ///
     /// Pruning behaviour: if `get_full_checkpoint(last_of_E)` returns
     /// `NotFound` because the end-of-epoch checkpoint was pruned upstream, the
-    /// `E → E+1` transition can't be BLS-verified. By default this is a hard
-    /// `ProofChainBroken` error (the operator must re-anchor); only with
-    /// `allow_unverified_committee_fallback` does it fetch `committee[E+1]`
-    /// directly and install it unverified (trust degraded to the endpoint).
+    /// `E → E+1` transition can't be BLS-verified. The verified archive is
+    /// tried next; if it also misses, this is a hard `ProofChainBroken` error
+    /// (the operator must re-anchor against a source retaining the epoch).
     ///
     /// Coalesced via `ratchet_lock`: concurrent callers return `Ok` and let
     /// the in-flight ratchet advance the head.
@@ -303,8 +290,7 @@ impl OcsVerifyingClient {
         // and asserts `next.epoch == head + 1`. So a malicious relay claiming a
         // far-future epoch can't walk the verified head faster than one real,
         // committee-signed epoch per step: at worst its checkpoint fetches fail
-        // and the ratchet stalls (or takes the unverified fallback, gated by
-        // `allow_unverified_committee_fallback`) — never a forged advance.
+        // and the ratchet stalls — never a forged advance.
         let target = self.transport.get_current_epoch().await?;
         self.metrics.chain_latest_epoch.set(target as i64);
         loop {
@@ -365,9 +351,8 @@ impl OcsVerifyingClient {
     /// `epochs.json` enumeration — an untrusted hint that can stall the walk
     /// but never forge an install (the per-summary verification decides).
     ///
-    /// Then the degraded unverified direct fetch, only when
-    /// `allow_unverified_committee_fallback` is set; otherwise the terminal,
-    /// non-retryable `ProofChainBroken` whose message names the remediation.
+    /// When the archive also misses: the terminal, non-retryable
+    /// `ProofChainBroken` whose message names the remediation.
     async fn pruned_boundary_fallback(
         &self,
         head: u64,
@@ -426,46 +411,17 @@ impl OcsVerifyingClient {
                 }
             }
         }
-        if !self.allow_unverified_committee_fallback {
-            error!(
-                head,
-                ?last_seq,
-                target,
-                reason,
-                "ratchet: epoch boundary pruned upstream and the unverified fallback is \
-                 disabled — proof chain broken; boot once against a full-retention Sui RPC (or \
-                 configure a `sui_checkpoint_archive`) so the persisted committee anchor \
-                 catches up"
-            );
-            return Err(OcsError::ProofChainBroken { epoch: head });
-        }
         error!(
-            security_critical = true,
             head,
             ?last_seq,
             target,
             reason,
-            "ratchet: epoch boundary pruned upstream; installing committee[E+1] via UNVERIFIED \
-             direct fetch — trust degraded to the endpoint's word"
+            "ratchet: epoch boundary pruned upstream and absent from the verified archive — \
+             proof chain broken; boot once against a full-retention Sui RPC (or configure a \
+             `sui_checkpoint_archive` retaining this epoch) so the persisted committee anchor \
+             catches up"
         );
-        self.metrics.unverified_committee_fallback_total.inc();
-        let next = self.transport.get_committee(Some(head + 1)).await?;
-        // Even in unverified mode the endpoint doesn't get to pick the epoch:
-        // `install_next` keys the store by the committee's own epoch field, so
-        // an endpoint returning a mislabeled committee could jump the ratchet
-        // head past epochs that were never installed.
-        if next.epoch != head + 1 {
-            return Err(OcsError::FallbackEpochMismatch {
-                requested: head + 1,
-                returned: next.epoch,
-            });
-        }
-        self.committees.install_next(next, None)?;
-        info!(
-            epoch = head + 1,
-            "ratcheted Sui committee (UNVERIFIED direct-fetch fallback)"
-        );
-        Ok(())
+        Err(OcsError::ProofChainBroken { epoch: head })
     }
 }
 
@@ -567,8 +523,9 @@ mod tests {
         epoch_floor: Option<u64>,
         /// `last_checkpoint_of_epoch(E)` -> seq. Defaults to `E` when absent.
         full_checkpoints: HashMap<CheckpointSequenceNumber, FullCheckpointOutcome>,
-        /// Committee handed back by the unverified `get_committee(Some(_))`
-        /// fallback, keyed by requested epoch.
+        /// Committee handed back by `get_committee(Some(_))`, keyed by
+        /// requested epoch. The verified ratchet must never call this; the
+        /// call counter below is how tests prove it.
         committees: HashMap<u64, Committee>,
         get_committee_calls: StdMutex<Vec<Option<u64>>>,
     }
@@ -679,11 +636,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let store = Arc::new(
-            CommitteeStore::open(
-                perpetual,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee)),
-            )
-            .unwrap(),
+            CommitteeStore::open(perpetual, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
         );
         (dir, store)
     }
@@ -758,7 +711,6 @@ mod tests {
             Arc::new(RatchetMock::new(0)),
             store,
             OcsMetrics::new_for_testing(),
-            false,
         )
     }
 
@@ -802,61 +754,12 @@ mod tests {
         assert_eq!(store.head_epoch(), 2, "head stops at the gap");
     }
 
-    /// With the unverified fallback enabled, a pruned end-of-epoch checkpoint
-    /// triggers a direct `get_committee` fetch -- but if the endpoint returns a
-    /// committee for the wrong epoch the ratchet refuses to install it
-    /// (`FallbackEpochMismatch`), the head does NOT advance, and the
-    /// security-critical fallback metric was incremented BEFORE the guard fired
-    /// (so operators still see the attempted degradation).
+    /// A `Network` error from `get_full_checkpoint` is retryable: the ratchet
+    /// surfaces it as `Transport(..)` — NOT the terminal `ProofChainBroken`
+    /// reserved for a genuinely pruned (`NotFound`) boundary — and never
+    /// fetches a committee directly from the endpoint.
     #[tokio::test]
-    async fn unverified_fallback_rejects_epoch_mismatch() {
-        let (committee, _keys) = Committee::new_simple_test_committee();
-        let (_dir, store) = store_with_genesis(committee.clone());
-        assert_eq!(store.head_epoch(), 0);
-
-        // head=0, target=1: the ratchet reaches for last_checkpoint_of_epoch(0)
-        // (seq 0), which the endpoint reports as pruned -> unverified fallback.
-        let mut mock = RatchetMock::new(1);
-        mock.full_checkpoints
-            .insert(0, FullCheckpointOutcome::NotFound);
-        // The endpoint returns a committee labelled epoch 2 when epoch 1 was
-        // requested -- a mislabel that would jump the head past epoch 1.
-        let wrong = committee_at_epoch(&committee, &_keys, 2);
-        mock.committees.insert(1, wrong);
-        let mock = Arc::new(mock);
-        let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), true);
-
-        let err = client.ratchet_to_current_epoch().await.unwrap_err();
-        assert!(
-            matches!(
-                err,
-                OcsError::FallbackEpochMismatch {
-                    requested: 1,
-                    returned: 2
-                }
-            ),
-            "expected FallbackEpochMismatch, got {err:?}"
-        );
-        assert_eq!(store.head_epoch(), 0, "head must not advance on mismatch");
-        assert_eq!(
-            metrics.unverified_committee_fallback_total.get(),
-            1,
-            "the fallback metric increments before the epoch guard fires"
-        );
-        assert_eq!(
-            mock.get_committee_call_count(),
-            1,
-            "the fallback fetched the committee exactly once"
-        );
-    }
-
-    /// The unverified fallback keys STRICTLY on `NotFound`. A `Network` error
-    /// from `get_full_checkpoint` is retryable, so the ratchet surfaces it as
-    /// `Transport(..)` WITHOUT taking the degraded direct-fetch path:
-    /// `get_committee` is never called and the fallback metric stays 0.
-    #[tokio::test]
-    async fn ratchet_does_not_fall_back_on_network_error() {
+    async fn ratchet_network_error_is_retryable_not_proof_chain_broken() {
         let (committee, _keys) = Committee::new_simple_test_committee();
         let (_dir, store) = store_with_genesis(committee);
         assert_eq!(store.head_epoch(), 0);
@@ -866,7 +769,7 @@ mod tests {
             .insert(0, FullCheckpointOutcome::Network);
         let mock = Arc::new(mock);
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), true);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
 
         let err = client.ratchet_to_current_epoch().await.unwrap_err();
         assert!(
@@ -878,26 +781,21 @@ mod tests {
         assert_eq!(
             mock.get_committee_call_count(),
             0,
-            "fallback must NOT be taken on a network error"
-        );
-        assert_eq!(
-            metrics.unverified_committee_fallback_total.get(),
-            0,
-            "the fallback metric stays 0 on a network error"
+            "a network error must never trigger a direct committee fetch"
         );
     }
 
-    /// finding-17 core, trusted-only posture: with the unverified fallback
-    /// DISABLED (the default), a pruned end-of-epoch checkpoint
-    /// (`get_full_checkpoint` -> NotFound) makes the ratchet fail with a TERMINAL
-    /// `ProofChainBroken` rather than silently fetch `committee[E+1]` from the
-    /// untrusted endpoint. The head does not advance, `get_committee` is never
-    /// called, and the error is non-retryable (the operator must re-anchor). This
-    /// is the in-process proxy for the cluster "peer-only bootstrap aborts on a
-    /// pruned end-of-epoch" scenario — the real-pruning version is not expressible
-    /// in the in-process Sui test cluster.
+    /// finding-17 core, trusted-only posture: a pruned end-of-epoch checkpoint
+    /// (`get_full_checkpoint` -> NotFound, no archive) makes the ratchet fail
+    /// with a TERMINAL `ProofChainBroken` rather than silently fetch
+    /// `committee[E+1]` from the untrusted endpoint. The head does not advance,
+    /// `get_committee` is never called, and the error is non-retryable (the
+    /// operator must re-anchor). This is the in-process proxy for the cluster
+    /// "peer-only bootstrap aborts on a pruned end-of-epoch" scenario — the
+    /// real-pruning version is not expressible in the in-process Sui test
+    /// cluster.
     #[tokio::test]
-    async fn ratchet_pruned_end_of_epoch_is_fatal_without_fallback() {
+    async fn ratchet_pruned_end_of_epoch_is_fatal() {
         let (committee, _keys) = Committee::new_simple_test_committee();
         let (_dir, store) = store_with_genesis(committee);
         assert_eq!(store.head_epoch(), 0);
@@ -909,14 +807,12 @@ mod tests {
             .insert(0, FullCheckpointOutcome::NotFound);
         let mock = Arc::new(mock);
         let metrics = OcsMetrics::new_for_testing();
-        // allow_unverified_committee_fallback = false (the default, trust-preserving).
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
 
         let err = client.ratchet_to_current_epoch().await.unwrap_err();
         assert!(
             matches!(err, OcsError::ProofChainBroken { epoch: 0 }),
-            "a pruned end-of-epoch with fallback disabled must be a terminal \
-             ProofChainBroken, got {err:?}"
+            "a pruned end-of-epoch must be a terminal ProofChainBroken, got {err:?}"
         );
         assert!(
             !err.is_retryable(),
@@ -927,11 +823,6 @@ mod tests {
             mock.get_committee_call_count(),
             0,
             "the trusted-only path must never fetch a committee from the endpoint"
-        );
-        assert_eq!(
-            metrics.unverified_committee_fallback_total.get(),
-            0,
-            "no fallback was attempted"
         );
     }
 
@@ -961,16 +852,15 @@ mod tests {
         let mock = Arc::new(mock);
         let metrics = OcsMetrics::new_for_testing();
         // Fallback OFF: every step must verify, no degraded path.
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
 
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(store.head_epoch(), 2, "advanced exactly E+1 then E+2");
         assert_eq!(
             mock.get_committee_call_count(),
             0,
-            "verified path never touches the unverified fallback"
+            "verified path never fetches a committee directly from the endpoint"
         );
-        assert_eq!(metrics.unverified_committee_fallback_total.get(), 0);
 
         // Never skipping: a checkpoint served at last_checkpoint_of_epoch(head)
         // that is NOT the end-of-epoch transition of `head` is rejected, head
@@ -993,7 +883,7 @@ mod tests {
             .full_checkpoints
             .insert(2, FullCheckpointOutcome::Data(Box::new(wrong_epoch_eoe)));
         let mock2 = Arc::new(mock2);
-        let client2 = OcsVerifyingClient::new(mock2, store.clone(), metrics, false);
+        let client2 = OcsVerifyingClient::new(mock2, store.clone(), metrics);
         let err = client2.ratchet_to_current_epoch().await.unwrap_err();
         assert!(
             matches!(err, OcsError::NotEndOfEpoch(2)),
@@ -1019,7 +909,7 @@ mod tests {
         // Determinate conditions a retry cannot heal — must be fatal.
         assert!(!OcsError::ProofChainBroken { epoch: 7 }.is_retryable());
         assert!(
-            !OcsError::FallbackEpochMismatch {
+            !OcsError::RatchetEpochMismatch {
                 requested: 8,
                 returned: 9,
             }
@@ -1069,15 +959,10 @@ mod tests {
     ) {
         let tables = Arc::new(AuthorityPerpetualTables::open(path, None));
         let store = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(base.clone()))).unwrap(),
         );
         let mock = Arc::new(mock_with_history(base, keys, head, 0));
-        let client =
-            OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing(), false);
+        let client = OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing());
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(store.head_epoch(), head, "first boot must reach the anchor");
     }
@@ -1099,8 +984,8 @@ mod tests {
     /// anchor → restart against a source with NO history (every completed epoch
     /// answers "Epoch N not found") → verification resumes from the persisted
     /// anchor, ratchets forward using only the source's live window, and
-    /// current-epoch summaries verify. No genesis re-bootstrap, no unverified
-    /// fallback, no stall.
+    /// current-epoch summaries verify. No genesis re-bootstrap, no direct
+    /// committee fetch, no stall.
     #[tokio::test]
     async fn persisted_anchor_round_trip_resumes_on_history_less_source() {
         let (base, keys) = Committee::new_simple_test_committee();
@@ -1122,7 +1007,7 @@ mod tests {
         // live window) is served; epochs 0..3 are "Epoch N not found".
         let mock = Arc::new(mock_with_history(&base, &keys, 4, 3));
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(
             store.head_epoch(),
@@ -1132,7 +1017,7 @@ mod tests {
         assert_eq!(
             mock.get_committee_call_count(),
             0,
-            "no unverified fallback on the resumed path"
+            "no direct committee fetch on the resumed path"
         );
         assert_eq!(metrics.ratchet_stalled.get(), 0);
 
@@ -1164,8 +1049,7 @@ mod tests {
         assert_eq!(store.head_epoch(), 3);
 
         let mock = Arc::new(mock_with_history(&base, &keys, 4, 3));
-        let client =
-            OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing(), false);
+        let client = OcsVerifyingClient::new(mock, store.clone(), OcsMetrics::new_for_testing());
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(store.head_epoch(), 4);
         let current = end_of_epoch_checkpoint(&committee_at_epoch(&base, &keys, 4), &keys, 99);
@@ -1188,7 +1072,7 @@ mod tests {
         let store = Arc::new(CommitteeStore::open(tables, None).unwrap());
         let mock = Arc::new(mock_with_history(&base, &keys, 6, 3));
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(
             store.head_epoch(),
@@ -1213,7 +1097,7 @@ mod tests {
         let store = Arc::new(CommitteeStore::open(tables, None).unwrap());
         let mock = Arc::new(mock_with_history(&base, &keys, 6, 5));
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
 
         let err = client.ratchet_to_current_epoch().await.unwrap_err();
         assert!(
@@ -1229,7 +1113,11 @@ mod tests {
             "the error must name the remediation: {err}"
         );
         assert_eq!(store.head_epoch(), 3, "head holds at the anchor");
-        assert_eq!(mock.get_committee_call_count(), 0, "no unverified fallback");
+        assert_eq!(
+            mock.get_committee_call_count(),
+            0,
+            "no direct committee fetch"
+        );
         assert_eq!(metrics.ratchet_stalled.get(), 1, "the stall is visible");
         assert_eq!(
             metrics
@@ -1244,7 +1132,7 @@ mod tests {
     /// NotFound), a configured checkpoint archive bridges the boundary: the
     /// end-of-epoch sequence is resolved from the archive's own enumeration and
     /// the fetched summary is BLS-verified before install — same trust as the
-    /// primary path, no unverified fallback. The one-shot cold-bootstrap
+    /// primary path. The one-shot cold-bootstrap
     /// backfill is defeated (its enumeration fails once) so the per-boundary
     /// fallback is what bridges.
     #[tokio::test]
@@ -1258,13 +1146,12 @@ mod tests {
         // The transport serves NO epoch records below the current epoch (2).
         let mock = Arc::new(mock_with_history(&committee, &keys, 2, 2));
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false)
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone())
             .with_archive(Some(archive));
 
         client.ratchet_to_current_epoch().await.unwrap();
         assert_eq!(store.head_epoch(), 2, "archive bridged the pruned records");
         assert_eq!(mock.get_committee_call_count(), 0);
-        assert_eq!(metrics.unverified_committee_fallback_total.get(), 0);
         assert_eq!(metrics.ratchet_stalled.get(), 0);
     }
 
@@ -1281,7 +1168,7 @@ mod tests {
 
         let mock = Arc::new(mock_with_history(&committee, &keys, 100, 100));
         let metrics = OcsMetrics::new_for_testing();
-        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone());
 
         let err = client.ratchet_to_current_epoch().await.unwrap_err();
         assert!(

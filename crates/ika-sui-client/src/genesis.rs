@@ -33,6 +33,7 @@ use fastcrypto::encoding::{Base58, Encoding};
 use ika_config::node::SuiChainIdentifier;
 use ika_types::digests::ChainIdentifier;
 use sui_config::genesis::Genesis;
+use sui_rpc_api::Client as SuiRpcClient;
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::committee::Committee;
 use sui_types::digests::{
@@ -40,6 +41,7 @@ use sui_types::digests::{
     TESTNET_CHAIN_IDENTIFIER_BASE58 as SUI_TESTNET_GENESIS_DIGEST_BASE58,
 };
 use sui_types::effects::TransactionEffects;
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::message_envelope::Message;
 use sui_types::messages_checkpoint::CheckpointSummary;
 use sui_types::object::Object;
@@ -69,6 +71,8 @@ pub enum GenesisError {
          committed by the verified genesis checkpoint digest: {detail}"
     )]
     InconsistentBlob { detail: String },
+    #[error("failed to fetch the Sui genesis checkpoint from {url}: {detail}")]
+    Fetch { url: String, detail: String },
 }
 
 /// The verified bootstrap material extracted from a Sui genesis blob: the
@@ -95,6 +99,58 @@ pub fn load_and_verify_sui_genesis(
         source,
     })?;
     verify_genesis(genesis, chain)
+}
+
+/// Reconstruct the Sui `Genesis` blob from a fullnode's genesis checkpoint
+/// (sequence 0) over gRPC. For localnet/test harnesses that boot against an
+/// externally started Sui localnet, where the blob file is not on a known
+/// path: the harness writes the reconstructed blob to disk and points
+/// `sui_genesis` at it.
+///
+/// Trust placement: the material comes from the queried endpoint, so on a
+/// `Custom` chain the blob is exactly as trustworthy as that endpoint — the
+/// same placement as any operator-supplied localnet blob. On mainnet/testnet
+/// the node's loader still verifies the blob's digest against the compiled-in
+/// chain identifier, so a forged endpoint is caught at load, and the loader's
+/// summary→contents→effects→objects binding rejects internally-inconsistent
+/// blobs on every chain.
+pub async fn fetch_genesis_blob(grpc_url: &str) -> Result<Genesis, GenesisError> {
+    let mut client = SuiRpcClient::new(grpc_url).map_err(|e| GenesisError::Fetch {
+        url: grpc_url.to_string(),
+        detail: format!("connect: {e}"),
+    })?;
+    let checkpoint = client
+        .get_full_checkpoint(0)
+        .await
+        .map_err(|e| GenesisError::Fetch {
+            url: grpc_url.to_string(),
+            detail: format!("get_full_checkpoint(0): {e}"),
+        })?;
+    let CheckpointData {
+        checkpoint_summary,
+        checkpoint_contents,
+        mut transactions,
+    } = checkpoint.into();
+    // Genesis is a single transaction; a checkpoint 0 with any other shape is
+    // not a genesis checkpoint.
+    if transactions.len() != 1 {
+        return Err(GenesisError::Fetch {
+            url: grpc_url.to_string(),
+            detail: format!(
+                "genesis checkpoint has {} transactions, expected exactly 1",
+                transactions.len()
+            ),
+        });
+    }
+    let genesis_transaction = transactions.remove(0);
+    Ok(Genesis::new(
+        checkpoint_summary,
+        checkpoint_contents,
+        genesis_transaction.transaction,
+        genesis_transaction.effects,
+        genesis_transaction.events.unwrap_or_default(),
+        genesis_transaction.output_objects,
+    ))
 }
 
 fn verify_genesis(

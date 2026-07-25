@@ -326,22 +326,25 @@ impl ClusterBuilder {
             .collect();
 
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
-        // set refuses to boot without a Sui trust anchor. Seed every validator
-        // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
-        // anchor (the private-net path), mirroring IkaTestClusterBuilder. Harmless
-        // pre-v4 (the field is unused on the JSON-RPC path). A legacy-config
-        // cluster gets NO anchor at all — an old-style config with an anchor is
-        // one of the mixed shapes the node rejects at boot.
-        let genesis_committee = if self.legacy_sui_config {
+        // set refuses to boot without a Sui trust anchor. Reconstruct the Sui
+        // localnet's genesis blob over gRPC, write it into the run's base dir,
+        // and seed every validator's `sui_genesis` with it, mirroring
+        // IkaTestClusterBuilder. A legacy-config cluster gets NO anchor at all
+        // — an old-style config with an anchor is one of the mixed shapes the
+        // node rejects at boot.
+        let sui_genesis_path = if self.legacy_sui_config {
             None
         } else {
-            Some(
-                ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}")
-                    })?,
+            let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&rpc_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for OCS anchor: {e}"))?;
+            let path = base.join("sui_genesis.blob");
+            std::fs::write(
+                &path,
+                bcs::to_bytes(&sui_genesis).context("serialize Sui genesis blob")?,
             )
+            .with_context(|| format!("write Sui genesis blob {}", path.display()))?;
+            Some(path)
         };
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
@@ -362,8 +365,8 @@ impl ClusterBuilder {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
             let mut builder = ValidatorConfigBuilder::new().with_config_directory(data_dir.clone());
-            builder = match &genesis_committee {
-                Some(committee) => builder.with_unsafe_genesis_committee(committee.clone()),
+            builder = match &sui_genesis_path {
+                Some(path) => builder.with_sui_genesis(path.clone()),
                 None => builder.with_legacy_sui_rpc_only(),
             };
             if let Some(cores) = max_mpc_computation_cores {
@@ -1772,19 +1775,25 @@ impl ClusterOfProcesses {
         let data_dir = self.base.join(format!("validator-{index}"));
         std::fs::create_dir_all(&data_dir)?;
         // Same OCS v4 trust anchor as the genesis validators (see `build`): the
-        // epoch-0 committee is immutable, so re-fetch it for the joiner.
-        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&self.rpc_url)
+        // genesis checkpoint is immutable, so re-fetch the blob for the joiner
+        // (a legacy-config cluster wrote none at build time) and write it into
+        // the joiner's own data dir.
+        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.rpc_url)
             .await
-            .map_err(|e| {
-                anyhow::anyhow!("fetch Sui genesis committee for joiner OCS anchor: {e}")
-            })?;
+            .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for joiner OCS anchor: {e}"))?;
+        let sui_genesis_path = data_dir.join("sui_genesis.blob");
+        std::fs::write(
+            &sui_genesis_path,
+            bcs::to_bytes(&sui_genesis).context("serialize Sui genesis blob")?,
+        )
+        .with_context(|| format!("write Sui genesis blob {}", sui_genesis_path.display()))?;
         // Same MPC-computation-core cap as the genesis validators (see `build`).
         let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
             .ok()
             .and_then(|v| v.parse::<usize>().ok());
         let mut builder = ValidatorConfigBuilder::new()
             .with_config_directory(data_dir.clone())
-            .with_unsafe_genesis_committee(genesis_committee);
+            .with_sui_genesis(sui_genesis_path);
         if let Some(cores) = max_mpc_computation_cores {
             builder = builder.with_max_mpc_computation_cores(cores);
         }

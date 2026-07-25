@@ -16,7 +16,7 @@
 //! from them on demand: keeping a separate per-epoch committee table would
 //! double the storage and grow it unboundedly. `sui_committees` is kept only
 //! for committees that have *no* backing summary — the bootstrap base
-//! committee and any unverified-fallback installs (`install_next(.., None)`).
+//! committee installed from the genesis blob.
 //!
 //! Derivation is cheap (a summary read + `next_epoch_committee` decode, no
 //! crypto), so the in-memory [`CommitteeStore::cache`] is a pure performance
@@ -27,11 +27,10 @@
 //! # Bootstrapping
 //!
 //! - If the perpetual tables already have a committee head, we resume from it.
-//! - Otherwise [`CommitteeBootstrap::UnsafeGenesis`] installs `committee[0]`
-//!   directly: on public chains from a Sui genesis blob verified against the
-//!   compiled-in chain identifier, or on localnet/test from the chain's epoch-0
-//!   committee. The ratchet then walks the end-of-epoch checkpoint chain forward
-//!   from there.
+//! - Otherwise [`CommitteeBootstrap::Genesis`] installs `committee[0]`
+//!   directly, extracted from a Sui genesis blob (verified against the
+//!   compiled-in chain identifier on public chains). The ratchet then walks
+//!   the end-of-epoch checkpoint chain forward from there.
 //! - If neither perpetual state nor bootstrap is available, [`Self::open`]
 //!   errors.
 
@@ -98,14 +97,11 @@ pub enum CommitteeTransitionError {
 }
 
 pub enum CommitteeBootstrap {
-    /// Install `committee[0]` directly. The committee comes from a verified Sui
-    /// genesis blob (the genesis-rooted production path) or, on localnet/test,
-    /// from the chain's epoch-0 committee fetched over RPC. The OCS ratchet then
-    /// walks the end-of-epoch checkpoint chain forward from here. (The name is
-    /// retained from the pre-genesis-blob era; on a public chain the genesis
-    /// blob is verified against the compiled-in chain identifier, so it is no
-    /// longer unsafe.)
-    UnsafeGenesis(SuiCommittee),
+    /// Install `committee[0]` directly, as extracted from a verified Sui
+    /// genesis blob (on public chains the blob is verified against the
+    /// compiled-in chain identifier). The OCS ratchet then walks the
+    /// end-of-epoch checkpoint chain forward from here.
+    Genesis(SuiCommittee),
 }
 
 pub struct CommitteeStore {
@@ -159,14 +155,12 @@ impl CommitteeStore {
                 let bootstrap = bootstrap.ok_or_else(|| {
                     IkaError::SuiClientInternalError(
                         "OCS verifier needs bootstrap material: perpetual Sui committee state is \
-                         empty and no `sui_genesis` / `sui_unsafe_genesis_committee` was provided"
+                         empty and no `sui_genesis` was provided"
                             .to_string(),
                     )
                 })?;
                 match bootstrap {
-                    CommitteeBootstrap::UnsafeGenesis(committee) => {
-                        store.install_unsafe_genesis(committee)?
-                    }
+                    CommitteeBootstrap::Genesis(committee) => store.install_genesis(committee)?,
                 }
             }
         }
@@ -177,7 +171,7 @@ impl CommitteeStore {
     /// directly (it has no preceding summary to derive from). The ratchet
     /// picks up `committee[1]` once the chain's first end-of-epoch summary
     /// appears upstream. Localnet/test only.
-    fn install_unsafe_genesis(&self, committee: SuiCommittee) -> IkaResult<()> {
+    fn install_genesis(&self, committee: SuiCommittee) -> IkaResult<()> {
         let epoch = committee.epoch;
         self.tables.install_sui_committee(&committee)?;
         self.head.store(epoch, Ordering::Relaxed);
@@ -251,9 +245,8 @@ impl CommitteeStore {
     /// Advance the head to `committee` (typically the epoch after the prior
     /// head). `source_summary`, when `Some`, is the summary signed by
     /// `committee[prior_head]` that commits to this committee: we persist only
-    /// the summary and derive the committee from it. When `None` (the
-    /// unverified-fallback path, which has no summary), we store the committee
-    /// directly so it can still be resolved.
+    /// the summary and derive the committee from it. When `None` (no backing
+    /// summary), we store the committee directly so it can still be resolved.
     pub fn install_next(
         &self,
         committee: SuiCommittee,
@@ -419,11 +412,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let store = Arc::new(
-            CommitteeStore::open(
-                tables,
-                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
-            )
-            .unwrap(),
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee.clone())))
+                .unwrap(),
         );
         (dir, store)
     }
@@ -586,7 +576,7 @@ mod tests {
         {
             let store = CommitteeStore::open(
                 tables.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
+                Some(CommitteeBootstrap::Genesis(base.clone())),
             )
             .unwrap();
             for epoch in 0..=1u64 {
@@ -732,7 +722,7 @@ mod tests {
         {
             let store = CommitteeStore::open(
                 tables.clone(),
-                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
+                Some(CommitteeBootstrap::Genesis(base.clone())),
             )
             .unwrap();
             for epoch in 0..=1u64 {

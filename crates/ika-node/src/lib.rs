@@ -390,16 +390,11 @@ impl IkaNode {
             .map_err(|e| anyhow!("read sui_committee_head: {e}"))?
             .is_some();
         // A node runs the OCS (gRPC) path once it has a Sui committee trust
-        // root: an already-verified perpetual committee chain, a configured
-        // genesis blob (the genesis-rooted root, verified against the compiled-in
-        // chain identifier), or — on localnet/test — an explicit epoch-0
-        // committee.
-        let has_anchor = perpetual_has_committees
-            || config.sui_connector_config.sui_genesis.is_some()
-            || config
-                .sui_connector_config
-                .sui_unsafe_genesis_committee
-                .is_some();
+        // root: an already-verified perpetual committee chain, or a configured
+        // genesis blob (the genesis-rooted root, verified against the
+        // compiled-in chain identifier).
+        let has_anchor =
+            perpetual_has_committees || config.sui_connector_config.sui_genesis.is_some();
 
         // --- Read-independent boot infrastructure, hoisted above the Sui
         // bootstrap reads below. A peer-only validator (sui-state-mirrored with

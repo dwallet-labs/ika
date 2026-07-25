@@ -257,8 +257,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         let store =
-            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
-                .unwrap();
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap();
         (dir, Arc::new(store))
     }
 
