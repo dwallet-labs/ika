@@ -42,14 +42,44 @@ replay protection that gas-coin version bumps provided. Decision rules:
    `Argument::GasCoin` (none exists); it is transferred to the writer's
    address as an owned coin instead, for the operator to sweep.
 
+## Boot-time behavior (preflight + migration sweep)
+
+With the flag on, `prepare_for_sui` runs, in order:
+
+1. **Chain identifier resolution** (fail boot loudly if unresolvable).
+2. **Funds read** (`get_sui_funds`: address balance vs. coin objects; an
+   unreadable balance — accumulators disabled on the target chain — fails
+   boot loudly).
+3. **Migration sweep**: if the address holds >= 1 SUI in coin objects (the
+   state every pre-SIP-58 notifier is in when the flag is first flipped),
+   deposit them into the address balance automatically: one transaction
+   using ALL owned gas coins as its own gas payment (the protocol merges
+   them into the first), `SplitCoins(GasCoin, [total - sweep budget])`, and
+   `coin::send_funds<SUI>(split, sender)`. The gas coin itself cannot be
+   passed by value to a Move call, hence split-then-deposit; the sweep
+   budget's unspent remainder stays behind as one small coin, below the
+   1-SUI re-sweep threshold (no churn). Best-effort: a failed sweep warns
+   and falls through to the preflight.
+4. **Balance preflight**: refuse to boot below one gas budget of address
+   balance (counting a just-swept amount directly rather than re-reading
+   through a possibly-lagging fullnode view), with the exact remediation in
+   the error. A writer that cannot pay must not take the writer role.
+5. **Funds gauge**: `ika_sui_connector_gas_coin_balance` is seeded and then
+   refreshed every 60s from the address balance (this gauge previously had
+   no writer at all), making balance drain alertable before submissions
+   fail. Mid-flight exhaustion still ends in the historical
+   hour-retry-then-panic path, same as coin-mode gas exhaustion.
+
 ## Preconditions and rollout
 
 - Sui protocol flags `enable_accumulators` + `enable_address_balance_gas_payments`:
   testnet since protocol 108, mainnet since 124, localnets at max version.
-- The notifier address must hold SUI in its ADDRESS BALANCE (an explicit
-  balance deposit — plain coin transfers do not fund it). Each submission
-  reserves the full gas budget from the balance for its validity window; the
-  writer submits serially, so one budget of headroom suffices, plus float.
+- The notifier address must hold SUI in its ADDRESS BALANCE — funded either
+  by the automatic boot sweep of its existing coin objects (above) or by an
+  explicit balance deposit (plain coin transfers do not fund it). Each
+  submission reserves the full gas budget from the balance for its validity
+  window; the writer submits serially, so one budget of headroom suffices,
+  plus float.
 - Default OFF. The intended rollout is a testnet canary of the flag before
   any mainnet use; the gas-coin path stays the default until then.
 

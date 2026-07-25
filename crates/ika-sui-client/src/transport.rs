@@ -228,6 +228,15 @@ pub trait SuiTransport: Send + Sync {
     ) -> Result<ExecutedTransaction, TransportError>;
 }
 
+/// SUI funds of an address, split by where they live (MIST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SuiFundsBreakdown {
+    /// In the SIP-58 ADDRESS BALANCE — spendable as address-balance gas.
+    pub in_address_balance: u64,
+    /// In owned `Coin<SUI>` objects — spendable as gas-coin payments only.
+    pub in_coin_objects: u64,
+}
+
 /// The notifier's **writer** surface — building and submitting transactions.
 /// Kept separate from [`SuiTransport`] because only a node with a direct Sui
 /// uplink can do these: a read-only relay/peer transport never implements them.
@@ -248,10 +257,11 @@ pub trait SuiWriter: Send + Sync {
         &self,
         address: SuiAddress,
     ) -> Result<Vec<ObjectRef>, TransportError>;
-    /// The SUI held in `address`'s ADDRESS BALANCE (SIP-58 accumulator), in
-    /// MIST — the funds address-balance-gas submissions draw on. Coin
-    /// objects are NOT included.
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, TransportError>;
+    /// The SUI held by `address`, split into its ADDRESS BALANCE (SIP-58
+    /// accumulator — what address-balance-gas submissions draw on) and its
+    /// owned coin objects.
+    async fn get_sui_funds(&self, address: SuiAddress)
+    -> Result<SuiFundsBreakdown, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,

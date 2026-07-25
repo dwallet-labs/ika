@@ -61,6 +61,7 @@ pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
 pub mod transport;
+pub use transport::SuiFundsBreakdown;
 
 #[macro_export]
 macro_rules! retry_with_max_elapsed_time {
@@ -819,18 +820,15 @@ where
         })
     }
 
-    /// SUI in `address`'s ADDRESS BALANCE (SIP-58), in MIST.
-    pub async fn get_sui_address_balance(&self, address: SuiAddress) -> IkaResult<u64> {
-        self.inner
-            .get_sui_address_balance(address)
-            .await
-            .map_err(|e| {
-                self.sui_client_metrics
-                    .sui_rpc_errors
-                    .with_label_values(&["get_sui_address_balance"])
-                    .inc();
-                IkaError::SuiClientInternalError(format!("Can't get_sui_address_balance: {e}"))
-            })
+    /// SUI held by `address`, split into address balance vs. coin objects.
+    pub async fn get_sui_funds(&self, address: SuiAddress) -> IkaResult<SuiFundsBreakdown> {
+        self.inner.get_sui_funds(address).await.map_err(|e| {
+            self.sui_client_metrics
+                .sui_rpc_errors
+                .with_label_values(&["get_sui_funds"])
+                .inc();
+            IkaError::SuiClientInternalError(format!("Can't get_sui_funds: {e}"))
+        })
     }
 
     pub async fn get_latest_checkpoint_sequence_number(&self) -> IkaResult<u64> {
@@ -1023,9 +1021,9 @@ pub trait SuiClientInner: Send + Sync {
     /// short id alone is not enough on chains without a compiled-in constant.
     async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error>;
 
-    /// SUI held in `address`'s ADDRESS BALANCE (SIP-58), in MIST — the funds
-    /// address-balance-gas submissions draw on. Coin objects are excluded.
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, Self::Error>;
+    /// SUI held by `address`, split into its ADDRESS BALANCE (SIP-58 — what
+    /// address-balance-gas submissions draw on) and its owned coin objects.
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error>;
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error>;
 
@@ -1167,9 +1165,20 @@ impl SuiClientInner for SuiSdkClient {
         Ok(SuiNetworkChainIdentifier::from(genesis.digest))
     }
 
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, Self::Error> {
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {
         let balance = self.coin_read_api().get_balance(address, None).await?;
-        Ok(u64::try_from(balance.funds_in_address_balance).unwrap_or(u64::MAX))
+        let in_address_balance =
+            u64::try_from(balance.funds_in_address_balance).unwrap_or(u64::MAX);
+        let in_coin_objects = u64::try_from(
+            balance
+                .total_balance
+                .saturating_sub(balance.funds_in_address_balance),
+        )
+        .unwrap_or(u64::MAX);
+        Ok(SuiFundsBreakdown {
+            in_address_balance,
+            in_coin_objects,
+        })
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
@@ -1824,8 +1833,8 @@ impl SuiClientInner for SuiBackend {
         dispatch_backend!(self, get_sui_chain_identifier())
     }
 
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, Self::Error> {
-        dispatch_backend!(self, get_sui_address_balance(address))
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {
+        dispatch_backend!(self, get_sui_funds(address))
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {

@@ -22,19 +22,24 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
+use move_core_types::ident_str;
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockEffectsAPI};
+use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
 use sui_types::digests::{
     ChainIdentifier as SuiNetworkChainIdentifier, get_mainnet_chain_identifier,
     get_testnet_chain_identifier,
 };
+use sui_types::gas_coin::GAS;
+use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{
-    GasData, ProgrammableTransaction, Transaction, TransactionData, TransactionDataV1,
-    TransactionExpiration, TransactionKind,
+    Argument, Command, GasData, ProgrammableTransaction, Transaction, TransactionData,
+    TransactionDataV1, TransactionExpiration, TransactionKind,
 };
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
@@ -468,16 +473,49 @@ impl SuiConnectorService {
             // a panic, with the network's epoch close blocked the whole time
             // — the issue-#1892 outage shape. Refuse to boot with the exact
             // remediation instead: a writer that cannot pay must not run.
-            let address_balance = sui_client
-                .get_sui_address_balance(sui_address)
+            let funds = sui_client.get_sui_funds(sui_address).await.map_err(|e| {
+                anyhow!(
+                    "notifier_gas_from_address_balance is set but the funds of \
+                     {sui_address} could not be read (does the target Sui network \
+                     have accumulators/address-balance gas enabled?): {e}"
+                )
+            })?;
+
+            // Migration sweep: an operator flipping the flag on an existing
+            // notifier still holds its funds as coin objects, which
+            // address-balance gas cannot spend. Deposit them into the address
+            // balance automatically (split off the sweep tx's own gas, then
+            // `coin::send_funds`). Best-effort: a failed sweep only warns —
+            // the preflight below still decides whether the writer can run.
+            let mut address_balance = funds.in_address_balance;
+            if funds.in_coin_objects >= SWEEP_MIN_COIN_TOTAL {
+                match sweep_gas_coins_into_address_balance(
+                    &sui_client,
+                    &sui_key,
+                    sui_address,
+                    funds.in_coin_objects,
+                )
                 .await
-                .map_err(|e| {
-                    anyhow!(
-                        "notifier_gas_from_address_balance is set but the address balance \
-                         of {sui_address} could not be read (does the target Sui network \
-                         have accumulators/address-balance gas enabled?): {e}"
-                    )
-                })?;
+                {
+                    Ok(swept) => {
+                        info!(
+                            swept,
+                            "Swept gas-coin objects into the notifier's address balance"
+                        );
+                        // Count the swept funds directly instead of re-reading:
+                        // the read goes through a fullnode view that can lag
+                        // the just-finalized sweep and would flunk the
+                        // preflight spuriously.
+                        address_balance = address_balance.saturating_add(swept);
+                    }
+                    Err(e) => warn!(
+                        error = ?e,
+                        in_coin_objects = funds.in_coin_objects,
+                        "failed to sweep gas coins into the address balance; \
+                         continuing to the balance preflight without them"
+                    ),
+                }
+            }
             if address_balance < NOTIFIER_GAS_BUDGET {
                 anyhow::bail!(
                     "notifier_gas_from_address_balance is set but {sui_address} holds only \
@@ -506,13 +544,10 @@ impl SuiConnectorService {
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
-                    if let Ok(balance) = balance_sui_client
-                        .get_sui_address_balance(sui_address)
-                        .await
-                    {
+                    if let Ok(funds) = balance_sui_client.get_sui_funds(sui_address).await {
                         balance_metrics
                             .gas_coin_balance
-                            .set(i64::try_from(balance).unwrap_or(i64::MAX));
+                            .set(i64::try_from(funds.in_address_balance).unwrap_or(i64::MAX));
                     }
                 }
             });
@@ -560,6 +595,100 @@ impl CheckpointMessageSuiNotify for SuiConnectorService {
     ) -> IkaResult {
         Ok(())
     }
+}
+
+/// Gas budget for the one-shot boot sweep that deposits coin objects into
+/// the address balance. The unswept remainder (this budget minus actual
+/// fees) is left behind as a small coin.
+const SWEEP_GAS_BUDGET: u64 = 200_000_000;
+
+/// Don't bother sweeping coin totals below this (1 SUI): repeatedly
+/// re-depositing sweep-fee dust on every boot is churn, not funding.
+const SWEEP_MIN_COIN_TOTAL: u64 = 1_000_000_000;
+
+/// A sweep pays gas with the very coins it sweeps; Sui caps gas payments at
+/// 256 objects per transaction.
+const SWEEP_MAX_GAS_COINS: usize = 256;
+
+/// Deposit the notifier's gas-coin objects into its SIP-58 address balance.
+/// Returns the amount deposited (MIST). The sweep transaction uses ALL owned
+/// gas coins as its own gas payment (Sui merges them into the first), splits
+/// off everything above the sweep's own gas budget, and deposits the split
+/// via `coin::send_funds` — the gas coin itself cannot be passed by value to
+/// a Move call, hence split-then-deposit rather than depositing the coin.
+async fn sweep_gas_coins_into_address_balance<C: SuiClientInner>(
+    sui_client: &Arc<SuiClient<C>>,
+    sui_key: &SuiKeyPair,
+    sui_address: SuiAddress,
+    coin_total: u64,
+) -> anyhow::Result<u64> {
+    let gas_coins = sui_client.get_gas_objects(sui_address).await;
+    if gas_coins.is_empty() {
+        anyhow::bail!("coin balance is {coin_total} MIST but no gas-coin objects were listed");
+    }
+    if gas_coins.len() > SWEEP_MAX_GAS_COINS {
+        // The subset's value is unknown, so a correct split amount can't be
+        // computed. This does not happen to a writer address in practice.
+        anyhow::bail!(
+            "{} gas coins exceed the {SWEEP_MAX_GAS_COINS}-object gas payment cap;              consolidate them manually",
+            gas_coins.len()
+        );
+    }
+    let sweep_amount = coin_total.saturating_sub(SWEEP_GAS_BUDGET);
+    if sweep_amount == 0 {
+        anyhow::bail!("coin balance {coin_total} MIST does not exceed the sweep gas budget");
+    }
+    let computation_price = sui_client.get_reference_gas_price_until_success().await;
+    let tx_data = sweep_transaction_data(sui_address, gas_coins, sweep_amount, computation_price)?;
+    let signature = Signature::new_secure(
+        &IntentMessage::new(Intent::sui_transaction(), &tx_data),
+        sui_key,
+    );
+    let transaction = Transaction::from_data(tx_data, vec![signature]);
+    let response = sui_client
+        .execute_transaction_block_with_effects(transaction)
+        .await
+        .map_err(|e| anyhow!("sweep submission failed: {e}"))?;
+    if !response.errors.is_empty() {
+        anyhow::bail!("sweep transaction failed: {:?}", response.errors);
+    }
+    if let Some(effects) = &response.effects
+        && let SuiExecutionStatus::Failure { error } = effects.status()
+    {
+        anyhow::bail!("sweep transaction executed but aborted: {error:?}");
+    }
+    Ok(sweep_amount)
+}
+
+/// The sweep transaction: all owned gas coins as payment (merged into the
+/// first by the protocol), `SplitCoins(GasCoin, [sweep_amount])`, and
+/// `coin::send_funds<SUI>(split, sender)` to deposit into the sender's own
+/// address balance. Ordinary gas-coin payment — the sweep exists precisely
+/// because the address balance may be empty.
+fn sweep_transaction_data(
+    sender: SuiAddress,
+    gas_coins: Vec<ObjectRef>,
+    sweep_amount: u64,
+    computation_price: u64,
+) -> anyhow::Result<TransactionData> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let amount_arg = ptb.pure(sweep_amount)?;
+    let deposit_coin = ptb.command(Command::SplitCoins(Argument::GasCoin, vec![amount_arg]));
+    let recipient_arg = ptb.pure(sender)?;
+    ptb.programmable_move_call(
+        SUI_FRAMEWORK_PACKAGE_ID,
+        ident_str!("coin").into(),
+        ident_str!("send_funds").into(),
+        vec![GAS::type_tag()],
+        vec![deposit_coin, recipient_arg],
+    );
+    Ok(TransactionData::new_programmable(
+        sender,
+        gas_coins,
+        ptb.finish(),
+        SWEEP_GAS_BUDGET,
+        computation_price,
+    ))
 }
 
 /// The writer's fixed gas budget. Under address-balance gas the full budget
@@ -691,6 +820,40 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn sweep_transaction_splits_gas_and_deposits_to_sender_balance() {
+        let sender = SuiAddress::random_for_testing_only();
+        let gas_coins = vec![sui_types::base_types::random_object_ref()];
+        let tx_data = sweep_transaction_data(sender, gas_coins.clone(), 5_000, 750).unwrap();
+
+        let v1 = tx_data.as_v1();
+        assert_eq!(v1.sender, sender);
+        // Ordinary gas-coin payment: the sweep runs precisely when the
+        // address balance may be empty.
+        assert_eq!(v1.gas_data.payment, gas_coins);
+        assert_eq!(v1.gas_data.budget, SWEEP_GAS_BUDGET);
+        assert_eq!(v1.expiration, TransactionExpiration::None);
+
+        let TransactionKind::ProgrammableTransaction(pt) = &v1.kind else {
+            panic!("sweep must be a programmable transaction");
+        };
+        // SplitCoins off the (merged) gas coin, then coin::send_funds<SUI>.
+        assert!(matches!(
+            &pt.commands[0],
+            Command::SplitCoins(Argument::GasCoin, amounts) if amounts.len() == 1
+        ));
+        let Command::MoveCall(call) = &pt.commands[1] else {
+            panic!("second command must be the send_funds deposit");
+        };
+        assert_eq!(call.package, SUI_FRAMEWORK_PACKAGE_ID);
+        assert_eq!(call.module.as_str(), "coin");
+        assert_eq!(call.function.as_str(), "send_funds");
+        assert_eq!(
+            call.type_arguments,
+            vec![sui_types::type_input::TypeInput::from(GAS::type_tag())]
+        );
     }
 
     #[tokio::test]

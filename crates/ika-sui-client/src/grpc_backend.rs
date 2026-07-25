@@ -38,7 +38,9 @@ use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
 
 use crate::SuiClientInner;
 use crate::grpc::SuiGrpcClient;
-use crate::transport::{SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by};
+use crate::transport::{
+    SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by,
+};
 use sui_types::digests::{ChainIdentifier as SuiNetworkChainIdentifier, CheckpointDigest};
 
 /// Error surface of the gRPC backend. Satisfies the
@@ -229,8 +231,8 @@ impl SuiClientInner for GrpcSuiClient {
         Ok(SuiNetworkChainIdentifier::from(digest))
     }
 
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, Self::Error> {
-        Ok(self.writer()?.get_sui_address_balance(address).await?)
+    async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {
+        Ok(self.writer()?.get_sui_funds(address).await?)
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {

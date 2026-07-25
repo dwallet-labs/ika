@@ -23,7 +23,7 @@ use sui_types::transaction::Transaction;
 
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
-    SuiTransport, SuiWriter, TransportError,
+    SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
 };
 
 pub struct SuiGrpcClient {
@@ -369,13 +369,19 @@ impl SuiWriter for SuiGrpcClient {
         Ok(refs)
     }
 
-    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, TransportError> {
+    async fn get_sui_funds(
+        &self,
+        address: SuiAddress,
+    ) -> Result<SuiFundsBreakdown, TransportError> {
         let rpc = self.rpc.clone();
         let balance = rpc
             .get_balance(address, &GasCoin::type_())
             .await
             .map_err(Self::rpc_err)?;
-        Ok(balance.address_balance.unwrap_or(0))
+        Ok(SuiFundsBreakdown {
+            in_address_balance: balance.address_balance.unwrap_or(0),
+            in_coin_objects: balance.coin_balance.unwrap_or(0),
+        })
     }
 
     async fn execute_transaction(
