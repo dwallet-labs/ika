@@ -1,8 +1,8 @@
 # OCS #1744 pre-merge cleanup (plan)
 
-**Status:** active — pre-merge cleanup (items 1–5) + `ocs-binding-1` **landed
-2026-06-26** (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
-all review items (incl. the bag-pump hygiene) are now closed.
+**Status:** landed — pre-merge cleanup (items 1–5) + `ocs-binding-1` landed
+2026-06-26 (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
+all review items (incl. the bag-pump hygiene) are closed.
 **Branch:** feat/ocs-grpc-migration (#1744).
 
 The actionable checklist derived from the pre-merge review

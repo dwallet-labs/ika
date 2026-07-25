@@ -31,6 +31,28 @@ rule, not the instance.
   runs with fault tolerance already spent — the eventual stall surfaces
   far from the cause. In any MPC-silence post-mortem, grep
   `recognized itself as malicious` FIRST.
+- **…but that same tally does NOT convict a divergent network KEY — and
+  the silence is the danger.** Fault injection established the boundary:
+  the output-quorum tally only convicts a validator that computes
+  correctly and broadcasts byte-divergent OUTPUT bytes. Corrupt the key
+  material instead and nothing is flagged. A divergent *DKG output* is
+  inert for signing (all protocol params and shares derive from the
+  reconfiguration output; the DKG output is an unused argument on that
+  path) and merely makes that validator's own handoff attestation
+  mismatch — self-limiting, since peers reject its signature and the cert
+  still forms from the honest quorum. A divergent *decryption-key share*
+  is worse: threshold signing aborts with
+  `FailedToAdvanceMPC(InvalidParameters)` inside
+  `interpolate_decryption_shares` / `combine_decryption_shares_semi_honest`,
+  which is a semi-honest, NON-IDENTIFIABLE abort — the faulty validator
+  emits no output (nothing to tally), every peer that includes its share
+  fails the same session, and no malicious set is populated. → Rule:
+  absence of a malicious flag is NOT evidence of healthy key material. A
+  persistently bad share on a live curve fails every session that draws it
+  in, forever, with no conviction and no exclusion — a liveness wedge that
+  looks like nothing at all. When signing fails repeatedly with
+  `InvalidParameters` and all malicious sets are empty, suspect key/share
+  divergence, not a byzantine peer.
 
 ## Batch processing & error handling
 
@@ -137,6 +159,17 @@ rule, not the instance.
   excluded the joiner and the assertion still passed. Two same-shaped
   committee objects with different provenance (chain read vs off-chain
   assembly) is exactly the setup for this trap.
+- **Adding a field to a public config struct breaks struct-literal sites
+  in crates a targeted `cargo check` never builds.** Literals that
+  construct the config with all fields explicit (no `..Default::default()`)
+  fail with `E0063 missing field`. A new `SuiConnectorConfig` field
+  compiled clean under `-p ika-core -p ika-node -p ika-config` and then
+  broke the test-cluster build ~6 min into CI, because the offending
+  literals live in `ika-swarm-config`'s `node_config_builder.rs`.
+  → Rule: gate any public struct-field addition on
+  `cargo check --workspace --all-targets` — `--all-targets` matters
+  because TEST targets construct configs too. `git grep "<StructName> {"`
+  finds the sites to update.
 - **Test-harness state that production syncs from chain must be set
   explicitly.** The in-process harness never syncs the epoch-close lock
   target, so it stays 0 and (correctly) gates everything; tests set it
@@ -171,6 +204,55 @@ rule, not the instance.
   real on-chain bytes in a unit test before relying on it, and when a strict decoder
   reports "unexpected end of input", suspect a too-short *header* (off-by-a-name)
   before re-checking the value struct.
+
+## Sui reads & submission
+
+- **Re-reading mutable state from a lagging fullnode between serial
+  submissions stalls the pipeline.** The notifier fetched its gas coin via
+  `get_gas_objects(address)` before building EVERY tx. That reads the
+  notifier's own fullnode, which under checkpoint-heavy load (a presign
+  flood) trails the validators by hundreds of object versions — so each tx
+  carried a stale gas-coin version and was rejected non-retriably
+  ("Transaction needs to be rebuilt because object … version …",
+  `-32002`). The retry wrapper re-read the same lagging view, so epoch
+  advance stalled outright. Symptom profile that distinguishes it from a
+  handoff wedge: `current_epoch` and `last_session` pinned, `sui_tx_err`
+  climbing into the hundreds, `mismatch=0`. → Rule: for serially-submitted
+  transactions, carry mutable object refs forward from the previous tx's
+  EFFECTS (authoritative post-tx version), not from a fresh read; fall back
+  to a read only for the first submission.
+- **An intermediate on-chain state variant can still carry the last
+  completed value — don't infer "no data" from the state name.** The v4
+  off-chain fast path treated a network key in state
+  `AwaitingNetworkReconfiguration` as having nothing to import, and
+  synthesized an empty reconfiguration output. But that variant still
+  carries the *last completed* reconfiguration's
+  `current_reconfiguration_public_output` — the bytes every validator
+  decrypts its current share from. At the v3→v4 boundary those bytes exist
+  only on chain (produced pre-migration, never in the off-chain cache), so
+  the whole committee fell back to the genesis DKG output and decryption
+  failed forever with `WaitingForNetworkKey`. → Rule: when gating a
+  chain-read away as "already cached", gate on the presence of the STABLE,
+  durably-mirrored artifact (here the DKG output), never on the
+  epoch-transient one that is legitimately absent at every epoch start;
+  and add a don't-downgrade guard so a later empty synthesis cannot
+  overwrite good data already held for the epoch. The decisive diagnostic
+  was logging the adopted output's digest AND LENGTH per epoch per
+  validator — the boundary epoch showed 0 bytes where the prior epoch had
+  17824.
+- **`ika_types::digests` and `sui_types::digests` export SAME-NAMED chain
+  constants with different meanings.** ika's `{MAINNET,TESTNET}_CHAIN_IDENTIFIER_BASE58`
+  decode to the ika **system object IDs** (load-bearing: metric labels,
+  short-id matching); Sui's are the genuine **genesis checkpoint digests**.
+  Genesis-blob verification recomputes the real Sui digest, so importing
+  the constant from the ika crate made the check unsatisfiable — no
+  legitimate blob could ever pass, on either network, and the failure
+  surfaced only as an operator's boot error with two digests that looked
+  equally plausible. → Rule: when two crates in a fork expose identically
+  named constants, name the crate explicitly at the import and assert the
+  semantic in a test (pin the expected value AND pin inequality with the
+  look-alike), because the compiler cannot tell you which meaning you
+  wanted.
 
 ## Dead code & dependencies
 

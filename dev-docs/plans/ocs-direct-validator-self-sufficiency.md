@@ -1,6 +1,6 @@
 # OCS direct-validator self-sufficiency (finding 17 durable fix)
 
-Status: **all slices done.** Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
+Status: landed — all slices done. Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
 (cluster-validated). **Slice 3** (serve a mirrored peer's committee ratchet from
 the direct node's retained store) is now done too, via **Option A** — a
 `RetainedFullnodeTransport` decorator that serves the end-of-epoch

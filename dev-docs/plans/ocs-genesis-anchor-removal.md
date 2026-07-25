@@ -1,6 +1,7 @@
 # OCS: replace the trusted anchor with a genesis-rooted committee chain (plan)
 
-**Status:** implemented, including the full removal list.
+**Status:** landed — implemented, including the full removal list; the
+final config escape hatches were removed by #1898 (`eb7749edaa`).
 **Depends on:** the OCS verified-Sui-reads subsystem
 ([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
 

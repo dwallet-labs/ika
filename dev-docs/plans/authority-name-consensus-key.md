@@ -1,5 +1,7 @@
 # Plan: consensus keys reachable by name (toward consensus-key-signed certs)
 
+Status: landed (2026-07-01, PR #1762 — `c875d88795`).
+
 **SHIPPED DESIGN: consensus keys are carried as `Committee` data; the
 identity (`AuthorityName`) stays the BLS key.** Jump to the
 [Redesign](#redesign-consensus-keys-are-committee-data-not-the-identity)

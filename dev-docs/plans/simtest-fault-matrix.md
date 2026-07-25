@@ -1,6 +1,6 @@
 # Simtest fault matrix — deterministic edge-case coverage under the crypto mock
 
-Status: COMPLETE (2026-07-13). PR #1808 landed the fault suite (6
+Status: landed (2026-07-13). PR #1808 landed the fault suite (6
 enabled tests + 3 #[ignore]d reproducers of then-open findings); the
 follow-up flow-coverage PR #1809 root-caused and fixed the findings,
 re-enabled every reproducer, and closed at 11/11 passing with zero

@@ -1,7 +1,7 @@
 # Making the V3 network DKG output canonical (within v4 off-chain)
 
-Status: active — implementation complete and validated end-to-end (2026-06-28),
-PR #1758 (into `dev`, ready for review); flip to `landed` on merge.
+Status: landed (2026-07-01, PR #1758) — implementation validated end-to-end
+2026-06-28.
 Consensus-critical. Builds on the in-memory V3 reconstruction (`013cb1b75f`).
 The durable behavioral contract — the `NetworkDkgOutput` item's one-time
 pre-V3 -> V3 migration (from a V2 anchor, or from the deployed keys' V1 anchor)

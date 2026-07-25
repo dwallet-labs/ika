@@ -56,6 +56,11 @@ them has a bug — determine which before changing either.
   off-chain transport, the V3 presign/sign flow, the
   `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
   still-gated external path.
+- [`specs/ocs-verified-sui-reads.md`](specs/ocs-verified-sui-reads.md) —
+  object-checkpoint-state: reading Sui without trusting the relay
+  (genesis-rooted committee trust root, the epoch ratchet,
+  dynamic-field/parent binding), what each read is actually bound to, and
+  why the opt-in keys off config SHAPE rather than a protocol version.
 - [`specs/trusted-peer-discovery.md`](specs/trusted-peer-discovery.md) —
   how a peer-only validator gets dialed and boots with no static seed
   peers: the continuous feed of active/next/previous committee +
