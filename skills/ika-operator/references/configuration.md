@@ -94,16 +94,19 @@ sui-connector-config:
   # Chain validation
   sui-chain-identifier: testnet            # Values: mainnet | testnet | custom (kebab-case)
 
-  # Move package IDs (must match deployed contracts)
-  ika-package-id: '0x...'
-  ika-common-package-id: '0x...'
-  ika-dwallet-2pc-mpc-package-id: '0x...'
-  ika-dwallet-2pc-mpc-package-id-v2: '0x...'  # Optional v2 package
-  ika-system-package-id: '0x...'
-
-  # System object IDs
-  ika-system-object-id: '0x...'
-  ika-dwallet-coordinator-object-id: '0x...'
+  # ika on-chain identity (packages + objects).
+  # mainnet/testnet: COMPILED INTO THE BINARY, keyed off sui-chain-identifier —
+  # do not configure it (a config carrying the override below is rejected at
+  # startup). Flat `ika-package-id:`-style keys from older configs are ignored.
+  # custom/localnet only: supply the freshly-published ids here:
+  # ika-unsafe-identity-override:
+  #   ika-package-id: '0x...'
+  #   ika-common-package-id: '0x...'
+  #   ika-dwallet-2pc-mpc-package-id: '0x...'
+  #   ika-dwallet-2pc-mpc-package-id-v2: '0x...'  # Optional v2 upgrade
+  #   ika-system-package-id: '0x...'
+  #   ika-system-object-id: '0x...'
+  #   ika-dwallet-coordinator-object-id: '0x...'
 
   # Notifier mode only: Sui keypair for submitting checkpoints
   notifier-client-key-pair:                # Optional (triggers Notifier mode)

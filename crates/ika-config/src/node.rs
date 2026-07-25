@@ -140,6 +140,13 @@ impl NodeMode {
     /// file.
     pub fn validate_and_prepare_config(&self, config: &mut NodeConfig) -> Result<()> {
         self.validate_config(config)?;
+        // Resolve the on-chain ika identity before anything reads the
+        // resolved id fields — `IkaRuntimes::new` keys its mock-crypto
+        // refusal off `ika_system_object_id`, so resolution must precede
+        // runtime construction, not just node start.
+        config
+            .sui_connector_config
+            .resolve_ika_on_chain_identity()?;
         if !self.is_validator() {
             config.root_seed_key_pair = None;
         }
@@ -297,6 +304,45 @@ pub fn compiled_in_ika_identity(chain: SuiChainIdentifier) -> Option<IkaOnChainI
 /// package/object id, so it is a safe "not provided" marker.
 fn unset_object_id() -> ObjectID {
     ObjectID::ZERO
+}
+
+/// serde `skip_serializing_if` for the resolved id fields: an unresolved
+/// (ZERO) id is omitted from the YAML rather than written as a bogus `0x0`.
+fn object_id_is_unset(id: &ObjectID) -> bool {
+    *id == ObjectID::ZERO
+}
+
+/// Config-supplied ika on-chain identity (Move package + object IDs), for
+/// chains with **no compiled-in identity** — localnet / private nets
+/// (`Devnet`/`Custom`), where the IDs are freshly generated each genesis.
+///
+/// **UNSAFE for public chains.** On `Mainnet`/`Testnet` the identity is
+/// compiled into the binary keyed off `sui_chain_identifier` (see
+/// [`compiled_in_ika_identity`]) and a config carrying this override is
+/// rejected at startup: an operator-level identity swap on a public chain
+/// would redirect the node to different packages/objects than the network it
+/// claims to join. The `unsafe_` prefix is the universal convention for
+/// "this opt-out skips a safety property."
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct IkaIdentityOverride {
+    /// The move package ID of ika (IKA) on sui.
+    pub ika_package_id: ObjectID,
+    /// The move package id of `ika_common` on sui.
+    pub ika_common_package_id: ObjectID,
+    /// The move package id of ika_dwallet_2pc_mpc on sui — the **original
+    /// v1** (the upgrade is `ika_dwallet_2pc_mpc_package_id_v2`).
+    pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    /// The v2 upgrade of the dwallet package; omit on a chain where no
+    /// upgrade has been published (fresh localnets).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
+    /// The move package ID of `ika_system` on sui (the **current/latest**).
+    pub ika_system_package_id: ObjectID,
+    /// The object ID of the Ika system on sui.
+    pub ika_system_object_id: ObjectID,
+    /// The object id of ika_dwallet_coordinator on sui.
+    pub ika_dwallet_coordinator_object_id: ObjectID,
 }
 
 /// Where this validator gets Sui state from.
@@ -578,28 +624,58 @@ pub struct SuiConnectorConfig {
     pub sui_checkpoint_archive: Option<SuiCheckpointArchiveConfig>,
     /// The expected sui chain identifier connecting to.
     pub sui_chain_identifier: SuiChainIdentifier,
-    /// The move package ID of ika (IKA) on sui. Omit on mainnet/testnet to use
-    /// the compiled-in default (see [`compiled_in_ika_identity`]); required on
-    /// localnet/Custom.
-    #[serde(default = "unset_object_id")]
+    /// ika's on-chain identity override — **only** for chains with no
+    /// compiled-in identity (localnet / `Devnet` / `Custom`), where it is
+    /// required. Rejected at startup on `Mainnet`/`Testnet`, where the
+    /// identity is compiled into the binary keyed off `sui_chain_identifier`
+    /// (see [`IkaIdentityOverride`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ika_unsafe_identity_override: Option<IkaIdentityOverride>,
+    /// The resolved on-chain ids below are filled at startup by
+    /// [`Self::resolve_ika_on_chain_identity`] — from the compiled-in
+    /// identity on `Mainnet`/`Testnet`, from `ika_unsafe_identity_override`
+    /// on `Devnet`/`Custom`. They are NOT config-file inputs
+    /// (`skip_deserializing`): a flat `ika-package-id:`-style key in the
+    /// YAML is ignored. They still SERIALIZE when set (non-ZERO), because
+    /// cross-binary harnesses (`ika-upgrade-test`) feed builder-written
+    /// YAML to old release binaries that read exactly these flat keys.
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_package_id: ObjectID,
-    /// The move package id of `ika_common` on sui.
-    #[serde(default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_common_package_id: ObjectID,
-    /// The move package id of ika_dwallet_2pc_mpc on sui — the **original v1**
-    /// (the upgrade is `ika_dwallet_2pc_mpc_package_id_v2`).
-    #[serde(default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
-    /// The move package ID of `ika_system` on sui (the **current/latest**).
-    #[serde(default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_system_package_id: ObjectID,
-    /// The object ID of the Ika system on sui.
-    #[serde(default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_system_object_id: ObjectID,
-    /// The object id of ika_dwallet_coordinator on sui.
-    #[serde(default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_dwallet_coordinator_object_id: ObjectID,
 
     /// How many checkpoints of OCS-verified state the direct-node cache retains
@@ -662,56 +738,80 @@ impl SuiConnectorConfig {
             .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
     }
 
-    /// Fill any unset (ZERO) on-chain id field from the binary's compiled-in
-    /// per-chain ika identity (keyed off `sui_chain_identifier`). A
-    /// config-supplied (non-ZERO) value always wins, so every id is overridable
-    /// per field. On localnet (`Custom`/`Devnet`) there is no compiled-in
-    /// identity, so every id must be supplied explicitly; an id still ZERO after
-    /// resolution is a hard error. Subsumes the old per-chain dwallet-`_v2`
-    /// hardcode in `ika-node`.
+    /// Resolve the runtime ika on-chain identity (packages + objects), keyed
+    /// off `sui_chain_identifier`:
+    ///
+    /// - `Mainnet`/`Testnet`: the identity is compiled into the binary
+    ///   ([`compiled_in_ika_identity`]) and is the sole source; a config
+    ///   carrying `ika_unsafe_identity_override` is rejected — the on-chain
+    ///   identity of a public chain is not operator-overridable.
+    /// - `Devnet`/`Custom` (localnet / private nets): no compiled-in identity
+    ///   exists (the IDs are freshly generated each genesis), so
+    ///   `ika_unsafe_identity_override` is required and is the sole source.
+    ///
+    /// Idempotent; must run before anything reads the resolved id fields
+    /// (wired into [`NodeMode::validate_and_prepare_config`], so every
+    /// binary entry point resolves before use).
     pub fn resolve_ika_on_chain_identity(&mut self) -> anyhow::Result<()> {
-        if let Some(id) = compiled_in_ika_identity(self.sui_chain_identifier) {
-            fn fill(field: &mut ObjectID, default: ObjectID) {
-                if *field == ObjectID::ZERO {
-                    *field = default;
+        match compiled_in_ika_identity(self.sui_chain_identifier) {
+            Some(id) => {
+                if self.ika_unsafe_identity_override.is_some() {
+                    anyhow::bail!(
+                        "sui_connector_config.ika-unsafe-identity-override is set, but chain \
+                         {} has a compiled-in ika identity; overriding it on a public chain \
+                         is not supported — remove the override (it is only for localnet / \
+                         private nets)",
+                        self.sui_chain_identifier
+                    );
                 }
-            }
-            fill(&mut self.ika_package_id, id.ika_package_id);
-            fill(&mut self.ika_common_package_id, id.ika_common_package_id);
-            fill(
-                &mut self.ika_dwallet_2pc_mpc_package_id,
-                id.ika_dwallet_2pc_mpc_package_id,
-            );
-            fill(&mut self.ika_system_package_id, id.ika_system_package_id);
-            fill(&mut self.ika_system_object_id, id.ika_system_object_id);
-            fill(
-                &mut self.ika_dwallet_coordinator_object_id,
-                id.ika_dwallet_coordinator_object_id,
-            );
-            if self.ika_dwallet_2pc_mpc_package_id_v2.is_none() {
+                self.ika_package_id = id.ika_package_id;
+                self.ika_common_package_id = id.ika_common_package_id;
+                self.ika_dwallet_2pc_mpc_package_id = id.ika_dwallet_2pc_mpc_package_id;
                 self.ika_dwallet_2pc_mpc_package_id_v2 = Some(id.ika_dwallet_2pc_mpc_package_id_v2);
+                self.ika_system_package_id = id.ika_system_package_id;
+                self.ika_system_object_id = id.ika_system_object_id;
+                self.ika_dwallet_coordinator_object_id = id.ika_dwallet_coordinator_object_id;
             }
-        }
-        for (name, value) in [
-            ("ika_package_id", self.ika_package_id),
-            ("ika_common_package_id", self.ika_common_package_id),
-            (
-                "ika_dwallet_2pc_mpc_package_id",
-                self.ika_dwallet_2pc_mpc_package_id,
-            ),
-            ("ika_system_package_id", self.ika_system_package_id),
-            ("ika_system_object_id", self.ika_system_object_id),
-            (
-                "ika_dwallet_coordinator_object_id",
-                self.ika_dwallet_coordinator_object_id,
-            ),
-        ] {
-            if value == ObjectID::ZERO {
-                anyhow::bail!(
-                    "sui_connector_config.{name} is unset and chain {} has no compiled-in \
-                     default; set it explicitly (required on localnet / Custom)",
-                    self.sui_chain_identifier
-                );
+            None => {
+                let Some(over) = self.ika_unsafe_identity_override else {
+                    anyhow::bail!(
+                        "chain {} has no compiled-in ika identity (its IDs are freshly \
+                         generated each genesis); set \
+                         sui_connector_config.ika-unsafe-identity-override with the chain's \
+                         package/object ids",
+                        self.sui_chain_identifier
+                    );
+                };
+                for (name, value) in [
+                    ("ika-package-id", over.ika_package_id),
+                    ("ika-common-package-id", over.ika_common_package_id),
+                    (
+                        "ika-dwallet-2pc-mpc-package-id",
+                        over.ika_dwallet_2pc_mpc_package_id,
+                    ),
+                    ("ika-system-package-id", over.ika_system_package_id),
+                    ("ika-system-object-id", over.ika_system_object_id),
+                    (
+                        "ika-dwallet-coordinator-object-id",
+                        over.ika_dwallet_coordinator_object_id,
+                    ),
+                ] {
+                    if value == ObjectID::ZERO {
+                        anyhow::bail!(
+                            "sui_connector_config.ika-unsafe-identity-override.{name} is the \
+                             ZERO object id, which is never a real package/object id"
+                        );
+                    }
+                }
+                self.ika_package_id = over.ika_package_id;
+                self.ika_common_package_id = over.ika_common_package_id;
+                self.ika_dwallet_2pc_mpc_package_id = over.ika_dwallet_2pc_mpc_package_id;
+                // `None` (no upgrade published on this chain) is a supported
+                // downstream value — preserve it rather than inventing one.
+                self.ika_dwallet_2pc_mpc_package_id_v2 = over.ika_dwallet_2pc_mpc_package_id_v2;
+                self.ika_system_package_id = over.ika_system_package_id;
+                self.ika_system_object_id = over.ika_system_object_id;
+                self.ika_dwallet_coordinator_object_id = over.ika_dwallet_coordinator_object_id;
             }
         }
         Ok(())
@@ -1305,6 +1405,7 @@ mod tests {
             sui_genesis: None,
             sui_checkpoint_archive: None,
             sui_chain_identifier: chain,
+            ika_unsafe_identity_override: None,
             ika_package_id: ObjectID::ZERO,
             ika_common_package_id: ObjectID::ZERO,
             ika_dwallet_2pc_mpc_package_id: ObjectID::ZERO,
@@ -1471,36 +1572,172 @@ mod tests {
         }
     }
 
+    fn test_identity_override() -> IkaIdentityOverride {
+        fn oid(byte: u8) -> ObjectID {
+            ObjectID::from_single_byte(byte)
+        }
+        IkaIdentityOverride {
+            ika_package_id: oid(1),
+            ika_common_package_id: oid(2),
+            ika_dwallet_2pc_mpc_package_id: oid(3),
+            ika_dwallet_2pc_mpc_package_id_v2: None,
+            ika_system_package_id: oid(4),
+            ika_system_object_id: oid(5),
+            ika_dwallet_coordinator_object_id: oid(6),
+        }
+    }
+
+    /// The on-chain identity of a public chain is not operator-overridable:
+    /// a Mainnet/Testnet config carrying the unsafe override is rejected
+    /// outright, never partially applied.
     #[test]
-    fn config_supplied_id_overrides_compiled_in() {
-        let mut cfg = config_for_chain(SuiChainIdentifier::Mainnet);
-        let custom = ObjectID::from_hex_literal("0x1234").unwrap();
-        cfg.ika_system_object_id = custom;
+    fn identity_override_rejected_on_public_chains() {
+        for chain in [SuiChainIdentifier::Mainnet, SuiChainIdentifier::Testnet] {
+            let mut cfg = config_for_chain(chain);
+            cfg.ika_unsafe_identity_override = Some(test_identity_override());
+            let err = cfg.resolve_ika_on_chain_identity().unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("overriding it on a public chain is not supported"),
+                "{chain}: {err}"
+            );
+            assert_eq!(
+                cfg.ika_package_id,
+                ObjectID::ZERO,
+                "{chain}: a rejected override must not partially resolve"
+            );
+        }
+    }
+
+    /// Localnet/private chains (`Devnet`/`Custom`) have no compiled-in
+    /// identity: the unsafe override is required, and is the sole source of
+    /// every resolved id (an absent `_v2` stays `None` — "no upgrade
+    /// published" is a supported downstream value).
+    #[test]
+    fn identity_override_required_and_sole_source_on_private_chains() {
+        for chain in [SuiChainIdentifier::Devnet, SuiChainIdentifier::Custom] {
+            let mut cfg = config_for_chain(chain);
+            let err = cfg.resolve_ika_on_chain_identity().unwrap_err();
+            assert!(
+                err.to_string().contains("ika-unsafe-identity-override"),
+                "{chain}: {err}"
+            );
+
+            let over = test_identity_override();
+            cfg.ika_unsafe_identity_override = Some(over);
+            cfg.resolve_ika_on_chain_identity().unwrap();
+            assert_eq!(cfg.ika_package_id, over.ika_package_id);
+            assert_eq!(cfg.ika_common_package_id, over.ika_common_package_id);
+            assert_eq!(
+                cfg.ika_dwallet_2pc_mpc_package_id,
+                over.ika_dwallet_2pc_mpc_package_id
+            );
+            assert_eq!(cfg.ika_dwallet_2pc_mpc_package_id_v2, None);
+            assert_eq!(cfg.ika_system_package_id, over.ika_system_package_id);
+            assert_eq!(cfg.ika_system_object_id, over.ika_system_object_id);
+            assert_eq!(
+                cfg.ika_dwallet_coordinator_object_id,
+                over.ika_dwallet_coordinator_object_id
+            );
+        }
+    }
+
+    /// A ZERO id inside the override is a config mistake, not a real id —
+    /// rejected rather than resolved into a node that queries object 0x0.
+    #[test]
+    fn identity_override_rejects_zero_ids() {
+        let mut cfg = config_for_chain(SuiChainIdentifier::Custom);
+        let mut over = test_identity_override();
+        over.ika_system_object_id = ObjectID::ZERO;
+        cfg.ika_unsafe_identity_override = Some(over);
+        let err = cfg.resolve_ika_on_chain_identity().unwrap_err();
+        assert!(
+            err.to_string().contains("ika-system-object-id"),
+            "the error must name the offending field: {err}"
+        );
+    }
+
+    /// The resolved id fields are runtime outputs, not config inputs: a YAML
+    /// carrying the old flat `ika-package-id`-style keys parses (serde
+    /// ignores unknown fields) but the values are discarded — on a public
+    /// chain resolution still yields the compiled-in identity.
+    #[test]
+    fn flat_id_keys_in_yaml_are_ignored() {
+        let yaml = r#"
+sui-data-source:
+  kind: sui-state-direct
+  url: "http://unused:9000"
+  serve-mirror: false
+sui-chain-identifier: mainnet
+ika-package-id: "0x1111111111111111111111111111111111111111111111111111111111111111"
+ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222222222222"
+"#;
+        let mut cfg: SuiConnectorConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.ika_package_id,
+            ObjectID::ZERO,
+            "flat keys must not deserialize into the resolved fields"
+        );
         cfg.resolve_ika_on_chain_identity().unwrap();
-        assert_eq!(cfg.ika_system_object_id, custom, "explicit value must win");
-        // Other unset fields still get the compiled-in default.
         let id = compiled_in_ika_identity(SuiChainIdentifier::Mainnet).unwrap();
         assert_eq!(cfg.ika_package_id, id.ika_package_id);
+        assert_eq!(cfg.ika_system_object_id, id.ika_system_object_id);
     }
 
+    /// Round-trip: the override struct serializes under the
+    /// `ika-unsafe-identity-override` key with kebab-case fields, and an
+    /// absent `_v2` stays absent.
     #[test]
-    fn localnet_custom_requires_explicit_ids() {
+    fn identity_override_yaml_round_trip() {
         let mut cfg = config_for_chain(SuiChainIdentifier::Custom);
-        let err = cfg.resolve_ika_on_chain_identity().unwrap_err();
-        assert!(err.to_string().contains("no compiled-in default"), "{err}");
+        cfg.ika_unsafe_identity_override = Some(test_identity_override());
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert!(yaml.contains("ika-unsafe-identity-override"), "{yaml}");
+        assert!(
+            !yaml.contains("ika-dwallet-2pc-mpc-package-id-v2"),
+            "absent v2 must not serialize: {yaml}"
+        );
+        let parsed: SuiConnectorConfig = serde_yaml::from_str(&yaml).unwrap();
+        let over = parsed.ika_unsafe_identity_override.unwrap();
+        assert_eq!(over.ika_package_id, test_identity_override().ika_package_id);
+        assert_eq!(over.ika_dwallet_2pc_mpc_package_id_v2, None);
     }
 
+    /// Old-binary compatibility: cross-binary harnesses (`ika-upgrade-test`)
+    /// hand builder-written YAML to previous release binaries that read the
+    /// flat `ika-package-id`-style keys. A config with the resolved ids set
+    /// must therefore still SERIALIZE them (while unresolved ZERO ids are
+    /// omitted rather than written as bogus `0x0`).
     #[test]
-    fn v2_kept_when_config_supplies_it() {
-        let mut cfg = config_for_chain(SuiChainIdentifier::Testnet);
-        let custom_v2 = ObjectID::from_hex_literal("0xabcd").unwrap();
-        cfg.ika_dwallet_2pc_mpc_package_id_v2 = Some(custom_v2);
-        cfg.resolve_ika_on_chain_identity().unwrap();
-        assert_eq!(
-            cfg.ika_dwallet_2pc_mpc_package_id_v2,
-            Some(custom_v2),
-            "explicit v2 must win"
+    fn resolved_flat_ids_serialize_for_old_binaries() {
+        let mut cfg = config_for_chain(SuiChainIdentifier::Custom);
+        cfg.ika_unsafe_identity_override = Some(test_identity_override());
+        // Unresolved: the flat ids are ZERO and must not serialize.
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert!(
+            !yaml.contains("\nika-package-id"),
+            "unresolved ZERO ids must be omitted: {yaml}"
         );
+        // Resolved (as the swarm builders and harnesses produce): the flat
+        // keys appear, readable by an old binary.
+        cfg.resolve_ika_on_chain_identity().unwrap();
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        for key in [
+            "\nika-package-id",
+            "\nika-common-package-id",
+            "\nika-dwallet-2pc-mpc-package-id",
+            "\nika-system-package-id",
+            "\nika-system-object-id",
+            "\nika-dwallet-coordinator-object-id",
+        ] {
+            assert!(yaml.contains(key), "missing flat key {key}: {yaml}");
+        }
+        // And the flat values a fresh parse yields still resolve identically
+        // (current binaries ignore the flat keys and use the override).
+        let mut reparsed: SuiConnectorConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(reparsed.ika_package_id, ObjectID::ZERO);
+        reparsed.resolve_ika_on_chain_identity().unwrap();
+        assert_eq!(reparsed.ika_package_id, cfg.ika_package_id);
     }
 
     // ---- default end-of-epoch checkpoint archive resolution ----

@@ -564,6 +564,7 @@ mod tests {
             sui_genesis,
             sui_checkpoint_archive: None,
             sui_chain_identifier: SuiChainIdentifier::Custom,
+            ika_unsafe_identity_override: None,
             ika_package_id: ObjectID::random(),
             ika_common_package_id: ObjectID::random(),
             ika_dwallet_2pc_mpc_package_id: ObjectID::random(),

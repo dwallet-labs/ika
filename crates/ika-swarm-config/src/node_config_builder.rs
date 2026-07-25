@@ -9,9 +9,9 @@ use crate::validator_initialization_config::{
 use fastcrypto::encoding::{Encoding, Hex};
 use fastcrypto::traits::KeyPair;
 use ika_config::node::{
-    AuthorityKeyPairWithPath, AuthorityOverloadConfig, KeyPairWithPath, RootSeedWithPath,
-    RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig, SuiDataSource,
-    default_end_of_epoch_broadcast_channel_capacity,
+    AuthorityKeyPairWithPath, AuthorityOverloadConfig, IkaIdentityOverride, KeyPairWithPath,
+    RootSeedWithPath, RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig,
+    SuiDataSource, default_end_of_epoch_broadcast_channel_capacity,
 };
 use std::path::PathBuf;
 use sui_types::base_types::ObjectID;
@@ -201,6 +201,22 @@ impl ValidatorConfigBuilder {
                 sui_genesis: self.sui_genesis.clone(),
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
+                // Localnet (`Custom`): the freshly-published ids travel in the
+                // unsafe override — the only config-surface source on chains
+                // with no compiled-in identity. The flat id fields are also
+                // set so they SERIALIZE into the YAML: cross-binary harnesses
+                // (`ika-upgrade-test`) hand builder-written configs to old
+                // release binaries that read exactly those flat keys. Current
+                // binaries ignore them on parse and resolve from the override.
+                ika_unsafe_identity_override: Some(IkaIdentityOverride {
+                    ika_package_id,
+                    ika_common_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
+                    ika_dwallet_2pc_mpc_package_id_v2: None,
+                    ika_system_package_id,
+                    ika_system_object_id,
+                    ika_dwallet_coordinator_object_id,
+                }),
                 ika_package_id,
                 ika_common_package_id,
                 ika_dwallet_2pc_mpc_package_id,
@@ -463,6 +479,18 @@ impl FullnodeConfigBuilder {
                 sui_genesis: None,
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
+                // Localnet (`Custom`): ids travel in the unsafe override; the
+                // flat fields are set too so they serialize for old-binary
+                // consumers (see the validator builder above).
+                ika_unsafe_identity_override: Some(IkaIdentityOverride {
+                    ika_package_id,
+                    ika_common_package_id,
+                    ika_dwallet_2pc_mpc_package_id,
+                    ika_dwallet_2pc_mpc_package_id_v2: None,
+                    ika_system_package_id,
+                    ika_system_object_id,
+                    ika_dwallet_coordinator_object_id,
+                }),
                 ika_package_id,
                 ika_common_package_id,
                 ika_dwallet_2pc_mpc_package_id,
