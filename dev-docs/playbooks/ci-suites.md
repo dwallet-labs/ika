@@ -115,6 +115,18 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout
 #   override the old side:  -f old_ref=release/mainnet-v1.2.5 -f old_bin_name=ika-validator
 
+# Test-test the gate with the compiled-in, feature-gated one-validator
+# reconfiguration-message fault. This run is expected to fail; its logs must
+# show the exact zero-malicious or output-convergence assertion firing.
+# (The standalone `malicious_v125` scenario is the local counterpart: honest
+# v1.2.5 committee + one faulty current validator, green = detection works.)
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout -f test_testing_fault=true
+
+# v125_rollout's churn counterpart: full swap, then a mirrored OCS joiner
+# folds into the reshared v1.2.5-origin key (4→5) and a shrink reshare
+# removes an original validator (5→4).
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_churn
+
 # Old-style (1.1.8-shape, JSON-RPC-only) YAML configs for every role.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=legacy_config
 
@@ -137,6 +149,7 @@ notifier + a validator committee:
 | `smoke` | current only | process harness reaches epoch 2 |
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
 | `v125_rollout` | **one current + three literal v1.2.5**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
+| `v125_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.5-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
 
 ### CI runner resources
@@ -146,8 +159,11 @@ quota, a **96 GiB pod memory limit**, and no swap. Each idle `ika-validator`
 runs ≈7.5–8 GB RSS, so co-locating many validators approaches the pod limit —
 the deleted `cross_binary` scenario (5–6 validators) reproducibly OOM-killed
 the runner at that limit (`OOMKilled`/137; forensics in this playbook's
-pre-#1751 history). The current scenarios — including `v125_rollout` — are
-all 4-validator and fit comfortably.
+pre-#1751 history). `v125_rollout` is 4-validator and fits comfortably;
+`v125_churn` peaks at 5 validators during its joiner phase — the same peak
+as the retired `v118_churn`, which passed on these runners (the OOM death
+was specific to `cross_binary`'s heavier 5–6-validator multi-lifecycle
+profile).
 
 ## Facts that save debugging time
 

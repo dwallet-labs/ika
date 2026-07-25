@@ -1549,6 +1549,22 @@ impl ProtocolCryptographicData {
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        // Test-only fault injection for the cross-binary
+                        // malicious-detection harness: corrupt this validator's
+                        // outgoing reconfiguration message so honest peers must
+                        // detect and exclude it. Gated behind the general
+                        // `test-testing` cargo feature — compiled out of every
+                        // normal (release) build, so the only way to produce a
+                        // faulty binary is an explicit `--features
+                        // test-testing`, never a source edit. (Re-homed from
+                        // the removed backward-compatible reconfiguration
+                        // party, which carried the original hook.)
+                        #[cfg(feature = "test-testing")]
+                        let message = {
+                            let mut message = message;
+                            message.push(0u8);
+                            message
+                        };
                         Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
                     GuaranteedOutputDeliveryRoundResult::Finalize {

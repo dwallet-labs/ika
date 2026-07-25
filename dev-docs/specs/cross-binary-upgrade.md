@@ -198,6 +198,20 @@ drives them across epochs. The surviving scenarios (current build only):
   reshares to converge byte-identically per authority with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
   validators and converge again.
+- `tests/v125_churn.rs` — the churn counterpart: full sequential swap over
+  the literal v1.2.5 committee (on-disk RocksDB continuity), then a
+  peer-only-mirrored joiner folds into the reshared v1.2.5-origin key
+  (4→5, the OCS joiner trust-anchor path) and a shrink reshare removes an
+  original validator (5→4).
+- `tests/malicious_v125.rs` — the test-testing counterpart: an honest
+  literal-v1.2.5 committee plus ONE current-build validator carrying the
+  `test-testing`-gated reconfiguration-message fault (the hook lives in
+  the main reconfiguration advance path in
+  `crytographic_computation/mpc_computations.rs`); honest validators must
+  convict it and reshare without it, asserted via the malicious-actors
+  gauge. Green = the compatibility gates above are not vacuous. The
+  workflow's `test_testing_fault` input runs the same fault through
+  `v125_rollout` itself (that run must fail closed).
 - `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
   JSON-RPC-only) YAML configs for every role, through a full lifecycle.
 

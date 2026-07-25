@@ -27,6 +27,11 @@ name: Upgrade Test
 #                  the rest and converge again — a pure binary swap, no
 #                  protocol transition. Defaults to
 #                  old_ref=release/mainnet-v1.2.5, old_bin_name=ika-validator.
+#   v125_churn   — v125_rollout's churn counterpart: full sequential swap
+#                  over the literal v1.2.5 committee, then a mirrored OCS
+#                  joiner folds into the reshared v1.2.5-origin key (4→5)
+#                  and a shrink reshare removes an original (5→4). Same OLD
+#                  defaults as v125_rollout.
 #   legacy_config — config-compat rehearsal: the current build on old-style
 #                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
@@ -103,6 +108,10 @@ on:
         type: boolean
         required: false
         default: false
+      test_testing_fault:
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       test:
@@ -153,6 +162,11 @@ on:
         type: boolean
         required: false
         default: false
+      test_testing_fault:
+        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v125_rollout; the zero-malicious/convergence gate must fail."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Literal prefix, NOT ${{ github.workflow }}: inside a workflow_call,
@@ -189,7 +203,7 @@ jobs:
           TEST: ${{ inputs.test || 'v125_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout legacy_config"
+          ALL="smoke workload v125_rollout v125_churn legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -303,6 +317,7 @@ jobs:
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             v125_rollout) RUN_FLAG=RUN_V125_ROLLOUT ;;
+            v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
@@ -311,7 +326,7 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v125_rollout)
+            v125_rollout | v125_churn)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -337,11 +352,22 @@ jobs:
           CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
           CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
           USE_MOCKS: ${{ inputs.use_mocks }}
+          TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if [ "$TEST_NAME" = "v125_rollout" ] && [ "$USE_MOCKS" = "true" ]; then
-            echo "v125_rollout is a rollout gate and must use real cryptography" >&2
+          if { [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "v125_churn" ]; } && [ "$USE_MOCKS" = "true" ]; then
+            echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
             exit 1
+          fi
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v125_rollout" ]; then
+            echo "test_testing_fault is only supported by v125_rollout" >&2
+            exit 1
+          fi
+          if [ "$TEST_TESTING_FAULT" = "true" ]; then
+            NODE_FAULT_FEATURES="--features test-testing"
+            echo "building deliberately faulty current validator; this validation run must fail closed"
+          else
+            NODE_FAULT_FEATURES=""
           fi
           # `use_mocks` builds the binaries with the INSECURE deterministic
           # mocks.
@@ -356,12 +382,12 @@ jobs:
           # green. Default features (enforce-minimum-cpu + jemalloc) are kept:
           # enforcement is runtime-gated to validators on the ika
           # testnet/mainnet networks, so it never fires on this localnet.
-          cargo build --release $NODE_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
+          cargo build --release $NODE_FEATURES $NODE_FAULT_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika $IKA_FEATURES
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_churn' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
