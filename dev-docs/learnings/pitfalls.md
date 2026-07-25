@@ -304,6 +304,36 @@ rule, not the instance.
   wrong removal. Verify those paths (`cargo simtest`, the wasm build,
   `--features <f>`) or leave the dep.
 
+## Repo guard hooks
+
+- **A PreToolUse guard checks repo state BEFORE the command runs — any
+  check keyed on mutable repo state can be sidestepped by a compound
+  command that mutates that state first.** `.claude/hooks/git-guard.sh`
+  gates commits containing `.rs` files on `cargo fmt --all --check`, but
+  it detects them via `git diff --cached` *at hook time*: staging and
+  committing in one command (`git add … && git commit …`, or
+  `git commit -a`) presents an empty index and the gate never fires. The
+  commit-on-protected-branch check shares the class (it reads the
+  current branch, which the same compound command could switch first).
+  The command-string checks (`--no-verify`, push targets) don't — the
+  string is immutable. → Rule: treat state-keyed guard checks as a
+  backstop, not the contract — run `cargo fmt --all` before committing
+  regardless (CLAUDE.md: Git Workflow), and never cite a green guard as
+  evidence the gated property held.
+- **git-guard reports ANY `cargo fmt` failure as "rustfmt is dirty",
+  including cargo failing to launch.** The fmt gate runs
+  `cargo fmt --all --check >/dev/null 2>&1`, discarding output and exit
+  detail, so a cargo that is absent from the hook's PATH (the hook
+  inherits the agent process environment, not a login shell —
+  `~/.cargo/bin` may be missing from it) blocks every Rust commit with a
+  formatting message even though `cargo fmt --all --check` is clean in
+  your terminal. Cost a fresh-workstation session real diagnosis time;
+  resolved by putting cargo/rustfmt on a directory the hook's PATH does
+  include (e.g. symlinks in `~/.local/bin`). → Rule: when a gate blocks
+  with a tool's verdict, first prove the tool actually RAN in the gate's
+  environment (re-run the gate's exact command with output visible)
+  before debugging the verdict itself.
+
 ## Process & forensics
 
 - **Verify the chain/config you're querying is the one the system
