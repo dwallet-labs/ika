@@ -45,6 +45,11 @@ them has a bug — determine which before changing either.
   blocks the epoch close, and the two stall signals (the notifier's
   sync-stall self-report; validators' `checkpoint_writer_lag`
   blocked-reason attribution).
+- [`specs/notifier-balance-gas.md`](specs/notifier-balance-gas.md)
+  — the writer's two gas modes: default gas-coin payment (and the
+  stale-gas caching apparatus it requires) vs. opt-in SIP-58
+  address-balance gas (`ValidDuring`, no gas objects, no stale-version
+  failure class), with rollout preconditions.
 - [`specs/cross-binary-upgrade.md`](specs/cross-binary-upgrade.md) —
   the in-place protocol-version upgrade contract: the stake-weighted
   version vote, the wire/on-disk compatibility invariants for mixed

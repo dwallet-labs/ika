@@ -39,6 +39,7 @@ use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
 use crate::SuiClientInner;
 use crate::grpc::SuiGrpcClient;
 use crate::transport::{SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by};
+use sui_types::digests::{ChainIdentifier as SuiNetworkChainIdentifier, CheckpointDigest};
 
 /// Error surface of the gRPC backend. Satisfies the
 /// `SuiClientInner::Error` bound (`Into<anyhow::Error> + Send + Sync +
@@ -210,6 +211,22 @@ impl SuiClientInner for GrpcSuiClient {
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
         Ok(self.transport.get_chain_identifier().await?)
+    }
+
+    async fn get_sui_epoch(&self) -> Result<u64, Self::Error> {
+        Ok(self.transport.get_current_epoch().await?)
+    }
+
+    async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error> {
+        // The gRPC service-info chain id IS the full genesis checkpoint
+        // digest (Base58) — parse it back into the typed identifier.
+        let chain_id = self.transport.get_chain_identifier().await?;
+        let digest: CheckpointDigest = chain_id.parse().map_err(|e| {
+            TransportError::Encoding(format!(
+                "service-info chain id {chain_id:?} is not a checkpoint digest: {e}"
+            ))
+        })?;
+        Ok(SuiNetworkChainIdentifier::from(digest))
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {

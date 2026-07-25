@@ -210,6 +210,7 @@ impl ValidatorConfigBuilder {
                 ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair: None,
+                notifier_gas_from_address_balance: false,
                 sui_ika_system_module_last_processed_event_id_override: None,
             },
             db_path,
@@ -462,6 +463,7 @@ impl FullnodeConfigBuilder {
                 ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair,
+                notifier_gas_from_address_balance: false,
                 sui_ika_system_module_last_processed_event_id_override: None,
             },
             metrics_address: self

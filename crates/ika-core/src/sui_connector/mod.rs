@@ -28,8 +28,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
-use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
-use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionData};
+use sui_types::digests::{
+    ChainIdentifier as SuiNetworkChainIdentifier, get_mainnet_chain_identifier,
+    get_testnet_chain_identifier,
+};
+use sui_types::transaction::{
+    GasData, ProgrammableTransaction, Transaction, TransactionData, TransactionDataV1,
+    TransactionExpiration, TransactionKind,
+};
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -59,6 +65,25 @@ pub mod verified_transport;
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,
     sui_address: SuiAddress,
+    /// SIP-58 mode: pay gas from the notifier address's SUI balance instead
+    /// of owned gas-coin objects. Submissions carry an empty gas payment and
+    /// a `ValidDuring` expiration; the entire stale-gas-version machinery is
+    /// bypassed. Opt-in via `notifier_gas_from_address_balance`.
+    gas_from_address_balance: bool,
+    /// The chain's full genesis-rooted identifier, resolved once at boot.
+    /// `Some` exactly when `gas_from_address_balance` (a `ValidDuring`
+    /// expiration embeds it and validators compare the full identifier).
+    sui_network_chain_identifier: Option<SuiNetworkChainIdentifier>,
+}
+
+impl SuiNotifier {
+    pub(crate) fn gas_from_address_balance(&self) -> bool {
+        self.gas_from_address_balance
+    }
+
+    pub(crate) fn sui_address(&self) -> SuiAddress {
+        self.sui_address
+    }
 }
 
 pub struct SuiConnectorService {
@@ -423,9 +448,32 @@ impl SuiConnectorService {
         );
 
         let sui_address = SuiAddress::from(&sui_key.public());
+
+        // SIP-58 address-balance gas: resolve the chain's FULL identifier once
+        // (a `ValidDuring` expiration embeds it verbatim). Fail the boot
+        // loudly if it can't be resolved — a writer silently unable to build
+        // transactions is exactly the failure shape issue #1892 is about.
+        let gas_from_address_balance = sui_connector_config.notifier_gas_from_address_balance;
+        let sui_network_chain_identifier = if gas_from_address_balance {
+            let chain_identifier = sui_client.get_sui_chain_identifier().await.map_err(|e| {
+                anyhow!(
+                    "notifier_gas_from_address_balance is set but the chain identifier                      could not be resolved (required for ValidDuring expirations): {e}"
+                )
+            })?;
+            info!(
+                ?chain_identifier,
+                "Notifier pays gas from its SUI address balance (SIP-58)"
+            );
+            Some(chain_identifier)
+        } else {
+            None
+        };
+
         Ok(Some(SuiNotifier {
             sui_key,
             sui_address,
+            gas_from_address_balance,
+            sui_network_chain_identifier,
         }))
     }
 
@@ -461,29 +509,84 @@ impl CheckpointMessageSuiNotify for SuiConnectorService {
     }
 }
 
+/// The writer's fixed gas budget. Under address-balance gas the full budget
+/// is reserved from the balance for the transaction's validity window, so the
+/// balance must comfortably cover `budget x in-flight transactions` (the
+/// writer submits serially: one).
+const NOTIFIER_GAS_BUDGET: u64 = 10_000_000_000;
+
 pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
-    signer: SuiAddress,
+    sui_notifier: &SuiNotifier,
     pt: ProgrammableTransaction,
     sui_client: &Arc<SuiClient<C>>,
     gas_payment: Vec<ObjectRef>,
-    sui_key: &SuiKeyPair,
 ) -> Transaction {
     let computation_price = sui_client.get_reference_gas_price_until_success().await;
 
-    let tx_data = TransactionData::new_programmable(
-        signer,
-        gas_payment,
-        pt,
-        10_000_000_000,
-        computation_price,
-    );
+    let tx_data = if sui_notifier.gas_from_address_balance {
+        let sui_epoch = sui_client.get_sui_epoch_until_success().await;
+        let chain_identifier = sui_notifier
+            .sui_network_chain_identifier
+            .expect("gas_from_address_balance implies a resolved chain identifier (set at boot)");
+        balance_gas_transaction_data(
+            sui_notifier.sui_address,
+            pt,
+            computation_price,
+            sui_epoch,
+            chain_identifier,
+            rand::random(),
+        )
+    } else {
+        TransactionData::new_programmable(
+            sui_notifier.sui_address,
+            gas_payment,
+            pt,
+            NOTIFIER_GAS_BUDGET,
+            computation_price,
+        )
+    };
 
     let signature = Signature::new_secure(
         &IntentMessage::new(Intent::sui_transaction(), &tx_data),
-        sui_key,
+        &sui_notifier.sui_key,
     );
 
     Transaction::from_data(tx_data, vec![signature])
+}
+
+/// SIP-58 address-balance-gas transaction: an EMPTY gas payment is the
+/// protocol-level trigger for paying from the sender's address balance, and
+/// the `ValidDuring` expiration supplies the replay protection that gas-coin
+/// version bumps used to provide. `min_epoch == max_epoch` (single-epoch
+/// validity) is accepted under every protocol regime; a submission racing a
+/// Sui epoch boundary simply expires and the caller's retry rebuilds it
+/// against the new epoch.
+fn balance_gas_transaction_data(
+    sender: SuiAddress,
+    pt: ProgrammableTransaction,
+    computation_price: u64,
+    sui_epoch: u64,
+    chain_identifier: SuiNetworkChainIdentifier,
+    nonce: u32,
+) -> TransactionData {
+    TransactionData::V1(TransactionDataV1 {
+        kind: TransactionKind::ProgrammableTransaction(pt),
+        sender,
+        gas_data: GasData {
+            payment: vec![],
+            owner: sender,
+            price: computation_price,
+            budget: NOTIFIER_GAS_BUDGET,
+        },
+        expiration: TransactionExpiration::ValidDuring {
+            min_epoch: Some(sui_epoch),
+            max_epoch: Some(sui_epoch),
+            min_timestamp: None,
+            max_timestamp: None,
+            chain: chain_identifier,
+            nonce,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -500,6 +603,41 @@ mod tests {
     async fn example_func_err() -> anyhow::Result<()> {
         info!("example_func_err");
         Err(anyhow::anyhow!(""))
+    }
+
+    #[test]
+    fn balance_gas_transaction_has_no_gas_objects_and_is_replay_protected() {
+        let sender = SuiAddress::random_for_testing_only();
+        let pt = sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder::new()
+            .finish();
+        let tx_data =
+            balance_gas_transaction_data(sender, pt, 750, 42, get_testnet_chain_identifier(), 7);
+
+        let v1 = tx_data.as_v1();
+        // An empty gas payment on a programmable transaction IS the SIP-58
+        // trigger for paying gas from the sender's address balance.
+        assert!(sui_types::transaction::is_gas_paid_from_address_balance(
+            &v1.gas_data,
+            &v1.kind
+        ));
+        assert_eq!(v1.sender, sender);
+        assert_eq!(v1.gas_data.owner, sender);
+        assert_eq!(v1.gas_data.price, 750);
+        assert_eq!(v1.gas_data.budget, NOTIFIER_GAS_BUDGET);
+        // Single-epoch validity: replay-protected under every protocol regime
+        // (validators retain executed digests across the expiry range).
+        assert!(v1.expiration.is_replay_protected());
+        assert!(matches!(
+            v1.expiration,
+            TransactionExpiration::ValidDuring {
+                min_epoch: Some(42),
+                max_epoch: Some(42),
+                min_timestamp: None,
+                max_timestamp: None,
+                nonce: 7,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
