@@ -222,12 +222,20 @@ impl fmt::Display for SuiChainIdentifier {
 }
 
 /// ika's on-chain identity (Move package + object IDs) for a public chain.
-/// Deployment constants: the object IDs are immutable, and the package IDs are
-/// the exact values the node config expects — the dwallet base id is the
-/// **original v1** with the upgrade in `_v2` (event filtering accepts both),
-/// and the system id is the **current/latest**. Sourced from
-/// `deployed_contracts/{mainnet,testnet}/address.yaml` (NOT `ika_sui_config.yaml`,
-/// which flattens packages to their latest under the base name).
+/// Deployment constants: the object IDs are immutable, and every package ID is
+/// the **original (defining) publication** — the dwallet base id is the
+/// original v1 with the upgrade in `_v2` (event filtering accepts both), and
+/// `ika_system_package_id` is likewise the ORIGINAL system package, never a
+/// later upgrade. These ids feed type/event matching and the OCS relevance
+/// set, and Sui type tags carry the *defining* package forever — the system
+/// object itself is typed `{original}::system::System` even after upgrades.
+/// The *current executable* system package is resolved at runtime from the
+/// system object's `package_id` field (`sui_executor` reads
+/// `system.package_id`), so NO constant here needs bumping when contracts
+/// upgrade. Sourced from the BASE keys of
+/// `deployed_contracts/{mainnet,testnet}/address.yaml` (`ika_system_package_id`,
+/// not `ika_system_package_id_v2`; and NOT `ika_sui_config.yaml`, which
+/// flattens packages to their latest under the base name).
 #[derive(Clone, Copy, Debug)]
 pub struct IkaOnChainIdentity {
     pub ika_package_id: ObjectID,
@@ -262,7 +270,7 @@ pub fn compiled_in_ika_identity(chain: SuiChainIdentifier) -> Option<IkaOnChainI
                 "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
             ),
             ika_system_package_id: oid(
-                "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+                "0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486",
             ),
             ika_system_object_id: oid(
                 "0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80",
@@ -285,7 +293,7 @@ pub fn compiled_in_ika_identity(chain: SuiChainIdentifier) -> Option<IkaOnChainI
                 "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
             ),
             ika_system_package_id: oid(
-                "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+                "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148",
             ),
             ika_system_object_id: oid(
                 "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6",
@@ -2083,5 +2091,50 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 "mode={mode}: error should mention the OCS path, got: {err}"
             );
         }
+    }
+
+    /// The compiled-in `ika_system_package_id` must be the ORIGINAL (defining)
+    /// system package, not a later upgrade. Every consumer of this field
+    /// matches Sui type tags (event filters, the system object's own type, the
+    /// OCS relevance set), and type tags carry the defining package forever;
+    /// the current executable package is resolved at runtime from the system
+    /// object's `package_id` field, never from here. Chain receipts
+    /// (sui_getObject, 2026-07-25): the testnet system object's type is
+    /// `0xae71e386…::system::System` with content `package_id: 0xde05f49e…`
+    /// (v2 upgrade); mainnet's type is `0xb874c9b5…::system::System` with
+    /// `package_id: 0xd69f947d…`. Pinning both directions because the v2 ids
+    /// sit one line below the base ids in
+    /// `deployed_contracts/{mainnet,testnet}/address.yaml`
+    /// (`ika_system_package_id` vs `ika_system_package_id_v2`) — the exact
+    /// copy mistake that shipped once.
+    #[test]
+    fn compiled_in_system_package_id_is_the_original_not_the_v2_upgrade() {
+        let testnet = compiled_in_ika_identity(SuiChainIdentifier::Testnet).unwrap();
+        assert_eq!(
+            testnet.ika_system_package_id.to_hex_literal(),
+            "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148",
+            "testnet ika_system_package_id must be the ORIGINAL system package \
+             (the defining id in the system object's type tag)"
+        );
+        assert_ne!(
+            testnet.ika_system_package_id.to_hex_literal(),
+            "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+            "0xde05f49e… is the testnet system package's v2 UPGRADE - resolved \
+             at runtime from the system object, never compiled in"
+        );
+
+        let mainnet = compiled_in_ika_identity(SuiChainIdentifier::Mainnet).unwrap();
+        assert_eq!(
+            mainnet.ika_system_package_id.to_hex_literal(),
+            "0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486",
+            "mainnet ika_system_package_id must be the ORIGINAL system package \
+             (the defining id in the system object's type tag)"
+        );
+        assert_ne!(
+            mainnet.ika_system_package_id.to_hex_literal(),
+            "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+            "0xd69f947d… is the mainnet system package's v2 UPGRADE - resolved \
+             at runtime from the system object, never compiled in"
+        );
     }
 }
