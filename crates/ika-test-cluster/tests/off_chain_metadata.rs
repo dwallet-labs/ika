@@ -27,7 +27,7 @@ async fn off_chain_metadata_v4_does_not_read_blobs_from_chain() {
     let cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(20_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");

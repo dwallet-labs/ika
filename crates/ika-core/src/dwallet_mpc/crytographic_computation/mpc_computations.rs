@@ -10,14 +10,11 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::network_dkg::{
-    DwalletMPCNetworkKeys, advance_network_dkg_bwd_compat, advance_network_dkg_v2,
-};
+use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg_v2};
 use crate::dwallet_mpc::presign::{
     PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol, compute_presign,
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::dwallet_mpc::reconfiguration::advance_network_reconfiguration_bwd_compat;
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
     SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
@@ -336,16 +333,10 @@ impl ProtocolCryptographicData {
             ProtocolData::NetworkEncryptionKeyDkg {
                 data: NetworkEncryptionKeyDkgData {},
                 ..
-            } => {
-                // Dispatch `ready_to_advance` to the matching Party impl so the
-                // deserializer interprets the in-flight `Message` bytes under
-                // the right shape (bwd-compat 3-variant `Message` vs main
-                // 6+-variant `Message`).
-                match public_input {
-                    PublicInput::NetworkEncryptionKeyDkgBwdCompat(public_input) => {
-                        let advance_request_result = Party::<
-                            twopc_mpc::decentralized_party_backward_compatible::dkg::Party,
-                        >::ready_to_advance(
+            } => match public_input {
+                PublicInput::NetworkEncryptionKeyDkg(public_input) => {
+                    let advance_request_result =
+                        Party::<twopc_mpc::decentralized_party::dkg::Party>::ready_to_advance(
                             party_id,
                             access_structure,
                             consensus_round,
@@ -353,43 +344,20 @@ impl ProtocolCryptographicData {
                             &serialized_messages_by_consensus_round,
                         )?;
 
-                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
-                            advance_request_result
-                        else {
-                            return Ok(None);
-                        };
+                    let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                        advance_request_result
+                    else {
+                        return Ok(None);
+                    };
 
-                        ProtocolCryptographicData::NetworkEncryptionKeyDkgBwdCompat {
-                            public_input: public_input.clone(),
-                            advance_request,
-                            class_groups_decryption_key,
-                        }
+                    ProtocolCryptographicData::NetworkEncryptionKeyDkg {
+                        public_input: public_input.clone(),
+                        advance_request,
+                        class_groups_decryption_key,
                     }
-                    PublicInput::NetworkEncryptionKeyDkg(public_input) => {
-                        let advance_request_result =
-                            Party::<twopc_mpc::decentralized_party::dkg::Party>::ready_to_advance(
-                                party_id,
-                                access_structure,
-                                consensus_round,
-                                HashMap::from([(3, network_dkg_third_round_delay)]),
-                                &serialized_messages_by_consensus_round,
-                            )?;
-
-                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
-                            advance_request_result
-                        else {
-                            return Ok(None);
-                        };
-
-                        ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                            public_input: public_input.clone(),
-                            advance_request,
-                            class_groups_decryption_key,
-                        }
-                    }
-                    _ => return Err(DwalletMPCError::InvalidSessionPublicInput),
                 }
-            }
+                _ => return Err(DwalletMPCError::InvalidSessionPublicInput),
+            },
             ProtocolData::NetworkEncryptionKeyReconfiguration {
                 dwallet_network_encryption_key_id,
                 ..
@@ -397,35 +365,7 @@ impl ProtocolCryptographicData {
                 let decryption_key_shares = decryption_key_shares
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                // Dispatch `ready_to_advance` to the matching Party impl so
-                // the deserializer interprets the in-flight `Message` bytes
-                // under the right shape (bwd-compat 3-variant `Message` vs
-                // main 6+-variant `Message`).
                 match public_input {
-                    PublicInput::NetworkEncryptionKeyReconfigurationBwdCompat(public_input) => {
-                        let advance_request_result = Party::<
-                            twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party,
-                        >::ready_to_advance(
-                            party_id,
-                            access_structure,
-                            consensus_round,
-                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
-                            &serialized_messages_by_consensus_round,
-                        )?;
-
-                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
-                            advance_request_result
-                        else {
-                            return Ok(None);
-                        };
-
-                        ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
-                            data: NetworkEncryptionKeyReconfigurationData {},
-                            public_input: public_input.clone(),
-                            advance_request,
-                            decryption_key_shares: decryption_key_shares.clone(),
-                        }
-                    }
                     PublicInput::NetworkEncryptionKeyReconfiguration(public_input) => {
                         let advance_request_result =
                             Party::<ReconfigurationParty>::ready_to_advance(
@@ -472,7 +412,6 @@ impl ProtocolCryptographicData {
         root_seed: RootSeed,
         vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        aggregated_network_key_public_outputs: bool,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
 
@@ -1579,19 +1518,6 @@ impl ProtocolCryptographicData {
                 public_input.to_string(),
                 advance_request.to_string(),
             )),
-            ProtocolCryptographicData::NetworkEncryptionKeyDkgBwdCompat {
-                public_input,
-                advance_request,
-                class_groups_decryption_key,
-            } => advance_network_dkg_bwd_compat(
-                session_id,
-                access_structure,
-                public_input,
-                party_id,
-                advance_request,
-                class_groups_decryption_key,
-                &mut rng,
-            ),
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 public_input,
                 advance_request,
@@ -1603,20 +1529,6 @@ impl ProtocolCryptographicData {
                 party_id,
                 advance_request,
                 class_groups_decryption_key,
-                &mut rng,
-            ),
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
-                public_input,
-                advance_request,
-                decryption_key_shares,
-                ..
-            } => advance_network_reconfiguration_bwd_compat(
-                session_id,
-                access_structure,
-                public_input,
-                party_id,
-                advance_request,
-                decryption_key_shares.clone(),
                 &mut rng,
             ),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
@@ -1637,6 +1549,22 @@ impl ProtocolCryptographicData {
 
                 match result {
                     GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                        // Test-only fault injection for the cross-binary
+                        // malicious-detection harness: corrupt this validator's
+                        // outgoing reconfiguration message so honest peers must
+                        // detect and exclude it. Gated behind the general
+                        // `test-testing` cargo feature — compiled out of every
+                        // normal (release) build, so the only way to produce a
+                        // faulty binary is an explicit `--features
+                        // test-testing`, never a source edit. (Re-homed from
+                        // the removed backward-compatible reconfiguration
+                        // party, which carried the original hook.)
+                        #[cfg(feature = "test-testing")]
+                        let message = {
+                            let mut message = message;
+                            message.push(0u8);
+                            message
+                        };
                         Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
                     }
                     GuaranteedOutputDeliveryRoundResult::Finalize {
@@ -1644,35 +1572,27 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // Wrap the public output with its version. Main
-                        // Reconfig writes V3 (pre-aggregation shape) below the
-                        // aggregated-outputs protocol gate and V4 (aggregated
-                        // shape, via upgrade()) above it; the bwd-compat path
-                        // in `advance_network_reconfiguration_bwd_compat`
-                        // writes V2.
-                        let public_output_value = if aggregated_network_key_public_outputs {
-                            // Deliberately the CONCRETE non-aggregated type, not the
-                            // Party's associated output type: this decode-and-upgrade
-                            // (and the V3 tagging below the gate) is correct only while
-                            // the reconfiguration Party's wire output is the
-                            // non-aggregated shape. When the Party migrates to the
-                            // aggregated output post-upgrade, this site must be
-                            // revisited — a hardcoded type makes that a loud failure
-                            // instead of a silent misinterpretation.
-                            let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
-                                bcs::from_bytes(&public_output_value)?;
-                            info!(
-                                session_identifier=?session_identifier,
-                                "persisting aggregated (V4) network-key reconfiguration output"
-                            );
+                        // Wrap the public output with its version: always the
+                        // aggregated (V4) shape — pre-aggregation (V3) output
+                        // production was removed with protocol v4 support.
+                        //
+                        // Deliberately the CONCRETE non-aggregated type, not the
+                        // Party's associated output type: this decode-and-upgrade
+                        // is correct only while the reconfiguration Party's wire
+                        // output is the non-aggregated shape. When the Party
+                        // migrates to the aggregated output post-upgrade, this
+                        // site must be revisited — a hardcoded type makes that a
+                        // loud failure instead of a silent misinterpretation.
+                        let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
+                            bcs::from_bytes(&public_output_value)?;
+                        info!(
+                            session_identifier=?session_identifier,
+                            "persisting aggregated (V4) network-key reconfiguration output"
+                        );
+                        let public_output_value =
                             bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
                                 bcs::to_bytes(&public_output.upgrade()?)?,
-                            ))?
-                        } else {
-                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V3(
-                                public_output_value,
-                            ))?
-                        };
+                            ))?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,

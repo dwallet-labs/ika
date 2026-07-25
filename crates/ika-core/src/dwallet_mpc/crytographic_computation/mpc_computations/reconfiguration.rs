@@ -11,23 +11,15 @@ use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
     generate_access_structure_from_committee,
 };
-use class_groups::SecretKeyShareSizedInteger;
-use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
     NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData, ReconfigurationParty,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
     VersionedNetworkDkgOutput,
 };
 use group::PartyID;
-use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use mpc::guaranteed_output_delivery::{AdvanceRequest, Party as GuaranteedOutputParty};
-use mpc::{
-    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, Party,
-    WeightedThresholdAccessStructure,
-};
-use rand_chacha::ChaCha20Rng;
+use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::debug;
@@ -79,10 +71,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
             generate_access_structure_from_committee(&upcoming_committee)?;
 
         // class_groups (and PVSS, below) come from the off-chain consensus-agreed
-        // key sets — NOT from Sui. This is the main reconfig party, which runs
-        // only at `network_encryption_key_version == 3`, where the validator keys
-        // live off-chain. (The bwd-compat party, at key version 2, reads them
-        // from the committee — see `reconfiguration_bwd_compat_public_input`.)
+        // key sets — NOT from Sui; the validator keys live off-chain.
         // The current set is the parties that actually hold shares from the
         // current DKG; the upcoming set is the reshare targets. Either may be a
         // subset of its committee — the reshare deals only to parties with keys.
@@ -317,208 +306,6 @@ fn decode_prior_reconfiguration_output_core(
     }
 }
 
-/// Builds the bwd-compat reconfiguration public input via
-/// `cryptography-private @ 7795eb45`'s new
-/// `decentralized_party_backward_compatible::reconfiguration::PublicInput::new_from_*`
-/// constructors. Mirrors the main path's `(VersionedNetworkDkgOutput,
-/// Option<VersionedDecryptionKeyReconfigurationOutput>)` dispatcher but produces
-/// the bwd-compat `PublicInput` shape (no PVSS HPKE keys — bwd-compat
-/// reconfig predates the threshold-encryption-to-sharing sub-protocol).
-///
-/// Used at `ProtocolConfig::is_reconfiguration_message_version_v3() == false`
-/// (protocol_version < 4); paired with [`advance_network_reconfiguration_bwd_compat`].
-pub(crate) fn reconfiguration_bwd_compat_public_input(
-    current_committee: &Committee,
-    upcoming_committee: Committee,
-    network_dkg_public_output: VersionedNetworkDkgOutput,
-    latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
-) -> DwalletMPCResult<<bwd_compat_reconfig::Party as mpc::Party>::PublicInput> {
-    let current_committee = current_committee.clone();
-    let current_access_structure = generate_access_structure_from_committee(&current_committee)?;
-    let upcoming_access_structure = generate_access_structure_from_committee(&upcoming_committee)?;
-
-    let current_encryption_keys_per_crt_prime_and_proofs =
-        extract_class_groups_encryption_keys_from_committee(&current_committee)?;
-
-    let upcoming_encryption_keys_per_crt_prime_and_proofs =
-        extract_class_groups_encryption_keys_from_committee(&upcoming_committee)?;
-
-    let current_tangible_party_id_to_upcoming =
-        current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
-
-    match network_dkg_public_output {
-        // The deployed mainnet/testnet network keys were DKG'd by a pre-1.1.8
-        // binary, which wrote a V1-tagged anchor: the raw
-        // `class_groups::dkg::PublicOutput` (no decentralized-party wrapper).
-        // Reconfiguration never rewrites the anchor, so it is still V1 on chain
-        // and is read on every reconfiguration. 1.1.8 handled this shape here;
-        // the anchor's class-groups DKG output feeds straight into
-        // `new_from_reconfiguration_output` (its bcs layout is unchanged across
-        // the crypto bump), alongside the prior V2 reconfiguration output.
-        VersionedNetworkDkgOutput::V1(network_dkg_public_output_bytes) => {
-            match latest_reconfiguration_public_output {
-                // A V1 anchor with no prior reconfiguration output is the pre-
-                // reconfiguration genesis state of a pre-1.1.8 key — which no
-                // deployed key is in (they have all reconfigured), and which
-                // this backward-compatible path cannot bootstrap (the DKG-only
-                // constructor needs the multi-curve output shape a V1 anchor
-                // does not carry). 1.1.8 also errored here.
-                None => Err(DwalletMPCError::InternalError(
-                    "Bwd-compat reconfig with a V1 anchor requires a prior V2 \
-                     reconfiguration output; a V1 anchor with no reconfiguration \
-                     output is unsupported."
-                        .to_string(),
-                )),
-                Some(VersionedDecryptionKeyReconfigurationOutput::V2(
-                    latest_reconfiguration_public_output_bytes,
-                )) => {
-                    let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =
-                        bcs::from_bytes(&latest_reconfiguration_public_output_bytes)?;
-                    bwd_compat_reconfig::PublicInput::new_from_reconfiguration_output(
-                        &current_access_structure,
-                        upcoming_access_structure,
-                        current_encryption_keys_per_crt_prime_and_proofs,
-                        upcoming_encryption_keys_per_crt_prime_and_proofs,
-                        current_tangible_party_id_to_upcoming,
-                        // The V1 anchor IS the class-groups DKG output the
-                        // constructor wants — decode it directly (no wrapper to
-                        // project through, unlike the V2 arm's `.into()`).
-                        bcs::from_bytes(&network_dkg_public_output_bytes)?,
-                        public_output,
-                    )
-                    .map_err(DwalletMPCError::from)
-                }
-                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
-                    Err(DwalletMPCError::InternalError(
-                        "V1 reconfiguration outputs are no longer supported.".to_string(),
-                    ))
-                }
-                Some(
-                    VersionedDecryptionKeyReconfigurationOutput::V3(_)
-                    | VersionedDecryptionKeyReconfigurationOutput::V4(_),
-                ) => Err(DwalletMPCError::InternalError(
-                    "Bwd-compat reconfig requires a prior V2-tagged reconfiguration \
-                     output; got V3/V4."
-                        .to_string(),
-                )),
-            }
-        }
-        VersionedNetworkDkgOutput::V2(network_dkg_public_output_bytes) => {
-            let bwd_compat_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
-                bcs::from_bytes(&network_dkg_public_output_bytes)?;
-
-            match latest_reconfiguration_public_output {
-                None => bwd_compat_reconfig::PublicInput::new_from_dkg_output(
-                    &current_access_structure,
-                    upcoming_access_structure,
-                    current_encryption_keys_per_crt_prime_and_proofs,
-                    upcoming_encryption_keys_per_crt_prime_and_proofs,
-                    current_tangible_party_id_to_upcoming,
-                    bwd_compat_dkg_public_output,
-                )
-                .map_err(DwalletMPCError::from),
-                Some(VersionedDecryptionKeyReconfigurationOutput::V2(
-                    latest_reconfiguration_public_output_bytes,
-                )) => {
-                    let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =
-                        bcs::from_bytes(&latest_reconfiguration_public_output_bytes)?;
-                    bwd_compat_reconfig::PublicInput::new_from_reconfiguration_output(
-                        &current_access_structure,
-                        upcoming_access_structure,
-                        current_encryption_keys_per_crt_prime_and_proofs,
-                        upcoming_encryption_keys_per_crt_prime_and_proofs,
-                        current_tangible_party_id_to_upcoming,
-                        bwd_compat_dkg_public_output.into(),
-                        public_output,
-                    )
-                    .map_err(DwalletMPCError::from)
-                }
-                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
-                    Err(DwalletMPCError::InternalError(
-                        "V1 reconfiguration outputs are no longer supported.".to_string(),
-                    ))
-                }
-                Some(
-                    VersionedDecryptionKeyReconfigurationOutput::V3(_)
-                    | VersionedDecryptionKeyReconfigurationOutput::V4(_),
-                ) => Err(DwalletMPCError::InternalError(
-                    "Bwd-compat reconfig requires a prior V2-tagged reconfiguration output."
-                        .to_string(),
-                )),
-            }
-        }
-        VersionedNetworkDkgOutput::V3(_) | VersionedNetworkDkgOutput::V4(_) => {
-            Err(DwalletMPCError::InternalError(
-                "Bwd-compat Reconfig dispatch saw a V3/V4 DKG output — protocol_config / wire-tag \
-                 mismatch."
-                    .to_string(),
-            ))
-        }
-    }
-}
-
-/// Advances the network Reconfiguration protocol using the mainnet-v1.1.8-shape
-/// decentralized party
-/// (`twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`).
-///
-/// Used when the active `ProtocolConfig` reports
-/// `reconfiguration_message_version() == 2` (protocol_version < 4). The
-/// finalized public output is wrapped as
-/// `VersionedDecryptionKeyReconfigurationOutput::V2`; bytes are wire-compatible
-/// with mainnet-v1.1.8 peers per audit §4 (reconfig `PublicOutput` wire-stable).
-pub(crate) fn advance_network_reconfiguration_bwd_compat(
-    session_id: CommitmentSizedNumber,
-    access_structure: &WeightedThresholdAccessStructure,
-    public_input: <bwd_compat_reconfig::Party as mpc::Party>::PublicInput,
-    party_id: PartyID,
-    advance_request: AdvanceRequest<<bwd_compat_reconfig::Party as mpc::Party>::Message>,
-    decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
-    rng: &mut ChaCha20Rng,
-) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    let result =
-        GuaranteedOutputParty::<bwd_compat_reconfig::Party>::advance_with_guaranteed_output(
-            session_id,
-            party_id,
-            access_structure,
-            advance_request,
-            Some(decryption_key_shares),
-            &public_input,
-            rng,
-        )?;
-
-    match result {
-        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-            // Test-only fault injection for the cross-binary malicious-detection
-            // harness: corrupt this validator's outgoing reconfiguration message
-            // so honest peers must detect and exclude it. Gated behind the
-            // general `test-testing` cargo feature — compiled out of every normal
-            // (release) build, so the only way to produce a faulty binary is an
-            // explicit `--features test-testing`, never a source edit.
-            #[cfg(feature = "test-testing")]
-            let message = {
-                let mut message = message;
-                message.push(0u8);
-                message
-            };
-            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-        }
-        GuaranteedOutputDeliveryRoundResult::Finalize {
-            public_output_value,
-            malicious_parties,
-            private_output,
-        } => {
-            let public_output_value = bcs::to_bytes(
-                &VersionedDecryptionKeyReconfigurationOutput::V2(public_output_value),
-            )?;
-            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
-                public_output_value,
-                malicious_parties,
-                private_output,
-            })
-        }
-    }
-}
-
 fn current_tangible_party_id_to_upcoming(
     current_committee: Committee,
     upcoming_committee: Committee,
@@ -538,21 +325,6 @@ fn current_tangible_party_id_to_upcoming(
             (current_party_id, upcoming_party_id)
         })
         .collect()
-}
-
-fn extract_class_groups_encryption_keys_from_committee(
-    committee: &Committee,
-) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
-    committee
-        .class_groups_public_keys_and_proofs
-        .iter()
-        .map(|(name, key)| {
-            let party_id = authority_name_to_party_id_from_committee(committee, name)?;
-            let key = key.clone();
-
-            Ok((party_id, key))
-        })
-        .collect::<DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>>>()
 }
 
 pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(

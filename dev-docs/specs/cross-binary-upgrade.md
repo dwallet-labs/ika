@@ -131,15 +131,17 @@ serialization/schema change, MUST preserve all of the following.
    because nothing on 1.1.8 reads `committee_map` history at runtime; the
    current-epoch committee is always rebuilt from chain state at startup.
 
-## Genesis must start at v3 and upgrade into v4
+## Genesis version
 
-A network must genesis at v3 (`ProtocolVersion::MIN`) and reach v4
-through the vote above; a **v4 genesis is rejected forever**. At v4 the
-network DKG needs PVSS keys that arrive only through the off-chain
-next-committee assembly, which by construction never serves the genesis
-(epoch-0) committee — so a v4 genesis DKG can never satisfy its key
-requirement (4/4 class-groups keys, 0/4 PVSS). This is also the path
-mainnet itself takes, so upgrade testing must follow it.
+Fresh networks genesis at `ProtocolVersion::MAX` (currently 5). The
+genesis network DKG's PVSS keys are served by the current-epoch off-chain
+key assembly (`sui_syncer::sync_next_committee` assembles the CURRENT
+committee's self-announced bundles at genesis), so no upgrade-into-a-
+version bootstrap path exists or is needed. (Historically — through the
+mainnet v1.1.8→v4 era — a v4+ genesis DKG was impossible and networks
+had to genesis at v3 and vote upward; that constraint died with the
+current-epoch assembly, and v3/v4 support was removed entirely once both
+deployed networks reached v5: `MIN_PROTOCOL_VERSION = 5`.)
 
 ## Literal previous-release compatibility is a release requirement
 
@@ -154,77 +156,67 @@ mainnet itself takes, so upgrade testing must follow it.
 > for it). Treat a release whose notes carry no such record as unvalidated.
 
 The decentralized rollout topology is one release-candidate validator and
-the rest of the committee on the literal previous release. That topology must
-remain valid through a network-key reconfiguration while the on-chain
-protocol version remains v3. Operational instructions cannot turn a
+the rest of the committee on the literal previous release. That topology
+must remain valid through a network-key reconfiguration at the current
+protocol version. Operational instructions cannot turn a
 validator-by-validator deployment into an atomic restart, and quorum progress
 cannot establish compatibility: three matching old validators can advance the
 chain while the upgraded validator produces different bytes, falls behind, or
 records itself as malicious.
-
-The `mainnet-v1.1.8` → current boundary is especially important because
-v1.1.8 links the former `class_groups`/`inkrypto` dependency while current
-source links `cryptography-private`. The prior assumption was that their MPC
-wire formats were not interchangeable and therefore that every validator had
-to be replaced before the next MPC boundary. That assumption conflicts with
-the deployment contract. The scenario must therefore run the literal binaries
-with real cryptography and either prove compatible canonical output or expose a
-release blocker.
-
-Protocol v4 also changes validator-key publication from the bare
-`ClassGroupsEncryptionKeyAndProof` shape to the combined
-`ValidatorEncryptionKeysAndProofs`. Current code can read the historical key
-shape; v1.1.8 cannot read the new shape. The mixed-rollout gate deliberately
-holds v3 and does not register new-shape validators during its mixed phase.
-Forward-only v4 state therefore does not excuse incompatibility for the v3
-network-key reshare.
 
 Any crypto-library, transcript, validator-key, or serialization change MUST
 state how the literal previous release interoperates during a rolling rollout.
 If it cannot, the candidate is not releasable until compatibility is restored
 or the decentralized rollout contract is explicitly changed outside this test.
 
+**Status of the verification machinery:** the literal-old-binary rehearsal
+scenarios that enforced this gate for the v1.1.8→v4 and v1.2.1→v5 rollouts
+(`v118_upgrade`, `v118_churn`, `v118_mixed_rollout`, `v121_rollout`,
+`cross_binary`, `malicious_cross_binary`) were retired with protocol v3/v4
+support — the current binary (`MIN_PROTOCOL_VERSION = 5`) shares no protocol
+version with those old binaries, so their topologies cannot boot; both
+rollouts completed on the deployed networks. Their successor is
+`tests/v125_rollout.rs`: the same one-upgraded-validator mixed topology
+against the literal **v1.2.5** release (deployed on mainnet AND testnet,
+protocol v5), where the boundary under test is a pure binary swap. It is
+the PR-gating scenario and the one a release manager dispatches against
+every release tag.
+
 ## How this is verified
 
 `crates/ika-upgrade-test/` spawns real, separately-compiled
 `ika-validator` child processes against an external `sui` localnet and
-drives them across epochs:
+drives them across epochs. The surviving scenarios (current build only):
 
 - `tests/smoke.rs` — harness plumbing: four same-binary processes reach
   epoch 2 on the genesis epoch cadence.
-- `tests/workload.rs` — the session-lifecycle invariant: a v3→v4 upgrade
-  followed by a full user DKG → Presign → Sign completing on-chain.
-- `tests/cross_binary.rs` — a rolling swap with committee churn between
-  two wire-compatible builds (an OLD build of the current branch pinned
-  to `MAX_PROTOCOL_VERSION = 3`, and the current `dev`): the vote
-  advances v3 → v4 while the committee reshapes 4 → 3 → 5 → 4.
-- `tests/v118_upgrade.rs` — the coordinated full-committee mainnet
-  rehearsal: boot the literal `mainnet-v1.1.8` binary, run the mainnet user
-  flow at v3, sequentially restart all validators onto the current build
-  before the tested reshare, and confirm the network upgrades to v4 and keeps
-  serving through the pre-activation presign window.
-- `tests/v118_mixed_rollout.rs` — the production deployment topology (the
-  scenario the release manager must run, see the enforcement note above):
-  upgrade exactly one member of a four-validator literal v1.1.8 committee,
-  hold protocol v3, and require two network-key reconfigurations to complete
-  with every validator healthy and locally current, zero reported malicious
-  actors, no stranded work, and identical canonical per-authority outputs.
-- `tests/v118_churn.rs` — `v118_upgrade` plus a post-upgrade committee join,
-  so the v4 reshare of a genuine 1.1.8-origin key includes a new party
-  (the lighter, more faithful exercise of the OCS joiner trust-anchor path).
-- `tests/v121_rollout.rs` — the aggregated-outputs (protocol v5) rehearsal:
-  boot the literal `release/testnet-v1.2.1` binary at v4, converge two mixed
-  pre-aggregation reshares, then swap the rest, vote to v5, and confirm the
-  first aggregated reconfiguration output installs everywhere.
-- `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape)
-  YAMLs for validators AND the notifier, covering the legacy JSON-RPC
-  transport nothing else exercises.
-- `tests/malicious_cross_binary.rs` — the deliberate-corruption counterpart:
-  corrupts the outgoing reconfiguration message so the output-quorum tally
-  must convict, which is what proves the compatibility scenarios above would
-  actually react to a real divergence rather than passing vacuously.
+- `tests/workload.rs` — the session-lifecycle invariant: a full user
+  DKG → Presign → Sign completing on-chain at genesis protocol v5.
+- `tests/v125_rollout.rs` — the deployed-release compatibility gate: boot
+  the literal v1.2.5 release at genesis protocol v5, upgrade exactly one
+  of four validators to the current build, require two mixed network-key
+  reshares to converge byte-identically per authority with zero malicious
+  reports and a served user lifecycle after each, then swap the remaining
+  validators and converge again.
+- `tests/v125_churn.rs` — the churn counterpart: full sequential swap over
+  the literal v1.2.5 committee (on-disk RocksDB continuity), then a
+  peer-only-mirrored joiner folds into the reshared v1.2.5-origin key
+  (4→5, the OCS joiner trust-anchor path) and a shrink reshare removes an
+  original validator (5→4).
+- `tests/malicious_v125.rs` — the test-testing counterpart: an honest
+  literal-v1.2.5 committee plus ONE current-build validator carrying the
+  `test-testing`-gated reconfiguration-message fault (the hook lives in
+  the main reconfiguration advance path in
+  `crytographic_computation/mpc_computations.rs`); honest validators must
+  convict it and reshare without it, asserted via the malicious-actors
+  gauge. Green = the compatibility gates above are not vacuous. The
+  workflow's `test_testing_fault` input runs the same fault through
+  `v125_rollout` itself (that run must fail closed); `malicious_v125` is
+  also directly dispatchable (the workflow builds the faulty binary).
+- `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
+  JSON-RPC-only) YAML configs for every role, through a full lifecycle.
 
-How the mixed-rollout scenario weighs the upgraded validator's output: production
+How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the
 quorum discards its own result without submitting it, and ANY honest

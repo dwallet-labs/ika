@@ -178,35 +178,6 @@ impl ValidatorMpcKeysByPartyId {
     }
 }
 
-/// Build the manager's key set from the committee's on-chain `class_groups`
-/// alone, with empty PVSS / VSS maps. This is the manager's starting point each
-/// epoch: `class_groups` is on `Committee` in every mode (it's the bare on-chain
-/// key), so the backward-compatible network DKG (legacy / pre-v4, which needs
-/// only class-groups) works immediately — while the off-chain-only PVSS / VSS
-/// keys are filled in later by `ingest_offchain_mpc_keys` once delivered (v4).
-pub(crate) fn class_groups_keys_by_party_id(
-    committee: &Committee,
-) -> DwalletMPCResult<ValidatorMpcKeysByPartyId> {
-    let mut class_groups = HashMap::new();
-    for (name, _) in committee.voting_rights.iter() {
-        let party_id = authority_name_to_party_id_from_committee(committee, name)?;
-        if let Some(k) = committee
-            .class_groups_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
-            class_groups.insert(party_id, k);
-        }
-    }
-    Ok(ValidatorMpcKeysByPartyId {
-        class_groups,
-        secp256k1_pvss: HashMap::new(),
-        secp256r1_pvss: HashMap::new(),
-        ristretto_pvss: HashMap::new(),
-        vss_hpke_verified_party_encryption_key_values: HashMap::new(),
-    })
-}
-
 /// Convert a `committee` to a `WeightedThresholdAccessStructure` that is used by the cryptographic library.
 pub(crate) fn generate_access_structure_from_committee(
     committee: &Committee,

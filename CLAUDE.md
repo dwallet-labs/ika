@@ -276,18 +276,21 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   the commit/round semantics ika's freeze and epoch-close logic rely on
   (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
   in ika (see the upstream reference above)
-- **Mainnet on protocol v3; TESTNET on protocol v4**: mainnet runs
-  protocol v3. Protocol v4 — off-chain validator metadata
-  (`off_chain_validator_metadata_enabled()`), the cross-epoch handoff
-  (`dev-docs/specs/handoff.md`), the deferred epoch close, the version-3
-  network-key crypto — is LIVE on testnet. v4-gated behavior therefore
-  HAS deployed-network backward-compatibility constraints: testnet
-  persists v4-era state (e.g. V3-tagged pre-aggregation network-key
-  public outputs), and MPC outputs must reach byte-identical quorum
-  across a mixed-binary committee, so serialization changes to v4-active
-  paths need a new protocol version gate, never a binary-driven flip.
-  Protocol v5 (aggregated network-key public outputs) is defined but not
-  active on any deployed network.
+- **Protocol v5 ONLY (`MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 5`)**:
+  mainnet and testnet both run protocol v5, and the binary supports
+  nothing older — protocol v3/v4 support, the v3→v4 migration
+  scaffolding (issue #1751), the backward-compatible (class-groups-only)
+  network DKG/reconfiguration parties, and pre-aggregation (V3-tagged)
+  output PRODUCTION are all removed. Everything formerly v4/v5-gated
+  (off-chain validator metadata, the cross-epoch handoff, deferred epoch
+  close, aggregated network-key outputs) is unconditionally on. What
+  REMAINS constrained: the networks persist pre-v5 state (V1-tagged
+  chain DKG anchors, V2/V3-tagged outputs), so old `Versioned*` enum
+  variants must stay (BCS variant indices are wire format) and their
+  DECODE paths must keep working; and MPC outputs must reach
+  byte-identical quorum across a mixed-binary committee, so
+  serialization changes to active paths need a new protocol version
+  gate, never a binary-driven flip.
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward

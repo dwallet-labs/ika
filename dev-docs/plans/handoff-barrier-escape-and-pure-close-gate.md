@@ -104,11 +104,15 @@ reconfiguration output is stale-share-EQUIVALENT, not degraded.
   (extend the tests near `all_cert_reconfiguration_outputs_held_locally_cases`,
   lib.rs:3631).
 - **Consistency with the sibling degraded path.**
-  `adopt_cert_verified_keys`' absent-cert chain adoption
+  ~~`adopt_cert_verified_keys`' absent-cert chain adoption
   (`mpc_manager.rs`, the v3→v4-boundary branch) and this fallback are
   the SAME degraded mode; both must back cert-less entry with the
   identical on-chain copy, or the barrier admits bytes the adoption
-  pass then rejects.
+  pass then rejects.~~ [Update, issue #1751: the absent-cert chain
+  adoption of a reconfigured key is now a REJECTION — the adoption pass
+  admits cert-less entries only for DKG-only keys. Any barrier fallback
+  designed here must match that: cert-less entry may not install a
+  reconfigured key's bytes at all.]
 
 **Spec deltas (same PR):** handoff.md step 2 (barrier) gains the
 two-tier rule; invariant 5 is amended from "verified epoch-E handoff

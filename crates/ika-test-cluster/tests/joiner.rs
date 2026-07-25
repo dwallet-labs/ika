@@ -35,7 +35,7 @@ async fn test_joiner_added_at_epoch_2() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(20_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -150,7 +150,7 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(10_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -361,7 +361,7 @@ async fn test_validator_removed_at_epoch_2() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(20_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -411,7 +411,7 @@ async fn test_sessions_complete_across_epoch_switch() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(15_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -487,7 +487,7 @@ async fn test_multiple_concurrent_dwallet_dkgs_across_epoch_switch() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(15_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -549,7 +549,7 @@ async fn test_joiner_added_while_user_dkg_in_flight() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(15_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -622,7 +622,7 @@ async fn test_user_sessions_across_multiple_epochs() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(15_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
@@ -748,7 +748,7 @@ async fn test_real_network_churn_over_5_epochs() {
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(10_000)
-        .with_protocol_version(ProtocolVersion::new(4))
+        .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");

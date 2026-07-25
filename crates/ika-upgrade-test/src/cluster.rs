@@ -193,8 +193,9 @@ impl ClusterBuilder {
         self
     }
 
-    /// Genesis protocol version. Default `ProtocolVersion::MIN` so a vote can
-    /// advance to a newer version supported by the new binary's `SYSTEM_DEFAULT`.
+    /// Genesis protocol version. Default `ProtocolVersion::MIN` — the lowest
+    /// version this binary supports; when MIN < MAX a capability vote can
+    /// advance to a newer version supported by the binary's `SYSTEM_DEFAULT`.
     pub fn with_genesis_protocol_version(mut self, v: ProtocolVersion) -> Self {
         self.genesis_protocol_version = Some(v);
         self

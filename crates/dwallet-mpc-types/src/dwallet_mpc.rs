@@ -484,9 +484,9 @@ pub enum VersionedSignOutput {
 /// - `V2` — bytes from
 ///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`,
 ///   which after the upstream `PublicOutputCore` extraction is a re-export of
-///   `twopc_mpc::decentralized_party::dkg::PublicOutputCore`. Written by
-///   `advance_network_dkg_bwd_compat` when
-///   `ProtocolConfig::is_network_encryption_key_version_v3()` is `false`.
+///   `twopc_mpc::decentralized_party::dkg::PublicOutputCore`. No longer
+///   PRODUCED (the backward-compatible DKG party was removed with protocol-v3
+///   support), but still READ from persisted pre-v4 state.
 /// - `V3` — bytes from
 ///   `twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput`. The full
 ///   output wraps `PublicOutputCore` with the trailing

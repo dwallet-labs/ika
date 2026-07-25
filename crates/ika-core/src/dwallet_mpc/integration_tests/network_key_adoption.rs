@@ -511,10 +511,13 @@ async fn unmapped_cert_referenced_key_defers_and_spawns_derivation() {
 /// Drives the REAL adoption path in two phases and asserts the invariant
 /// over the whole adopted set after every pass:
 /// 1. cert-anchored — a cert pins two keys, one mapped, one not;
-/// 2. cert-less (the v3/v3→v4-boundary path) — no cert at all, a fresh
-///    unmapped key must STILL defer (pre-fix it was blindly adopted, so on
-///    any fresh network's first v4 epoch the top-up loop's
-///    should-never-happen skip fired routinely).
+/// 2. cert-less (genesis / fresh-key path) — no cert at all, a fresh
+///    unmapped DKG-only key must STILL defer (pre-fix it was blindly
+///    adopted, so on any fresh network's genesis epoch the top-up loop's
+///    should-never-happen skip fired routinely). A cert-less RECONFIGURED
+///    key is rejected outright: a handoff cert exists every off-chain
+///    epoch, so an unanchored reconfiguration output has no quorum
+///    certification behind it.
 #[tokio::test]
 async fn adopted_keys_always_resolve_a_network_key_id() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
@@ -657,11 +660,11 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     );
     assert_all_adopted_resolve(manager, "after the registration pass");
 
-    // === Phase 2: the CERT-LESS adoption branch (v3 / v3→v4 boundary) ===
-    // Remove the cert entirely: a fresh unmapped key arriving through the
-    // cert-less path must be deferred exactly like the cert-anchored case —
-    // pre-fix this branch blindly adopted it, violating the invariant on any
-    // fresh network's first v4 epoch.
+    // === Phase 2: the CERT-LESS adoption branch (genesis / fresh key) ===
+    // Remove the cert entirely: a fresh unmapped DKG-only key arriving
+    // through the cert-less path must be deferred exactly like the
+    // cert-anchored case — pre-fix this branch blindly adopted it,
+    // violating the invariant on any fresh network's genesis epoch.
     epoch_stores
         .first()
         .unwrap()
@@ -672,14 +675,13 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     let certless_key_id = ObjectID::random();
     let certless_network_key_id = NetworkKeyId([0x63; 32]);
     let certless_dkg_output = b"certless key network dkg public output".to_vec();
-    let certless_reconfiguration_output = b"certless key reconfiguration public output".to_vec();
     let certless_overlay = Arc::new(HashMap::from([(
         certless_key_id,
         network_key_data(
             certless_key_id,
             epoch_id,
             certless_dkg_output.clone(),
-            certless_reconfiguration_output.clone(),
+            vec![],
         ),
     )]));
     let manager = service.dwallet_mpc_manager_mut();
@@ -698,16 +700,44 @@ async fn adopted_keys_always_resolve_a_network_key_id() {
     );
     assert_all_adopted_resolve(manager, "after the cert-less deferral pass");
 
-    // Registration unwedges the cert-less branch the same way.
+    // Registration unwedges the cert-less branch the same way: the DKG-only
+    // key adopts its deterministic local DKG output.
     crate::network_key_id_mapping::register(certless_key_id, certless_network_key_id);
     manager.adopt_cert_verified_keys(&certless_overlay);
     assert!(
         manager
             .adopted_network_key_data
             .contains_key(&certless_key_id),
-        "registration must let the cert-less deferred key be adopted on the next pass"
+        "registration must let the cert-less deferred DKG-only key be adopted on the next pass"
     );
     assert_all_adopted_resolve(manager, "after the cert-less registration pass");
+
+    // === Phase 3: a cert-less RECONFIGURED key is rejected outright ===
+    // A handoff cert is built durably every off-chain epoch, so a
+    // reconfigured overlay entry with no prior cert has no quorum anchor —
+    // adoption must reject it even though its NetworkKeyId mapping resolves
+    // (pre-#1751 this was the v3→v4-boundary import path and was adopted
+    // blindly from the chain copy).
+    let reconfigured_key_id = ObjectID::random();
+    let reconfigured_network_key_id = NetworkKeyId([0x64; 32]);
+    crate::network_key_id_mapping::register(reconfigured_key_id, reconfigured_network_key_id);
+    let reconfigured_overlay = Arc::new(HashMap::from([(
+        reconfigured_key_id,
+        network_key_data(
+            reconfigured_key_id,
+            epoch_id,
+            b"reconfigured key network dkg public output".to_vec(),
+            b"reconfigured key reconfiguration public output".to_vec(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&reconfigured_overlay);
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&reconfigured_key_id),
+        "a reconfigured key with no prior handoff cert must be rejected, not adopted"
+    );
+    assert_all_adopted_resolve(manager, "after the cert-less reconfigured rejection pass");
 }
 
 /// The mid-epoch-restart strand (#1852), manager side. Once this epoch's
@@ -862,5 +892,81 @@ async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_r
             .pending_network_key_instantiations
             .contains_key(&key_id),
         "the adopted current-epoch output must spawn instantiation"
+    );
+}
+
+/// The joiner / cold-start strand: a key DKG'd in a PRIOR epoch whose overlay
+/// entry carries no blobs at all, on a validator that holds nothing for it.
+/// The producer cache can never fill (this validator never computed the key's
+/// outputs) and the cert-pinned blob install covers only continuing
+/// validators, so without intervention the key is never adopted. Adoption
+/// must flag it for the syncer's stranded-key chain read — the recovery that
+/// the removed v3→v4 chain-read fallback used to provide implicitly (caught
+/// live by the `v125_churn` scenario's mirrored joiner). A key DKG'd THIS
+/// epoch must NOT be flagged: that is the healthy fresh-key bootstrap window.
+#[tokio::test]
+async fn empty_overlay_for_prior_epoch_key_flags_stranded() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        _epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+
+    // A prior-epoch key with an entirely empty overlay entry (the joiner
+    // shape: chain metadata present, no blobs anywhere locally).
+    let stranded_key_id = ObjectID::random();
+    // A key DKG'd this epoch with the same empty entry (fresh-key bootstrap).
+    let fresh_key_id = ObjectID::random();
+    let overlay = Arc::new(HashMap::from([
+        (
+            stranded_key_id,
+            DWalletNetworkEncryptionKeyData {
+                id: stranded_key_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: 0,
+                network_dkg_public_output: vec![],
+                current_reconfiguration_public_output: vec![],
+                state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+            },
+        ),
+        (
+            fresh_key_id,
+            DWalletNetworkEncryptionKeyData {
+                id: fresh_key_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: epoch_id,
+                network_dkg_public_output: vec![],
+                current_reconfiguration_public_output: vec![],
+                state: DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG,
+            },
+        ),
+    ]));
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.adopt_cert_verified_keys(&overlay);
+    assert!(
+        manager
+            .stranded_network_keys
+            .load()
+            .contains(&stranded_key_id),
+        "an empty overlay entry for a prior-epoch key the validator holds nothing for \
+         must be flagged for the syncer's chain-sourced recovery read"
+    );
+    assert!(
+        !manager.stranded_network_keys.load().contains(&fresh_key_id),
+        "a key DKG'd this epoch must NOT be flagged — its empty overlay is the healthy \
+         DKG-bootstrap convergence window"
+    );
+    assert!(
+        !manager
+            .adopted_network_key_data
+            .contains_key(&stranded_key_id),
+        "flagging must not adopt anything — adoption waits for the chain-read overlay"
     );
 }

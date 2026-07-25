@@ -15,7 +15,7 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 3;
+const MIN_PROTOCOL_VERSION: u64 = 5;
 const MAX_PROTOCOL_VERSION: u64 = 5;
 
 // Record history of protocol version allocations here:
@@ -541,9 +541,14 @@ impl ProtocolConfig {
         // ProtocolVersion can be deserialized so we need to check it here as well.
         assert!(
             version >= ProtocolVersion::MIN,
-            "Network protocol version is {:?}, but the minimum supported version by the binary is {:?}. Please upgrade the binary.",
+            "Protocol version {:?} is below this binary's minimum supported version {:?}. \
+             If this is LOCAL state (a node restored from an old backup, or offline since \
+             before the network upgraded past v{:?}), the network itself is newer — catch up \
+             or re-sync chain state; upgrading the binary won't help. Only if the NETWORK \
+             actually runs this version does this node need a different (older) binary.",
             version,
             ProtocolVersion::MIN.0,
+            version,
         );
         assert!(
             version <= ProtocolVersion::MAX_ALLOWED,
@@ -760,6 +765,10 @@ impl ProtocolConfig {
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
         cfg.feature_flags.bls_checkpoints = true;
 
+        // Versions below MIN (= 5) are unreachable via `get_for_version` (it
+        // asserts `version >= MIN`), but their arms are kept as the readable
+        // history of how each version changed the config — every supported
+        // version's config is still built by replaying them from the start.
         #[allow(clippy::never_loop)]
         for cur in 2..=version.0 {
             match cur {

@@ -6,7 +6,7 @@ mutation testing) proves that: inject a deliberate, minimal fault that
 *should* trip the property, confirm the system reacts the way you predicted
 **in the logs**, then revert. Most valuable for the slow, opaque
 integration tests where a green run is otherwise an act of faith —
-`cross_binary`, `v118_upgrade`, cluster/simtest suites asserting things like
+upgrade-suite scenarios and cluster/simtest suites asserting things like
 serialized-MPC-data continuity, cross-binary wire compat, or malicious-party
 detection.
 
