@@ -152,17 +152,25 @@ async fn v125_full_swap_then_committee_churn() {
         .run_workload("v5-with-joiner")
         .record_mpc_timings("v5-with-joiner")
         // ── Churn 2: shrink 5 → 4 by removing an original validator. ──────
+        // The removal lands mid-epoch 4, AFTER that epoch's reshare already
+        // locked the 5-member epoch-5 committee — so epoch 5 still runs all
+        // five members, epoch 5's mid-epoch reshare is the SHRINK deal (to
+        // the 4-member epoch-6 committee), and the size drop is visible at
+        // epoch 6.
         .remove_validator(3)
         .wait_for_epoch(5)
         .wait_for_all_validators_local_epoch(5)
-        .expect_committee_size(4)
+        .expect_committee_size(5)
         .expect_all_validators_healthy()
-        // Same pattern for the shrink reshare (mid-epoch 5, dealing 5 → 4).
         .wait_for_network_key_reconfiguration_started(5)
         .wait_for_network_key_reconfiguration_completed(5)
         .expect_all_validators_healthy()
         .expect_network_key_output_converged(&current_observer)
         .expect_malicious_actors_exactly(&current_observer, 0)
+        .wait_for_epoch(6)
+        .expect_committee_size(4)
+        // The removed validator's process keeps running until stopped.
+        .stop_validator(3)
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
         .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
