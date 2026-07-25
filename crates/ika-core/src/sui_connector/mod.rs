@@ -19,6 +19,9 @@ use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
 };
+use ika_types::sui::{
+    DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
+};
 use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -30,7 +33,7 @@ use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionDa
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub mod bag_event_pump;
 pub mod changeset_receiver;
@@ -116,6 +119,12 @@ impl SuiConnectorService {
         // JSON-RPC event path — see `run_legacy_event_ingestion` below.
         reader: Option<Arc<OcsVerifiedReader>>,
         ocs_metrics: Arc<crate::sui_connector::ocs_metrics::OcsMetrics>,
+        // Feed of the chain's processed checkpoint cursors into p2p state
+        // sync (its pull-mode sync floor; `None` until the first successful
+        // chain read). Created in ika-node because state sync is built
+        // before this service; this service is the writer.
+        on_chain_dwallet_checkpoint_cursor_sender: watch::Sender<Option<u64>>,
+        on_chain_system_checkpoint_cursor_sender: watch::Sender<Option<u64>>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -124,6 +133,13 @@ impl SuiConnectorService {
         let (system_object_sender, system_object_receiver) = watch::channel(Default::default());
         let (dwallet_coordinator_object_sender, dwallet_coordinator_receiver) =
             watch::channel(Default::default());
+
+        tokio::spawn(Self::forward_on_chain_checkpoint_cursors(
+            system_object_receiver.clone(),
+            dwallet_coordinator_receiver.clone(),
+            on_chain_dwallet_checkpoint_cursor_sender,
+            on_chain_system_checkpoint_cursor_sender,
+        ));
 
         let sui_notifier = Self::prepare_for_sui(
             sui_connector_config.clone(),
@@ -299,6 +315,70 @@ impl SuiConnectorService {
         self.sui_executor
             .run_epoch(epoch_id, run_with_range, self.network_keys_receiver.clone())
             .await
+    }
+
+    /// Forward the chain's processed checkpoint cursors — the coordinator's
+    /// and system object's `last_processed_checkpoint_sequence_number` — into
+    /// the watch channels p2p state sync uses as its pull-mode sync floor.
+    /// Values only move forward: a stale read (e.g. a lagging fullnode view)
+    /// must never drag the floor backwards.
+    async fn forward_on_chain_checkpoint_cursors(
+        mut system_object_receiver: Receiver<Option<(System, SystemInner)>>,
+        mut dwallet_coordinator_receiver: Receiver<
+            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
+        >,
+        dwallet_cursor_sender: watch::Sender<Option<u64>>,
+        system_cursor_sender: watch::Sender<Option<u64>>,
+    ) {
+        loop {
+            tokio::select! {
+                changed = dwallet_coordinator_receiver.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let cursor = dwallet_coordinator_receiver.borrow_and_update().as_ref().map(
+                        |(_, inner)| {
+                            let DWalletCoordinatorInner::V1(inner) = inner;
+                            inner.last_processed_checkpoint_sequence_number
+                        },
+                    );
+                    if let Some(cursor) = cursor {
+                        let advanced = Some(cursor) > *dwallet_cursor_sender.borrow();
+                        if advanced {
+                            // First reading at info (the cold-start unblock signal);
+                            // steady-state advances at debug — one per processed
+                            // checkpoint, far too chatty for info.
+                            if dwallet_cursor_sender.borrow().is_none() {
+                                info!(
+                                    cursor,
+                                    "on-chain dwallet checkpoint cursor known (state-sync floor active)"
+                                );
+                            } else {
+                                debug!(cursor, "on-chain dwallet checkpoint cursor advanced");
+                            }
+                            if dwallet_cursor_sender.send(Some(cursor)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                changed = system_object_receiver.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let cursor = system_object_receiver
+                        .borrow_and_update()
+                        .as_ref()
+                        .map(|(_, inner)| inner.last_processed_checkpoint_sequence_number());
+                    if let Some(cursor) = cursor {
+                        let advanced = Some(cursor) > *system_cursor_sender.borrow();
+                        if advanced && system_cursor_sender.send(Some(cursor)).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async fn prepare_for_sui(

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use super::{
-    Handle, PeerHeights, StateSync, StateSyncEventLoop, StateSyncMessage, StateSyncServer,
+    Handle, OnChainCheckpointCursors, PeerHeights, StateSync, StateSyncEventLoop, StateSyncMessage,
+    StateSyncServer,
     metrics::Metrics,
     server::{CheckpointMessageDownloadLimitLayer, Server},
 };
@@ -31,6 +32,7 @@ pub struct Builder<S> {
     metrics: Option<Metrics>,
     archive_readers: Option<ArchiveReaderBalancer>,
     chain_identifier: Option<ChainIdentifier>,
+    on_chain_cursors: Option<OnChainCheckpointCursors>,
 }
 
 impl Builder<()> {
@@ -42,6 +44,7 @@ impl Builder<()> {
             metrics: None,
             archive_readers: None,
             chain_identifier: None,
+            on_chain_cursors: None,
         }
     }
 }
@@ -54,6 +57,7 @@ impl<S> Builder<S> {
             metrics: self.metrics,
             archive_readers: self.archive_readers,
             chain_identifier: self.chain_identifier,
+            on_chain_cursors: self.on_chain_cursors,
         }
     }
 
@@ -69,6 +73,14 @@ impl<S> Builder<S> {
 
     pub fn archive_readers(mut self, archive_readers: ArchiveReaderBalancer) -> Self {
         self.archive_readers = Some(archive_readers);
+        self
+    }
+
+    /// Feed of the on-chain processed checkpoint cursors (see
+    /// [`OnChainCheckpointCursors`]). When set, pull-mode sync starts from
+    /// the cursor instead of chasing full history from sequence 1.
+    pub fn with_on_chain_cursors(mut self, on_chain_cursors: OnChainCheckpointCursors) -> Self {
+        self.on_chain_cursors = Some(on_chain_cursors);
         self
     }
 }
@@ -124,6 +136,7 @@ where
             metrics,
             archive_readers,
             chain_identifier,
+            on_chain_cursors,
         } = self;
         let store = store.unwrap();
         let config = config.unwrap_or_default();
@@ -175,6 +188,7 @@ where
                 archive_readers,
                 chain_identifier,
                 system_checkpoint_download_limit_layer: None,
+                on_chain_cursors,
             },
             server,
         )
@@ -194,6 +208,7 @@ pub struct UnstartedStateSync<S> {
     pub(super) metrics: Metrics,
     pub(super) archive_readers: ArchiveReaderBalancer,
     pub(crate) chain_identifier: ChainIdentifier,
+    pub(super) on_chain_cursors: Option<OnChainCheckpointCursors>,
 }
 
 impl<S> UnstartedStateSync<S>
@@ -218,6 +233,7 @@ where
             metrics,
             archive_readers,
             chain_identifier,
+            on_chain_cursors,
         } = self;
 
         (
@@ -241,6 +257,7 @@ where
                 sync_checkpoint_from_archive_task: None,
                 chain_identifier,
                 sync_system_checkpoint_from_archive_task: None,
+                on_chain_cursors,
             },
             handle,
         )

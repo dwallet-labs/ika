@@ -68,10 +68,30 @@ use std::{
 use tap::{Pipe, TapFallible, TapOptional};
 use tokio::sync::oneshot;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     task::{AbortHandle, JoinSet},
 };
 use tracing::{debug, error, info, instrument, trace, warn};
+
+/// Live feed of the highest checkpoint sequence numbers the chain has already
+/// PROCESSED (the coordinator's / system's `last_processed_checkpoint_sequence_number`),
+/// fed by the node's Sui connector. `None` until the first successful chain
+/// read of a cursor.
+///
+/// Pull-mode state sync (notifiers/fullnodes — nodes that don't build
+/// checkpoints from consensus) uses this as a sync FLOOR: checkpoints at or
+/// below the cursor have already landed on Sui and are useless to a writer,
+/// and on a long-lived network no peer can serve deep history anyway —
+/// validators only ever hold what consensus gave them since their own last
+/// (re)deploy, and there is no backfill. Without the floor, a notifier
+/// deployed on a fresh database chases checkpoint 1 forever ("no peers were
+/// able to help sync checkpoint 1"), synced pinned at 0 while known grows —
+/// the 2026-07 epoch-close outage shape (issue #1892).
+#[derive(Clone)]
+pub struct OnChainCheckpointCursors {
+    pub dwallet: watch::Receiver<Option<DWalletCheckpointSequenceNumber>>,
+    pub system: watch::Receiver<Option<SystemCheckpointSequenceNumber>>,
+}
 
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.StateSync.rs"));
@@ -516,6 +536,7 @@ struct StateSyncEventLoop<S> {
     sync_system_checkpoints_task: Option<AbortHandle>,
     system_checkpoint_download_limit_layer: Option<SystemCheckpointDownloadLimitLayer>,
     sync_system_checkpoint_from_archive_task: Option<AbortHandle>,
+    on_chain_cursors: Option<OnChainCheckpointCursors>,
 }
 
 impl<S> StateSyncEventLoop<S>
@@ -834,6 +855,30 @@ where
             .highest_known_checkpoint()
             .cloned();
 
+        // Sync floor from the chain: checkpoints at or below the on-chain
+        // processed cursor are useless to a pull-mode node (they already
+        // landed on Sui), and on a long-lived network no peer can serve deep
+        // history anyway. With a cursor feed configured but no reading yet
+        // and an EMPTY local store, defer the first sync job until the
+        // cursor is known — otherwise it would chase full history from
+        // sequence 1 and wedge forever on unfetchable checkpoints (issue
+        // #1892's notifier cold-start stall). At genesis the first read
+        // yields Some(0) quickly, so a brand-new network is never blocked.
+        let on_chain_cursor = match &self.on_chain_cursors {
+            Some(cursors) => {
+                let cursor = *cursors.dwallet.borrow();
+                if cursor.is_none() && highest_processed_checkpoint.is_none() {
+                    debug!(
+                        "deferring dwallet checkpoint sync from an empty store until the \
+                         on-chain processed cursor is known"
+                    );
+                    return;
+                }
+                cursor.unwrap_or(0)
+            }
+            None => 0,
+        };
+
         if highest_processed_checkpoint
             .as_ref()
             .map(|x| x.sequence_number())
@@ -841,6 +886,12 @@ where
                 .as_ref()
                 .map(|x| x.sequence_number())
         {
+            debug!(
+                local_highest = ?highest_processed_checkpoint.as_ref().map(|x| x.sequence_number()),
+                target = ?highest_known_checkpoint.as_ref().map(|x| x.sequence_number()),
+                on_chain_cursor,
+                "starting dwallet checkpoint sync job"
+            );
             // Start a sync job.
             let task = sync_to_checkpoint(
                 self.network.clone(),
@@ -850,6 +901,7 @@ where
                 self.config.pinned_dwallet_checkpoints.clone(),
                 self.config.dwallet_checkpoint_header_download_concurrency(),
                 self.config.timeout(),
+                on_chain_cursor,
                 // The if condition should ensure that this is Some
                 highest_known_checkpoint.unwrap(),
             )
@@ -882,6 +934,23 @@ where
             .highest_known_system_checkpoint()
             .cloned();
 
+        // Same floor/deferral logic as the dwallet stream — see
+        // `maybe_start_checkpoint_summary_sync_task`.
+        let on_chain_cursor = match &self.on_chain_cursors {
+            Some(cursors) => {
+                let cursor = *cursors.system.borrow();
+                if cursor.is_none() && highest_processed_system_checkpoint.is_none() {
+                    debug!(
+                        "deferring system checkpoint sync from an empty store until the \
+                         on-chain processed cursor is known"
+                    );
+                    return;
+                }
+                cursor.unwrap_or(0)
+            }
+            None => 0,
+        };
+
         if highest_processed_system_checkpoint
             .as_ref()
             .map(|x| x.sequence_number())
@@ -898,6 +967,7 @@ where
                 self.config.pinned_system_checkpoints.clone(),
                 self.config.system_checkpoint_header_download_concurrency(),
                 self.config.timeout(),
+                on_chain_cursor,
                 // The if condition should ensure that this is Some
                 highest_known_system_checkpoint.unwrap(),
             )
@@ -1126,6 +1196,7 @@ async fn sync_to_checkpoint<S>(
     )>,
     checkpoint_header_download_concurrency: usize,
     timeout: Duration,
+    on_chain_processed_cursor: DWalletCheckpointSequenceNumber,
     checkpoint: CertifiedDWalletCheckpointMessage,
 ) -> Result<()>
 where
@@ -1133,7 +1204,7 @@ where
 {
     metrics.set_highest_known_dwallet_checkpoint(*checkpoint.sequence_number());
 
-    let mut current = store
+    let current = store
         .get_highest_verified_dwallet_checkpoint()
         .expect("store operation should not fail");
     let current_sequence_number = current.as_ref().map(|c| c.sequence_number);
@@ -1145,9 +1216,38 @@ where
         ));
     }
 
+    // Start from the on-chain processed cursor when it is ahead of the local
+    // store: everything at or below it already landed on Sui (useless to a
+    // writer), and on a long-lived network no peer can serve deep history —
+    // without this floor a fresh/lagging store chases checkpoint 1 forever
+    // ("no peers were able to help sync checkpoint 1"; issue #1892).
+    let local_next_sequence_number = current_sequence_number
+        .map(|s| s.checked_add(1).expect("exhausted u64"))
+        .unwrap_or(1);
+    let start_sequence_number = local_next_sequence_number.max(
+        on_chain_processed_cursor
+            .checked_add(1)
+            .expect("exhausted u64"),
+    );
+    if start_sequence_number > *checkpoint.sequence_number() {
+        // Everything peers advertise has already been processed on Sui.
+        return Ok(());
+    }
+    if start_sequence_number > local_next_sequence_number {
+        info!(
+            local_next_sequence_number,
+            on_chain_processed_cursor,
+            start_sequence_number,
+            "starting dwallet checkpoint sync from the on-chain processed cursor; \
+             older checkpoints already landed on Sui and are skipped (peers on a \
+             long-lived network cannot serve deep history)",
+        );
+    }
+    let mut expected_sequence_number = start_sequence_number;
+
     let peer_balancer = PeerBalancer::new(&network, peer_heights.clone());
     // range of the next sequence_numbers to fetch
-    let mut request_stream = (current_sequence_number.map(|s| s.checked_add(1).expect("exhausted u64")).unwrap_or(1)
+    let mut request_stream = (start_sequence_number
         ..=*checkpoint.sequence_number())
         .map(|next| {
             let peers = peer_balancer.clone().with_checkpoint(next);
@@ -1214,12 +1314,8 @@ where
         .buffered(checkpoint_header_download_concurrency);
 
     while let Some((maybe_checkpoint, next, _maybe_peer_id)) = request_stream.next().await {
-        assert_eq!(
-            current
-                .map(|s| s.sequence_number().checked_add(1).expect("exhausted u64"))
-                .unwrap_or(1),
-            next
-        );
+        assert_eq!(expected_sequence_number, next);
+        expected_sequence_number = next.checked_add(1).expect("exhausted u64");
 
         // We can't verify the checkpoint
         let checkpoint = maybe_checkpoint
@@ -1228,7 +1324,6 @@ where
 
         debug!(checkpoint_seq = ?checkpoint.sequence_number(), "verified checkpoint summary");
 
-        current = Some(checkpoint.clone());
         // Insert the newly verified checkpoint into our store, which will bump our highest
         // verified checkpoint watermark as well.
         store
@@ -1574,6 +1669,7 @@ async fn sync_to_system_checkpoint<S>(
     )>,
     system_checkpoint_header_download_concurrency: usize,
     timeout: Duration,
+    on_chain_processed_cursor: SystemCheckpointSequenceNumber,
     system_checkpoint: CertifiedSystemCheckpointMessage,
 ) -> Result<()>
 where
@@ -1581,7 +1677,7 @@ where
 {
     metrics.set_highest_known_system_checkpoint(*system_checkpoint.sequence_number());
 
-    let mut current = store
+    let current = store
         .get_highest_verified_system_checkpoint()
         .expect("store operation should not fail");
     let current_sequence_number = current.as_ref().map(|c| c.sequence_number);
@@ -1593,9 +1689,33 @@ where
         ));
     }
 
+    // Same on-chain floor as `sync_to_checkpoint` — see the comment there.
+    let local_next_sequence_number = current_sequence_number
+        .map(|s| s.checked_add(1).expect("exhausted u64"))
+        .unwrap_or(1);
+    let start_sequence_number = local_next_sequence_number.max(
+        on_chain_processed_cursor
+            .checked_add(1)
+            .expect("exhausted u64"),
+    );
+    if start_sequence_number > *system_checkpoint.sequence_number() {
+        // Everything peers advertise has already been processed on Sui.
+        return Ok(());
+    }
+    if start_sequence_number > local_next_sequence_number {
+        info!(
+            local_next_sequence_number,
+            on_chain_processed_cursor,
+            start_sequence_number,
+            "starting system checkpoint sync from the on-chain processed cursor; \
+             older system checkpoints already landed on Sui and are skipped",
+        );
+    }
+    let mut expected_sequence_number = start_sequence_number;
+
     let peer_balancer = PeerBalancer::new(&network, peer_heights.clone());
     // range of the next sequence_numbers to fetch
-    let mut request_stream = (current_sequence_number.map(|s| s.checked_add(1).expect("exhausted u64")).unwrap_or(1)
+    let mut request_stream = (start_sequence_number
         ..=*system_checkpoint.sequence_number())
         .map(|next| {
             let peers = peer_balancer.clone().with_system_checkpoint(next);
@@ -1662,12 +1782,8 @@ where
         .buffered(system_checkpoint_header_download_concurrency);
 
     while let Some((maybe_system_checkpoint, next, _maybe_peer_id)) = request_stream.next().await {
-        assert_eq!(
-            current
-                .map(|s| s.sequence_number().checked_add(1).expect("exhausted u64"))
-                .unwrap_or(1),
-            next
-        );
+        assert_eq!(expected_sequence_number, next);
+        expected_sequence_number = next.checked_add(1).expect("exhausted u64");
 
         // We can't verify the system_checkpoint
         let system_checkpoint = maybe_system_checkpoint
@@ -1678,7 +1794,6 @@ where
 
         debug!(system_checkpoint_seq = ?system_checkpoint.sequence_number(), "verified system_checkpoint summary");
 
-        current = Some(system_checkpoint.clone());
         // Insert the newly verified system_checkpoint into our store, which will bump our highest
         // verified system_checkpoint watermark as well.
         store
