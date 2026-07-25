@@ -541,9 +541,14 @@ impl ProtocolConfig {
         // ProtocolVersion can be deserialized so we need to check it here as well.
         assert!(
             version >= ProtocolVersion::MIN,
-            "Network protocol version is {:?}, but the minimum supported version by the binary is {:?}. Please upgrade the binary.",
+            "Protocol version {:?} is below this binary's minimum supported version {:?}. \
+             If this is LOCAL state (a node restored from an old backup, or offline since \
+             before the network upgraded past v{:?}), the network itself is newer — catch up \
+             or re-sync chain state; upgrading the binary won't help. Only if the NETWORK \
+             actually runs this version does this node need a different (older) binary.",
             version,
             ProtocolVersion::MIN.0,
+            version,
         );
         assert!(
             version <= ProtocolVersion::MAX_ALLOWED,
