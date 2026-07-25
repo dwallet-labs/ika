@@ -248,6 +248,10 @@ pub trait SuiWriter: Send + Sync {
         &self,
         address: SuiAddress,
     ) -> Result<Vec<ObjectRef>, TransportError>;
+    /// The SUI held in `address`'s ADDRESS BALANCE (SIP-58 accumulator), in
+    /// MIST — the funds address-balance-gas submissions draw on. Coin
+    /// objects are NOT included.
+    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,

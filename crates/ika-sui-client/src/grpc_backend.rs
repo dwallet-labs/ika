@@ -229,6 +229,10 @@ impl SuiClientInner for GrpcSuiClient {
         Ok(SuiNetworkChainIdentifier::from(digest))
     }
 
+    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, Self::Error> {
+        Ok(self.writer()?.get_sui_address_balance(address).await?)
+    }
+
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
         Ok(self.writer()?.get_reference_gas_price().await?)
     }

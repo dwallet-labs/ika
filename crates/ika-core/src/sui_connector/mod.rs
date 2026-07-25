@@ -409,7 +409,7 @@ impl SuiConnectorService {
     async fn prepare_for_sui(
         sui_connector_config: SuiConnectorConfig,
         sui_client: Arc<SuiClient<SuiBackend>>,
-        _sui_connector_metrics: Arc<SuiConnectorMetrics>,
+        sui_connector_metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<Option<SuiNotifier>> {
         let Some(sui_key_path) = sui_connector_config.notifier_client_key_pair else {
             return Ok(None);
@@ -457,13 +457,66 @@ impl SuiConnectorService {
         let sui_network_chain_identifier = if gas_from_address_balance {
             let chain_identifier = sui_client.get_sui_chain_identifier().await.map_err(|e| {
                 anyhow!(
-                    "notifier_gas_from_address_balance is set but the chain identifier                      could not be resolved (required for ValidDuring expirations): {e}"
+                    "notifier_gas_from_address_balance is set but the chain identifier \
+                     could not be resolved (required for ValidDuring expirations): {e}"
                 )
             })?;
+
+            // Preflight the ADDRESS BALANCE (not coin objects — plain coin
+            // transfers don't fund it). An underfunded balance would
+            // otherwise surface as an hour of failed submissions followed by
+            // a panic, with the network's epoch close blocked the whole time
+            // — the issue-#1892 outage shape. Refuse to boot with the exact
+            // remediation instead: a writer that cannot pay must not run.
+            let address_balance = sui_client
+                .get_sui_address_balance(sui_address)
+                .await
+                .map_err(|e| {
+                    anyhow!(
+                        "notifier_gas_from_address_balance is set but the address balance \
+                         of {sui_address} could not be read (does the target Sui network \
+                         have accumulators/address-balance gas enabled?): {e}"
+                    )
+                })?;
+            if address_balance < NOTIFIER_GAS_BUDGET {
+                anyhow::bail!(
+                    "notifier_gas_from_address_balance is set but {sui_address} holds only \
+                     {address_balance} MIST in its ADDRESS BALANCE — below one gas budget \
+                     ({} MIST). Deposit SUI into the address balance (coin-object \
+                     transfers do not fund it), or unset the flag to fall back to gas \
+                     coins.",
+                    NOTIFIER_GAS_BUDGET,
+                );
+            }
+            sui_connector_metrics
+                .gas_coin_balance
+                .set(i64::try_from(address_balance).unwrap_or(i64::MAX));
             info!(
                 ?chain_identifier,
-                "Notifier pays gas from its SUI address balance (SIP-58)"
+                address_balance, "Notifier pays gas from its SUI address balance (SIP-58)"
             );
+
+            // Keep the writer-funds gauge live: refresh from the address
+            // balance once a minute. (In coin mode this gauge currently has
+            // no writer at all; here funds exhaustion is otherwise invisible
+            // until submissions start failing, so the gauge is the alert
+            // surface for topping up the balance.)
+            let balance_sui_client = sui_client.clone();
+            let balance_metrics = sui_connector_metrics.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    if let Ok(balance) = balance_sui_client
+                        .get_sui_address_balance(sui_address)
+                        .await
+                    {
+                        balance_metrics
+                            .gas_coin_balance
+                            .set(i64::try_from(balance).unwrap_or(i64::MAX));
+                    }
+                }
+            });
+
             Some(chain_identifier)
         } else {
             None

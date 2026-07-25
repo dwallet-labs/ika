@@ -369,6 +369,15 @@ impl SuiWriter for SuiGrpcClient {
         Ok(refs)
     }
 
+    async fn get_sui_address_balance(&self, address: SuiAddress) -> Result<u64, TransportError> {
+        let rpc = self.rpc.clone();
+        let balance = rpc
+            .get_balance(address, &GasCoin::type_())
+            .await
+            .map_err(Self::rpc_err)?;
+        Ok(balance.address_balance.unwrap_or(0))
+    }
+
     async fn execute_transaction(
         &self,
         tx: &Transaction,
