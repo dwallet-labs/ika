@@ -138,6 +138,13 @@ async fn v125_full_swap_then_committee_churn() {
         // anchor and reconfiguration output.
         .expect_network_dkg_output_version_at_least(4)
         .expect_reconfiguration_output_version_at_least(4)
+        // The 5-member reshare (mid-epoch 4, dealing to the joiner-inclusive
+        // committee): per-authority output observations exist only around a
+        // reshare in the CURRENT epoch, so convergence is asserted between
+        // started/completed — never at epoch entry.
+        .wait_for_network_key_reconfiguration_started(4)
+        .wait_for_network_key_reconfiguration_completed(4)
+        .expect_all_validators_healthy()
         .expect_network_key_output_converged(&current_observer)
         .expect_malicious_actors_exactly(&current_observer, 0)
         // The 5-member committee runs a full lifecycle against the reshared
@@ -149,6 +156,10 @@ async fn v125_full_swap_then_committee_churn() {
         .wait_for_epoch(5)
         .wait_for_all_validators_local_epoch(5)
         .expect_committee_size(4)
+        .expect_all_validators_healthy()
+        // Same pattern for the shrink reshare (mid-epoch 5, dealing 5 → 4).
+        .wait_for_network_key_reconfiguration_started(5)
+        .wait_for_network_key_reconfiguration_completed(5)
         .expect_all_validators_healthy()
         .expect_network_key_output_converged(&current_observer)
         .expect_malicious_actors_exactly(&current_observer, 0)
