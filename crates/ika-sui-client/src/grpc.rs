@@ -384,6 +384,15 @@ impl SuiWriter for SuiGrpcClient {
         })
     }
 
+    async fn get_sui_chain_identifier(
+        &self,
+    ) -> Result<sui_types::digests::ChainIdentifier, TransportError> {
+        let rpc = self.rpc.clone();
+        // The inner client already returns the typed, full identifier
+        // (service-info chain id parsed as the genesis checkpoint digest).
+        rpc.get_chain_identifier().await.map_err(Self::rpc_err)
+    }
+
     async fn execute_transaction(
         &self,
         tx: &Transaction,

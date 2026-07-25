@@ -41,7 +41,7 @@ use crate::grpc::SuiGrpcClient;
 use crate::transport::{
     SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by,
 };
-use sui_types::digests::{ChainIdentifier as SuiNetworkChainIdentifier, CheckpointDigest};
+use sui_types::digests::ChainIdentifier as SuiNetworkChainIdentifier;
 
 /// Error surface of the gRPC backend. Satisfies the
 /// `SuiClientInner::Error` bound (`Into<anyhow::Error> + Send + Sync +
@@ -220,15 +220,11 @@ impl SuiClientInner for GrpcSuiClient {
     }
 
     async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error> {
-        // The gRPC service-info chain id IS the full genesis checkpoint
-        // digest (Base58) — parse it back into the typed identifier.
-        let chain_id = self.transport.get_chain_identifier().await?;
-        let digest: CheckpointDigest = chain_id.parse().map_err(|e| {
-            TransportError::Encoding(format!(
-                "service-info chain id {chain_id:?} is not a checkpoint digest: {e}"
-            ))
-        })?;
-        Ok(SuiNetworkChainIdentifier::from(digest))
+        // Typed read through the writer uplink: the transport's STRING
+        // identifier goes through `Display`, which is the 4-byte short id
+        // and cannot be turned back into the full identifier `ValidDuring`
+        // needs. Every balance-gas node is a writer, so the uplink exists.
+        Ok(self.writer()?.get_sui_chain_identifier().await?)
     }
 
     async fn get_sui_funds(&self, address: SuiAddress) -> Result<SuiFundsBreakdown, Self::Error> {

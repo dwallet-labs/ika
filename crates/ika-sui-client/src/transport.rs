@@ -262,6 +262,13 @@ pub trait SuiWriter: Send + Sync {
     /// owned coin objects.
     async fn get_sui_funds(&self, address: SuiAddress)
     -> Result<SuiFundsBreakdown, TransportError>;
+    /// The chain's genesis-rooted `ChainIdentifier`, TYPED. The transport's
+    /// string `get_chain_identifier` goes through `Display`, which is the
+    /// 4-byte short id — useless for `ValidDuring`, which validators compare
+    /// against the FULL identifier.
+    async fn get_sui_chain_identifier(
+        &self,
+    ) -> Result<sui_types::digests::ChainIdentifier, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,
