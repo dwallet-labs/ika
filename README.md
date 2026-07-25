@@ -23,8 +23,8 @@ sign alone.
 ## Unique Value of dWallets
 
 - _Noncollusive_: the user is always required to generate a signature.
-- _Massively decentralized_: besides the user, a 2/3 threshold of a network of
-  100+ nodes is required to generate a signature.
+- _Massively decentralized_: besides the user, a 2/3 threshold of a network
+  that can scale to hundreds of nodes is required to generate a signature.
 - _Multi-chain_: using the default authentication method of every blockchain —
   the signature — dWallets offer universal, native interoperability without
   the cross-chain risks of wrapping, bridging, or messaging. With ECDSA and
