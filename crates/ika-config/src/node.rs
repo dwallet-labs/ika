@@ -306,6 +306,12 @@ fn unset_object_id() -> ObjectID {
     ObjectID::ZERO
 }
 
+/// serde `skip_serializing_if` for the resolved id fields: an unresolved
+/// (ZERO) id is omitted from the YAML rather than written as a bogus `0x0`.
+fn object_id_is_unset(id: &ObjectID) -> bool {
+    *id == ObjectID::ZERO
+}
+
 /// Config-supplied ika on-chain identity (Move package + object IDs), for
 /// chains with **no compiled-in identity** — localnet / private nets
 /// (`Devnet`/`Custom`), where the IDs are freshly generated each genesis.
@@ -628,22 +634,48 @@ pub struct SuiConnectorConfig {
     /// The resolved on-chain ids below are filled at startup by
     /// [`Self::resolve_ika_on_chain_identity`] — from the compiled-in
     /// identity on `Mainnet`/`Testnet`, from `ika_unsafe_identity_override`
-    /// on `Devnet`/`Custom`. They are NOT part of the config-file surface
-    /// (`serde(skip)`): a flat `ika-package-id:`-style key in the YAML is
-    /// ignored.
-    #[serde(skip, default = "unset_object_id")]
+    /// on `Devnet`/`Custom`. They are NOT config-file inputs
+    /// (`skip_deserializing`): a flat `ika-package-id:`-style key in the
+    /// YAML is ignored. They still SERIALIZE when set (non-ZERO), because
+    /// cross-binary harnesses (`ika-upgrade-test`) feed builder-written
+    /// YAML to old release binaries that read exactly these flat keys.
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_package_id: ObjectID,
-    #[serde(skip, default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_common_package_id: ObjectID,
-    #[serde(skip, default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_dwallet_2pc_mpc_package_id: ObjectID,
-    #[serde(skip)]
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub ika_dwallet_2pc_mpc_package_id_v2: Option<ObjectID>,
-    #[serde(skip, default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_system_package_id: ObjectID,
-    #[serde(skip, default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_system_object_id: ObjectID,
-    #[serde(skip, default = "unset_object_id")]
+    #[serde(
+        skip_deserializing,
+        default = "unset_object_id",
+        skip_serializing_if = "object_id_is_unset"
+    )]
     pub ika_dwallet_coordinator_object_id: ObjectID,
 
     /// How many checkpoints of OCS-verified state the direct-node cache retains
@@ -1669,6 +1701,43 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
         let over = parsed.ika_unsafe_identity_override.unwrap();
         assert_eq!(over.ika_package_id, test_identity_override().ika_package_id);
         assert_eq!(over.ika_dwallet_2pc_mpc_package_id_v2, None);
+    }
+
+    /// Old-binary compatibility: cross-binary harnesses (`ika-upgrade-test`)
+    /// hand builder-written YAML to previous release binaries that read the
+    /// flat `ika-package-id`-style keys. A config with the resolved ids set
+    /// must therefore still SERIALIZE them (while unresolved ZERO ids are
+    /// omitted rather than written as bogus `0x0`).
+    #[test]
+    fn resolved_flat_ids_serialize_for_old_binaries() {
+        let mut cfg = config_for_chain(SuiChainIdentifier::Custom);
+        cfg.ika_unsafe_identity_override = Some(test_identity_override());
+        // Unresolved: the flat ids are ZERO and must not serialize.
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert!(
+            !yaml.contains("\nika-package-id"),
+            "unresolved ZERO ids must be omitted: {yaml}"
+        );
+        // Resolved (as the swarm builders and harnesses produce): the flat
+        // keys appear, readable by an old binary.
+        cfg.resolve_ika_on_chain_identity().unwrap();
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        for key in [
+            "\nika-package-id",
+            "\nika-common-package-id",
+            "\nika-dwallet-2pc-mpc-package-id",
+            "\nika-system-package-id",
+            "\nika-system-object-id",
+            "\nika-dwallet-coordinator-object-id",
+        ] {
+            assert!(yaml.contains(key), "missing flat key {key}: {yaml}");
+        }
+        // And the flat values a fresh parse yields still resolve identically
+        // (current binaries ignore the flat keys and use the override).
+        let mut reparsed: SuiConnectorConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(reparsed.ika_package_id, ObjectID::ZERO);
+        reparsed.resolve_ika_on_chain_identity().unwrap();
+        assert_eq!(reparsed.ika_package_id, cfg.ika_package_id);
     }
 
     // ---- default end-of-epoch checkpoint archive resolution ----

@@ -203,9 +203,11 @@ impl ValidatorConfigBuilder {
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 // Localnet (`Custom`): the freshly-published ids travel in the
                 // unsafe override — the only config-surface source on chains
-                // with no compiled-in identity. The flat id fields are
-                // resolution outputs; `resolve_ika_on_chain_identity` fills
-                // them at node startup.
+                // with no compiled-in identity. The flat id fields are also
+                // set so they SERIALIZE into the YAML: cross-binary harnesses
+                // (`ika-upgrade-test`) hand builder-written configs to old
+                // release binaries that read exactly those flat keys. Current
+                // binaries ignore them on parse and resolve from the override.
                 ika_unsafe_identity_override: Some(IkaIdentityOverride {
                     ika_package_id,
                     ika_common_package_id,
@@ -215,13 +217,13 @@ impl ValidatorConfigBuilder {
                     ika_system_object_id,
                     ika_dwallet_coordinator_object_id,
                 }),
-                ika_package_id: ObjectID::ZERO,
-                ika_common_package_id: ObjectID::ZERO,
-                ika_dwallet_2pc_mpc_package_id: ObjectID::ZERO,
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
                 ika_dwallet_2pc_mpc_package_id_v2: None,
-                ika_system_package_id: ObjectID::ZERO,
-                ika_system_object_id: ObjectID::ZERO,
-                ika_dwallet_coordinator_object_id: ObjectID::ZERO,
+                ika_system_package_id,
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair: None,
                 notifier_gas_from_address_balance: false,
@@ -478,8 +480,8 @@ impl FullnodeConfigBuilder {
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 // Localnet (`Custom`): ids travel in the unsafe override; the
-                // flat fields are resolution outputs (see the validator
-                // builder above).
+                // flat fields are set too so they serialize for old-binary
+                // consumers (see the validator builder above).
                 ika_unsafe_identity_override: Some(IkaIdentityOverride {
                     ika_package_id,
                     ika_common_package_id,
@@ -489,13 +491,13 @@ impl FullnodeConfigBuilder {
                     ika_system_object_id,
                     ika_dwallet_coordinator_object_id,
                 }),
-                ika_package_id: ObjectID::ZERO,
-                ika_common_package_id: ObjectID::ZERO,
-                ika_dwallet_2pc_mpc_package_id: ObjectID::ZERO,
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
                 ika_dwallet_2pc_mpc_package_id_v2: None,
-                ika_system_package_id: ObjectID::ZERO,
-                ika_system_object_id: ObjectID::ZERO,
-                ika_dwallet_coordinator_object_id: ObjectID::ZERO,
+                ika_system_package_id,
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
                 verified_cache_retention_checkpoints: None,
                 notifier_client_key_pair,
                 notifier_gas_from_address_balance: self.notifier_gas_from_address_balance,
