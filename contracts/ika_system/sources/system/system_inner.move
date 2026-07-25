@@ -47,6 +47,21 @@ use sui::{
 
 const PARAMS_MESSAGE_INTENT: vector<u8> = vector[2, 0, 0];
 
+/// The protocol version from which validators' canonical network identity
+/// (`AuthorityName` in the validator binaries) is derived from the consensus
+/// Ed25519 public key instead of the BLS protocol public key.
+const CONSENSUS_KEY_AUTHORITY_NAME_MIN_PROTOCOL_VERSION: u64 = 6;
+
+/// `extra_fields` key of the authority-name flip epoch (a `u64` value).
+/// The committee OF an epoch `E` derives its members' `AuthorityName` from
+/// the consensus key iff `E >= flip_epoch`. Every reader — the validators
+/// assembling the next epoch's committee mid-epoch AND the next epoch's own
+/// committee build — derives the basis from this same persisted value, so
+/// the two sides cannot disagree at the transition boundary (a protocol
+/// version comparison cannot provide this: the next committee is assembled
+/// before the next epoch's version is knowable on chain).
+const AUTHORITY_NAME_FLIP_EPOCH_KEY: vector<u8> = b"authority_name_flip_epoch";
+
 // System checkpoint message data type constants corresponding to system parameters
 // Note: the order of these fields, and the number must correspond to the Rust code in
 // `crates/ika-types/src/messages_system_checkpoints.rs`.
@@ -246,6 +261,12 @@ public(package) fun create(
     let protocol_cap_id = object::id(&protocol_cap);
 
     let authorized_protocol_cap_ids = vector[protocol_cap_id];
+    let mut extra_fields = bag::new(ctx);
+    // A network created at the consensus-key-identity protocol version (or
+    // later) uses consensus-key authority names from its very first epoch.
+    if (protocol_version >= CONSENSUS_KEY_AUTHORITY_NAME_MIN_PROTOCOL_VERSION) {
+        extra_fields.add(AUTHORITY_NAME_FLIP_EPOCH_KEY, 0u64);
+    };
     // This type is fixed as it's created at init. It should not be updated during type upgrade.
     let system_state = SystemInner {
         epoch: 0,
@@ -270,7 +291,7 @@ public(package) fun create(
         // send `END_OF_PUBLISH` - so we shouldn't expect one, and we set `received_end_of_publish`
         // to overcome the check in `advance_epoch()`.
         received_end_of_publish: true,
-        extra_fields: bag::new(ctx),
+        extra_fields,
     };
     (system_state, protocol_cap)
 }
@@ -668,6 +689,19 @@ public(package) fun advance_epoch(
     if (self.next_protocol_version.is_some()) {
         self.protocol_version = self.next_protocol_version.extract();
     };
+    // Once the protocol version supports consensus-key authority names,
+    // record the flip epoch — one epoch ahead of the epoch now starting, so
+    // the first committee to use consensus-key names is one assembled
+    // entirely after this marker became visible on chain. Set-once and
+    // checked on every advancement (not only on the version transition), so
+    // a package upgrade that lands after the version has already advanced
+    // still arms the flip at the next epoch boundary.
+    if (
+        self.protocol_version >= CONSENSUS_KEY_AUTHORITY_NAME_MIN_PROTOCOL_VERSION
+        && !self.extra_fields.contains(AUTHORITY_NAME_FLIP_EPOCH_KEY)
+    ) {
+        self.extra_fields.add(AUTHORITY_NAME_FLIP_EPOCH_KEY, new_epoch + 1);
+    };
 
     self
         .validator_set
@@ -710,6 +744,18 @@ public(package) fun epoch(self: &SystemInner): u64 {
 
 public(package) fun protocol_version(self: &SystemInner): u64 {
     self.protocol_version
+}
+
+/// The epoch from which committees derive their members' `AuthorityName`
+/// from the consensus key (see `AUTHORITY_NAME_FLIP_EPOCH_KEY`), or `none`
+/// while the network has not reached
+/// `CONSENSUS_KEY_AUTHORITY_NAME_MIN_PROTOCOL_VERSION`.
+public(package) fun authority_name_flip_epoch(self: &SystemInner): Option<u64> {
+    if (self.extra_fields.contains(AUTHORITY_NAME_FLIP_EPOCH_KEY)) {
+        option::some(*self.extra_fields.borrow(AUTHORITY_NAME_FLIP_EPOCH_KEY))
+    } else {
+        option::none()
+    }
 }
 
 /// Returns unix timestamp of the start of current epoch
