@@ -90,6 +90,13 @@ pub struct ClusterOfProcesses {
     /// compares exact identities, not just a count that a missing validator
     /// and an unexpected sender could accidentally satisfy.
     validator_authorities: Vec<AuthorityPublicKeyBytes>,
+    /// The same validators named under the CONSENSUS-key basis. A
+    /// validator's `AuthorityName` is its BLS protocol key below protocol
+    /// v6 and its consensus key from v6, so a harness that knows only one
+    /// basis compares a correctly-flipped cluster against the wrong
+    /// expectation. Both are derived at construction from the init configs,
+    /// which carry both keypairs.
+    validator_consensus_authorities: Vec<AuthorityPublicKeyBytes>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -325,6 +332,12 @@ impl ClusterBuilder {
             .iter()
             .map(|init| init.key_pair.public().into())
             .collect();
+        let validator_consensus_authorities = validator_init_configs
+            .iter()
+            .map(|init| {
+                AuthorityPublicKeyBytes::from_consensus_key(init.consensus_key_pair.public())
+            })
+            .collect();
 
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
         // set refuses to boot without a Sui trust anchor. Reconstruct the Sui
@@ -454,6 +467,7 @@ impl ClusterBuilder {
             committee,
             validator_peer_ids,
             validator_authorities,
+            validator_consensus_authorities,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -721,7 +735,9 @@ impl NetworkKeyBoundaryEvidence {
 fn canonical_network_key_outputs(
     body: &str,
     committee_authorities: &BTreeSet<String>,
-    candidate_authority: &str,
+    // The candidate under both identity bases; the cluster uses one of them
+    // depending on its protocol version.
+    candidate_authority: &BTreeSet<String>,
     quorum: usize,
     observer: &str,
 ) -> Result<NetworkKeyOutputConvergence> {
@@ -884,8 +900,11 @@ fn canonical_network_key_outputs(
     }
 
     ensure!(
-        committee_authorities.contains(candidate_authority),
-        "validator under test {candidate_authority} is not a committee member: {committee_authorities:?}"
+        candidate_authority
+            .iter()
+            .any(|name| committee_authorities.contains(name)),
+        "validator under test {candidate_authority:?} is not a committee member: \
+         {committee_authorities:?}"
     );
 
     let mut canonical = BTreeMap::new();
@@ -931,8 +950,14 @@ fn canonical_network_key_outputs(
                 rejected.get(&key)
             );
         }
-        if !outputs.contains_key(candidate_authority) {
-            match late_outputs.get(&(session.clone(), candidate_authority.to_string())) {
+        if !candidate_authority
+            .iter()
+            .any(|name| outputs.contains_key(name))
+        {
+            match candidate_authority
+                .iter()
+                .find_map(|name| late_outputs.get(&(session.clone(), name.clone())))
+            {
                 // Validated above: digest equals the quorum digest and the
                 // late malicious count is zero — byte-level evidence that the
                 // candidate computed the same output the quorum agreed on.
@@ -1304,9 +1329,14 @@ impl ClusterOfProcesses {
             !observer_indices.is_empty(),
             "no output-convergence observers supplied"
         );
+        // Both bases: the cluster names its authorities under whichever one
+        // its protocol version selects, and this check exists to catch a
+        // FOREIGN authority submitting an output — which either naming still
+        // catches, since a non-member appears in neither set.
         let committee_authorities: BTreeSet<_> = self
             .validator_authorities
             .iter()
+            .chain(self.validator_consensus_authorities.iter())
             .map(ToString::to_string)
             .collect();
         // Byzantine quorum of the committee. These scenarios run an
@@ -1353,11 +1383,18 @@ impl ClusterOfProcesses {
                 // binary); its own authority is the candidate whose
                 // byte-equality with the v1.1.8 quorum this boundary tries
                 // to witness.
-                let candidate_authority = self
-                    .validator_authorities
-                    .get(*index)
-                    .with_context(|| format!("validator index {index} out of range"))?
-                    .to_string();
+                let candidate_authority: BTreeSet<String> = [
+                    self.validator_authorities.get(*index),
+                    self.validator_consensus_authorities.get(*index),
+                ]
+                .into_iter()
+                .flatten()
+                .map(ToString::to_string)
+                .collect();
+                ensure!(
+                    !candidate_authority.is_empty(),
+                    "validator index {index} out of range"
+                );
                 let (observer_canonical, observer_missing) = match canonical_network_key_outputs(
                     &body,
                     &committee_authorities,
@@ -1376,13 +1413,16 @@ impl ClusterOfProcesses {
                         continue;
                     }
                 };
+                let candidate_label = candidate_authority
+                    .iter()
+                    .next()
+                    .cloned()
+                    .unwrap_or_default();
                 if observer_missing.is_empty() {
-                    evidence
-                        .evidenced_authorities
-                        .insert(candidate_authority.clone());
+                    evidence.evidenced_authorities.insert(candidate_label);
                 } else {
                     evidence.unevidenced_authorities.insert(
-                        candidate_authority.clone(),
+                        candidate_label,
                         format!(
                             "validator {}: {}",
                             validator.index,
@@ -2025,6 +2065,10 @@ fn rayon_threads_per_node(node_count: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// The candidate under both identity bases; these fixtures use one name.
+    fn candidate(name: &str) -> std::collections::BTreeSet<String> {
+        std::collections::BTreeSet::from([name.to_string()])
+    }
     use super::*;
 
     fn stopped_validator() -> ValidatorProcess {
@@ -2174,7 +2218,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             canonical,
             sessions_without_candidate_evidence,
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("four matching authorities must converge");
         };
@@ -2196,7 +2241,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             canonical,
             sessions_without_candidate_evidence,
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("a converged quorum including the validator under test must pass");
         };
@@ -2218,7 +2264,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             canonical,
             sessions_without_candidate_evidence,
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("a clean 3-of-4 quorum without the candidate must still converge");
         };
@@ -2240,7 +2287,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             canonical,
             sessions_without_candidate_evidence,
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("matching late-computation evidence must converge");
         };
@@ -2258,8 +2306,9 @@ mod tests {
         let committee = committee_of(&["a", "b", "c", "d"]);
         let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
         body.push_str(&late_output_metrics("a", "localdigest", "quorumdigest", 0));
-        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
-            .expect_err("a divergent late output must fail closed");
+        let error =
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .expect_err("a divergent late output must fail closed");
         let error = error.to_string();
         assert!(error.contains("DIVERGES"));
         assert!(error.contains("localdigest"));
@@ -2271,8 +2320,9 @@ mod tests {
         let committee = committee_of(&["a", "b", "c", "d"]);
         let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
         body.push_str(&late_output_metrics("a", "rawdigest", "rawdigest", 2));
-        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
-            .expect_err("a late output reporting malicious actors must fail closed");
+        let error =
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .expect_err("a late output reporting malicious actors must fail closed");
         assert!(error.to_string().contains("2 malicious actors"));
     }
 
@@ -2290,7 +2340,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             sessions_without_candidate_evidence,
             ..
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("a superseded unknown-quorum child must not block convergence");
         };
@@ -2305,8 +2356,9 @@ mod tests {
         let mut body = network_key_metrics(&[("b", "same"), ("c", "same"), ("d", "same")]);
         body.push_str(&late_output_info_sample("a", "firstdigest", "unknown"));
         body.push_str(&late_output_metrics("a", "seconddigest", "seconddigest", 0));
-        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
-            .expect_err("cross-attempt output disagreement must fail closed");
+        let error =
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .expect_err("cross-attempt output disagreement must fail closed");
         assert!(error.to_string().contains("across attempts"));
     }
 
@@ -2322,7 +2374,8 @@ mod tests {
         let NetworkKeyOutputConvergence::Converged {
             sessions_without_candidate_evidence,
             ..
-        } = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+        } = canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+            .unwrap()
         else {
             panic!("an unverifiable late output must not block convergence");
         };
@@ -2341,7 +2394,8 @@ mod tests {
             "ika_dwallet_mpc_session_late_output_info{{protocol_name=\"{NETWORK_KEY_RECONFIGURATION_PROTOCOL}\",session_id=\"session\",authority=\"a\",output_digest=\"rawdigest\",quorum_output_digest=\"rawdigest\"}} 1\n"
         ));
         let NetworkKeyOutputConvergence::Incomplete(reason) =
-            canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .unwrap()
         else {
             panic!("a late-output sample without its malicious gauge must be incomplete");
         };
@@ -2353,7 +2407,8 @@ mod tests {
         let committee = committee_of(&["a", "b", "c", "d"]);
         let body = network_key_metrics(&[("a", "same"), ("b", "same")]);
         let NetworkKeyOutputConvergence::Incomplete(_) =
-            canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .unwrap()
         else {
             panic!("a below-quorum observation must be incomplete");
         };
@@ -2370,8 +2425,9 @@ mod tests {
             ("c", "same"),
             ("rogue", "same"),
         ]);
-        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
-            .expect_err("an out-of-committee authority must fail closed");
+        let error =
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .expect_err("an out-of-committee authority must fail closed");
         assert!(error.to_string().contains("out-of-committee"));
     }
 
@@ -2384,8 +2440,9 @@ mod tests {
             ("c", "majority"),
             ("d", "majority"),
         ]);
-        let error = canonical_network_key_outputs(&body, &committee, "a", 3, "validator 0")
-            .expect_err("3-vs-1 output split must fail closed");
+        let error =
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 3, "validator 0")
+                .expect_err("3-vs-1 output split must fail closed");
         assert!(
             error
                 .to_string()
@@ -2403,7 +2460,8 @@ mod tests {
         // the observer keeps polling (and the caller ultimately times out —
         // still fail-closed), rather than declaring a hard divergence.
         let NetworkKeyOutputConvergence::Incomplete(reason) =
-            canonical_network_key_outputs(&body, &committee, "a", 1, "validator 0").unwrap()
+            canonical_network_key_outputs(&body, &committee, &candidate("a"), 1, "validator 0")
+                .unwrap()
         else {
             panic!("a missing envelope metric must be reported as incomplete");
         };
