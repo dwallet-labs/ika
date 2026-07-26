@@ -44,7 +44,10 @@ use tracing::{debug, error, info, warn};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
-use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
+use crate::sui_connector::sui_event_into_request::{
+    PackageDrift, accepted_dwallet_packages, detect_dwallet_package_drift,
+    sui_event_into_session_request,
+};
 use crate::sui_connector::verified_reader::{OcsVerifiedReader, VerifiedObject};
 
 pub struct BagEventPump {
@@ -208,7 +211,56 @@ impl BagEventPump {
         }
     }
 
+    /// Compare the chain's dwallet package against the set this binary accepts
+    /// events from, and surface a drift.
+    ///
+    /// A Sui upgrade's newly-defined types carry the UPGRADE address, so an
+    /// upgrade this binary has not been taught about makes those events fail
+    /// the address filter in `sui_event_into_session_request` — the node
+    /// silently loses those sessions. Checked here because this is the tick
+    /// that both reads the coordinator and feeds that filter.
+    fn note_package_drift(&self, coordinator: &DWalletCoordinator) {
+        let drift = detect_dwallet_package_drift(
+            &self.network_config,
+            coordinator.package_id,
+            coordinator.new_package_id,
+        );
+        let (executing, pending) = match drift {
+            PackageDrift::Known => (0, 0),
+            PackageDrift::Executing(id) => {
+                warn!(
+                    chain_package = ?id,
+                    accepted = ?accepted_dwallet_packages(&self.network_config),
+                    "the chain is EXECUTING a dwallet package this binary does not accept events \
+                     from — any event type first defined in that upgrade is being DROPPED. Ship a \
+                     release carrying this package id"
+                );
+                (1, 0)
+            }
+            PackageDrift::Pending(id) => {
+                warn!(
+                    staged_package = ?id,
+                    accepted = ?accepted_dwallet_packages(&self.network_config),
+                    "a dwallet package upgrade is STAGED that this binary does not accept events \
+                     from — nothing is dropped yet; ship its package id before the migration epoch"
+                );
+                (0, 1)
+            }
+        };
+        self.metrics
+            .dwallet_package_drift
+            .with_label_values(&["executing"])
+            .set(executing);
+        self.metrics
+            .dwallet_package_drift
+            .with_label_values(&["pending"])
+            .set(pending);
+    }
+
     async fn advance(&mut self) -> anyhow::Result<()> {
+        if let Some((coordinator, _)) = self.coordinator_rx.borrow().as_ref() {
+            self.note_package_drift(coordinator);
+        }
         let (user_bag, user_size, sys_bag, sys_size, epoch) =
             match self.coordinator_rx.borrow().as_ref() {
                 Some((_, DWalletCoordinatorInner::V1(inner))) => {

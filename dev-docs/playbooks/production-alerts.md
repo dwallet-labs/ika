@@ -54,6 +54,38 @@ joiner bootstrap rejected: no peer-served certificate verified
 NOT auto-restart into it; verify the node's configured trust anchors
 and the peer set before bringing it back.
 
+## Alert 4: dwallet package upgraded past what the binary accepts
+
+```
+ika_dwallet_package_drift{state="executing"} > 0
+```
+
+**Meaning**: the chain is executing a dwallet Move package whose id is not
+in the binary's accepted set, so **session events are being dropped right
+now**. A Sui upgrade does not move existing types — Sui records type
+identity per datatype, so types carried forward keep the ORIGINAL package
+address while types **first defined in the upgrade** carry the UPGRADE
+address. The event filter admits only the addresses the binary was compiled
+with (`ika_dwallet_2pc_mpc_package_id` and `…_v2`), so any event type
+introduced by an unknown upgrade fails it silently. As of 2026-07-25 the
+deployed dwallet package has 7 upgrade-defined types, five of them events —
+this is not hypothetical.
+
+**Operator action**: page. Ship a release carrying the new package id. There
+is no config workaround on public chains (the override was removed in
+#1908). Grep `received an event from a wrong SUI module` to see the
+rejected addresses.
+
+```
+ika_dwallet_package_drift{state="pending"} > 0
+```
+
+**Meaning**: an upgrade is **staged but not yet migrated to** — nothing is
+being dropped yet. This is the lead time: ship the package id before the
+migration epoch and the `executing` alert never fires. Warn, don't page.
+
+Both clear automatically once the accepted set includes the id.
+
 ## Secondary signals worth dashboarding (no page)
 
 - `ika_last_pruned_authority_db_epoch` / `ika_last_pruned_consensus_db_epoch`

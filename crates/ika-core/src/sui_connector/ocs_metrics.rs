@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use prometheus::{
-    Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry,
+    Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
     register_histogram_vec_with_registry, register_histogram_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
-    register_int_gauge_with_registry,
+    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
 
 #[derive(Clone, Debug)]
@@ -68,6 +68,13 @@ pub struct OcsMetrics {
 
     // BagEventPump — omission detection via verified parent state.
     pub bag_omission_suspected_total: IntCounterVec, // labels: ["bag"]
+
+    /// The chain's dwallet package is one this binary does not accept events
+    /// from. `state="executing"` means event types first defined in that
+    /// upgrade are being DROPPED right now; `state="pending"` means an upgrade
+    /// is staged and this is the lead time to ship its id. Non-zero on any
+    /// validator is a release-blocking signal — alert on it.
+    pub dwallet_package_drift: IntGaugeVec, // labels: ["state"]
 
     /// End-to-end verify latency on the consumer side (transport
     /// round-trip + proof verify). Captures what consumers actually
@@ -177,6 +184,13 @@ impl OcsMetrics {
                 "ika_ocs_bag_omission_suspected_total",
                 "Bag walk returned fewer children than the verified parent's `Bag.size` claimed (suspected relay omission; could also be a benign race when entries are removed mid-walk — only a hard signal if it persists)",
                 &["bag"],
+                registry,
+            )
+            .unwrap(),
+            dwallet_package_drift: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_package_drift",
+                "1 while the chain's dwallet package is one this binary does not accept events from. state=\"executing\": event types first defined in that upgrade are being DROPPED now. state=\"pending\": an upgrade is staged, ship its package id before it migrates. Non-zero on any validator is release-blocking",
+                &["state"],
                 registry,
             )
             .unwrap(),

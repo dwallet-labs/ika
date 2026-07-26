@@ -18,9 +18,71 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
+use sui_types::base_types::ObjectID;
 use sui_types::dynamic_field::Field;
 use sui_types::id::ID;
 use tracing::{error, info};
+
+/// The dwallet package addresses this binary will accept events from.
+///
+/// A Sui package upgrade does NOT move existing types — Sui records type
+/// identity per datatype in the package's `TypeOrigin` table, so a type carried
+/// forward keeps the ORIGINAL address while a type **first defined in the
+/// upgrade** carries the UPGRADE address. Both are therefore live at once (as
+/// of 2026-07-25 the deployed dwallet package has 79 types at the original and
+/// 7 at the upgrade, five of them events), which is why this set is a set and
+/// not one id.
+pub fn accepted_dwallet_packages(packages_config: &IkaNetworkConfig) -> Vec<ObjectID> {
+    let mut ids = vec![packages_config.packages.ika_dwallet_2pc_mpc_package_id];
+    if let Some(v2) = packages_config.packages.ika_dwallet_2pc_mpc_package_id_v2 {
+        ids.push(v2);
+    }
+    ids
+}
+
+/// Outcome of comparing the chain's dwallet package against the set this
+/// binary accepts events from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageDrift {
+    /// The chain's executable package is one we accept.
+    Known,
+    /// The chain is EXECUTING a dwallet package this binary does not accept
+    /// events from. Any event type first defined in it is being dropped.
+    Executing(ObjectID),
+    /// An upgrade is staged but not yet migrated to. Nothing is dropped yet —
+    /// this is the lead time to ship the constant.
+    Pending(ObjectID),
+}
+
+/// Detect a dwallet package upgrade this binary does not know about.
+///
+/// The event filter below admits an event only if its type address is in
+/// [`accepted_dwallet_packages`]. Because an upgrade's newly-defined types
+/// carry the UPGRADE address, a package upgrade the config has not been taught
+/// about makes those events fail that filter — the node silently loses those
+/// sessions. This is the same failure shape as #1908 (a fleet deaf to events
+/// because a compiled-in package id did not match the chain), reached by a
+/// different route, and this check is what makes it visible.
+///
+/// Deliberately NOT fatal: an upgrade that defines no new event types is
+/// harmless, and refusing to boot the whole fleet on a benign upgrade would be
+/// worse than the degradation. The caller warns and counts instead.
+pub fn detect_dwallet_package_drift(
+    packages_config: &IkaNetworkConfig,
+    executing_package_id: ObjectID,
+    staged_package_id: Option<ObjectID>,
+) -> PackageDrift {
+    let accepted = accepted_dwallet_packages(packages_config);
+    if !accepted.contains(&executing_package_id) {
+        return PackageDrift::Executing(executing_package_id);
+    }
+    // Only report a staged upgrade we don't already accept; once the constant
+    // ships, the same staged id is no longer news.
+    match staged_package_id {
+        Some(staged) if !accepted.contains(&staged) => PackageDrift::Pending(staged),
+        _ => PackageDrift::Known,
+    }
+}
 
 pub fn sui_event_into_session_request(
     packages_config: &IkaNetworkConfig,
@@ -28,22 +90,17 @@ pub fn sui_event_into_session_request(
     contents: &[u8],
     pulled: bool,
 ) -> anyhow::Result<Option<DWalletSessionRequest>> {
-    if (event_type.address != *packages_config.packages.ika_dwallet_2pc_mpc_package_id
-        && (packages_config
-            .packages
-            .ika_dwallet_2pc_mpc_package_id_v2
-            .is_none()
-            || event_type.address
-                != *packages_config
-                    .packages
-                    .ika_dwallet_2pc_mpc_package_id_v2
-                    .unwrap()))
+    let accepted = accepted_dwallet_packages(packages_config);
+    if !accepted.contains(&ObjectID::from(event_type.address))
         || event_type.module != SESSIONS_MANAGER_MODULE_NAME.into()
     {
         error!(
             module=?event_type.module,
             address=?event_type.address,
-            "received an event from a wrong SUI module - rejecting!"
+            ?accepted,
+            "received an event from a wrong SUI module - rejecting! (if the address is an \
+             unrecognised dwallet package, the chain upgraded and this binary needs its id — \
+             see ika_dwallet_package_drift)"
         );
         return Err(anyhow::anyhow!(
             "received an event from a wrong SUI module - rejecting!"
@@ -357,6 +414,104 @@ fn deserialize_event_contents<T: DeserializeOwned + DWalletSessionEventTrait>(
             .map(|field| field.value)
     } else {
         bcs::from_bytes::<DWalletSessionEvent<T>>(event_contents)
+    }
+}
+
+#[cfg(test)]
+mod package_drift_tests {
+    use super::*;
+
+    fn cfg(v1: ObjectID, v2: Option<ObjectID>) -> IkaNetworkConfig {
+        IkaNetworkConfig::new(
+            ObjectID::random(),
+            ObjectID::random(),
+            v1,
+            v2,
+            ObjectID::random(),
+            ObjectID::random(),
+            ObjectID::random(),
+        )
+    }
+
+    /// The set is a SET because a Sui upgrade leaves existing types on the
+    /// original address while newly-defined types carry the upgrade address —
+    /// both are live at once.
+    #[test]
+    fn accepted_set_contains_both_versions() {
+        let (v1, v2) = (ObjectID::random(), ObjectID::random());
+        let accepted = accepted_dwallet_packages(&cfg(v1, Some(v2)));
+        assert_eq!(accepted, vec![v1, v2]);
+    }
+
+    #[test]
+    fn accepted_set_is_just_v1_when_no_upgrade_is_configured() {
+        let v1 = ObjectID::random();
+        assert_eq!(accepted_dwallet_packages(&cfg(v1, None)), vec![v1]);
+    }
+
+    #[test]
+    fn no_drift_when_the_chain_runs_a_package_we_accept() {
+        let (v1, v2) = (ObjectID::random(), ObjectID::random());
+        let config = cfg(v1, Some(v2));
+        // Executing the upgrade we already know about, nothing staged.
+        assert_eq!(
+            detect_dwallet_package_drift(&config, v2, None),
+            PackageDrift::Known
+        );
+        // Still on the original.
+        assert_eq!(
+            detect_dwallet_package_drift(&config, v1, None),
+            PackageDrift::Known
+        );
+    }
+
+    /// The live failure: the chain upgraded, this binary was never taught the
+    /// new id, so every event type first defined in it fails the address
+    /// filter and its sessions are lost.
+    #[test]
+    fn executing_an_unknown_package_is_drift() {
+        let (v1, v2, v3) = (ObjectID::random(), ObjectID::random(), ObjectID::random());
+        assert_eq!(
+            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v3, None),
+            PackageDrift::Executing(v3)
+        );
+    }
+
+    /// A staged upgrade is the lead time — nothing is dropped until it
+    /// migrates, so it must be reported distinctly from the executing case.
+    #[test]
+    fn a_staged_unknown_upgrade_is_reported_as_pending() {
+        let (v1, v2, v3) = (ObjectID::random(), ObjectID::random(), ObjectID::random());
+        assert_eq!(
+            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v2, Some(v3)),
+            PackageDrift::Pending(v3)
+        );
+    }
+
+    /// Once the constant ships, the same staged id must stop being reported —
+    /// otherwise the alert never clears and gets ignored.
+    #[test]
+    fn a_staged_upgrade_we_already_accept_is_not_drift() {
+        let (v1, v2) = (ObjectID::random(), ObjectID::random());
+        assert_eq!(
+            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v1, Some(v2)),
+            PackageDrift::Known
+        );
+    }
+
+    /// Executing-unknown outranks pending: the drop is happening now.
+    #[test]
+    fn executing_drift_takes_precedence_over_a_pending_one() {
+        let (v1, v2, v3, v4) = (
+            ObjectID::random(),
+            ObjectID::random(),
+            ObjectID::random(),
+            ObjectID::random(),
+        );
+        assert_eq!(
+            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v3, Some(v4)),
+            PackageDrift::Executing(v3)
+        );
     }
 }
 
