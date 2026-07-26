@@ -2068,6 +2068,10 @@ mod tests {
         let att = build_handoff_attestation(9, [0xFF; 32], vec![]).expect("build");
         let handoff_msg = sign_handoff_attestation(att, signer, consensus_kp);
 
+        // Constructing a V1 is exactly what this test is for — it pins the
+        // key of a variant we still decode. This is the one sanctioned use
+        // of the deprecated producer.
+        #[allow(deprecated)]
         let v1 = ConsensusTransaction::new_end_of_publish(signer);
         let v2 = ConsensusTransaction::new_end_of_publish_v2(signer, handoff_msg);
         assert!(matches!(v1.key(), ConsensusTransactionKey::EndOfPublish(_)));

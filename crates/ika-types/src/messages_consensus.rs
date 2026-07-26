@@ -54,6 +54,11 @@ pub struct ConsensusTransaction {
 pub enum ConsensusTransactionKey {
     DWalletCheckpointSignature(AuthorityName, DWalletCheckpointSequenceNumber),
     CapabilityNotification(AuthorityName, u64 /* generation */),
+    /// Key of a decode-only V1 `EndOfPublish` (see
+    /// [`ConsensusTransactionKind::EndOfPublish`]). Still reached, because a
+    /// received V1 is keyed before it is dropped. Distinct from
+    /// [`Self::EndOfPublishV2`] so the consensus dedupe layer never conflates
+    /// the two. BCS index is wire/DB format — do not reorder.
     EndOfPublish(AuthorityName),
     /// Authority that sent the message, the session identifier, and the message itself.
     DWalletMPCMessage(AuthorityName, SessionIdentifier, Vec<u8>),
@@ -325,6 +330,17 @@ pub enum ConsensusTransactionKind {
     DWalletCheckpointSignature(Box<DWalletCheckpointSignatureMessage>),
     SystemCheckpointSignature(Box<SystemCheckpointSignatureMessage>),
     CapabilityNotificationV1(AuthorityCapabilitiesV1),
+    /// DECODE-ONLY since `MIN_PROTOCOL_VERSION = 5`. No supported binary
+    /// emits this — `EndOfPublishV2` is the only form produced, and the
+    /// consumer drops any V1 it receives (a peer sending one is
+    /// misconfigured). The variant itself must stay: its BCS index is wire
+    /// format, and removing it would renumber every variant below.
+    ///
+    /// Not `#[deprecated]` on purpose — receiving and dropping V1 is live,
+    /// required behavior, so the attribute would only force
+    /// `#[allow(deprecated)]` onto every decode site and stop meaning
+    /// anything. The dead half is *production*, which is marked on
+    /// [`ConsensusTransaction::new_end_of_publish`].
     EndOfPublish(AuthorityName),
     DWalletMPCMessage(DWalletMPCMessage),
     DWalletMPCOutput(DWalletMPCOutput),
@@ -388,6 +404,17 @@ pub enum ConsensusTransactionKind {
 }
 
 impl ConsensusTransaction {
+    /// Builds a standalone V1 `EndOfPublish`.
+    ///
+    /// No supported binary emits this: `EndOfPublishV2` — which bundles the
+    /// vote with the sender's handoff signature — is the only form produced
+    /// since the off-chain validator-metadata pipeline became unconditional
+    /// at `MIN_PROTOCOL_VERSION = 5`, and the consumer side drops any V1 it
+    /// receives. The DECODE path for V1 is still live and must stay (the
+    /// enum variant is BCS wire format); only production is dead, which is
+    /// what this marker forbids.
+    #[deprecated(note = "V1 EndOfPublish is never emitted; use new_end_of_publish_v2. \
+                Kept only so the wire variant has a constructor for tests.")]
     pub fn new_end_of_publish(authority: AuthorityName) -> Self {
         let mut hasher = DefaultHasher::new();
         authority.hash(&mut hasher);
