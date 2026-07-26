@@ -885,6 +885,38 @@ impl OcsVerifiedReader {
         }
     }
 
+    /// The distinct package versions that INTRODUCED the types in `package_id`.
+    ///
+    /// A Move type's address is fixed at the version that first defined it and
+    /// never moves, so an upgraded package's types are spread across every
+    /// version that introduced any of them — recorded per datatype in the
+    /// package's `TypeOrigin` table. This returns exactly that set, which is
+    /// therefore the complete and exact set of addresses a type (or event) from
+    /// this package can carry. Reading it beats enumerating `_v1`/`_v2`/…
+    /// constants: it cannot drift, and it needs no release when the package
+    /// upgrades.
+    ///
+    /// Packages are immutable, so the read is a one-shot per package id.
+    pub async fn verified_package_type_origins(
+        &self,
+        package_id: ObjectID,
+    ) -> Result<Vec<ObjectID>, ReaderError> {
+        let obj = self.verified_anchor_object(package_id).await?;
+        let pkg = obj.object.data.try_as_package().ok_or_else(|| {
+            ReaderError::Decode(format!("expected a Move package at {package_id}"))
+        })?;
+        let mut ids: Vec<ObjectID> = pkg
+            .type_origin_table()
+            .iter()
+            .map(|t| t.package)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        // Deterministic order so logs/metrics don't churn between ticks.
+        ids.sort();
+        Ok(ids)
+    }
+
     /// OCS-verified read of the `System` outer + its versioned inner.
     /// Same versioned-dynamic-field pattern as
     /// [`Self::verified_dwallet_coordinator_inner`].

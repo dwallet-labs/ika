@@ -54,37 +54,34 @@ joiner bootstrap rejected: no peer-served certificate verified
 NOT auto-restart into it; verify the node's configured trust anchors
 and the peer set before bringing it back.
 
-## Alert 4: dwallet package upgraded past what the binary accepts
+## Alert 4: the chain introduces dwallet types at versions the binary rejects
 
 ```
-ika_dwallet_package_drift{state="executing"} > 0
+ika_dwallet_uncovered_introducing_versions > 0
 ```
 
-**Meaning**: the chain is executing a dwallet Move package whose id is not
-in the binary's accepted set, so **session events are being dropped right
-now**. A Sui upgrade does not move existing types — Sui records type
-identity per datatype, so types carried forward keep the ORIGINAL package
-address while types **first defined in the upgrade** carry the UPGRADE
-address. The event filter admits only the addresses the binary was compiled
-with (`ika_dwallet_2pc_mpc_package_id` and `…_v2`), so any event type
-introduced by an unknown upgrade fails it silently. As of 2026-07-25 the
-deployed dwallet package has 7 upgrade-defined types, five of them events —
-this is not hypothetical.
+**Meaning**: **session events are being dropped right now.**
 
-**Operator action**: page. Ship a release carrying the new package id. There
-is no config workaround on public chains (the override was removed in
-#1908). Grep `received an event from a wrong SUI module` to see the
-rejected addresses.
+A Move type's address is fixed at the package version that *first introduced*
+it and never moves — Sui records this per datatype in the package's
+`TypeOrigin` table. So an upgraded package's types are spread across every
+version that introduced any of them, and that table is the exact set of
+addresses its events can carry. The node reads it (verified) and compares
+against the addresses it accepts (`ika_dwallet_2pc_mpc_package_id` and
+`…_v2`). This gauge is how many introducing versions are NOT accepted; every
+event type introduced at one of them fails the filter silently.
 
-```
-ika_dwallet_package_drift{state="pending"} > 0
-```
+Not hypothetical: as of 2026-07-25 the deployed dwallet package introduces
+types at **two** versions — 79 types at the original and 7 at the upgrade,
+**five of the seven being events**.
 
-**Meaning**: an upgrade is **staged but not yet migrated to** — nothing is
-being dropped yet. This is the lead time: ship the package id before the
-migration epoch and the `executing` alert never fires. Warn, don't page.
+**Operator action**: page. Ship a release carrying the missing package ids
+(the warn log names them). There is no config workaround on public chains —
+the override was removed in #1908. Grep `received an event from a wrong SUI
+module` to see the rejected addresses.
 
-Both clear automatically once the accepted set includes the id.
+**It clears by itself** once a release accepts the ids, and accepting *more*
+versions than the chain introduces is not a gap — an unused id drops nothing.
 
 ## Secondary signals worth dashboarding (no page)
 

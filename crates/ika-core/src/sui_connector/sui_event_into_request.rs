@@ -40,48 +40,29 @@ pub fn accepted_dwallet_packages(packages_config: &IkaNetworkConfig) -> Vec<Obje
     ids
 }
 
-/// Outcome of comparing the chain's dwallet package against the set this
-/// binary accepts events from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PackageDrift {
-    /// The chain's executable package is one we accept.
-    Known,
-    /// The chain is EXECUTING a dwallet package this binary does not accept
-    /// events from. Any event type first defined in it is being dropped.
-    Executing(ObjectID),
-    /// An upgrade is staged but not yet migrated to. Nothing is dropped yet —
-    /// this is the lead time to ship the constant.
-    Pending(ObjectID),
-}
-
-/// Detect a dwallet package upgrade this binary does not know about.
+/// Introducing versions the compiled-in constants do NOT cover.
 ///
-/// The event filter below admits an event only if its type address is in
-/// [`accepted_dwallet_packages`]. Because an upgrade's newly-defined types
-/// carry the UPGRADE address, a package upgrade the config has not been taught
-/// about makes those events fail that filter — the node silently loses those
-/// sessions. This is the same failure shape as #1908 (a fleet deaf to events
-/// because a compiled-in package id did not match the chain), reached by a
-/// different route, and this check is what makes it visible.
+/// `introducing_versions` is the chain's own answer to "which addresses can a
+/// type from this package carry" — the distinct packages in its `TypeOrigin`
+/// table (see `OcsVerifiedReader::verified_package_type_origins`). A type's
+/// address is fixed at the version that first defined it, so this set is exact:
+/// anything in it that the binary does not accept is an address whose events
+/// are being dropped, and anything the binary accepts beyond it is merely
+/// unused.
 ///
-/// Deliberately NOT fatal: an upgrade that defines no new event types is
-/// harmless, and refusing to boot the whole fleet on a benign upgrade would be
-/// worse than the degradation. The caller warns and counts instead.
-pub fn detect_dwallet_package_drift(
+/// Comparing against the chain's *executing* version instead would only be a
+/// proxy — it false-positives on an upgrade that introduces no new types, and
+/// says nothing about which addresses actually appear.
+pub fn uncovered_introducing_versions(
     packages_config: &IkaNetworkConfig,
-    executing_package_id: ObjectID,
-    staged_package_id: Option<ObjectID>,
-) -> PackageDrift {
+    introducing_versions: &[ObjectID],
+) -> Vec<ObjectID> {
     let accepted = accepted_dwallet_packages(packages_config);
-    if !accepted.contains(&executing_package_id) {
-        return PackageDrift::Executing(executing_package_id);
-    }
-    // Only report a staged upgrade we don't already accept; once the constant
-    // ships, the same staged id is no longer news.
-    match staged_package_id {
-        Some(staged) if !accepted.contains(&staged) => PackageDrift::Pending(staged),
-        _ => PackageDrift::Known,
-    }
+    introducing_versions
+        .iter()
+        .filter(|id| !accepted.contains(id))
+        .copied()
+        .collect()
 }
 
 pub fn sui_event_into_session_request(
@@ -100,7 +81,7 @@ pub fn sui_event_into_session_request(
             ?accepted,
             "received an event from a wrong SUI module - rejecting! (if the address is an \
              unrecognised dwallet package, the chain upgraded and this binary needs its id — \
-             see ika_dwallet_package_drift)"
+             see ika_dwallet_uncovered_introducing_versions)"
         );
         return Err(anyhow::anyhow!(
             "received an event from a wrong SUI module - rejecting!"
@@ -418,7 +399,7 @@ fn deserialize_event_contents<T: DeserializeOwned + DWalletSessionEventTrait>(
 }
 
 #[cfg(test)]
-mod package_drift_tests {
+mod package_coverage_tests {
     use super::*;
 
     fn cfg(v1: ObjectID, v2: Option<ObjectID>) -> IkaNetworkConfig {
@@ -433,14 +414,13 @@ mod package_drift_tests {
         )
     }
 
-    /// The set is a SET because a Sui upgrade leaves existing types on the
-    /// original address while newly-defined types carry the upgrade address —
-    /// both are live at once.
+    /// The accepted set is a SET because a Move type's address is fixed at the
+    /// version that first introduced it — so an upgraded package's types are
+    /// spread across every introducing version, all of them live at once.
     #[test]
     fn accepted_set_contains_both_versions() {
         let (v1, v2) = (ObjectID::random(), ObjectID::random());
-        let accepted = accepted_dwallet_packages(&cfg(v1, Some(v2)));
-        assert_eq!(accepted, vec![v1, v2]);
+        assert_eq!(accepted_dwallet_packages(&cfg(v1, Some(v2))), vec![v1, v2]);
     }
 
     #[test]
@@ -449,59 +429,32 @@ mod package_drift_tests {
         assert_eq!(accepted_dwallet_packages(&cfg(v1, None)), vec![v1]);
     }
 
+    /// The shape on both live networks today: the chain introduces types at v1
+    /// and v2, and the binary accepts exactly those.
     #[test]
-    fn no_drift_when_the_chain_runs_a_package_we_accept() {
+    fn fully_covered_introducing_versions_report_nothing() {
         let (v1, v2) = (ObjectID::random(), ObjectID::random());
-        let config = cfg(v1, Some(v2));
-        // Executing the upgrade we already know about, nothing staged.
-        assert_eq!(
-            detect_dwallet_package_drift(&config, v2, None),
-            PackageDrift::Known
-        );
-        // Still on the original.
-        assert_eq!(
-            detect_dwallet_package_drift(&config, v1, None),
-            PackageDrift::Known
+        assert!(
+            uncovered_introducing_versions(&cfg(v1, Some(v2)), &[v1, v2]).is_empty(),
+            "accepting every introducing version must report no gap"
         );
     }
 
-    /// The live failure: the chain upgraded, this binary was never taught the
-    /// new id, so every event type first defined in it fails the address
-    /// filter and its sessions are lost.
+    /// The live failure: the chain introduced types at a version the binary was
+    /// never taught, so every event type introduced there is dropped.
     #[test]
-    fn executing_an_unknown_package_is_drift() {
+    fn an_unaccepted_introducing_version_is_reported() {
         let (v1, v2, v3) = (ObjectID::random(), ObjectID::random(), ObjectID::random());
         assert_eq!(
-            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v3, None),
-            PackageDrift::Executing(v3)
+            uncovered_introducing_versions(&cfg(v1, Some(v2)), &[v1, v2, v3]),
+            vec![v3]
         );
     }
 
-    /// A staged upgrade is the lead time — nothing is dropped until it
-    /// migrates, so it must be reported distinctly from the executing case.
+    /// Multiple upgrades can each introduce types; all uncovered ones must be
+    /// named, not just the newest, so one release can carry them together.
     #[test]
-    fn a_staged_unknown_upgrade_is_reported_as_pending() {
-        let (v1, v2, v3) = (ObjectID::random(), ObjectID::random(), ObjectID::random());
-        assert_eq!(
-            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v2, Some(v3)),
-            PackageDrift::Pending(v3)
-        );
-    }
-
-    /// Once the constant ships, the same staged id must stop being reported —
-    /// otherwise the alert never clears and gets ignored.
-    #[test]
-    fn a_staged_upgrade_we_already_accept_is_not_drift() {
-        let (v1, v2) = (ObjectID::random(), ObjectID::random());
-        assert_eq!(
-            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v1, Some(v2)),
-            PackageDrift::Known
-        );
-    }
-
-    /// Executing-unknown outranks pending: the drop is happening now.
-    #[test]
-    fn executing_drift_takes_precedence_over_a_pending_one() {
+    fn every_uncovered_version_is_reported() {
         let (v1, v2, v3, v4) = (
             ObjectID::random(),
             ObjectID::random(),
@@ -509,9 +462,35 @@ mod package_drift_tests {
             ObjectID::random(),
         );
         assert_eq!(
-            detect_dwallet_package_drift(&cfg(v1, Some(v2)), v3, Some(v4)),
-            PackageDrift::Executing(v3)
+            uncovered_introducing_versions(&cfg(v1, None), &[v1, v2, v3, v4]),
+            vec![v2, v3, v4]
         );
+    }
+
+    /// Accepting MORE than the chain introduces is harmless — an unused
+    /// constant drops nothing — so it must not be reported as a gap. This is
+    /// what makes the signal actionable rather than noisy.
+    #[test]
+    fn accepting_more_than_the_chain_introduces_is_not_a_gap() {
+        let (v1, v2) = (ObjectID::random(), ObjectID::random());
+        assert!(
+            uncovered_introducing_versions(&cfg(v1, Some(v2)), &[v1]).is_empty(),
+            "an accepted-but-unused version is not a coverage gap"
+        );
+    }
+
+    /// Once the release ships the missing id, the gap must clear — an alert
+    /// that never clears gets ignored.
+    #[test]
+    fn the_gap_clears_once_the_id_is_accepted() {
+        let (v1, v2, v3) = (ObjectID::random(), ObjectID::random(), ObjectID::random());
+        let introducing = [v1, v2, v3];
+        assert_eq!(
+            uncovered_introducing_versions(&cfg(v1, Some(v2)), &introducing),
+            vec![v3]
+        );
+        // ...ship v3 as the configured upgrade id:
+        assert!(uncovered_introducing_versions(&cfg(v1, Some(v3)), &[v1, v3]).is_empty());
     }
 }
 

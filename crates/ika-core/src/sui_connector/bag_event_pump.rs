@@ -45,8 +45,7 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::sui_event_into_request::{
-    PackageDrift, accepted_dwallet_packages, detect_dwallet_package_drift,
-    sui_event_into_session_request,
+    accepted_dwallet_packages, sui_event_into_session_request, uncovered_introducing_versions,
 };
 use crate::sui_connector::verified_reader::{OcsVerifiedReader, VerifiedObject};
 
@@ -73,6 +72,10 @@ pub struct BagEventPump {
     /// warn→error escalation in [`Self::note_bag_omission`]. Reset to 0 on any
     /// clean tick.
     consecutive_omission_ticks: u32,
+    /// The dwallet package id whose type-origin coverage has been checked.
+    /// Packages are immutable, so one check per id is enough; `None` until the
+    /// first successful read, and left unset on failure so a later tick retries.
+    checked_dwallet_package: Option<ObjectID>,
 }
 
 /// Backoff cap for a persistently-failing pump tick. Throttles the retry (and
@@ -161,6 +164,7 @@ impl BagEventPump {
             seen: HashSet::new(),
             detect_omission,
             consecutive_omission_ticks: 0,
+            checked_dwallet_package: None,
         }
     }
 
@@ -211,55 +215,68 @@ impl BagEventPump {
         }
     }
 
-    /// Compare the chain's dwallet package against the set this binary accepts
-    /// events from, and surface a drift.
+    /// Compare the chain's OWN record of which versions introduced its types
+    /// against the set this binary accepts events from.
     ///
-    /// A Sui upgrade's newly-defined types carry the UPGRADE address, so an
-    /// upgrade this binary has not been taught about makes those events fail
-    /// the address filter in `sui_event_into_session_request` — the node
-    /// silently loses those sessions. Checked here because this is the tick
-    /// that both reads the coordinator and feeds that filter.
-    fn note_package_drift(&self, coordinator: &DWalletCoordinator) {
-        let drift = detect_dwallet_package_drift(
-            &self.network_config,
-            coordinator.package_id,
-            coordinator.new_package_id,
-        );
-        let (executing, pending) = match drift {
-            PackageDrift::Known => (0, 0),
-            PackageDrift::Executing(id) => {
-                warn!(
-                    chain_package = ?id,
-                    accepted = ?accepted_dwallet_packages(&self.network_config),
-                    "the chain is EXECUTING a dwallet package this binary does not accept events \
-                     from — any event type first defined in that upgrade is being DROPPED. Ship a \
-                     release carrying this package id"
-                );
-                (1, 0)
-            }
-            PackageDrift::Pending(id) => {
-                warn!(
-                    staged_package = ?id,
-                    accepted = ?accepted_dwallet_packages(&self.network_config),
-                    "a dwallet package upgrade is STAGED that this binary does not accept events \
-                     from — nothing is dropped yet; ship its package id before the migration epoch"
-                );
-                (0, 1)
+    /// A Move type's address is fixed at the version that first defined it, so
+    /// the package's `TypeOrigin` table is the exact set of addresses its
+    /// events can carry. Any entry the binary does not accept is an address
+    /// whose events fail the filter in `sui_event_into_session_request` — those
+    /// sessions are silently lost. That is the #1908 failure shape (a fleet
+    /// deaf to events because a compiled-in package id did not match the
+    /// chain), reached by a different route.
+    ///
+    /// The package is immutable, so this is read once per observed package id.
+    /// Deliberately NOT fatal: refusing to boot the fleet would be worse than
+    /// the degradation, and a fetch failure must not stop event ingestion.
+    async fn note_package_coverage(&mut self, executing_package_id: ObjectID) {
+        if self.checked_dwallet_package == Some(executing_package_id) {
+            return;
+        }
+        let introducing = match self
+            .reader
+            .verified_package_type_origins(executing_package_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                // Leave `checked_dwallet_package` unset so a later tick retries.
+                debug!(error = ?e, package = ?executing_package_id,
+                       "could not read dwallet package type origins; will retry");
+                return;
             }
         };
+        let uncovered = uncovered_introducing_versions(&self.network_config, &introducing);
+        if uncovered.is_empty() {
+            info!(
+                package = ?executing_package_id,
+                introducing_versions = ?introducing,
+                "dwallet package type-origin coverage OK"
+            );
+        } else {
+            warn!(
+                package = ?executing_package_id,
+                ?uncovered,
+                accepted = ?accepted_dwallet_packages(&self.network_config),
+                "the chain defines dwallet types at package versions this binary does not accept \
+                 events from — every event type introduced at those versions is being DROPPED. \
+                 Ship a release carrying these package ids"
+            );
+        }
         self.metrics
-            .dwallet_package_drift
-            .with_label_values(&["executing"])
-            .set(executing);
-        self.metrics
-            .dwallet_package_drift
-            .with_label_values(&["pending"])
-            .set(pending);
+            .dwallet_uncovered_introducing_versions
+            .set(uncovered.len() as i64);
+        self.checked_dwallet_package = Some(executing_package_id);
     }
 
     async fn advance(&mut self) -> anyhow::Result<()> {
-        if let Some((coordinator, _)) = self.coordinator_rx.borrow().as_ref() {
-            self.note_package_drift(coordinator);
+        let executing_dwallet_package = self
+            .coordinator_rx
+            .borrow()
+            .as_ref()
+            .map(|(coordinator, _)| coordinator.package_id);
+        if let Some(pkg) = executing_dwallet_package {
+            self.note_package_coverage(pkg).await;
         }
         let (user_bag, user_size, sys_bag, sys_size, epoch) =
             match self.coordinator_rx.borrow().as_ref() {

@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use prometheus::{
-    Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry,
     register_histogram_vec_with_registry, register_histogram_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    register_int_gauge_with_registry,
 };
 
 #[derive(Clone, Debug)]
@@ -69,12 +69,12 @@ pub struct OcsMetrics {
     // BagEventPump — omission detection via verified parent state.
     pub bag_omission_suspected_total: IntCounterVec, // labels: ["bag"]
 
-    /// The chain's dwallet package is one this binary does not accept events
-    /// from. `state="executing"` means event types first defined in that
-    /// upgrade are being DROPPED right now; `state="pending"` means an upgrade
-    /// is staged and this is the lead time to ship its id. Non-zero on any
-    /// validator is a release-blocking signal — alert on it.
-    pub dwallet_package_drift: IntGaugeVec, // labels: ["state"]
+    /// How many package versions the chain INTRODUCED dwallet types at that
+    /// this binary does not accept events from (from the package's own
+    /// `TypeOrigin` table — a type's address is fixed at its introducing
+    /// version). Non-zero means every event type introduced at those versions
+    /// is being DROPPED. Alert on it.
+    pub dwallet_uncovered_introducing_versions: IntGauge,
 
     /// End-to-end verify latency on the consumer side (transport
     /// round-trip + proof verify). Captures what consumers actually
@@ -187,10 +187,9 @@ impl OcsMetrics {
                 registry,
             )
             .unwrap(),
-            dwallet_package_drift: register_int_gauge_vec_with_registry!(
-                "ika_dwallet_package_drift",
-                "1 while the chain's dwallet package is one this binary does not accept events from. state=\"executing\": event types first defined in that upgrade are being DROPPED now. state=\"pending\": an upgrade is staged, ship its package id before it migrates. Non-zero on any validator is release-blocking",
-                &["state"],
+            dwallet_uncovered_introducing_versions: register_int_gauge_with_registry!(
+                "ika_dwallet_uncovered_introducing_versions",
+                "Number of package versions the chain introduced dwallet types at (per its TypeOrigin table) that this binary does not accept events from; non-zero means event types introduced at those versions are being DROPPED, and a release must carry their package ids",
                 registry,
             )
             .unwrap(),
