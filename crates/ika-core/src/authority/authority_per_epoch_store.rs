@@ -1110,6 +1110,22 @@ pub struct AuthorityEpochTables {
     /// consensus-deterministic).
     end_of_publish_quorum_round: DBMap<u64, u64>,
 
+    /// Single-entry (key `0`) record of how many authorities were in the
+    /// in-memory `end_of_publish` aggregator at the commit that first
+    /// observed quorum — the input to the close's `all_voted` fast path.
+    ///
+    /// Persisted for the same reason as `end_of_publish_quorum_round`, and it
+    /// is NOT derivable from `end_of_publish` above. That table records every
+    /// vote, but the live aggregator stops accepting inserts the moment
+    /// quorum is reached, so its membership is a prefix of the CONSENSUS
+    /// ARRIVAL ORDER — which the table does not store (its value is `()`, and
+    /// iteration is by `AuthorityName`). Rebuilding the aggregator from the
+    /// table on restart therefore yields the FULL vote set, a larger count
+    /// than a never-restarted peer holds; without this record a restarted
+    /// validator could satisfy `all_voted`, skip the grace, and close the
+    /// epoch at a different round than the rest of the committee. See #1917.
+    end_of_publish_quorum_voted_count: DBMap<u64, u64>,
+
     /// Single-entry (key `0`) marker set when the deferred epoch-close
     /// message set was emitted. Written atomically with that commit's batch;
     /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
@@ -4464,7 +4480,30 @@ impl AuthorityPerEpochStore {
                         consensus_commit_info.round
                     }
                 };
-                let all_voted = voted_count >= self.committee().num_members();
+                // The `all_voted` input is pinned at the quorum-observing
+                // commit and read back from storage thereafter, so it cannot
+                // grow underneath a restart (#1917). Reading the LIVE
+                // aggregator here would make the close round depend on
+                // whether this validator happened to restart: the live count
+                // stops at the quorum-crossing membership, while the
+                // restart-hydrated one is the full vote set.
+                //
+                // Written in the same commit batch as the anchor above, so
+                // the two are always consistent. The `None` arm also covers
+                // an epoch that reached quorum under a binary predating this
+                // record: the in-memory count is then exactly what that
+                // binary itself used at this commit, so adopting it keeps
+                // close timing identical across the upgrade.
+                let quorum_voted_count =
+                    match self.tables()?.end_of_publish_quorum_voted_count.get(&0)? {
+                        Some(count) => count,
+                        None => {
+                            let count = voted_count as u64;
+                            output.set_end_of_publish_quorum_voted_count(count);
+                            count
+                        }
+                    };
+                let all_voted = quorum_voted_count >= self.committee().num_members() as u64;
                 // Consensus leader rounds advance in sequence but NOT by a
                 // fixed +1 per commit — rounds skip when a leader is not
                 // committed — so the grace is measured as the leader-round
@@ -5392,6 +5431,11 @@ pub(crate) struct ConsensusCommitOutput {
     /// commits atomically with the commit that observed it — an
     /// out-of-band write could desync from the commit on crash-replay.
     end_of_publish_quorum_round: Option<u64>,
+    /// Size of the in-memory EndOfPublish aggregator at that same
+    /// quorum-observing commit — the pinned `all_voted` input. Written in
+    /// this batch alongside the anchor above so the two can never disagree
+    /// (see the table's doc comment and #1917).
+    end_of_publish_quorum_voted_count: Option<u64>,
     /// Set when this commit emitted the deferred epoch-close message
     /// set. Persisted atomically with the commit so a restarted validator
     /// neither re-emits the close (marker present ⇒ `reconfig_state` is
@@ -5431,6 +5475,10 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_end_of_publish_quorum_round(&mut self, round: u64) {
         self.end_of_publish_quorum_round = Some(round);
+    }
+
+    pub(crate) fn set_end_of_publish_quorum_voted_count(&mut self, voted_count: u64) {
+        self.end_of_publish_quorum_voted_count = Some(voted_count);
     }
 
     pub(crate) fn set_epoch_close_emitted(&mut self) {
@@ -5605,6 +5653,12 @@ impl ConsensusCommitOutput {
 
         if let Some(round) = self.end_of_publish_quorum_round {
             batch.insert_batch(&tables.end_of_publish_quorum_round, [(0u64, round)])?;
+        }
+        if let Some(voted_count) = self.end_of_publish_quorum_voted_count {
+            batch.insert_batch(
+                &tables.end_of_publish_quorum_voted_count,
+                [(0u64, voted_count)],
+            )?;
         }
         if self.epoch_close_emitted {
             batch.insert_batch(&tables.epoch_close_emitted, [(0u64, ())])?;
@@ -5916,6 +5970,143 @@ mod tests {
                 .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
             "#1736: the close must emit the EndOfPublish close message once both \
              conditions hold"
+        );
+    }
+
+    /// #1917: a validator that RESTARTS after every EndOfPublish vote has landed
+    /// must still close at the same round as its never-restarted peers.
+    ///
+    /// The two views of the vote set disagree by construction. The live
+    /// aggregator stops accepting inserts at the quorum-crossing membership (3
+    /// of 4 here), while `record_end_of_publish_vote` persists ALL votes and
+    /// restart hydration rebuilds the aggregator from that full table (4 of 4).
+    /// Reading `all_voted` from the live aggregator therefore flips it from
+    /// false to true across a restart, making `eop_ready` true immediately and
+    /// closing the epoch before the grace elapses — while peers keep waiting.
+    ///
+    /// The fix pins the count at the quorum-observing commit and reads it back
+    /// from storage. This test DISCRIMINATES fix from base: on base, the
+    /// post-restart commit closes and both STEP 3 assertions fail.
+    ///
+    /// Committee size 4 is deliberate — it is the smallest size where the test
+    /// helper's quorum formula `(2n).div_ceil(3)` and the chain's
+    /// `2*(n/3)+1` agree (both 3), so the scenario matches production. At n = 3
+    /// they differ (2 vs 3) and quorum is unanimity on chain, where `all_voted`
+    /// is legitimately true and there is nothing to discriminate.
+    #[tokio::test]
+    async fn epoch_close_all_voted_survives_restart_after_all_votes_land() {
+        let (base_committee, names) = freeze_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(grace > 1, "test needs a non-trivial grace window");
+
+        // Handoff-cert quorum satisfied throughout, so the close hinges purely
+        // on EndOfPublish readiness — i.e. on `all_voted` vs the grace.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(3) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(epoch_store.handoff_signatures_meet_quorum().unwrap());
+
+        // STEP 1: reproduce the live path's two views. Every vote is persisted
+        // (what `record_end_of_publish_vote` does), but the in-memory
+        // aggregator stops at the quorum-crossing membership (what the
+        // pre-quorum guard in `process_end_of_publish_vote` enforces).
+        for name in names.iter() {
+            epoch_store.record_end_of_publish_vote(name).unwrap();
+        }
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(end_of_publish.has_quorum(), "quorum at 3 of 4");
+            assert_eq!(end_of_publish.keys().count(), 3, "live view is capped");
+        }
+
+        // STEP 2: the quorum-observing commit pins both the anchor and the
+        // count. Well inside the grace, so no close fires here.
+        let quorum_round = 100u64;
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        let mut output = ConsensusCommitOutput::new(quorum_round);
+        epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        let mut batch = epoch_store.db_batch().unwrap();
+        output.write_to_batch(&epoch_store, &mut batch).unwrap();
+        batch.write().unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "no close yet — the grace has not elapsed"
+        );
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .end_of_publish_quorum_voted_count
+                .get(&0u64)
+                .unwrap(),
+            Some(3),
+            "the capped count must be pinned at the quorum-observing commit"
+        );
+        drop(epoch_store);
+
+        // STEP 3: restart. Hydration rebuilds the aggregator from the full
+        // table, so the LIVE view now says 4 of 4 — the input that would make
+        // `all_voted` true and close the epoch early.
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+        assert_eq!(
+            epoch_store.end_of_publish.lock().keys().count(),
+            4,
+            "restart hydrates the FULL vote set — this is the hazard being guarded"
+        );
+
+        let mut output = ConsensusCommitOutput::new(quorum_round + 1);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round + 1, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "#1917: the restarted validator must NOT close early — `all_voted` \
+             must come from the pinned count (3), not the hydrated view (4)"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1917: no close message may be emitted one round past quorum"
         );
     }
 
