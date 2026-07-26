@@ -10,7 +10,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::{
     AGE_BUCKET_OVERFLOW, AGE_BUCKETS, ALL_SESSION_STATES, ALL_SESSION_TYPES, DWalletMPCMetrics,
     READY_RESULT_ERR, READY_RESULT_NOT_READY, READY_RESULT_READY, SESSION_STATE_ACTIVE,
     SESSION_STATE_COMPLETED, SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED,
-    SESSION_STATE_WAITING_FOR_REQUEST, session_type_label,
+    SESSION_STATE_WAITING_FOR_REQUEST, optional_session_type_label, session_type_label,
 };
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
@@ -18,8 +18,8 @@ use crate::dwallet_mpc::mpc_diagnostics::{
     mpc_error_diagnostic, network_key_reconfiguration_raw_output_digest,
 };
 use crate::dwallet_mpc::mpc_session::{
-    AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput, SessionComputationType,
-    SessionStatus, session_input_from_request,
+    AddMessageResult, AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput,
+    SessionComputationType, SessionStatus, TerminalStatus, session_input_from_request,
 };
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::network_dkg::{
@@ -89,6 +89,125 @@ use crate::request_protocol_data::NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME;
 /// Extend this only when a compatibility scenario actually scrapes another
 /// protocol's per-authority outputs.
 const OUTPUT_OBSERVATION_EXPORT_PROTOCOLS: &[&str] = &[NETWORK_KEY_RECONFIGURATION_PROTOCOL_NAME];
+
+const TERMINAL_MESSAGE_LOG_INTERVAL: Duration = Duration::from_secs(60);
+const COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD: u64 = 100;
+
+#[derive(Debug, Eq, PartialEq)]
+enum TerminalMessageLogAction {
+    None,
+    Warn { completed: u64, failed: u64 },
+    Recovered { completed: u64, failed: u64 },
+}
+
+/// Fixed-size aggregation for messages that arrive after a session becomes
+/// terminal. No identifier is retained: Prometheus carries the bounded
+/// status/type breakdown, while logs report only aggregate transitions.
+struct TerminalMessageLogState {
+    window_started: Instant,
+    last_event: Option<Instant>,
+    completed: u64,
+    failed: u64,
+    warning_active: bool,
+    last_warning: Option<Instant>,
+    last_failed_warning: Option<Instant>,
+    recovery_eligible: bool,
+    active_completed: u64,
+    active_failed: u64,
+}
+
+impl TerminalMessageLogState {
+    fn new(now: Instant) -> Self {
+        Self {
+            window_started: now,
+            last_event: None,
+            completed: 0,
+            failed: 0,
+            warning_active: false,
+            last_warning: None,
+            last_failed_warning: None,
+            recovery_eligible: false,
+            active_completed: 0,
+            active_failed: 0,
+        }
+    }
+
+    fn record(
+        &mut self,
+        now: Instant,
+        terminal_status: TerminalStatus,
+    ) -> TerminalMessageLogAction {
+        if now.duration_since(self.window_started) >= TERMINAL_MESSAGE_LOG_INTERVAL {
+            self.window_started = now;
+            self.completed = 0;
+            self.failed = 0;
+        }
+        self.last_event = Some(now);
+        match terminal_status {
+            TerminalStatus::Completed => self.completed += 1,
+            TerminalStatus::Failed => self.failed += 1,
+        }
+        self.active_completed += u64::from(terminal_status == TerminalStatus::Completed);
+        self.active_failed += u64::from(terminal_status == TerminalStatus::Failed);
+        self.recovery_eligible |= self.active_completed + self.active_failed > 1;
+
+        let interval_elapsed = self
+            .last_warning
+            .is_none_or(|last| now.duration_since(last) >= TERMINAL_MESSAGE_LOG_INTERVAL);
+        let failed_interval_elapsed = self
+            .last_failed_warning
+            .is_none_or(|last| now.duration_since(last) >= TERMINAL_MESSAGE_LOG_INTERVAL);
+        // A completed-volume warning must never delay the first failed-session
+        // warning, while repeated failed arrivals still share their own limit.
+        let warning_due = match terminal_status {
+            TerminalStatus::Completed => {
+                self.completed >= COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD && interval_elapsed
+            }
+            TerminalStatus::Failed => failed_interval_elapsed,
+        };
+        if warning_due {
+            self.warning_active = true;
+            self.last_warning = Some(now);
+            if terminal_status == TerminalStatus::Failed {
+                self.last_failed_warning = Some(now);
+            }
+            TerminalMessageLogAction::Warn {
+                completed: self.completed,
+                failed: self.failed,
+            }
+        } else {
+            TerminalMessageLogAction::None
+        }
+    }
+
+    fn check_recovery(&mut self, now: Instant) -> TerminalMessageLogAction {
+        let quiet = self
+            .last_event
+            .is_some_and(|last| now.duration_since(last) >= TERMINAL_MESSAGE_LOG_INTERVAL);
+        if !quiet {
+            return TerminalMessageLogAction::None;
+        }
+        let action = if self.warning_active && self.recovery_eligible {
+            TerminalMessageLogAction::Recovered {
+                completed: self.active_completed,
+                failed: self.active_failed,
+            }
+        } else {
+            TerminalMessageLogAction::None
+        };
+        self.warning_active = false;
+        self.last_warning = None;
+        self.last_failed_warning = None;
+        self.recovery_eligible = false;
+        self.active_completed = 0;
+        self.active_failed = 0;
+        self.completed = 0;
+        self.failed = 0;
+        self.window_started = now;
+        self.last_event = None;
+        action
+    }
+}
 
 /// Compute the agreed chain context for any `CounterpartyChain` implementation.
 /// Updates `current_context` in place if a new context is agreed upon.
@@ -378,6 +497,7 @@ pub(crate) struct DWalletMPCManager {
     /// errors/second; log once per session (the skip-and-retry behavior
     /// itself is unthrottled).
     warned_cryptographic_data_generation_failures: HashSet<SessionIdentifier>,
+    terminal_message_log_state: TerminalMessageLogState,
 
     /// Deduplicates anomalies that arrive before a session can be constructed
     /// (for example a malformed first output). Capped to avoid attacker-chosen
@@ -645,6 +765,7 @@ impl DWalletMPCManager {
             network_key_id_derivations_spawned: HashMap::new(),
             stranded_network_keys,
             warned_cryptographic_data_generation_failures: HashSet::new(),
+            terminal_message_log_state: TerminalMessageLogState::new(Instant::now()),
             untracked_anomalies: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: HashMap::new(),
@@ -1321,7 +1442,7 @@ impl DWalletMPCManager {
                 );
                 Ok(PriorCertKeysOutcome::Ingested)
             }
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 // Surface the deferral without log access (issue #1881): the
                 // gauge holds the missing-blob count until the peer-blob
                 // fetcher's prior-cert repair lands the blobs and assembly
@@ -2064,7 +2185,34 @@ impl DWalletMPCManager {
             }
         };
 
-        session.add_message(consensus_round, sender_party_id, message);
+        match session.add_message(consensus_round, sender_party_id, message) {
+            AddMessageResult::Stored | AddMessageResult::IgnoredNonMpcSession => {}
+            AddMessageResult::IgnoredTerminal {
+                terminal_status,
+                session_type,
+            } => {
+                let session_type = optional_session_type_label(session_type);
+                self.dwallet_mpc_metrics
+                    .messages_after_terminal_session_total
+                    .with_label_values(&[terminal_status.label(), session_type])
+                    .inc();
+                debug!(
+                    terminal_status = terminal_status.label(),
+                    session_type, "ignored MPC message received after the session became terminal"
+                );
+                if let TerminalMessageLogAction::Warn { completed, failed } = self
+                    .terminal_message_log_state
+                    .record(Instant::now(), terminal_status)
+                {
+                    warn!(
+                        completed,
+                        failed,
+                        interval_seconds = TERMINAL_MESSAGE_LOG_INTERVAL.as_secs(),
+                        "sustained MPC messages received after terminal sessions"
+                    );
+                }
+            }
+        }
     }
 
     /// Builds the MPC session input for a request from this manager's current
@@ -4379,6 +4527,17 @@ impl DWalletMPCManager {
         }
         self.last_observability_refresh = Some(now);
 
+        if let TerminalMessageLogAction::Recovered { completed, failed } =
+            self.terminal_message_log_state.check_recovery(now)
+        {
+            info!(
+                completed,
+                failed,
+                quiet_interval_seconds = TERMINAL_MESSAGE_LOG_INTERVAL.as_secs(),
+                "MPC messages-after-terminal burst recovered"
+            );
+        }
+
         let metrics = &self.dwallet_mpc_metrics;
 
         // ----- session-state counts + Active-session age buckets -----
@@ -4720,5 +4879,119 @@ fn session_state_label(status: &SessionStatus) -> &'static str {
         SessionStatus::ComputationCompleted => SESSION_STATE_COMPUTATION_COMPLETED,
         SessionStatus::Completed => SESSION_STATE_COMPLETED,
         SessionStatus::Failed => SESSION_STATE_FAILED,
+    }
+}
+
+#[cfg(test)]
+mod terminal_message_log_tests {
+    use super::*;
+
+    #[test]
+    fn completed_terminal_messages_warn_once_per_burst_and_recover_once() {
+        let start = Instant::now();
+        let mut state = TerminalMessageLogState::new(start);
+        for offset in 0..COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD - 1 {
+            assert_eq!(
+                state.record(
+                    start + Duration::from_millis(offset),
+                    TerminalStatus::Completed,
+                ),
+                TerminalMessageLogAction::None
+            );
+        }
+        assert_eq!(
+            state.record(start + Duration::from_secs(1), TerminalStatus::Completed,),
+            TerminalMessageLogAction::Warn {
+                completed: COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD,
+                failed: 0,
+            }
+        );
+        assert_eq!(
+            state.record(start + Duration::from_secs(2), TerminalStatus::Completed,),
+            TerminalMessageLogAction::None
+        );
+
+        assert_eq!(
+            state.check_recovery(start + TERMINAL_MESSAGE_LOG_INTERVAL),
+            TerminalMessageLogAction::None
+        );
+        assert_eq!(
+            state.check_recovery(start + Duration::from_secs(2) + TERMINAL_MESSAGE_LOG_INTERVAL),
+            TerminalMessageLogAction::Recovered {
+                completed: COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD + 1,
+                failed: 0,
+            }
+        );
+        assert_eq!(
+            state.check_recovery(start + Duration::from_secs(3) + TERMINAL_MESSAGE_LOG_INTERVAL),
+            TerminalMessageLogAction::None
+        );
+    }
+
+    #[test]
+    fn failed_terminal_message_is_distinct_and_isolated_recovery_is_silent() {
+        let start = Instant::now();
+        let mut state = TerminalMessageLogState::new(start);
+        assert_eq!(
+            state.record(start, TerminalStatus::Failed),
+            TerminalMessageLogAction::Warn {
+                completed: 0,
+                failed: 1,
+            }
+        );
+        assert_eq!(
+            state.check_recovery(start + TERMINAL_MESSAGE_LOG_INTERVAL),
+            TerminalMessageLogAction::None
+        );
+    }
+
+    #[test]
+    fn failed_terminal_message_warnings_are_limited_to_one_per_interval() {
+        let start = Instant::now();
+        let mut state = TerminalMessageLogState::new(start);
+        assert!(matches!(
+            state.record(start, TerminalStatus::Failed),
+            TerminalMessageLogAction::Warn { .. }
+        ));
+        assert_eq!(
+            state.record(start + Duration::from_secs(1), TerminalStatus::Failed),
+            TerminalMessageLogAction::None
+        );
+        assert!(matches!(
+            state.record(
+                start + TERMINAL_MESSAGE_LOG_INTERVAL,
+                TerminalStatus::Failed
+            ),
+            TerminalMessageLogAction::Warn { .. }
+        ));
+    }
+
+    #[test]
+    fn first_failed_message_bypasses_completed_warning_throttle() {
+        let start = Instant::now();
+        let mut state = TerminalMessageLogState::new(start);
+        for offset in 0..COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD {
+            let action = state.record(
+                start + Duration::from_millis(offset),
+                TerminalStatus::Completed,
+            );
+            if offset + 1 == COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD {
+                assert!(matches!(action, TerminalMessageLogAction::Warn { .. }));
+            } else {
+                assert_eq!(action, TerminalMessageLogAction::None);
+            }
+        }
+
+        assert_eq!(
+            state.record(start + Duration::from_secs(1), TerminalStatus::Failed),
+            TerminalMessageLogAction::Warn {
+                completed: COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD,
+                failed: 1,
+            }
+        );
+        assert_eq!(
+            state.record(start + Duration::from_secs(2), TerminalStatus::Failed),
+            TerminalMessageLogAction::None
+        );
     }
 }

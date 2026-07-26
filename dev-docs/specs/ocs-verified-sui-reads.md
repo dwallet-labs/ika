@@ -773,6 +773,17 @@ because the bytes came from a peer's disk rather than its fullnode.
   (`install_next_from_verified_summary`), not only on the unverified
   fallback.
 
+## Operational signals
+
+Every consumer-side verification failure increments
+`ika_ocs_proof_verify_failures_total{kind,reason}` with fixed call-kind and
+reason enums. A stale-but-valid object version additionally increments
+`ika_ocs_high_water_violations_total`. A successful proof-verified read on the
+peer-only relay path updates `ika_ocs_last_successful_relay_timestamp_seconds`;
+the gauge starts at zero on process start and cache/direct reads do not update
+it. These metrics contain no object id, checkpoint digest, peer identity, raw
+error, or proof material.
+
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 (verification, freshness/high-water, bag-membership binding),
 `committee_store.rs` (committee trust + ratchet install),

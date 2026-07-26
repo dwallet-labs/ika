@@ -27,6 +27,7 @@ use prometheus::{
     register_histogram_with_registry, register_int_counter_vec_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -220,6 +221,11 @@ pub struct DWalletMPCMetrics {
     /// strings), `session_type`.
     pub(crate) completion_races_total: IntCounterVec,
 
+    /// Consensus-delivered MPC messages ignored because the local session was
+    /// already terminal. Labels are bounded enums; session identifiers and
+    /// senders are deliberately excluded.
+    pub(crate) messages_after_terminal_session_total: IntCounterVec,
+
     /// Sessions created from peer artifacts arriving through consensus (a
     /// stray message/output before the request, or a completion replayed at
     /// restart) rather than from a locally processed session request. A
@@ -384,7 +390,7 @@ impl DWalletMPCMetrics {
             "signature_algorithm",
         ];
 
-        Arc::new(Self {
+        let metrics = Arc::new(Self {
             session_start_count: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_session_start_count",
                 "Number of MPC protocol sessions started",
@@ -610,6 +616,13 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
+            messages_after_terminal_session_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_messages_after_terminal_session_total",
+                "Consensus-delivered MPC messages ignored because the local session was already terminal",
+                &["terminal_status", "session_type"],
+                registry,
+            )
+            .unwrap(),
             sessions_reconstructed_total: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_sessions_reconstructed_total",
                 "Sessions created from peer artifacts arriving through consensus instead of a locally processed session request",
@@ -768,7 +781,19 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
-        })
+        });
+        for terminal_status in ["completed", "failed"] {
+            for session_type in ALL_SESSION_TYPES
+                .iter()
+                .copied()
+                .chain(iter::once(SESSION_TYPE_UNKNOWN))
+            {
+                metrics
+                    .messages_after_terminal_session_total
+                    .with_label_values(&[terminal_status, session_type]);
+            }
+        }
+        metrics
     }
 
     /// Clears every per-session-sequence-number series. Called at
@@ -1130,6 +1155,7 @@ pub(crate) const SESSION_TYPE_USER: &str = "user";
 pub(crate) const SESSION_TYPE_SYSTEM: &str = "system";
 pub(crate) const SESSION_TYPE_INTERNAL_PRESIGN: &str = "internal_presign";
 pub(crate) const SESSION_TYPE_NOA_SIGN: &str = "noa_sign";
+pub(crate) const SESSION_TYPE_UNKNOWN: &str = "unknown";
 pub(crate) const ALL_SESSION_TYPES: &[&str] = &[
     SESSION_TYPE_USER,
     SESSION_TYPE_SYSTEM,
@@ -1146,6 +1172,10 @@ pub(crate) fn session_type_label(session_type: SessionType) -> &'static str {
     }
 }
 
+pub(crate) fn optional_session_type_label(session_type: Option<SessionType>) -> &'static str {
+    session_type.map_or(SESSION_TYPE_UNKNOWN, session_type_label)
+}
+
 /// Calculating the variance using the Welford's method.
 /// Learn more in this [article](https://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/)
 fn update_variance(old_mean: f64, new_mean: f64, old_variance: f64, new_value: f64, n: i64) -> f64 {
@@ -1158,6 +1188,27 @@ fn update_variance(old_mean: f64, new_mean: f64, old_variance: f64, new_value: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_message_metric_has_only_bounded_labels() {
+        let registry = Registry::new();
+        let _metrics = DWalletMPCMetrics::new(&registry);
+        let family = registry
+            .gather()
+            .into_iter()
+            .find(|family| family.name() == "ika_dwallet_mpc_messages_after_terminal_session_total")
+            .unwrap();
+        assert_eq!(family.get_metric().len(), 2 * (ALL_SESSION_TYPES.len() + 1));
+        for metric in family.get_metric() {
+            let label_names: Vec<_> = metric
+                .get_label()
+                .iter()
+                .map(|label| label.name())
+                .collect();
+            assert_eq!(label_names, vec!["session_type", "terminal_status"]);
+        }
+    }
+
     #[test]
     fn test_update_variance() {
         // Case 1

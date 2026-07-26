@@ -55,6 +55,31 @@ pub(crate) enum AddOutputResult {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalStatus {
+    Completed,
+    Failed,
+}
+
+impl TerminalStatus {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AddMessageResult {
+    Stored,
+    IgnoredNonMpcSession,
+    IgnoredTerminal {
+        terminal_status: TerminalStatus,
+        session_type: Option<SessionType>,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct SessionOutputObservation {
     pub(crate) digests: HashSet<[u8; 32]>,
@@ -414,18 +439,23 @@ impl DWalletSession {
         consensus_round: u64,
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
-    ) {
+    ) -> AddMessageResult {
         let metric_data = match &self.status {
             SessionStatus::Active { request, .. } => Some(DWalletSessionRequestMetricData::from(
                 &request.protocol_data,
             )),
             SessionStatus::WaitingForSessionRequest | SessionStatus::ComputationCompleted => None,
-            SessionStatus::Completed | SessionStatus::Failed => {
-                warn!(
-                    session_identifier=?self.session_identifier,
-                    "tried to add a message to a non-active MPC session"
-                );
-                return;
+            SessionStatus::Completed => {
+                return AddMessageResult::IgnoredTerminal {
+                    terminal_status: TerminalStatus::Completed,
+                    session_type: self.session_type,
+                };
+            }
+            SessionStatus::Failed => {
+                return AddMessageResult::IgnoredTerminal {
+                    terminal_status: TerminalStatus::Failed,
+                    session_type: self.session_type,
+                };
             }
         };
 
@@ -473,7 +503,7 @@ impl DWalletSession {
                 "got a message for a non-MPC session, ignoring",
             );
 
-            return;
+            return AddMessageResult::IgnoredNonMpcSession;
         };
 
         let consensus_round_messages_map = messages_by_consensus_round
@@ -483,6 +513,7 @@ impl DWalletSession {
         if let Vacant(e) = consensus_round_messages_map.entry(sender_party_id) {
             e.insert(message.message);
         }
+        AddMessageResult::Stored
     }
 
     /// Add an output received from a party for the current consensus round.
@@ -1410,5 +1441,39 @@ impl DWalletMPCService {
             }
             Err(e) => Err(IkaError::ReceiverError(e.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ika_types::committee::Committee;
+
+    #[test]
+    fn message_for_non_mpc_session_is_reported_as_ignored() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(1);
+        let authority = *committee.names().next().unwrap();
+        let session_identifier = SessionIdentifier::new(SessionType::System, [1; 32]);
+        let mut session = DWalletSession::new(
+            authority,
+            SessionStatus::WaitingForSessionRequest,
+            session_identifier,
+            0,
+            None,
+            SessionComputationType::Native,
+        );
+
+        assert_eq!(
+            session.add_message(
+                1,
+                0,
+                DWalletMPCMessage {
+                    message: vec![1],
+                    authority,
+                    session_identifier,
+                },
+            ),
+            AddMessageResult::IgnoredNonMpcSession
+        );
     }
 }

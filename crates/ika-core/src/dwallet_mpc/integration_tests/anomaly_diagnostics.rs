@@ -6,14 +6,14 @@ use crate::dwallet_mpc::mpc_diagnostics::{
     SessionOrigin, output_digest, report_digest,
 };
 use crate::dwallet_mpc::mpc_manager::MAX_UNTRACKED_ANOMALIES;
-use crate::dwallet_mpc::mpc_session::DWalletMPCSessionOutput;
+use crate::dwallet_mpc::mpc_session::{DWalletMPCSessionOutput, SessionStatus};
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
 use ika_types::crypto::AuthorityName;
 use ika_types::message::{DWalletCheckpointMessageKind, SignOutput};
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCOutput, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, SessionIdentifier, SessionType,
+    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
+    DWalletMPCOutputKind, DWalletMPCOutputReport, SessionIdentifier, SessionType,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of;
@@ -123,6 +123,95 @@ fn normal_quorum_emits_no_anomaly_snapshot() {
             .with_label_values(&["quorum_anomaly", "system", "warn"])
             .get(),
         0
+    );
+}
+
+#[test]
+fn messages_after_terminal_sessions_are_counted_without_anomaly_snapshots() {
+    let (authorities, mut services) = authorities(0);
+    let completed_session = SessionIdentifier::new(SessionType::System, [31; 32]);
+    let reports = authorities
+        .iter()
+        .take(3)
+        .map(|authority| internal_report(*authority, completed_session, vec![1], vec![]))
+        .collect();
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(10, reports);
+    let completed = services[0]
+        .dwallet_mpc_manager_mut()
+        .sessions
+        .get_mut(&completed_session)
+        .unwrap();
+    completed.set_request_metadata(None, SessionType::System);
+    let completed_status = completed.status.clone();
+
+    services[0].dwallet_mpc_manager_mut().handle_message(
+        11,
+        DWalletMPCMessage {
+            message: vec![0xAA],
+            authority: authorities[1],
+            session_identifier: completed_session,
+        },
+    );
+
+    let failed_session = SessionIdentifier::new(SessionType::User, [32; 32]);
+    services[0].dwallet_mpc_manager_mut().new_session(
+        &failed_session,
+        SessionStatus::Failed,
+        None,
+        crate::dwallet_mpc::mpc_session::SessionComputationType::MPC {
+            messages_by_consensus_round: HashMap::new(),
+        },
+    );
+    services[0]
+        .dwallet_mpc_manager_mut()
+        .sessions
+        .get_mut(&failed_session)
+        .unwrap()
+        .set_request_metadata(None, SessionType::User);
+    services[0].dwallet_mpc_manager_mut().handle_message(
+        12,
+        DWalletMPCMessage {
+            message: vec![0xBB],
+            authority: authorities[1],
+            session_identifier: failed_session,
+        },
+    );
+
+    let manager = services[0].dwallet_mpc_manager();
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .messages_after_terminal_session_total
+            .with_label_values(&["completed", "system"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .messages_after_terminal_session_total
+            .with_label_values(&["failed", "user"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        manager.sessions.get(&completed_session).unwrap().status,
+        completed_status
+    );
+    assert_eq!(
+        manager.sessions.get(&failed_session).unwrap().status,
+        SessionStatus::Failed
+    );
+    assert_eq!(
+        manager
+            .dwallet_mpc_metrics
+            .anomaly_snapshots_total
+            .with_label_values(&["quorum_anomaly", "system", "warn"])
+            .get(),
+        0,
+        "expected terminal-message races stay outside anomaly snapshots"
     );
 }
 
