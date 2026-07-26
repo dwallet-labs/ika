@@ -326,8 +326,8 @@ impl SuiClientInner for GrpcSuiClient {
                 if info.next_epoch_mpc_data_bytes.is_some()
                     && info.previous_mpc_data_bytes.is_some()
                 {
-                    tracing::error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "grpc_validator_mpc_data_overlap",
                         validator_id=?validator.id,
                         "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
                     );

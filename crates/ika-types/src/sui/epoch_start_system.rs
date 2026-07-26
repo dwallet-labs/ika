@@ -285,8 +285,8 @@ fn build_ika_committee(
                 // then silently drops this member from every MPC public input
                 // seeded from it (the class-groups map must never be partial
                 // for a non-excluded member).
-                error!(
-                    should_never_happen = true,
+                crate::report_invariant_violation!(
+                    "persisted_epoch_start_mpc_data_missing",
                     authority = ?name,
                     "active committee member has no mpc_data record in the \
                      persisted EpochStartSystem; its class-groups key is \

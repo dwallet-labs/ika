@@ -2011,8 +2011,8 @@ impl AuthorityEpochTables {
         if presigns.is_empty() {
             // This shouldn't happen, but handle it gracefully: remove the
             // corrupted entry and decrement the size counter atomically.
-            error!(
-                should_never_happen = true,
+            ika_types::report_invariant_violation!(
+                "presign_pool_empty_entry",
                 ?signature_algorithm,
                 ?dwallet_network_encryption_key_id,
                 "prepare_pop_presign: found entry with empty presigns vec, removing"

@@ -612,8 +612,8 @@ impl DWalletMPCService {
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
             let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
             if self.submitted_noa_sign_messages.contains(&message_hash) {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "duplicate_noa_sign_request",
                     message_len = request.message.len(),
                     curve = ?request.curve,
                     algorithm = ?request.signature_algorithm,
@@ -667,9 +667,9 @@ impl DWalletMPCService {
                         // so the `contains` guard above suppresses re-logs) and
                         // announce anyway — the consensus-ordered drain is
                         // idempotent, so a redundant announcement is harmless.
-                        error!(
+                        ika_types::report_invariant_violation!(
+                            "noa_assigned_presign_read",
                             error=?e,
-                            should_never_happen = true,
                             "failed to read NOA assigned-presign state during announcement; announcing anyway"
                         );
                     }
@@ -1405,8 +1405,8 @@ impl DWalletMPCService {
             let consensus_round = mpc_messages_consensus_round;
 
             if self.last_read_consensus_round >= Some(consensus_round) {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "consensus_round_not_ascending",
                     consensus_round,
                     last_read_consensus_round=?self.last_read_consensus_round,
                     "consensus round must be in a ascending order"
@@ -1607,9 +1607,9 @@ impl DWalletMPCService {
                                 Err(e) => {
                                     // Serialization of a valid presign output should never fail.
                                     // If it does, the data is corrupted and retrying won't help.
-                                    error!(
+                                    ika_types::report_invariant_violation!(
+                                        "presign_output_serialize",
                                         error=?e,
-                                        should_never_happen = true,
                                         "failed to serialize presign output — data corruption"
                                     );
                                     panic!("failed to serialize presign output: {e:?}");
@@ -1621,9 +1621,9 @@ impl DWalletMPCService {
                             true
                         }
                         Err(e) => {
-                            error!(
+                            ika_types::report_invariant_violation!(
+                                "internal_presign_pool_pop",
                                 error=?e,
-                                should_never_happen = true,
                                 "failed to pop presign from internal pool"
                             );
                             // Keep in queue for retry (return true)
@@ -1700,9 +1700,9 @@ impl DWalletMPCService {
                         Ok(Some(_)) => false,
                         Ok(None) => true,
                         Err(e) => {
-                            error!(
+                            ika_types::report_invariant_violation!(
+                                "noa_presign_assignment",
                                 error=?e,
-                                should_never_happen = true,
                                 "failed to assign presign for NOA demand — keeping for retry"
                             );
                             true
@@ -1947,8 +1947,8 @@ impl DWalletMPCService {
             // sessions below the message threshold network-wide and wedging
             // the epoch close (locked-set sessions could never complete).
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "computation_session_missing",
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
@@ -2258,8 +2258,8 @@ impl DWalletMPCService {
                 }
                 Err(err) => match request.session_type {
                     SessionType::InternalPresign | SessionType::NetworkOwnedAddressSign => {
-                        error!(
-                            should_never_happen = true,
+                        ika_types::report_invariant_violation!(
+                            "internal_session_failed",
                             session_identifier=?session.session_identifier,
                             session_type=?request.session_type,
                             error=?err,
@@ -2467,8 +2467,8 @@ impl DWalletMPCService {
                     dwallet_network_encryption_key_id,
                 } => {
                     if session_request.session_sequence_number.is_none() {
-                        error!(
-                            should_never_happen = true,
+                        ika_types::report_invariant_violation!(
+                            "internal_presign_sequence_missing",
                             ?session_identifier,
                             "internal presign session missing session_sequence_number",
                         );
@@ -2489,8 +2489,8 @@ impl DWalletMPCService {
                     ))
                 }
                 _ => {
-                    error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "internal_presign_protocol_mismatch",
                         session_identifier=?session_identifier,
                         "mismatch between session type and protocol data during MPC output creation",
                     );
@@ -2515,8 +2515,8 @@ impl DWalletMPCService {
                     ))
                 }
                 _ => {
-                    error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "noa_sign_protocol_mismatch",
                         session_identifier=?session_identifier,
                         "mismatch between session type and protocol data during MPC output creation",
                     );
@@ -2640,9 +2640,9 @@ impl DWalletMPCService {
                         match bcs::from_bytes(&output) {
                             Ok(parsed) => parsed,
                             Err(e) => {
-                                error!(
+                                ika_types::report_invariant_violation!(
+                                    "dkg_and_sign_checkpoint_deserialize",
                                     error = ?e,
-                                    should_never_happen = true,
                                     "Failed to deserialize dwallet dkg + sign output"
                                 );
                                 return vec![];
@@ -2669,8 +2669,8 @@ impl DWalletMPCService {
                 vec![tx]
             }
             ProtocolData::InternalPresign { .. } => {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "internal_presign_checkpoint",
                     "received an internal presign session for checkpointing"
                 );
                 vec![]
@@ -2691,8 +2691,8 @@ impl DWalletMPCService {
                 vec![tx]
             }
             ProtocolData::NetworkOwnedAddressSign { .. } => {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "noa_sign_checkpoint",
                     "received an network-owned-address sign session for checkpointing"
                 );
                 vec![]

@@ -7,7 +7,7 @@ use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, CounterpartyChain, NOACheckpointKind, NOACheckpointMessage,
     NOACheckpointTxRef, NOACheckpointTxStatus,
 };
-use tracing::{error, warn};
+use tracing::warn;
 
 // === NOACheckpointLocalStore ===
 
@@ -187,10 +187,10 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             None | Some(NOACheckpointTxStatus::RetryPending)
                 | Some(NOACheckpointTxStatus::SubmitFailed)
         ) {
-            error!(
+            ika_types::report_invariant_violation!(
+                "noa_mark_submitted_transition",
                 current_status = ?tx_state.finalization_status,
                 ?tx_ref,
-                should_never_happen = true,
                 "mark_submitted: unexpected status transition",
             );
             panic!(
@@ -216,10 +216,10 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             tx_state.finalization_status,
             None | Some(NOACheckpointTxStatus::SubmitFailed)
         ) {
-            error!(
+            ika_types::report_invariant_violation!(
+                "noa_mark_submit_failed_transition",
                 current_status = ?tx_state.finalization_status,
                 ?tx_ref,
-                should_never_happen = true,
                 "mark_submit_failed: unexpected status transition",
             );
             panic!(
@@ -241,10 +241,10 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
                 state.finalization_status,
                 Some(NOACheckpointTxStatus::Pending)
             ) {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "noa_mark_confirmed_transition",
                     current_status = ?state.finalization_status,
                     ?tx_ref,
-                    should_never_happen = true,
                     "mark_confirmed_locally: unexpected status transition",
                 );
                 panic!(
@@ -272,10 +272,10 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
                     | Some(NOACheckpointTxStatus::RetryPending)
                     | Some(NOACheckpointTxStatus::SubmitFailed)
             ) {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "noa_mark_finalized_transition",
                     current_status = ?state.finalization_status,
                     ?tx_ref,
-                    should_never_happen = true,
                     "mark_finalized: unexpected status transition",
                 );
                 panic!(
@@ -364,10 +364,10 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             tx_state.finalization_status,
             Some(NOACheckpointTxStatus::Pending) | Some(NOACheckpointTxStatus::SubmitFailed)
         ) {
-            error!(
+            ika_types::report_invariant_violation!(
+                "noa_initiate_retry_transition",
                 current_status = ?tx_state.finalization_status,
                 ?tx_ref,
-                should_never_happen = true,
                 "initiate_tx_retry: unexpected status transition",
             );
             panic!(

@@ -548,8 +548,8 @@ where
                                 .sui_rpc_errors
                                 .with_label_values(&["epoch_start_missing_mpc_data"])
                                 .inc();
-                            error!(
-                                should_never_happen = true,
+                            ika_types::report_invariant_violation!(
+                                "epoch_start_mpc_data_missing",
                                 validator_id = ?validator.id,
                                 validator_name = %info.name,
                                 "active committee member has no decodable on-chain \
@@ -1310,8 +1310,8 @@ impl SuiClientInner for SuiSdkClient {
                 if info.next_epoch_mpc_data_bytes.is_some()
                     && info.previous_mpc_data_bytes.is_some()
                 {
-                    error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "jsonrpc_validator_mpc_data_overlap",
                         validator_id=?validator.id,
                         "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
                     );

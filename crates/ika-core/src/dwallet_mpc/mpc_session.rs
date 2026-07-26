@@ -1301,8 +1301,8 @@ impl DWalletMPCManager {
                 request.protocol_data.is_global_presign()
         {
             if request.session_sequence_number.is_none() {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "internal_presign_sequence_missing_on_insert",
                     session_identifier = ?request.session_identifier,
                     "internal presign session missing session_sequence_number",
                 );

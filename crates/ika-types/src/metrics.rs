@@ -1,6 +1,42 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use once_cell::sync::OnceCell;
+use prometheus::{IntCounterVec, Registry, register_int_counter_vec_with_registry};
+
+static INVARIANT_VIOLATIONS_TOTAL: OnceCell<IntCounterVec> = OnceCell::new();
+
+pub fn init_invariant_violation_metric(registry: &Registry) {
+    INVARIANT_VIOLATIONS_TOTAL.get_or_init(|| {
+        register_int_counter_vec_with_registry!(
+            "ika_invariant_violations_total",
+            "Invariant violations that should never happen, by bounded call-site identifier",
+            &["site"],
+            registry,
+        )
+        .expect("invariant violation metric registration must succeed")
+    });
+}
+
+#[doc(hidden)]
+pub fn record_invariant_violation(site: &'static str) {
+    if let Some(metric) = INVARIANT_VIOLATIONS_TOTAL.get() {
+        metric.with_label_values(&[site]).inc();
+    }
+}
+
+/// Records a broken invariant in both Prometheus and the structured logs.
+///
+/// The site must be a literal so the `site` label's cardinality is bounded by
+/// the number of call sites in the binary.
+#[macro_export]
+macro_rules! report_invariant_violation {
+    ($site:literal, $($field:tt)+) => {{
+        $crate::metrics::record_invariant_violation($site);
+        tracing::error!(should_never_happen = true, $($field)+);
+    }};
+}
+
 pub struct LimitsMetrics {}
 
 impl LimitsMetrics {
@@ -23,5 +59,38 @@ impl BytecodeVerifierMetrics {
     pub const TIMEOUT_TAG: &'static str = "failed";
     pub fn new(_registry: &prometheus::Registry) -> Self {
         Self {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use prometheus::Registry;
+
+    use super::init_invariant_violation_metric;
+
+    #[test]
+    fn invariant_violation_macro_increments_only_for_marked_events() {
+        let registry = Registry::new();
+        init_invariant_violation_metric(&registry);
+        assert!(
+            registry
+                .gather()
+                .iter()
+                .all(|family| family.name() != "ika_invariant_violations_total"),
+            "counter vector must not export a series before a site fires"
+        );
+
+        crate::report_invariant_violation!("metrics_test", "marked event");
+        tracing::error!("ordinary error");
+
+        let metric_family = registry
+            .gather()
+            .into_iter()
+            .find(|family| family.name() == "ika_invariant_violations_total")
+            .expect("invariant violation metric must be exported");
+        let metric = metric_family.get_metric();
+        assert_eq!(metric.len(), 1);
+        assert_eq!(metric[0].get_counter().value(), 1.0);
+        assert_eq!(metric[0].get_label()[0].value(), "metrics_test");
     }
 }

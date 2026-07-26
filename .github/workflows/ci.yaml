@@ -96,6 +96,10 @@ jobs:
         # commit-batched or written directly (and why that is safe).
         # See dev-docs/conventions/epoch-table-write-discipline.md.
         run: ./scripts/check-epoch-table-write-discipline.sh
+      - name: Invariant violation metric coverage
+        # Every should-never-happen log must increment the fleet-visible
+        # invariant violation counter through the shared macro.
+        run: ./scripts/check-invariant-violation-markers.sh
       - name: Sui version consistency
         # The Sui pin lives in several places that don't update together;
         # see dev-docs/conventions/sui-version-bump.md.
