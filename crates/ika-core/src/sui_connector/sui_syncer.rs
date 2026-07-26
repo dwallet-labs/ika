@@ -13,7 +13,7 @@ use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, NetworkPublicKey};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
@@ -402,6 +402,10 @@ where
         // the keys are deterministic and the current committee is fixed within
         // an epoch, so one successful send per epoch is enough.
         let mut current_keys_sent_for_epoch: Option<EpochId> = None;
+        // `validator_id -> consensus pubkey`, populated on first sight and
+        // never invalidated (registration-fixed values). Keeps the
+        // consensus-basis re-keying below off the per-tick chain path.
+        let mut consensus_key_cache: HashMap<ObjectID, NetworkPublicKey> = HashMap::new();
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -459,6 +463,7 @@ where
                     &sui_client,
                     system_inner.read_bls_committee(&system_inner.get_ika_active_committee()),
                     consensus_key_identity,
+                    &mut consensus_key_cache,
                 )
                 .await
                 {
@@ -500,6 +505,7 @@ where
                 &sui_client,
                 system_inner.read_bls_committee(&new_next_bls_committee),
                 consensus_key_identity,
+                &mut consensus_key_cache,
             )
             .await
             {
@@ -647,37 +653,55 @@ where
     /// `read_bls_committee` mints them) to consensus-basis names when the
     /// identity basis is the consensus key. The consensus keys are not in
     /// the on-chain `BlsCommittee` (it carries `validator_id` + BLS
-    /// `protocol_pubkey` only), so each member's validator record is
+    /// `protocol_pubkey` only), so a member's validator record must be
     /// fetched by id. No-op — no fetch — under the BLS basis.
+    ///
+    /// A validator's consensus public key is fixed at registration, so a
+    /// cached value never goes stale and only ids never seen before are
+    /// fetched. That matters beyond latency: this runs on every sync tick,
+    /// and its caller skips the tick (and with it the next-committee send)
+    /// when it returns `Err`. A per-tick chain fetch in exactly this spot
+    /// wedged reconfiguration once before — `get_validators_info_by_ids`
+    /// fails transiently while validators restart during a rollout, which
+    /// is precisely when the committee must still be assembled (see
+    /// `dev-docs/plans/authority-name-consensus-key.md`). With the cache,
+    /// steady-state ticks perform no chain read at all, so a committee
+    /// whose members are already known can never be starved by RPC flake.
     async fn committee_names_for_basis(
         sui_client: &Arc<SuiClient<C>>,
         members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
         consensus_key_identity: bool,
+        consensus_key_cache: &mut HashMap<ObjectID, NetworkPublicKey>,
     ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
         if !consensus_key_identity {
             return Ok(members);
         }
-        let validator_ids: Vec<ObjectID> = members.iter().map(|(id, _)| *id).collect();
-        let validators = sui_client.get_validators_info_by_ids(validator_ids).await?;
+        let unknown_ids: Vec<ObjectID> = members
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| !consensus_key_cache.contains_key(id))
+            .collect();
+        let validators = if unknown_ids.is_empty() {
+            Vec::new()
+        } else {
+            sui_client.get_validators_info_by_ids(unknown_ids).await?
+        };
+        for validator in &validators {
+            let info = validator.verified_validator_info();
+            consensus_key_cache.insert(validator.id, info.consensus_pubkey.clone());
+        }
         members
             .into_iter()
             .map(|(validator_id, (_, stake))| {
-                let validator = validators
-                    .iter()
-                    .find(|v| v.id == validator_id)
-                    .ok_or_else(|| {
-                        IkaError::InvalidCommittee(format!(
-                            "validator {validator_id} missing from the fetched validator \
+                let consensus_pubkey = consensus_key_cache.get(&validator_id).ok_or_else(|| {
+                    IkaError::InvalidCommittee(format!(
+                        "validator {validator_id} missing from the fetched validator \
                              records while re-keying to consensus-basis names"
-                        ))
-                    })?;
-                let info = validator.verified_validator_info();
+                    ))
+                })?;
                 Ok((
                     validator_id,
-                    (
-                        AuthorityName::from_consensus_key(&info.consensus_pubkey),
-                        stake,
-                    ),
+                    (AuthorityName::from_consensus_key(consensus_pubkey), stake),
                 ))
             })
             .collect()
