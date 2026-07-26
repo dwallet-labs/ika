@@ -1,15 +1,16 @@
 # Committee consensus keys
 
-Status: active (protocol v4+). Landed 2026-07-01, PR #1762. The design
-record — including the identity-flip approach that was rejected and why —
-is [`../plans/authority-name-consensus-key.md`](../plans/authority-name-consensus-key.md).
+Status: active (protocol v4+; identity basis flips at v6 — see below).
+Landed 2026-07-01, PR #1762. The design record — including the first,
+reverted identity-flip attempt and why it failed — is
+[`../plans/authority-name-consensus-key.md`](../plans/authority-name-consensus-key.md).
 
 A validator has **two** long-lived public keys with different jobs:
 
 | Key | Type | Role |
 |---|---|---|
-| BLS (`AuthorityPublicKey`) | aggregatable | the validator's **identity**; `AuthorityName` is its byte encoding, and aggregate stake certificates verify against it |
-| consensus (`NetworkPublicKey`, Ed25519) | not aggregatable | signs **individually-signed** messages — handoff attestation signatures today, more certificate kinds later |
+| BLS (`AuthorityPublicKey`) | aggregatable | aggregate stake certificates (BLS checkpoints) verify against it; below protocol v6 it is ALSO the validator's identity (`AuthorityName` is its byte encoding) |
+| consensus (`NetworkPublicKey`, Ed25519) | not aggregatable | signs **individually-signed** messages (handoff attestation signatures today); from protocol v6 it is ALSO the validator's identity — `AuthorityName` is the 32 key bytes zero-padded to the 48-byte container |
 
 A signer identifies itself by `AuthorityName` (BLS-derived), but an
 Ed25519 signature must verify against the consensus key. **The BLS name
@@ -20,7 +21,28 @@ missing.
 
 ## The decision rule
 
-**`Committee` carries the mapping; `AuthorityName` stays the BLS key.**
+**`Committee` carries the mapping.** Below protocol v6 `AuthorityName` is
+the BLS key; from v6 (`consensus_key_authority_names`) it is the
+zero-padded consensus key, and the BLS keys are then carried explicitly
+too (`Committee::new_with_protocol_keys` — a consensus-basis name cannot
+be decoded into a BLS key, and BLS aggregate-certificate verification
+still needs it; `Committee::load_inner`'s name-decode is lossy, failing
+closed at `public_key()` instead of panicking).
+
+**Identity-basis rule (v6 flip).** The basis of a committee's names is
+decided by the protocol version its builder evaluates
+(`consensus_key_identity_for_version`). KNOWN BOUNDARY LIMITATION,
+accepted by decision: the next-epoch committee is assembled mid-epoch
+under the CURRENT epoch's version, while the next epoch rebuilds it
+under its OWN — at the single activation boundary the two disagree
+(this asymmetry is what wedged the first flip attempt). Mitigations in
+place: the joiner watcher matches next-committee membership under either
+basis; `EpochStartSystem::V2` records the basis per epoch so restarts
+within an epoch are stable; prior-committee handoff verification keys
+snapshot names under the current version's basis (mis-based only in the
+activation epoch itself). The gradual-upgrade cluster suite is the
+gate for activating v6 on a live network; genesis-at-v6 networks have
+no boundary.
 
 ```rust
 // ika-types/src/committee.rs

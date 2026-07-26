@@ -52,29 +52,6 @@ pub fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<Objec
         .map_err(|e| format!("derive child id: {e}"))
 }
 
-/// The `SystemInner.extra_fields` Bag key of the authority-name flip epoch.
-/// No deployed contract writes this entry yet — a FUTURE `ika_system`
-/// upgrade will record it (its Move-side constant must match this byte
-/// string); until then the read always resolves to "unset" and every
-/// identity-basis decision stays BLS. Committees OF epochs `>=` the stored
-/// `u64` derive their members' `AuthorityName` from the consensus key.
-pub const AUTHORITY_NAME_FLIP_EPOCH_KEY: &[u8] = b"authority_name_flip_epoch";
-
-/// Deterministically-derived `Field<vector<u8>, u64>` child id of the
-/// authority-name flip-epoch marker under the `extra_fields` bag.
-pub fn authority_name_flip_epoch_field_id(
-    extra_fields_bag_id: ObjectID,
-) -> Result<ObjectID, String> {
-    let name_bytes = bcs::to_bytes(&AUTHORITY_NAME_FLIP_EPOCH_KEY.to_vec())
-        .map_err(|e| format!("encode vector<u8> name: {e}"))?;
-    sui_types::dynamic_field::derive_dynamic_field_id(
-        extra_fields_bag_id,
-        &sui_types::TypeTag::Vector(Box::new(sui_types::TypeTag::U8)),
-        &name_bytes,
-    )
-    .map_err(|e| format!("derive child id: {e}"))
-}
-
 /// Deterministically-derived `Field` wrapper id for a dynamic *object* field
 /// `(parent, name)`, given the stringified `TypeTag` of the unwrapped key and
 /// its BCS-encoded value. Returns `None` if the key type doesn't parse.

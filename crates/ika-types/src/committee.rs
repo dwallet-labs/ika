@@ -89,8 +89,8 @@ pub struct Committee {
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     /// `AuthorityName -> BLS protocol pubkey`, for BLS aggregate-certificate
-    /// verification. For BLS-basis names (committees of epochs before the
-    /// on-chain authority-name flip epoch) the name IS the BLS key, so this
+    /// verification. For BLS-basis names (committees of epochs below
+    /// protocol version 6) the name IS the BLS key, so this
     /// is decoded from it (a cache). For consensus-basis names the BLS key
     /// cannot be recovered from the name — such committees must be built
     /// with [`Committee::new_with_protocol_keys`], which carries the map
@@ -215,9 +215,9 @@ impl Committee {
     /// Like [`Committee::new`], but with the `AuthorityName -> BLS protocol
     /// pubkey` map supplied by the caller (from the on-chain read) instead of
     /// decoded from the names. Required for committees whose names are
-    /// consensus-basis (epochs at or after the on-chain authority-name flip
-    /// epoch): a consensus-basis name does not contain the BLS key, and BLS
-    /// aggregate-certificate verification still needs it.
+    /// consensus-basis (`consensus_key_authority_names`, on from protocol
+    /// version 6): a consensus-basis name does not contain the BLS key, and
+    /// BLS aggregate-certificate verification still needs it.
     pub fn new_with_protocol_keys(
         epoch: EpochId,
         voting_rights: Vec<(AuthorityName, StakeUnit)>,

@@ -705,9 +705,8 @@ impl IkaNode {
 
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
 
-        // The node's committee identity for THIS epoch — basis decided by the
-        // epoch's own record (the on-chain flip marker), never the protocol
-        // version.
+        // The node's committee identity for THIS epoch — basis recorded on
+        // the epoch's own EpochStartSystem record at build time.
         let consensus_key_identity = epoch_start_configuration
             .epoch_start_state()
             .consensus_key_identity();

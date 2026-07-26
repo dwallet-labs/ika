@@ -1001,35 +1001,6 @@ pub struct OffChainCommitteeBundles {
     >,
 }
 
-impl OffChainCommitteeBundles {
-    /// Re-key every per-authority map through `translation`
-    /// (announcement-basis name → committee-basis name); names absent from
-    /// the map are kept as-is. Needed only for the authority-name flip
-    /// boundary epoch, where announcements are keyed under the CURRENT
-    /// epoch's identity basis while the assembled committee (and every
-    /// consumer of these bundles — `Committee` maps, handoff items) uses
-    /// the NEXT epoch's.
-    pub fn rekey_names(
-        &mut self,
-        translation: &std::collections::HashMap<AuthorityName, AuthorityName>,
-    ) {
-        fn rekey<V>(
-            map: &mut std::collections::HashMap<AuthorityName, V>,
-            translation: &std::collections::HashMap<AuthorityName, AuthorityName>,
-        ) {
-            *map = std::mem::take(map)
-                .into_iter()
-                .map(|(name, value)| (*translation.get(&name).unwrap_or(&name), value))
-                .collect();
-        }
-        rekey(&mut self.class_groups, translation);
-        rekey(&mut self.secp256k1_pvss, translation);
-        rekey(&mut self.secp256r1_pvss, translation);
-        rekey(&mut self.ristretto_pvss, translation);
-        rekey(&mut self.vss_hpke, translation);
-    }
-}
-
 /// Outcome of trying to assemble the committee's class-groups
 /// public-keys map from off-chain announcements + the local blob
 /// store. `Complete` means every supplied authority resolved

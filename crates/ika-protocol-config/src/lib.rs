@@ -33,16 +33,12 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6: consensus-key authority names. No Rust-side config change: the
-//            behavior arms ON CHAIN — a FUTURE ika_system upgrade records
-//            the authority-name flip epoch in `extra_fields` once the version
-//            reaches 6 (no deployed contract writes it yet, so the marker
-//            never exists and every identity-basis decision stays BLS until
-//            that upgrade ships), and name derivation keys on that marker
-//            (NEVER on the protocol version; a version comparison diverges at
-//            the epoch boundary — see dev-docs/specs/committee-consensus-keys.md).
-//            The version bump is the coordination point: quorum must run
-//            marker-aware binaries before the network can vote to 6.
+// Version 6: consensus_key_authority_names on — `AuthorityName` (validator
+//            identity) becomes the Ed25519 consensus key, zero-padded to the
+//            48-byte container so the wire encoding is unchanged. The BLS
+//            protocol key stays on chain and carried on `Committee` for BLS
+//            aggregate-certificate (checkpoint) verification. See the flag
+//            definition for the activation-boundary caveat.
 // Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -211,6 +207,21 @@ struct FeatureFlags {
     // output and no DKG session runs during a rollout window.
     #[serde(skip_serializing_if = "is_false")]
     aggregated_network_key_public_outputs: bool,
+
+    // When on, a validator's `AuthorityName` (its canonical committee
+    // identity) is its Ed25519 consensus key (zero-padded to the 48-byte
+    // container) instead of its BLS protocol key. The BLS key remains on
+    // chain and carried on `Committee` for BLS aggregate-certificate
+    // (checkpoint) verification. KNOWN BOUNDARY LIMITATION: the next-epoch
+    // committee is assembled mid-epoch under the CURRENT epoch's version
+    // while the next epoch consumes it under its OWN — at the single
+    // activation boundary the two disagree (this asymmetry is what wedged
+    // and reverted the first flip attempt; see
+    // dev-docs/plans/authority-name-consensus-key.md). Validated by the
+    // gradual-upgrade cluster suite; genesis-at-v6 networks have no
+    // boundary and are unaffected.
+    #[serde(skip_serializing_if = "is_false")]
+    consensus_key_authority_names: bool,
 }
 
 #[allow(unused)]
@@ -481,6 +492,13 @@ impl ProtocolConfig {
     /// boundary.
     pub fn aggregated_network_key_public_outputs(&self) -> bool {
         self.feature_flags.aggregated_network_key_public_outputs
+    }
+
+    /// Whether `AuthorityName` is the Ed25519 consensus key (zero-padded)
+    /// instead of the BLS protocol key. See the flag definition for the
+    /// activation-boundary caveat.
+    pub fn consensus_key_authority_names(&self) -> bool {
+        self.feature_flags.consensus_key_authority_names
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -812,13 +830,7 @@ impl ProtocolConfig {
                     cfg.feature_flags.aggregated_network_key_public_outputs = true;
                 }
                 6 => {
-                    // Consensus-key authority names. Deliberately NO config
-                    // change: a future ika_system upgrade arms the flip
-                    // marker on chain at version >= 6, and derivation reads
-                    // the marker (until then it never exists). Keying
-                    // any Rust derivation on this version instead would
-                    // re-create the boundary divergence that sank the first
-                    // (version-gated) attempt.
+                    cfg.feature_flags.consensus_key_authority_names = true;
                 }
                 // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;

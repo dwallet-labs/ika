@@ -13,11 +13,24 @@ use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
 use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-use ika_protocol_config::ProtocolVersion;
+use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::multiaddr::Multiaddr;
 use tracing::{error, warn};
+
+/// Whether committees of an epoch running `protocol_version` use
+/// consensus-basis authority names (`consensus_key_authority_names`, on from
+/// protocol version 6). The flag has no chain-specific override, so
+/// `Chain::Unknown` resolves it identically on every network; versions this
+/// binary no longer supports predate the flag and resolve to `false`.
+pub fn consensus_key_identity_for_version(protocol_version: u64) -> bool {
+    ProtocolConfig::get_for_version_if_supported(
+        ProtocolVersion::new(protocol_version),
+        Chain::Unknown,
+    )
+    .is_some_and(|config| config.consensus_key_authority_names())
+}
 
 #[enum_dispatch]
 pub trait EpochStartSystemTrait {
@@ -32,11 +45,9 @@ pub trait EpochStartSystemTrait {
     fn get_authority_names_to_peer_ids(&self) -> HashMap<AuthorityName, PeerId>;
     fn get_authority_names_to_hostnames(&self) -> HashMap<AuthorityName, String>;
     fn get_ika_validators(&self) -> Vec<EpochStartValidatorInfo>;
-    /// The on-chain authority-name flip epoch this record was built with
-    /// (`None` for V1 records and unarmed networks). Committees OF epochs
-    /// `>=` this value use consensus-basis authority names.
-    fn authority_name_flip_epoch(&self) -> Option<EpochId>;
-    /// Whether THIS epoch's committee uses consensus-basis authority names.
+    /// Whether THIS epoch's committee uses consensus-basis authority names
+    /// (`consensus_key_authority_names`, on from protocol version 6; always
+    /// false for V1 records, which predate the flip).
     fn consensus_key_identity(&self) -> bool;
 }
 
@@ -75,9 +86,9 @@ impl EpochStartSystem {
         })
     }
 
-    /// V2 additionally carries the on-chain authority-name flip epoch, from
-    /// which the epoch's identity basis is decided (see
-    /// [`EpochStartSystemV2::consensus_key_identity`]).
+    /// V2 additionally records whether this epoch's committee uses
+    /// consensus-basis authority names (decided by the epoch's protocol
+    /// config at build time).
     #[allow(clippy::too_many_arguments)]
     pub fn new_v2(
         epoch: EpochId,
@@ -87,7 +98,7 @@ impl EpochStartSystem {
         active_validators: Vec<EpochStartValidatorInfoV1>,
         quorum_threshold: u64,
         validity_threshold: u64,
-        authority_name_flip_epoch: Option<EpochId>,
+        consensus_key_identity: bool,
     ) -> Self {
         Self::V2(EpochStartSystemV2 {
             epoch,
@@ -97,7 +108,7 @@ impl EpochStartSystem {
             active_validators,
             quorum_threshold,
             validity_threshold,
-            authority_name_flip_epoch,
+            consensus_key_identity,
         })
     }
 
@@ -125,7 +136,7 @@ impl EpochStartSystem {
                 active_validators: state.active_validators.clone(),
                 quorum_threshold: 0,
                 validity_threshold: 0,
-                authority_name_flip_epoch: state.authority_name_flip_epoch,
+                consensus_key_identity: state.consensus_key_identity,
             }),
         }
     }
@@ -142,7 +153,7 @@ pub struct EpochStartSystemV1 {
     validity_threshold: u64,
 }
 
-/// V1 plus the on-chain authority-name flip epoch. Persisted V1 records
+/// V1 plus the epoch's authority-name identity basis. Persisted V1 records
 /// (written by pre-flip binaries) always describe pre-flip epochs, so V1's
 /// trait impl keeps the BLS identity basis unconditionally.
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -154,22 +165,11 @@ pub struct EpochStartSystemV2 {
     active_validators: Vec<EpochStartValidatorInfoV1>,
     quorum_threshold: u64,
     validity_threshold: u64,
-    /// The on-chain marker (`ika_system::system_inner`, `extra_fields`):
-    /// committees OF epochs `>=` this value derive members' `AuthorityName`
-    /// from the consensus key. `None` while the network has not reached the
-    /// arming protocol version.
-    authority_name_flip_epoch: Option<EpochId>,
-}
-
-impl EpochStartSystemV2 {
-    /// Whether THIS epoch's committee uses consensus-basis authority names.
-    /// Decided solely by the persisted on-chain marker — never by the
-    /// protocol version, which the producing and consuming sides of an
-    /// epoch boundary can see differently.
-    fn consensus_key_identity(&self) -> bool {
-        self.authority_name_flip_epoch
-            .is_some_and(|flip_epoch| self.epoch >= flip_epoch)
-    }
+    /// Whether this epoch's committee derives members' `AuthorityName`
+    /// from the consensus key — decided at record build time from the
+    /// epoch's protocol config (`consensus_key_authority_names`, on from
+    /// protocol version 6).
+    consensus_key_identity: bool,
 }
 
 impl EpochStartSystemV1 {
@@ -192,8 +192,8 @@ impl EpochStartSystemV1 {
 
 /// A validator's `AuthorityName` under the given identity basis: the
 /// zero-padded consensus Ed25519 key when `consensus_key_identity`, the BLS
-/// protocol key otherwise. The basis is decided per epoch from the on-chain
-/// flip marker (see [`EpochStartSystemV2::consensus_key_identity`]).
+/// protocol key otherwise. The basis is decided per epoch from its protocol
+/// config (`consensus_key_authority_names`, on from protocol version 6).
 pub fn validator_authority_name(
     validator: &EpochStartValidatorInfoV1,
     consensus_key_identity: bool,
@@ -520,13 +520,9 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .collect()
     }
 
-    fn authority_name_flip_epoch(&self) -> Option<EpochId> {
+    fn consensus_key_identity(&self) -> bool {
         // V1 records were written by binaries that predate the flip; they
         // always describe pre-flip epochs.
-        None
-    }
-
-    fn consensus_key_identity(&self) -> bool {
         false
     }
 }
@@ -599,12 +595,8 @@ impl EpochStartSystemTrait for EpochStartSystemV2 {
             .collect()
     }
 
-    fn authority_name_flip_epoch(&self) -> Option<EpochId> {
-        self.authority_name_flip_epoch
-    }
-
     fn consensus_key_identity(&self) -> bool {
-        EpochStartSystemV2::consensus_key_identity(self)
+        self.consensus_key_identity
     }
 }
 
@@ -663,18 +655,15 @@ impl EpochStartValidatorInfoTrait for EpochStartValidatorInfoV1 {
 mod tests {
     use super::*;
 
-    fn v2_with(epoch: EpochId, flip_epoch: Option<EpochId>) -> EpochStartSystem {
-        EpochStartSystem::new_v2(epoch, 6, 0, 1000, vec![], 0, 0, flip_epoch)
+    fn v2_with(epoch: EpochId, consensus_key_identity: bool) -> EpochStartSystem {
+        EpochStartSystem::new_v2(epoch, 6, 0, 1000, vec![], 0, 0, consensus_key_identity)
     }
 
-    /// The basis rule: consensus-key identity iff the marker is set and the
-    /// record's epoch has reached it — never a protocol-version comparison.
+    /// The recorded basis is carried verbatim by the V2 record.
     #[test]
-    fn consensus_key_identity_follows_the_marker() {
-        assert!(!v2_with(10, None).consensus_key_identity());
-        assert!(!v2_with(4, Some(5)).consensus_key_identity());
-        assert!(v2_with(5, Some(5)).consensus_key_identity());
-        assert!(v2_with(9, Some(5)).consensus_key_identity());
+    fn v2_records_carry_the_identity_basis() {
+        assert!(!v2_with(10, false).consensus_key_identity());
+        assert!(v2_with(10, true).consensus_key_identity());
     }
 
     /// V1 records were written by pre-flip binaries and always describe
@@ -683,7 +672,6 @@ mod tests {
     fn v1_records_are_always_bls_basis() {
         let v1 = EpochStartSystem::new_for_testing_with_epoch(42);
         assert!(!v1.consensus_key_identity());
-        assert_eq!(v1.authority_name_flip_epoch(), None);
     }
 
     /// A V1 record's BCS bytes must keep decoding after the V2 variant was
@@ -699,7 +687,7 @@ mod tests {
 
     #[test]
     fn v2_bcs_round_trip() {
-        let v2 = v2_with(9, Some(5));
+        let v2 = v2_with(9, true);
         let bytes = bcs::to_bytes(&v2).unwrap();
         let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
         assert_eq!(decoded, v2);

@@ -277,54 +277,6 @@ impl SuiClientInner for GrpcSuiClient {
         move_object_contents(&object, entry.object_id)
     }
 
-    async fn get_authority_name_flip_epoch(
-        &self,
-        extra_fields_bag_id: ObjectID,
-    ) -> Result<Option<u64>, Self::Error> {
-        // Absence must be `Ok(None)` (the normal pre-arming state), and a
-        // plain `get_object` miss is not reliably distinguishable from a
-        // transient fault across transports — so LIST the bag (listing an
-        // existing bag always succeeds) and treat "our derived child id not
-        // in the listing" as unset.
-        let field_id = crate::transport::authority_name_flip_epoch_field_id(extra_fields_bag_id)
-            .map_err(GrpcSuiClientError::decode)?;
-        let mut page_token = None;
-        let entry = loop {
-            let page = self
-                .transport
-                .list_dynamic_fields(extra_fields_bag_id, None, page_token)
-                .await?;
-            if let Some(entry) = page.entries.iter().find(|e| e.object_id == field_id) {
-                break entry.clone();
-            }
-            match page.next_page_token {
-                Some(token) => page_token = Some(token),
-                None => return Ok(None),
-            }
-        };
-        // Bind the listed child to the bag — on the verified relay path a
-        // malicious peer could otherwise substitute a validly-proven field
-        // owned by a different parent (same defense as the ExtendedField
-        // read above).
-        let object = self.transport.get_object(entry.object_id).await?;
-        if !dynamic_field_child_owned_by(
-            object.owner(),
-            extra_fields_bag_id,
-            &entry.name_type,
-            &entry.name_value_bcs,
-        ) {
-            return Err(GrpcSuiClientError::decode(format!(
-                "flip-epoch field {} is owned by {:?}, not the extra_fields bag",
-                entry.object_id,
-                object.owner()
-            )));
-        }
-        let bytes = move_object_contents(&object, entry.object_id)?;
-        let field: Field<Vec<u8>, u64> =
-            bcs::from_bytes(&bytes).map_err(GrpcSuiClientError::decode)?;
-        Ok(Some(field.value))
-    }
-
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
         self.object_bcs(clock_obj_id).await
     }

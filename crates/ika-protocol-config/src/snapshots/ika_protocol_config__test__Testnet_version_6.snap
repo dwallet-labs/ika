@@ -15,6 +15,7 @@ feature_flags:
   fast_schnorr_supported: true
   off_chain_validator_metadata: true
   aggregated_network_key_public_outputs: true
+  consensus_key_authority_names: true
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200

@@ -27,7 +27,9 @@ use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
-use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+use ika_types::sui::epoch_start_system::{
+    EpochStartSystemTrait, consensus_key_identity_for_version,
+};
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -78,16 +80,16 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         .get_system_inner()
         .await
         .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
-    let authority_name_flip_epoch = sui_client
-        .get_authority_name_flip_epoch(&system_inner)
-        .await
-        .map_err(|e| anyhow::anyhow!("get_authority_name_flip_epoch failed: {e}"))?;
     let SystemInner::V1(system_inner) = system_inner;
     let on_chain_epoch = system_inner.epoch();
     // The identity basis of the PRIOR epoch's committee — the name space its
-    // members signed their handoff attestations under.
+    // members signed their handoff attestations under. Version-gated on the
+    // CURRENT on-chain version (the prior epoch's own version is no longer
+    // on chain): correct everywhere except when the flag activated exactly
+    // at the current epoch, where the prior committee was still BLS-named —
+    // the single-boundary limitation shared by the whole version-gated flip.
     let consensus_key_identity =
-        authority_name_flip_epoch.is_some_and(|flip_epoch| expected_prior_epoch >= flip_epoch);
+        consensus_key_identity_for_version(system_inner.protocol_version());
     if on_chain_epoch != expected_prior_epoch + 1 {
         anyhow::bail!(
             "on-chain epoch {on_chain_epoch} does not equal expected prior epoch \

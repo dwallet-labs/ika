@@ -19,6 +19,7 @@ use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
+use ika_types::sui::epoch_start_system::consensus_key_identity_for_version;
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
@@ -414,26 +415,15 @@ where
                 system_inner.epoch_duration_ms(),
                 Duration::from_secs(10),
             );
-            // The authority-name basis of a committee OF epoch E is decided
-            // by the persisted on-chain flip marker (E >= flip_epoch →
-            // consensus-basis names) — the SAME value every producer and
-            // consumer of that committee reads, which is what keeps the two
-            // sides of an epoch boundary in agreement. Unset means BLS basis
-            // for every epoch.
-            let authority_name_flip_epoch = match sui_client
-                .get_authority_name_flip_epoch(&system_inner)
-                .await
-            {
-                Ok(flip_epoch) => flip_epoch,
-                Err(e) => {
-                    warn!(
-                        error = ?e,
-                        "failed to read the authority-name flip epoch; retrying next tick"
-                    );
-                    continue;
-                }
-            };
             let SystemInner::V1(system_inner) = system_inner;
+            // Identity basis, version-gated (`consensus_key_authority_names`,
+            // on from protocol version 6). Evaluated on the CURRENT epoch's
+            // version — the only one knowable when the next-epoch committee
+            // is assembled mid-epoch. At the single activation boundary this
+            // disagrees with the next epoch's own view (documented
+            // limitation; see the protocol-config flag definition).
+            let consensus_key_identity =
+                consensus_key_identity_for_version(system_inner.protocol_version());
 
             // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
             // VSS HPKE) to the MPC manager. The within-epoch network DKG needs
@@ -465,11 +455,10 @@ where
                 && let Some(source) = off_chain_mpc_data_source.load_full()
                 && source.is_frozen()
             {
-                let current_committee = match Self::committee_names_for_epoch(
+                let current_committee = match Self::committee_names_for_basis(
                     &sui_client,
                     system_inner.read_bls_committee(&system_inner.get_ika_active_committee()),
-                    current_epoch,
-                    authority_name_flip_epoch,
+                    consensus_key_identity,
                 )
                 .await
                 {
@@ -507,13 +496,10 @@ where
                 continue;
             };
 
-            let next_epoch_for_names = system_inner.epoch() + 1;
-            let raw_next_committee = system_inner.read_bls_committee(&new_next_bls_committee);
-            let new_next_committee = match Self::committee_names_for_epoch(
+            let new_next_committee = match Self::committee_names_for_basis(
                 &sui_client,
-                raw_next_committee.clone(),
-                next_epoch_for_names,
-                authority_name_flip_epoch,
+                system_inner.read_bls_committee(&new_next_bls_committee),
+                consensus_key_identity,
             )
             .await
             {
@@ -527,33 +513,6 @@ where
                     continue;
                 }
             };
-            // The off-chain announcement/freeze pipeline lives in the
-            // CURRENT epoch's store and is keyed under the current epoch's
-            // identity basis (a member announces under `epoch_store.name`,
-            // a joiner under its current-basis name). At the authority-name
-            // flip boundary — and only there — that basis differs from the
-            // next committee's: announcements/assembly/freeze-gate use the
-            // announcement-basis names, and the assembled bundles are
-            // re-keyed to the committee basis afterwards.
-            let flip_applies = |epoch: EpochId| {
-                authority_name_flip_epoch.is_some_and(|flip_epoch| epoch >= flip_epoch)
-            };
-            let announcement_committee =
-                if flip_applies(current_epoch) == flip_applies(next_epoch_for_names) {
-                    new_next_committee.clone()
-                } else {
-                    raw_next_committee
-                };
-            // announcement-basis name -> committee-basis name; identity
-            // except at the flip boundary. Same source read, same order.
-            let announcement_to_committee_names: HashMap<AuthorityName, AuthorityName> =
-                announcement_committee
-                    .iter()
-                    .zip(new_next_committee.iter())
-                    .map(|((_, (announcement_name, _)), (_, (committee_name, _)))| {
-                        (*announcement_name, *committee_name)
-                    })
-                    .collect();
 
             // Publish the CHAIN view of the next-epoch committee
             // (members + stake, no class-groups) as soon as Sui has it
@@ -570,10 +529,7 @@ where
             let next_epoch = system_inner.epoch() + 1;
             let chain_committee = CommitteeMembership {
                 epoch: next_epoch,
-                // Announcement-basis names: the freeze emit-gate and joiner
-                // watcher compare these against announcements made in the
-                // CURRENT epoch's store.
-                voting_rights: announcement_committee
+                voting_rights: new_next_committee
                     .iter()
                     .map(|(_, (name, stake))| (*name, *stake))
                     .collect(),
@@ -612,11 +568,6 @@ where
                 true,
                 off_chain_mpc_data_snapshot,
                 frozen_at_assembly,
-                announcement_committee
-                    .iter()
-                    .map(|(_, (name, _))| *name)
-                    .collect(),
-                &announcement_to_committee_names,
                 &mut assembly_log_state,
                 &metrics,
             )
@@ -694,19 +645,16 @@ where
 
     /// Re-key a chain-read committee (BLS-basis names, as
     /// `read_bls_committee` mints them) to consensus-basis names when the
-    /// on-chain flip applies to `epoch`. The consensus keys are not in the
-    /// on-chain `BlsCommittee` (it carries `validator_id` + BLS
-    /// `protocol_pubkey` only), so each member's validator record is fetched
-    /// by id. No-op — no fetch — below the flip epoch, which keeps this off
-    /// the rolling-upgrade window: the first consensus-basis epoch begins
-    /// only after the network is stable on the arming protocol version.
-    async fn committee_names_for_epoch(
+    /// identity basis is the consensus key. The consensus keys are not in
+    /// the on-chain `BlsCommittee` (it carries `validator_id` + BLS
+    /// `protocol_pubkey` only), so each member's validator record is
+    /// fetched by id. No-op — no fetch — under the BLS basis.
+    async fn committee_names_for_basis(
         sui_client: &Arc<SuiClient<C>>,
         members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
-        epoch: EpochId,
-        authority_name_flip_epoch: Option<EpochId>,
+        consensus_key_identity: bool,
     ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
-        if authority_name_flip_epoch.is_none_or(|flip_epoch| epoch < flip_epoch) {
+        if !consensus_key_identity {
             return Ok(members);
         }
         let validator_ids: Vec<ObjectID> = members.iter().map(|(id, _)| *id).collect();
@@ -747,11 +695,6 @@ where
             Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
         frozen_at_assembly: bool,
-        // The names announcements were made under in the current epoch's
-        // store (differ from `committee`'s names only at the authority-name
-        // flip boundary), and the map back to `committee`'s name space.
-        announcement_names: Vec<AuthorityName>,
-        announcement_to_committee_names: &HashMap<AuthorityName, AuthorityName>,
         log_state: &mut AssemblyLogState,
         metrics: &SuiConnectorMetrics,
     ) -> DwalletMPCResult<(
@@ -768,15 +711,10 @@ where
         // chain read below serves only the bootstrap window before
         // the off-chain source is installed (`source == None`).
         if let Some(source) = off_chain_mpc_data_source {
-            let authorities = announcement_names;
+            let authorities: Vec<AuthorityName> =
+                committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {
-                crate::validator_metadata::OffChainMpcDataAssembly::Complete(mut bundles) => {
-                    // Announcements are keyed under the current epoch's
-                    // identity basis; every consumer of the bundles (the
-                    // Committee's maps, handoff items, the MPC manager) uses
-                    // the next committee's. Identity re-key except at the
-                    // flip boundary.
-                    bundles.rekey_names(announcement_to_committee_names);
+                crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
                     metrics.off_chain_assembly_wedged.set(0);
                     // Pre-freeze, the assembly re-runs (and re-succeeds)
                     // every sync tick; log at info only when the assembled
