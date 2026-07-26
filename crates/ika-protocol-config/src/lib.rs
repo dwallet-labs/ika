@@ -192,17 +192,25 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     off_chain_validator_metadata: bool,
 
-    // If true, network-key reconfiguration public outputs are persisted in
-    // the aggregated wire format (one summed randomizer-share ciphertext per
-    // receiver instead of every dealer's full PVSS dealing), tagged V4 in
-    // ika's versioned output enums. False keeps producing the pre-aggregation
-    // V3 wire format that testnet already persists. MPC outputs must reach
-    // byte-identical quorum and reconfiguration runs every epoch — including
-    // during a mixed-binary rollout — so the flip must happen at a protocol
-    // version boundary, never per-binary. Network DKG outputs are NOT gated
-    // by this flag: they are always persisted in the aggregated (V4) format,
-    // since no deployed network ever persisted a pre-aggregation fresh DKG
-    // output and no DKG session runs during a rollout window.
+    // Switched network-key reconfiguration public outputs to the aggregated
+    // wire format (one summed randomizer-share ciphertext per receiver
+    // instead of every dealer's full PVSS dealing), tagged V4 in ika's
+    // versioned output enums; false kept producing the pre-aggregation V3
+    // format. Set at version 5 and therefore true at every supported
+    // version, so nothing reads it anymore — V4 is the only format produced.
+    // V3-tagged outputs stay DECODABLE forever (testnet persisted them).
+    //
+    // Kept for the same reason as `off_chain_validator_metadata` above: the
+    // flag set is part of the BCS-serialized `ProtocolConfig` whose digest
+    // rides `AuthorityCapabilitiesV1` through consensus, so dropping a field
+    // changes every supported version's config digest relative to the
+    // binaries already deployed.
+    //
+    // The original reason this was a version flag rather than a binary
+    // switch still governs any FUTURE change here: MPC outputs must reach
+    // byte-identical quorum, and reconfiguration runs every epoch including
+    // during a mixed-binary rollout, so an output-format flip must happen at
+    // a protocol version boundary, never per-binary.
     #[serde(skip_serializing_if = "is_false")]
     aggregated_network_key_public_outputs: bool,
 }
@@ -461,16 +469,6 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
-    }
-
-    /// True iff network-key reconfiguration public outputs are persisted in
-    /// the aggregated wire format (V4-tagged in the versioned output enums)
-    /// instead of the pre-aggregation V3 format. Network DKG outputs are
-    /// always aggregated regardless of this flag. See the flag definition for
-    /// why the reconfiguration flip happens only at a protocol version
-    /// boundary.
-    pub fn aggregated_network_key_public_outputs(&self) -> bool {
-        self.feature_flags.aggregated_network_key_public_outputs
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -1183,10 +1181,6 @@ impl ProtocolConfig {
 
     pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
         self.feature_flags.noa_checkpoints = val;
-    }
-
-    pub fn set_aggregated_network_key_public_outputs_for_testing(&mut self, val: bool) {
-        self.feature_flags.aggregated_network_key_public_outputs = val;
     }
 }
 

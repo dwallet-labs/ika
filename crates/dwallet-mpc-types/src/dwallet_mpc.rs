@@ -554,8 +554,9 @@ impl VersionedNetworkDkgOutput {
 ///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutput`:
 ///   the same `PublicOutputCore` prefix with the trailing sharing output in
 ///   the aggregated shape (one summed randomizer-share ciphertext per
-///   receiver). Written when `aggregated_network_key_public_outputs()` is
-///   `true` (protocol v5); the producer upgrades the protocol's
+///   receiver). The ONLY format produced since `MIN_PROTOCOL_VERSION = 5`
+///   (the flag that gated the V3→V4 flip is true at every supported version
+///   and no longer read); the producer upgrades the protocol's
 ///   pre-aggregation output via `PublicOutput::upgrade()`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
