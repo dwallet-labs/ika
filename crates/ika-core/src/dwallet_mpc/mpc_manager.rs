@@ -110,6 +110,7 @@ struct TerminalMessageLogState {
     failed: u64,
     warning_active: bool,
     last_warning: Option<Instant>,
+    last_failed_warning: Option<Instant>,
     recovery_eligible: bool,
     active_completed: u64,
     active_failed: u64,
@@ -124,6 +125,7 @@ impl TerminalMessageLogState {
             failed: 0,
             warning_active: false,
             last_warning: None,
+            last_failed_warning: None,
             recovery_eligible: false,
             active_completed: 0,
             active_failed: 0,
@@ -149,14 +151,26 @@ impl TerminalMessageLogState {
         self.active_failed += u64::from(terminal_status == TerminalStatus::Failed);
         self.recovery_eligible |= self.active_completed + self.active_failed > 1;
 
-        let warning_due =
-            self.failed > 0 || self.completed >= COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD;
         let interval_elapsed = self
             .last_warning
             .is_none_or(|last| now.duration_since(last) >= TERMINAL_MESSAGE_LOG_INTERVAL);
-        if warning_due && interval_elapsed {
+        let failed_interval_elapsed = self
+            .last_failed_warning
+            .is_none_or(|last| now.duration_since(last) >= TERMINAL_MESSAGE_LOG_INTERVAL);
+        // A completed-volume warning must never delay the first failed-session
+        // warning, while repeated failed arrivals still share their own limit.
+        let warning_due = match terminal_status {
+            TerminalStatus::Completed => {
+                self.completed >= COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD && interval_elapsed
+            }
+            TerminalStatus::Failed => failed_interval_elapsed,
+        };
+        if warning_due {
             self.warning_active = true;
             self.last_warning = Some(now);
+            if terminal_status == TerminalStatus::Failed {
+                self.last_failed_warning = Some(now);
+            }
             TerminalMessageLogAction::Warn {
                 completed: self.completed,
                 failed: self.failed,
@@ -183,6 +197,7 @@ impl TerminalMessageLogState {
         };
         self.warning_active = false;
         self.last_warning = None;
+        self.last_failed_warning = None;
         self.recovery_eligible = false;
         self.active_completed = 0;
         self.active_failed = 0;
@@ -2171,7 +2186,7 @@ impl DWalletMPCManager {
         };
 
         match session.add_message(consensus_round, sender_party_id, message) {
-            AddMessageResult::Stored => {}
+            AddMessageResult::Stored | AddMessageResult::IgnoredNonMpcSession => {}
             AddMessageResult::IgnoredTerminal {
                 terminal_status,
                 session_type,
@@ -4949,5 +4964,34 @@ mod terminal_message_log_tests {
             ),
             TerminalMessageLogAction::Warn { .. }
         ));
+    }
+
+    #[test]
+    fn first_failed_message_bypasses_completed_warning_throttle() {
+        let start = Instant::now();
+        let mut state = TerminalMessageLogState::new(start);
+        for offset in 0..COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD {
+            let action = state.record(
+                start + Duration::from_millis(offset),
+                TerminalStatus::Completed,
+            );
+            if offset + 1 == COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD {
+                assert!(matches!(action, TerminalMessageLogAction::Warn { .. }));
+            } else {
+                assert_eq!(action, TerminalMessageLogAction::None);
+            }
+        }
+
+        assert_eq!(
+            state.record(start + Duration::from_secs(1), TerminalStatus::Failed),
+            TerminalMessageLogAction::Warn {
+                completed: COMPLETED_TERMINAL_MESSAGE_WARN_THRESHOLD,
+                failed: 1,
+            }
+        );
+        assert_eq!(
+            state.record(start + Duration::from_secs(2), TerminalStatus::Failed),
+            TerminalMessageLogAction::None
+        );
     }
 }
