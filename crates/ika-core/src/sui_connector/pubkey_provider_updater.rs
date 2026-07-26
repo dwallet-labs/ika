@@ -27,6 +27,7 @@ use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
+use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -371,6 +372,7 @@ where
         // committees read here belong to a later epoch; installing them
         // onto this epoch's store would clobber it with the wrong keys.
         // Skip; the next epoch's own updater installs its committees.
+        let consensus_key_identity = epoch_store.epoch_start_state().consensus_key_identity();
         if system_inner.epoch != self.epoch_id {
             return Ok(());
         }
@@ -408,7 +410,15 @@ where
                     continue;
                 }
             };
-            let name: AuthorityName = (&verified.protocol_pubkey).into();
+            // Key by the name space announcements use in THIS epoch's store:
+            // an announcer names itself under its epoch's identity basis, so
+            // the provider must key the same way (consensus-basis past the
+            // authority-name flip epoch, BLS before it).
+            let name = if consensus_key_identity {
+                AuthorityName::from_consensus_key(&verified.consensus_pubkey)
+            } else {
+                (&verified.protocol_pubkey).into()
+            };
             consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
         }
 

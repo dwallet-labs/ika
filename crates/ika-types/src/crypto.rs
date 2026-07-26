@@ -1092,10 +1092,28 @@ mod tests {
         assert_eq!(deserialized, zero_padded(&consensus_key));
     }
 
+    /// `from_consensus_key` must agree with the lenient deserializer: the
+    /// name built from a consensus key equals the name deserialized from
+    /// that key's unpadded 32-byte wire encoding.
+    #[test]
+    fn from_consensus_key_matches_unpadded_wire_decoding() {
+        let keypair = Ed25519KeyPair::generate(&mut StdRng::from_seed([7; 32]));
+        let name = AuthorityPublicKeyBytes::from_consensus_key(keypair.public());
+        let deserialized: AuthorityPublicKeyBytes =
+            bcs::from_bytes(&bcs_byte_string(keypair.public().as_bytes())).unwrap();
+        assert_eq!(name, deserialized);
+        let padded: &[u8] = name.as_ref();
+        assert_eq!(
+            &padded[..Ed25519PublicKey::LENGTH],
+            keypair.public().as_bytes()
+        );
+        assert!(padded[Ed25519PublicKey::LENGTH..].iter().all(|b| *b == 0));
+    }
+
     #[test]
     fn json_rejects_lengths_other_than_full_and_consensus() {
         for len in [0usize, 31, 33, 47, 49] {
-            let json = format!("\"{}\"", Base64::encode(&vec![0x11; len]));
+            let json = format!("\"{}\"", Base64::encode(vec![0x11; len]));
             assert!(
                 serde_json::from_str::<AuthorityPublicKeyBytes>(&json).is_err(),
                 "length {len} must be rejected"

@@ -658,3 +658,51 @@ impl EpochStartValidatorInfoTrait for EpochStartValidatorInfoV1 {
         self.mpc_data.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v2_with(epoch: EpochId, flip_epoch: Option<EpochId>) -> EpochStartSystem {
+        EpochStartSystem::new_v2(epoch, 6, 0, 1000, vec![], 0, 0, flip_epoch)
+    }
+
+    /// The basis rule: consensus-key identity iff the marker is set and the
+    /// record's epoch has reached it — never a protocol-version comparison.
+    #[test]
+    fn consensus_key_identity_follows_the_marker() {
+        assert!(!v2_with(10, None).consensus_key_identity());
+        assert!(!v2_with(4, Some(5)).consensus_key_identity());
+        assert!(v2_with(5, Some(5)).consensus_key_identity());
+        assert!(v2_with(9, Some(5)).consensus_key_identity());
+    }
+
+    /// V1 records were written by pre-flip binaries and always describe
+    /// pre-flip epochs.
+    #[test]
+    fn v1_records_are_always_bls_basis() {
+        let v1 = EpochStartSystem::new_for_testing_with_epoch(42);
+        assert!(!v1.consensus_key_identity());
+        assert_eq!(v1.authority_name_flip_epoch(), None);
+    }
+
+    /// A V1 record's BCS bytes must keep decoding after the V2 variant was
+    /// added (old persisted EpochStartConfiguration records).
+    #[test]
+    fn v1_bcs_round_trip_survives_v2_addition() {
+        let v1 = EpochStartSystem::new_for_testing_with_epoch(7);
+        let bytes = bcs::to_bytes(&v1).unwrap();
+        let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, v1);
+        assert_eq!(decoded.epoch(), 7);
+    }
+
+    #[test]
+    fn v2_bcs_round_trip() {
+        let v2 = v2_with(9, Some(5));
+        let bytes = bcs::to_bytes(&v2).unwrap();
+        let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, v2);
+        assert!(decoded.consensus_key_identity());
+    }
+}
