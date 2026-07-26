@@ -126,8 +126,20 @@ pub struct JoinerHandle {
 
 impl JoinerHandle {
     /// BLS authority name (committee identity) for this joiner.
-    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
-        self.init_config.key_pair.public().into()
+    /// The joiner's `AuthorityName` under the given identity basis: the
+    /// zero-padded consensus Ed25519 key when `consensus_key_identity`
+    /// (protocol v6+), the BLS protocol key before it. Callers read the
+    /// basis from the epoch they are inspecting — a name minted under the
+    /// wrong one is simply absent from that epoch's committee, which reads
+    /// as "the joiner never landed" rather than as a naming mistake.
+    pub fn authority_name(&self, consensus_key_identity: bool) -> AuthorityPublicKeyBytes {
+        if consensus_key_identity {
+            AuthorityPublicKeyBytes::from_consensus_key(
+                self.init_config.consensus_key_pair.public(),
+            )
+        } else {
+            self.init_config.key_pair.public().into()
+        }
     }
 }
 

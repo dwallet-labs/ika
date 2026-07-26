@@ -27,6 +27,7 @@ use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
 use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, wait_for_node_epoch};
 use ika_types::crypto::AuthorityName;
+use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_joiner_added_at_epoch_2() {
@@ -186,7 +187,15 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
          node dead or not following the chain",
     );
 
-    let joiner_name = joiner.authority_name();
+    // Under the identity basis this epoch actually uses: `AuthorityName` is
+    // the BLS protocol key below protocol v6 and the consensus key from v6,
+    // and this cluster genesises at ProtocolVersion::MAX.
+    let joiner_name = joiner.authority_name(joiner.node_handle.with(|node| {
+        node.state()
+            .epoch_store_for_testing()
+            .epoch_start_state()
+            .consensus_key_identity()
+    }));
 
     // Read the epoch-2 committee from the joiner's own node: is the
     // joiner's on-chain mpc_data record visible in this node's epoch-2
