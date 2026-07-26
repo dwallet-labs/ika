@@ -823,16 +823,42 @@ because the bytes came from a peer's disk rather than its fullnode.
     | `System` | `0xae71e386…` | `0xde05f49e…` |
     | `DWalletCoordinator` | `0xf02f5960…` (dwallet **v1**) | `0x6573a6c1…` (**v2**) |
 
-    Event type tags follow the same rule: every sampled `system_inner` and
-    `coordinator_inner` event on testnet is tagged by the ORIGINAL package, and
-    **zero** are tagged by either executable — so
-    `ika_dwallet_2pc_mpc_package_id_v2` (which event filtering also accepts) is
-    defensive rather than load-bearing today.
+    **An upgraded package holds a MIX of type addresses, so "the package id" is
+    not one value.** Sui records type identity per datatype in the package's
+    `TypeOrigin` table (`{module_name, datatype_name, package}`): a type
+    carried forward from the previous version keeps the ORIGINAL address, while
+    a type **first defined in the upgrade** carries the UPGRADE address. Both
+    networks show the same split (checked 2026-07-25):
 
-    The corollary is the reason there is **no `ika_system_package_id_v2`**, and
-    why one must not be added for this check: expecting a later upgrade id here
-    would assert against an address no anchor object is ever typed by — which
-    is precisely the #1908 defect this invariant exists to catch.
+    | package | types at original | types at upgrade |
+    |---|---|---|
+    | dwallet | 79 | **7** |
+    | ika_system | 36 | **0** |
+
+    The seven dwallet upgrade-defined types include five **events**
+    (`DWalletDKGRequestEvent`, `CompletedDWalletDKGEvent`,
+    `RejectedDWalletDKGEvent`, `SignDuringDKGRequestEvent`,
+    `UserSecretKeyShareEventType`). That is why
+    `ika_dwallet_2pc_mpc_package_id_v2` exists and why event filtering accepts
+    both addresses — it is **load-bearing**, not defensive: without it those DKG
+    events are dropped.
+
+    Two consequences:
+
+    - **This invariant is unaffected.** It asserts the type of the two
+      singleton ANCHOR objects, and those were created by the original
+      packages — their types sit in the original's `TypeOrigin` entries, and
+      `System::try_migrate` mutates the object in place (`&mut System`) rather
+      than recreating it, so an existing object's type can never move. Verified
+      directly on both networks. It must therefore expect ONLY the original:
+      accepting the upgrade id as well would admit exactly the #1908 defect
+      (a constant set to the upgrade id) that this check exists to catch.
+    - **`ika_system` is one upgrade away from needing a `_v2`.** It has no
+      upgrade-defined types today (36/36 original), so no constant is missing —
+      but the first system upgrade that defines a new event type would emit
+      events tagged by the upgrade address, with nothing configured to accept
+      them. That is the #1908 failure shape (a fleet silently deaf to system
+      events) reached by a different route.
 
     This is a stable equality check, not something to bump on contract
     upgrades: a Sui type tag carries the **defining** package forever, so the
