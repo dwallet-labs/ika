@@ -22,7 +22,7 @@ use ika_types::handoff::{
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
@@ -422,12 +422,28 @@ pub(crate) fn quorum_attestation_in_buffer(
 ///   not be accepted just because the caller happened to pass a
 ///   matching committee. Binding it explicitly keeps the
 ///   cross-epoch anchor unambiguous.
+///
+/// `also_accept_next_committee_pubkeys` covers the identity-basis
+/// activation boundary. `AuthorityName` is the BLS protocol key below
+/// protocol v6 and the consensus key from v6, and this hash is computed by
+/// the OUTGOING epoch (under its basis) but re-checked by the INCOMING one
+/// (under its own). At the single epoch where those differ the two sides
+/// derive different names for the same members, and a strict comparison
+/// fail-closed halts every node. Passing the same membership expressed in
+/// the other basis makes that boundary verifiable.
+///
+/// This is an encoding ambiguity, not a weakened binding: both sets list the
+/// same committee, so an attacker gains no freedom — the cert still has to
+/// carry a stake quorum of valid signatures over the attestation. It is the
+/// same tolerance the `AuthorityName` deserializer applies to the 48- and
+/// 32-byte encodings of one key.
 pub fn verify_joiner_bootstrap_cert(
     cert: &CertifiedHandoffAttestation,
     expected_prior_epoch: EpochId,
     prior_committee: &Committee,
     prior_consensus_pubkeys: &dyn ConsensusPubkeyProvider,
     expected_next_committee_pubkeys: impl IntoIterator<Item = AuthorityName>,
+    also_accept_next_committee_pubkeys: Option<Vec<AuthorityName>>,
 ) -> IkaResult<()> {
     if cert.attestation.epoch != expected_prior_epoch {
         return Err(IkaError::Unknown(format!(
@@ -438,10 +454,20 @@ pub fn verify_joiner_bootstrap_cert(
     }
     let expected_hash = hash_next_committee_pubkey_set(expected_next_committee_pubkeys);
     if cert.attestation.next_committee_pubkey_set_hash != expected_hash {
-        return Err(IkaError::Unknown(format!(
-            "handoff cert next_committee_pubkey_set_hash mismatch: cert {:?} vs expected {:?}",
-            cert.attestation.next_committee_pubkey_set_hash, expected_hash
-        )));
+        let alternate_hash = also_accept_next_committee_pubkeys.map(hash_next_committee_pubkey_set);
+        if alternate_hash != Some(cert.attestation.next_committee_pubkey_set_hash) {
+            return Err(IkaError::Unknown(format!(
+                "handoff cert next_committee_pubkey_set_hash mismatch: cert {:?} vs expected \
+                 {expected_hash:?} (alternate identity basis {alternate_hash:?})",
+                cert.attestation.next_committee_pubkey_set_hash
+            )));
+        }
+        info!(
+            prior_epoch = expected_prior_epoch,
+            "handoff cert commits to the next committee under the OTHER authority-name \
+             basis; accepted — this is the protocol-v6 identity-flip boundary, where the \
+             signing epoch and the entering epoch name the same members differently"
+        );
     }
     verify_certified_handoff_attestation(cert, prior_committee, prior_consensus_pubkeys)
 }

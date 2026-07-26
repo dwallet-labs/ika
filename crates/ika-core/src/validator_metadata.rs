@@ -2909,14 +2909,16 @@ mod tests {
             &committee,
             &provider,
             next_pubkeys.iter().copied(),
+            None,
         )
         .expect("verify");
 
         // Joiner expects a different committee than what's pinned →
         // refuse, even though signatures are individually valid.
         let wrong_pubkeys = vec![names[2], names[3]];
-        let err = verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, wrong_pubkeys)
-            .expect_err("should mismatch");
+        let err =
+            verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, wrong_pubkeys, None)
+                .expect_err("should mismatch");
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("next_committee_pubkey_set_hash mismatch"),
@@ -2934,10 +2936,55 @@ mod tests {
             &committee,
             &provider,
             next_pubkeys.iter().copied(),
+            None,
         )
         .expect_err("epoch mismatch must be rejected");
         let msg = format!("{:?}", err);
         assert!(msg.contains("epoch mismatch"), "unexpected error: {msg}");
+
+        // The identity-basis boundary: a cert pinning the committee under
+        // the OTHER basis is rejected when no alternate is offered, and
+        // accepted when it is — the whole point of the tolerance. Signatures
+        // and epoch are untouched, so only the hash check is exercised.
+        let other_basis_pubkeys = vec![names[2], names[3]];
+        let err = verify_joiner_bootstrap_cert(
+            &cert,
+            7,
+            &committee,
+            &provider,
+            other_basis_pubkeys.clone(),
+            None,
+        )
+        .expect_err("no alternate offered → strict");
+        assert!(
+            format!("{err:?}").contains("next_committee_pubkey_set_hash mismatch"),
+            "unexpected error: {err:?}"
+        );
+        verify_joiner_bootstrap_cert(
+            &cert,
+            7,
+            &committee,
+            &provider,
+            other_basis_pubkeys,
+            Some(next_pubkeys.clone()),
+        )
+        .expect("the alternate basis must be accepted at the flip boundary");
+
+        // The tolerance must not become a blanket bypass: an alternate that
+        // matches NEITHER set is still refused.
+        let err = verify_joiner_bootstrap_cert(
+            &cert,
+            7,
+            &committee,
+            &provider,
+            vec![names[2], names[3]],
+            Some(vec![names[3]]),
+        )
+        .expect_err("an unrelated alternate must not be accepted");
+        assert!(
+            format!("{err:?}").contains("next_committee_pubkey_set_hash mismatch"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

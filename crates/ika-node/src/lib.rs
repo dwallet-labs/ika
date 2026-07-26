@@ -79,8 +79,10 @@ use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{AuthorityCapabilitiesV1, ConsensusTransaction};
 use ika_types::sui::SystemInnerTrait;
-use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+use ika_types::sui::epoch_start_system::{
+    EpochStartSystem, EpochStartValidatorInfo, validator_authority_name,
+};
 use sui_types::crypto::KeypairTraits;
 
 use ika_core::consensus_adapter::SubmitToConsensus;
@@ -2493,6 +2495,14 @@ impl IkaNode {
                     Some(prior_committee) => {
                         let is_joiner = !prior_committee.authority_exists(&self_name);
                         let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
+                        // The same membership expressed under the OTHER
+                        // authority-name basis. The outgoing epoch hashed
+                        // the next committee under ITS basis; at the
+                        // protocol-v6 identity flip that differs from this
+                        // epoch's, and a strict comparison would fail-closed
+                        // halt every node at the boundary.
+                        let expected_next_other_basis =
+                            authority_names_under_other_basis(cur_epoch_store.epoch_start_state());
                         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
                             .epoch_start_state()
                             .get_authority_names_to_peer_ids()
@@ -2536,6 +2546,7 @@ impl IkaNode {
                                     &prior_committee,
                                     prior_committee.as_ref(),
                                     expected_next.iter().copied(),
+                                    Some(expected_next_other_basis.clone()),
                                 )
                             });
                             // Defense in depth — same policy as
@@ -3150,6 +3161,11 @@ impl IkaNode {
         // The cert pins the hash of the committee being handed into —
         // the epoch we are entering, whose committee is `new_epoch_store`'s.
         let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
+        // See the epoch-start anchoring path: the signing epoch and the
+        // epoch being entered name the same members differently across the
+        // protocol-v6 identity flip.
+        let expected_next_other_basis =
+            authority_names_under_other_basis(new_epoch_store.epoch_start_state());
         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
             .epoch_start_state()
             .get_authority_names_to_peer_ids()
@@ -3165,6 +3181,7 @@ impl IkaNode {
                 &signing_committee,
                 &signing_committee,
                 expected_next.iter().copied(),
+                Some(expected_next_other_basis.clone()),
             )
         });
 
@@ -3661,6 +3678,30 @@ async fn install_joiner_network_key_outputs(
         }
     }
     missing_key_ids
+}
+
+/// The epoch's committee membership named under the OPPOSITE identity basis
+/// to the one the epoch itself uses — the BLS protocol keys when the epoch
+/// names members by consensus key, and vice versa.
+///
+/// `AuthorityName`'s basis is a property of the epoch (BLS below protocol
+/// v6, consensus key from v6), so an artifact produced by one epoch and
+/// consumed by the next straddles a basis change exactly once, at
+/// activation. Both name sets describe the SAME members — the validator
+/// records carry both keys — so offering the alternate resolves an encoding
+/// ambiguity rather than widening what is accepted.
+fn authority_names_under_other_basis(
+    epoch_start_state: &EpochStartSystem,
+) -> Vec<ika_types::crypto::AuthorityName> {
+    let other_basis = !epoch_start_state.consensus_key_identity();
+    epoch_start_state
+        .get_ika_validators()
+        .iter()
+        .map(|validator| {
+            let EpochStartValidatorInfo::V1(validator) = validator;
+            validator_authority_name(validator, other_basis)
+        })
+        .collect()
 }
 
 /// Notify state-sync that a new list of trusted peers are now available.
