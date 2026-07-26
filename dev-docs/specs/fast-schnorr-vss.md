@@ -58,8 +58,8 @@ VSS path is internal NOA-VSS.
   version-3 network-key DKG output**. A pre-version-3 key has no VSS cache.
   The full-shape output comes in two wire tags — V3 (pre-aggregation, what
   testnet persists at protocol v4) and V4 (aggregated). Reconfiguration
-  outputs flip V3→V4 at protocol v5 under
-  `aggregated_network_key_public_outputs()`; fresh network DKG outputs are V4
+  outputs flipped V3→V4 at protocol v5, so with `MIN_PROTOCOL_VERSION = 5`
+  V4 is the only format produced; fresh network DKG outputs are V4
   unconditionally (no deployed network persisted a pre-aggregation fresh DKG
   output). The cache derivation runs on the **aggregated** form either way (a
   V3 output is upgraded on first derivation), so recovering a Shamir share
