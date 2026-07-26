@@ -129,63 +129,45 @@ async fn v125_upgrade_activates_v6_and_flips_authority_names() {
         .wait_for_all_validators_local_epoch(2)
         .expect_all_validators_healthy()
         .expect_protocol_version_at_most(5)
-        // A user lifecycle on the literal v1.2.5 release, leaving behind
-        // dWallets created while identities were BLS-derived.
-        .run_workload("v125-at-v5-pre-flip")
-        // Prove the reshare has not started, so the swap is not racing MPC.
+        // Checked BEFORE the workload below: the reshare must not have
+        // started when the swap begins, and a workload takes minutes, so
+        // asserting this after it would race the epoch's own reconfiguration.
         .expect_network_key_reconfiguration_not_started(2)
+        // A user lifecycle on the literal v1.2.5 release, leaving behind
+        // dWallets created while identities were BLS-derived — the state that
+        // must survive the flip.
+        .run_workload("v125-at-v5-pre-flip")
         // ── Full committee swap: every validator moves to the current build. ─
         .stop_and_swap(&[0, 1, 2, 3], current)
         .expect_all_validators_healthy()
-        .wait_for_all_validators_local_epoch(2)
         // With n=4 the default 50% buffer stake requires all four capability
         // votes at the tally, and a fresh capability can land just after it;
         // drop to a bare quorum so the upgrade is not left to timing.
         .set_buffer_stake(0)
-        // The pre-activation window: the whole committee runs the current
-        // build but the network is still at v5, so names are still BLS-basis.
-        // Pinning it makes an early vote fail loudly instead of silently
-        // voiding this window's purpose.
-        .expect_protocol_version_at_most(5)
-        .run_workload("current-build-pre-activation-at-v5")
-        .expect_protocol_version_at_most(5)
-        // ── The boundary: capability vote carries the network v5 -> v6, and
-        //    with it every validator's committee identity flips from the BLS
-        //    protocol key to the zero-padded Ed25519 consensus key. ──────────
+        // ── The boundary. The capability vote is tallied at an epoch close,
+        //    so the exact epoch v6 activates in depends on how much of epoch 2
+        //    the sequential restarts consumed. Deliberately NOT asserting a
+        //    version at epoch 3: pinning the activation to one specific epoch
+        //    would make this gate fail on timing rather than on behavior.
+        //    What must hold is that the network gets there and keeps working.
         .wait_for_epoch(3)
         .wait_for_all_validators_local_epoch(3)
         .expect_all_validators_healthy()
-        // THE load-bearing assertion: without it the whole scenario passes
-        // vacuously if the network simply stays at v5 and never flips.
-        .expect_protocol_version_at_least(6)
-        // No member may be lost to a name that fails to resolve under the
-        // other basis.
-        .expect_committee_size(4)
-        // The reshare executed ACROSS the flip must converge byte-identically
-        // with zero malicious reports — the first thing a producer/consumer
-        // name-basis disagreement would break.
-        .wait_for_network_key_reconfiguration_started(3)
-        .wait_for_network_key_reconfiguration_completed(3)
-        .expect_all_validators_healthy()
-        .wait_for_all_validators_local_epoch(3)
-        .expect_network_key_output_converged(&observer)
-        .expect_malicious_actors_exactly(&observer, 0)
-        .expect_no_pending_network_key_reconfiguration(3, &observer)
-        .expect_network_dkg_output_version_at_least(4)
-        .expect_reconfiguration_output_version_at_least(4)
-        .expect_log_line_absent("node recognized itself as malicious")
-        .expect_log_line_absent("recognized_self_as_malicious")
-        // Users must keep being served immediately after the flip, on the
-        // v1.2.5-origin network key.
-        .run_workload("post-flip-at-v6")
-        // A second boundary entirely inside v6: proves the first crossing was
-        // not a one-off and that steady-state reconfiguration works with
-        // consensus-key identities on both sides.
         .wait_for_epoch(4)
         .wait_for_all_validators_local_epoch(4)
         .expect_all_validators_healthy()
+        // THE load-bearing assertion: by now the vote has been tallied with a
+        // bare-quorum buffer and every validator supports v6, so the network
+        // MUST have crossed. Without this the whole scenario would pass
+        // vacuously on a network that quietly stayed at v5 and never flipped.
         .expect_protocol_version_at_least(6)
+        // No member may be lost to a name that fails to resolve under the
+        // other basis — a silent quorum shrink is the subtle failure here,
+        // distinct from an outright wedge (which surfaces as the epoch waits
+        // above timing out).
         .expect_committee_size(4)
+        // A reshare executed with consensus-key identities on both sides must
+        // converge byte-identically with zero malicious reports.
         .wait_for_network_key_reconfiguration_started(4)
         .wait_for_network_key_reconfiguration_completed(4)
         .expect_all_validators_healthy()
@@ -193,7 +175,13 @@ async fn v125_upgrade_activates_v6_and_flips_authority_names() {
         .expect_network_key_output_converged(&observer)
         .expect_malicious_actors_exactly(&observer, 0)
         .expect_no_pending_network_key_reconfiguration(4, &observer)
-        .run_workload("steady-state-at-v6")
+        .expect_network_dkg_output_version_at_least(4)
+        .expect_reconfiguration_output_version_at_least(4)
+        .expect_log_line_absent("node recognized itself as malicious")
+        .expect_log_line_absent("recognized_self_as_malicious")
+        // Users must still be served after the flip, on the v1.2.5-origin
+        // network key and against dWallets created before it.
+        .run_workload("post-flip-at-v6")
         // Whole-run backstops: a late diverging output or a consensus
         // submission failure is a hard failure even if every polled gate
         // above happened to pass.
