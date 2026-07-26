@@ -2628,7 +2628,10 @@ impl IkaNode {
                                             error = ?e,
                                             "the locally-persisted handoff cert FAILED \
                                              re-verification at epoch start — the local \
-                                             handoff-cert DB is tampered or corrupted. \
+                                             handoff-cert DB is tampered or corrupted \
+                                             (or, for a next_committee_pubkey_set_hash \
+                                             mismatch, an authority-name basis change \
+                                             between the signing and entering epochs). \
                                              Halting the node (fail-closed) rather than \
                                              anchoring the epoch on an unverified cert."
                                         );
@@ -3259,7 +3262,10 @@ impl IkaNode {
                         anchor_epoch,
                         error = ?e,
                         "prepare-then-start: the locally-persisted handoff cert FAILED \
-                         re-verification — the local handoff-cert DB is tampered or corrupted. \
+                         re-verification — most likely a tampered or corrupted local \
+                         handoff-cert DB, but a next_committee_pubkey_set_hash mismatch \
+                         specifically can also mean this epoch names committee members under \
+                         a different authority-name basis than the epoch that signed the cert. \
                          Halting the node (fail-closed) rather than anchoring the epoch on an \
                          unverified cert."
                     );
