@@ -811,10 +811,28 @@ because the bytes came from a peer's disk rather than its fullnode.
     scrape before exit; a node down for this reason otherwise presents only as
     absent series.)
 
-    Note this asserts the object's **type**, which is distinct from the
-    *current executable* package: the system object's `package_id` FIELD names
-    the latest upgrade (mainnet: type `0xb874c9b5…`, `package_id`
-    `0xd69f947d…`) and is read at runtime, so no constant tracks upgrades.
+    **This asserts the object's TYPE, which is a different address from the
+    current executable package — both are live at once.** The object's type is
+    its ORIGINAL defining package and never moves; the `package_id` FIELD names
+    the latest upgrade and is read at runtime, which is why no constant here
+    tracks contract upgrades. Testnet shows both packages already upgraded and
+    the types still on the originals (checked 2026-07-25):
+
+    | anchor | type (asserted) | `package_id` field (executable) |
+    |---|---|---|
+    | `System` | `0xae71e386…` | `0xde05f49e…` |
+    | `DWalletCoordinator` | `0xf02f5960…` (dwallet **v1**) | `0x6573a6c1…` (**v2**) |
+
+    Event type tags follow the same rule: every sampled `system_inner` and
+    `coordinator_inner` event on testnet is tagged by the ORIGINAL package, and
+    **zero** are tagged by either executable — so
+    `ika_dwallet_2pc_mpc_package_id_v2` (which event filtering also accepts) is
+    defensive rather than load-bearing today.
+
+    The corollary is the reason there is **no `ika_system_package_id_v2`**, and
+    why one must not be added for this check: expecting a later upgrade id here
+    would assert against an address no anchor object is ever typed by — which
+    is precisely the #1908 defect this invariant exists to catch.
 
     This is a stable equality check, not something to bump on contract
     upgrades: a Sui type tag carries the **defining** package forever, so the
