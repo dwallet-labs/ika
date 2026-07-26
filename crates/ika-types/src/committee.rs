@@ -342,6 +342,34 @@ impl Committee {
         }
     }
 
+    /// Maps each member's name under EITHER identity basis to the name this
+    /// committee actually uses.
+    ///
+    /// `AuthorityName` is the BLS protocol key below protocol v6 and the
+    /// consensus key from v6, so anything one epoch names and a later epoch
+    /// reads back — prior-epoch handoff-cert items, carried-forward mpc_data —
+    /// arrives keyed in the producing epoch's name space. Away from the
+    /// activation boundary both spaces agree and every entry maps a name to
+    /// itself; at the boundary this is what stops those lookups from silently
+    /// missing every member. Derived from the committee's own key maps, so it
+    /// needs no chain read.
+    pub fn name_translation(&self) -> HashMap<AuthorityName, AuthorityName> {
+        self.voting_rights
+            .iter()
+            .flat_map(|(name, _)| {
+                let bls = self.expanded_keys.get(name).map(AuthorityName::from);
+                let consensus = self
+                    .consensus_keys
+                    .get(name)
+                    .map(AuthorityName::from_consensus_key);
+                [bls, consensus]
+                    .into_iter()
+                    .flatten()
+                    .map(move |alias| (alias, *name))
+            })
+            .collect()
+    }
+
     /// The signer's consensus Ed25519 pubkey, if this committee carries it.
     /// Used to verify consensus-key-signed messages (handoff certs today).
     /// `None` means the committee wasn't built with this signer's consensus

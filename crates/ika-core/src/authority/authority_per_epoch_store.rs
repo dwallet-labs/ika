@@ -3780,13 +3780,22 @@ impl AuthorityPerEpochStore {
                 return Err(e);
             }
         };
+        // The cert names its items in the PRIOR epoch's identity basis. At
+        // the protocol-v6 activation boundary that differs from this epoch's,
+        // and every carry-forward lookup would miss silently — dropping each
+        // seated member that did not freshly announce this epoch into the
+        // excluded set, which is precisely the safety net carry-forward
+        // exists to provide. Translate into this epoch's basis at the source
+        // so every consumer of these digests is keyed consistently; away from
+        // the boundary the map is empty of surprises and this is a no-op.
+        let translation = self.committee().name_translation();
         Ok(cert
             .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
                 ika_types::handoff::HandoffItemKey::ValidatorMpcData { validator } => {
-                    Some((*validator, *digest))
+                    Some((*translation.get(validator).unwrap_or(validator), *digest))
                 }
                 _ => None,
             })
