@@ -1814,6 +1814,21 @@ impl IkaNode {
             network
         };
 
+        // Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
+        // dialable on their own: register them as high-affinity known peers so
+        // anemo establishes and maintains the connection — like a seed peer,
+        // but scoped to the mirrored data source (the field is meaningless
+        // otherwise, and a stale list on a direct node must not create dials).
+        if matches!(
+            config.sui_connector_config.sui_data_source,
+            Some(ika_config::node::SuiDataSource::SuiStateMirrored { .. })
+        ) {
+            ika_network::sui_state_mirror::register_addressed_mirror_peers(
+                &p2p_network,
+                &config.sui_connector_config.sui_state_mirror_peers,
+            );
+        }
+
         let discovery_handle =
             discovery.start(p2p_network.clone(), config.network_key_pair().copy());
         let state_sync_handle = state_sync.start(p2p_network.clone(), is_notifier);

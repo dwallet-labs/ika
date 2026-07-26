@@ -533,11 +533,18 @@ timeout counts as a peer failure, not a `NotFound`.
 The peer set comes in two modes, selected by whether
 `sui-state-mirror-peers` is configured:
 
-- **Pinned** (non-empty list): the operator's explicit override. Only
-  the configured peer ids are used; configured peers that aren't
+- **Pinned** (non-empty list): the operator's explicit override, logged
+  at WARN on startup so a list left behind in a config isn't missed.
+  Only the configured peer ids are used; configured peers that aren't
   currently connected are skipped within a pass. Passes rotate their
   start round-robin: the fleet shares one operator-written list, so
-  without rotation every node would hammer `peers[0]`.
+  without rotation every node would hammer `peers[0]`. An entry is
+  either a bare hex peer id — selecting the peer among connections the
+  p2p layer establishes by other means (seeds, fixed peers, committee
+  discovery) — or a `{peer-id, address}` pair, which is additionally
+  registered as a high-affinity anemo known peer (the seed-peer
+  mechanism) so the connection is dialed and maintained even when
+  nothing else would reach it.
 - **Automatic** (empty list, the preferred default): every operation
   snapshots the peers *currently connected* through Ika's discovery
   system — never a boot-time capture, since peers connect, disconnect,

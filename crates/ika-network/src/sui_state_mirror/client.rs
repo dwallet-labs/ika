@@ -28,16 +28,18 @@
 
 use std::sync::Arc;
 
+use anemo::types::{PeerAffinity, PeerInfo};
 use anemo::{Network, PeerId, Request};
 use async_trait::async_trait;
 use futures::future::join_all;
+use ika_config::node::SuiStateMirrorPeer;
 use parking_lot::RwLock;
 use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use ika_sui_client::transport::{
     DynamicFieldPage, ExecutedTransaction, SuiTransport, TransportError,
@@ -340,6 +342,54 @@ pub async fn find_serving_mirror_peer(network: &Network) -> Option<PeerId> {
         })
     });
     join_all(probes).await.into_iter().flatten().next()
+}
+
+/// Register the ADDRESSED `sui-state-mirror-peers` entries as high-affinity
+/// known peers, so anemo's connection manager dials and maintains a
+/// connection to each — the same mechanism that keeps seed peers connected.
+/// Bare (id-only) entries carry no address and are skipped: they select among
+/// connections the p2p layer establishes by other means. Malformed entries
+/// warn and are skipped here; the strict parse at OCS stack construction
+/// rejects them loudly. Returns how many peers were registered.
+pub fn register_addressed_mirror_peers(network: &Network, peers: &[SuiStateMirrorPeer]) -> usize {
+    let mut registered = 0;
+    for entry in peers {
+        let Some(address) = entry.address() else {
+            continue;
+        };
+        let peer_id = match entry.parse_peer_id() {
+            Ok(peer_id) => peer_id,
+            Err(e) => {
+                warn!(
+                    peer = %entry.peer_id_hex(),
+                    error = %e,
+                    "skipping malformed sui-state-mirror-peers entry"
+                );
+                continue;
+            }
+        };
+        let Ok(anemo_address) = address.to_anemo_address() else {
+            warn!(
+                %peer_id,
+                p2p_address = %address,
+                "sui-state-mirror-peers address is not a valid anemo address; the peer is only \
+                 reachable if something else connects it"
+            );
+            continue;
+        };
+        info!(
+            %peer_id,
+            address = %address,
+            "registering addressed sui-state-mirror peer for dialing (high affinity)"
+        );
+        network.known_peers().insert(PeerInfo {
+            peer_id,
+            affinity: PeerAffinity::High,
+            address: vec![anemo_address],
+        });
+        registered += 1;
+    }
+    registered
 }
 
 // -- Verified-read surface --------------------------------------------------------------------
@@ -829,5 +879,59 @@ mod tests {
             Err(TransportError::Network(_)) => {}
             other => panic!("expected Network error with no serving peer, got {other:?}"),
         }
+    }
+
+    /// Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
+    /// registered as high-affinity known peers, so anemo's connection manager
+    /// dials and maintains the connection on its own — a pinned relay outside
+    /// every other dial path (p2p seeds, committee discovery) still becomes
+    /// reachable. Bare (id-only) entries register nothing: they only select
+    /// among connections established by other means.
+    #[tokio::test]
+    async fn addressed_mirror_peers_are_dialed_via_known_peers() {
+        use crate::sui_state_mirror::SuiStateMirrorServer;
+        use crate::utils::{build_network, build_network_with_anemo_config};
+        use ika_config::node::AddressedSuiStateMirrorPeer;
+
+        let serving =
+            build_network(|router| router.add_rpc_service(SuiStateMirrorServer::new(StubMirror)));
+        // Fast connectivity checks so the auto-dial happens promptly (the
+        // production default is 5s).
+        let mut anemo_config = anemo::Config::default();
+        anemo_config.connectivity_check_interval_ms = Some(200);
+        let (consumer, _key) = build_network_with_anemo_config(|router| router, anemo_config);
+
+        // Bare entries carry no address: nothing to register.
+        let bare = SuiStateMirrorPeer::PeerId(hex::encode(serving.peer_id().0));
+        assert_eq!(register_addressed_mirror_peers(&consumer, &[bare]), 0);
+        assert!(consumer.peers().is_empty());
+
+        // Addressed entry: registered, and anemo establishes the connection
+        // with no explicit connect() call anywhere. Derive the multiaddr from
+        // the actual bound socket — `build_network` binds `localhost:0`, which
+        // may resolve to either 127.0.0.1 or ::1, and a hard-coded /ip4 would
+        // silently dial the wrong stack on an ::1 bind.
+        let bound = serving.local_addr();
+        let address = match bound {
+            std::net::SocketAddr::V4(v4) => format!("/ip4/{}/udp/{}", v4.ip(), v4.port()),
+            std::net::SocketAddr::V6(v6) => format!("/ip6/{}/udp/{}", v6.ip(), v6.port()),
+        };
+        let addressed = SuiStateMirrorPeer::Addressed(AddressedSuiStateMirrorPeer {
+            peer_id: hex::encode(serving.peer_id().0),
+            address: address.parse().unwrap(),
+        });
+        assert_eq!(register_addressed_mirror_peers(&consumer, &[addressed]), 1);
+
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while consumer.peer(serving.peer_id()).is_none() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("anemo should dial the registered high-affinity addressed peer");
+        assert_eq!(
+            find_serving_mirror_peer(&consumer).await,
+            Some(serving.peer_id())
+        );
     }
 }

@@ -35,7 +35,9 @@
 use std::sync::Arc;
 
 use anemo::PeerId;
-use ika_config::node::{SuiConnectorConfig, SuiDataSource, resolve_sui_checkpoint_archive};
+use ika_config::node::{
+    SuiConnectorConfig, SuiDataSource, SuiStateMirrorPeer, resolve_sui_checkpoint_archive,
+};
 use ika_network::proof_provider::{
     LocalProofProvider, ProofCacheConfig, ProofProvider, ProofProviderMetrics,
 };
@@ -227,8 +229,8 @@ pub async fn build_sui_connector_stack(
         SuiDataSource::SuiStateMirrored { fallback_grpc_url } => {
             let net = network.clone().ok_or(SetupError::MirroredWithoutNetwork)?;
             let mut peer_ids = Vec::with_capacity(cfg.sui_state_mirror_peers.len());
-            for raw_id in &cfg.sui_state_mirror_peers {
-                peer_ids.push(parse_peer_id(raw_id)?);
+            for entry in &cfg.sui_state_mirror_peers {
+                peer_ids.push(parse_peer_entry(entry)?);
             }
             if peer_ids.is_empty() {
                 info!(
@@ -236,9 +238,18 @@ pub async fn build_sui_connector_stack(
                      peer discovery (every operation tries the currently-connected p2p peers)"
                 );
             } else {
-                info!(
-                    peer_count = peer_ids.len(),
-                    "SuiStateMirror reads pinned to the configured sui-state-mirror-peers"
+                // warn, not info: an explicit override silently left behind in a
+                // config (e.g. after the fleet moved to automatic discovery) is
+                // exactly the kind of thing that gets missed at info level.
+                warn!(
+                    peers = ?cfg
+                        .sui_state_mirror_peers
+                        .iter()
+                        .map(|p| p.peer_id_hex())
+                        .collect::<Vec<_>>(),
+                    "sui-state-mirror-peers override is set: SuiStateMirror reads are PINNED to \
+                     these peers and automatic peer discovery is disabled; remove the list from \
+                     the config to use every connected peer"
                 );
             }
             let peers = SuiMirrorPeers::new(net, peer_ids, provider_metrics.clone());
@@ -499,28 +510,26 @@ pub async fn build_sui_connector_stack(
     })
 }
 
-fn parse_peer_id(s: &str) -> Result<PeerId, SetupError> {
-    let bytes: [u8; 32] =
-        hex::FromHex::from_hex(s).map_err(|e: hex::FromHexError| SetupError::BadPeerId {
-            peer: s.to_string(),
-            error: e.to_string(),
-        })?;
-    Ok(PeerId(bytes))
+fn parse_peer_entry(entry: &SuiStateMirrorPeer) -> Result<PeerId, SetupError> {
+    entry.parse_peer_id().map_err(|e| SetupError::BadPeerId {
+        peer: entry.peer_id_hex().to_string(),
+        error: e.to_string(),
+    })
 }
 
 /// Parse the configured `sui_state_mirror_peers` into anemo [`PeerId`]s,
 /// warning on (and skipping) malformed entries. Lenient counterpart of the
-/// strict per-entry [`parse_peer_id`] used at stack construction: callers of
-/// this are deciding which peers to *wait for*, where a bad entry should not
-/// abort boot.
+/// strict per-entry [`parse_peer_entry`] used at stack construction: callers
+/// of this are deciding which peers to *wait for*, where a bad entry should
+/// not abort boot.
 pub fn configured_mirror_peer_ids(cfg: &SuiConnectorConfig) -> Vec<PeerId> {
     cfg.sui_state_mirror_peers
         .iter()
-        .filter_map(|raw| match parse_peer_id(raw) {
+        .filter_map(|entry| match entry.parse_peer_id() {
             Ok(id) => Some(id),
             Err(e) => {
                 tracing::warn!(
-                    peer = %raw,
+                    peer = %entry.peer_id_hex(),
                     error = %e,
                     "skipping malformed sui_state_mirror_peers entry"
                 );
