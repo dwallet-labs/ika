@@ -300,6 +300,24 @@ impl OcsVerifiedReader {
         }
     }
 
+    /// [`check_object_identity`] plus the metric, so a node that refuses to
+    /// start names the cause on its last scrape instead of presenting only as
+    /// absent series.
+    fn assert_anchor_identity(
+        &self,
+        kind: &'static str,
+        object: &Object,
+        object_id: ObjectID,
+        expected: Option<ObjectID>,
+    ) -> Result<(), ReaderError> {
+        check_object_identity(kind, object, object_id, expected).inspect_err(|_| {
+            self.metrics
+                .identity_mismatch_total
+                .with_label_values(&[kind])
+                .inc();
+        })
+    }
+
     /// Pin the compiled-in package identity for the two singleton anchors, so
     /// every verified read of them asserts the chain agrees. Left unset on
     /// localnet, where there is no compiled-in identity to check against.
@@ -970,7 +988,7 @@ impl OcsVerifiedReader {
         coordinator_id: ObjectID,
     ) -> Result<(DWalletCoordinator, DWalletCoordinatorInner), ReaderError> {
         let outer_obj = self.verified_anchor_object(coordinator_id).await?;
-        check_object_identity(
+        self.assert_anchor_identity(
             "DWalletCoordinator",
             &outer_obj.object,
             coordinator_id,
@@ -1006,7 +1024,7 @@ impl OcsVerifiedReader {
         system_id: ObjectID,
     ) -> Result<(System, SystemInner), ReaderError> {
         let outer_obj = self.verified_anchor_object(system_id).await?;
-        check_object_identity(
+        self.assert_anchor_identity(
             "System",
             &outer_obj.object,
             system_id,
@@ -1268,6 +1286,7 @@ fn clone_inclusion_proof(
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+    use sui_types::object::Owner;
 
     const SYSTEM_OBJ: u8 = 0x11;
 
@@ -1354,6 +1373,84 @@ mod identity_tests {
         let err = check_identity_addresses("System", pkg(1), pkg(0xAA), Some(pkg(0xBB)))
             .expect_err("mismatch");
         assert_eq!(classify_verify_error(&err), "identity_mismatch");
+    }
+
+    // The tests below drive the real `check_object_identity`, so they cover the
+    // `type_().address()` extraction and not just the comparison. The only
+    // safely-constructible typed object in the pinned Sui is a gas coin
+    // (`0x2::coin::Coin<0x2::sui::SUI>`), whose top-level type address is the
+    // Sui framework — which is exactly what we need: an address that is
+    // definitively NOT an ika package.
+
+    fn framework_typed_object() -> Object {
+        Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(SYSTEM_OBJ),
+            SequenceNumber::from(1),
+            Owner::AddressOwner(ObjectID::from_single_byte(2).into()),
+        )
+    }
+
+    /// The end-to-end shape of #1908: the object on chain is typed by one
+    /// package, the binary compiled in another. Proves the extraction reads the
+    /// object's own top-level type address.
+    #[test]
+    fn object_typed_by_another_package_is_rejected() {
+        let object = framework_typed_object();
+        let ika_pkg = pkg(0xBB);
+
+        let err = check_object_identity(
+            "System",
+            &object,
+            ObjectID::from_single_byte(SYSTEM_OBJ),
+            Some(ika_pkg),
+        )
+        .expect_err("an object typed outside the compiled-in package must be rejected");
+
+        match err {
+            ReaderError::IdentityMismatch {
+                chain_package,
+                expected_package,
+                ..
+            } => {
+                // The gas coin's type is `0x2::coin::Coin<..>`, so the extracted
+                // address must be the framework — proving we read the object's
+                // type rather than, say, its id.
+                assert_eq!(
+                    chain_package,
+                    ObjectID::from_single_byte(2),
+                    "extracted address should be the type's package, not the object id"
+                );
+                assert_ne!(chain_package, ObjectID::from_single_byte(SYSTEM_OBJ));
+                assert_eq!(expected_package, ika_pkg);
+            }
+            other => panic!("expected IdentityMismatch, got {other:?}"),
+        }
+    }
+
+    /// Same extraction path, agreeing case: expectation set to the object's
+    /// actual defining package passes.
+    #[test]
+    fn object_typed_by_the_expected_package_passes() {
+        let object = framework_typed_object();
+        check_object_identity(
+            "System",
+            &object,
+            ObjectID::from_single_byte(SYSTEM_OBJ),
+            Some(ObjectID::from_single_byte(2)),
+        )
+        .expect("expectation matching the object's own type must pass");
+    }
+
+    #[test]
+    fn object_check_is_inert_without_a_compiled_in_identity() {
+        let object = framework_typed_object();
+        check_object_identity(
+            "System",
+            &object,
+            ObjectID::from_single_byte(SYSTEM_OBJ),
+            None,
+        )
+        .expect("localnet has no compiled-in identity to assert");
     }
 }
 

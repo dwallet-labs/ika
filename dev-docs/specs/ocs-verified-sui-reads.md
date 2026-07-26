@@ -804,9 +804,17 @@ because the bytes came from a peer's disk rather than its fullnode.
 10. **A verified read of either singleton anchor asserts that the chain's
     object is typed by the package this binary compiled in for that role**
     (`System` → `ika_system_package_id`, `DWalletCoordinator` →
-    `ika_dwallet_2pc_mpc_package_id`). Mismatch is `IdentityMismatch` and is
-    **terminal**: the node refuses to run rather than retrying, because no
-    amount of retrying changes a constant baked into the build.
+    `ika_dwallet_2pc_mpc_package_id`). Mismatch is `IdentityMismatch`, counted
+    as `ika_ocs_identity_mismatch_total{anchor}`, and is **terminal**: the node
+    refuses to run rather than retrying, because no amount of retrying changes
+    a constant baked into the build. (The counter names the cause on the last
+    scrape before exit; a node down for this reason otherwise presents only as
+    absent series.)
+
+    Note this asserts the object's **type**, which is distinct from the
+    *current executable* package: the system object's `package_id` FIELD names
+    the latest upgrade (mainnet: type `0xb874c9b5…`, `package_id`
+    `0xd69f947d…`) and is read at runtime, so no constant tracks upgrades.
 
     This is a stable equality check, not something to bump on contract
     upgrades: a Sui type tag carries the **defining** package forever, so the
