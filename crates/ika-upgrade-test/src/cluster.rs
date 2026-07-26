@@ -1341,9 +1341,12 @@ impl ClusterOfProcesses {
             .collect();
         // Byzantine quorum of the committee. These scenarios run an
         // equal-weight committee, so a plain member count matches the
-        // access-structure threshold (n - floor((n-1)/3)).
-        let quorum =
-            committee_authorities.len() - committee_authorities.len().saturating_sub(1) / 3;
+        // access-structure threshold (n - floor((n-1)/3)). Counted from the
+        // VALIDATORS, not from `committee_authorities`: that set holds each
+        // member under both identity bases, so its length is twice the
+        // committee size and would demand a quorum no run can reach.
+        let members = self.validator_authorities.len();
+        let quorum = members - members.saturating_sub(1) / 3;
         let expected_epoch = self.current_epoch().await?;
         let deadline = tokio::time::Instant::now() + timeout;
         // First fully-converged canonical result and when it was first
