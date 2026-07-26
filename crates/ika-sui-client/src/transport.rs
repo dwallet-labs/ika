@@ -52,10 +52,12 @@ pub fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<Objec
         .map_err(|e| format!("derive child id: {e}"))
 }
 
-/// The `SystemInner.extra_fields` Bag key of the authority-name flip epoch —
-/// must match the Move constant `AUTHORITY_NAME_FLIP_EPOCH_KEY` in
-/// `ika_system::system_inner`. Committees OF epochs `>=` the stored `u64`
-/// derive their members' `AuthorityName` from the consensus key.
+/// The `SystemInner.extra_fields` Bag key of the authority-name flip epoch.
+/// No deployed contract writes this entry yet — a FUTURE `ika_system`
+/// upgrade will record it (its Move-side constant must match this byte
+/// string); until then the read always resolves to "unset" and every
+/// identity-basis decision stays BLS. Committees OF epochs `>=` the stored
+/// `u64` derive their members' `AuthorityName` from the consensus key.
 pub const AUTHORITY_NAME_FLIP_EPOCH_KEY: &[u8] = b"authority_name_flip_epoch";
 
 /// Deterministically-derived `Field<vector<u8>, u64>` child id of the

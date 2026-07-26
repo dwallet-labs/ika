@@ -34,9 +34,11 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
 // Version 6: consensus-key authority names. No Rust-side config change: the
-//            behavior is armed ON CHAIN — ika_system's `advance_epoch` records
+//            behavior arms ON CHAIN — a FUTURE ika_system upgrade records
 //            the authority-name flip epoch in `extra_fields` once the version
-//            reaches 6, and name derivation keys on that persisted marker
+//            reaches 6 (no deployed contract writes it yet, so the marker
+//            never exists and every identity-basis decision stays BLS until
+//            that upgrade ships), and name derivation keys on that marker
 //            (NEVER on the protocol version; a version comparison diverges at
 //            the epoch boundary — see dev-docs/specs/committee-consensus-keys.md).
 //            The version bump is the coordination point: quorum must run
@@ -811,8 +813,9 @@ impl ProtocolConfig {
                 }
                 6 => {
                     // Consensus-key authority names. Deliberately NO config
-                    // change: ika_system arms the flip marker on chain at
-                    // version >= 6, and derivation reads the marker. Keying
+                    // change: a future ika_system upgrade arms the flip
+                    // marker on chain at version >= 6, and derivation reads
+                    // the marker (until then it never exists). Keying
                     // any Rust derivation on this version instead would
                     // re-create the boundary divergence that sank the first
                     // (version-gated) attempt.
