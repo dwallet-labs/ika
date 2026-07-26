@@ -281,6 +281,21 @@ enum PriorCertKeysOutcome {
     RetryLater,
 }
 
+/// How a completed internal-presign output's network key resolves for the
+/// per-pool counter bookkeeping — see
+/// [`DWalletMPCManager::classify_internal_presign_completion`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InternalPresignCompletionKey {
+    /// The key resolves to its content-derived id; the counter may advance.
+    Resolved(NetworkKeyId),
+    /// The key is adopted but does not resolve — a should-never-happen
+    /// (adoption defers an unmapped key).
+    AdoptedUnresolvable,
+    /// The key is not adopted on this process yet: the ordinary
+    /// pre-adoption consensus replay after a restart.
+    NotAdopted,
+}
+
 /// The correct way to use the manager is to create it along with all other Ika components
 /// at the start of each epoch.
 /// Ensuring it is destroyed when the epoch ends and providing a clean slate for each new epoch.
@@ -466,6 +481,16 @@ pub(crate) struct DWalletMPCManager {
     /// would re-warn per republish; warn once per distinct local digest,
     /// debug thereafter.
     warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
+
+    /// Keys already reported as carrying an internal-presign completion
+    /// while not yet adopted here. Consensus replays a burst of such
+    /// completions after a restart, so the report is deduped to once per
+    /// key (debug thereafter): a skip may be correct, but a *silent* skip
+    /// never is — if a key is never adopted (its background `NetworkKeyId`
+    /// derivation failed, or its overlay entry carries no DKG output), the
+    /// top-up loop never runs for it and that key's presign pool starves
+    /// for the epoch, and this is the recurring evidence of it.
+    reported_unadopted_internal_presign_completions: HashSet<ObjectID>,
 
     /// Keys whose background `NetworkKeyId` derivation has been spawned by
     /// the adoption pass, memoized by the digest of the exact derivation
@@ -762,6 +787,7 @@ impl DWalletMPCManager {
             last_cert_read_warn: None,
             last_prior_cert_keys_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
+            reported_unadopted_internal_presign_completions: HashSet::new(),
             network_key_id_derivations_spawned: HashMap::new(),
             stranded_network_keys,
             warned_cryptographic_data_generation_failures: HashSet::new(),
@@ -2510,6 +2536,46 @@ impl DWalletMPCManager {
         }
     }
 
+    /// How a completed internal-presign output's key resolves for counter
+    /// bookkeeping. The three cases move no counter differently — only the
+    /// `Resolved` arm advances one — but they mean very different things
+    /// operationally, so they are classified here rather than at the log
+    /// site, where the distinction would be untestable.
+    ///
+    /// Why `NotAdopted` is safe to pass over: resolution is **monotone within
+    /// a process** — the `ObjectID → NetworkKeyId` mapping is a never-cleared
+    /// process-global static (`network_key_id_mapping::register` only
+    /// inserts) and installed keys are never evicted, so resolution can go
+    /// `None → Some` but never `Some → None`. The only writer of
+    /// `instantiated_internal_presign_sessions` is the top-up loop, which
+    /// skips unresolvable keys. So "unresolvable now" implies "never
+    /// resolved in this process", implies this process never instantiated a
+    /// batch for that id: `instantiated` is 0 by construction and the
+    /// saturating `completed < instantiated` guard would decline the
+    /// increment even if the key resolved. Nothing is lost by not counting.
+    pub(crate) fn classify_internal_presign_completion(
+        &self,
+        dwallet_network_encryption_key_id: &ObjectID,
+    ) -> InternalPresignCompletionKey {
+        match self.internal_presign_network_key_id(dwallet_network_encryption_key_id) {
+            Some(network_key_id) => InternalPresignCompletionKey::Resolved(network_key_id),
+            // Adoption defers an unmapped key, so an ADOPTED key that does
+            // not resolve is a genuine invariant violation.
+            None if self
+                .adopted_network_key_data
+                .contains_key(dwallet_network_encryption_key_id) =>
+            {
+                InternalPresignCompletionKey::AdoptedUnresolvable
+            }
+            // Ordinarily a post-restart replay: consensus redelivers outputs
+            // of sessions the PREVIOUS process instantiated, while this
+            // process's mapping still lacks the key (it is outside the
+            // compiled-in seeds — every localnet/CI DKG — until the
+            // background derivation lands with adoption, seconds later).
+            None => InternalPresignCompletionKey::NotAdopted,
+        }
+    }
+
     /// The key's flip-invariant, content-derived `NetworkKeyId` — the identity
     /// bound into internal presign session identifiers and the key of the
     /// per-pool sequence/guard counters. Read from the installed key data when
@@ -3856,28 +3922,52 @@ impl DWalletMPCManager {
                 // `instantiated` — the top-up skip compares them for
                 // equality and would block the pool permanently. Keyed by the
                 // same content-derived `NetworkKeyId` the top-up loop uses.
-                if let Some(network_key_id) =
-                    self.internal_presign_network_key_id(&dwallet_network_encryption_key_id)
+                match self.classify_internal_presign_completion(&dwallet_network_encryption_key_id)
                 {
-                    let instantiated = self
-                        .instantiated_internal_presign_sessions
-                        .get(&(network_key_id, curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    let completed = self
-                        .completed_internal_presign_sessions
-                        .entry((network_key_id, curve, signature_algorithm))
-                        .or_insert(0);
-                    if *completed < instantiated {
-                        *completed += 1;
+                    InternalPresignCompletionKey::Resolved(network_key_id) => {
+                        let instantiated = self
+                            .instantiated_internal_presign_sessions
+                            .get(&(network_key_id, curve, signature_algorithm))
+                            .copied()
+                            .unwrap_or(0);
+                        let completed = self
+                            .completed_internal_presign_sessions
+                            .entry((network_key_id, curve, signature_algorithm))
+                            .or_insert(0);
+                        if *completed < instantiated {
+                            *completed += 1;
+                        }
                     }
-                } else {
-                    error!(
+                    InternalPresignCompletionKey::AdoptedUnresolvable => error!(
                         should_never_happen = true,
                         ?dwallet_network_encryption_key_id,
-                        "completed internal presign output for a key with no resolvable \
+                        "completed internal presign output for an ADOPTED key with no resolvable \
                          NetworkKeyId; completion counter not advanced"
-                    );
+                    ),
+                    // Deduped to once per key: a restart replays a burst of
+                    // these, but a key that is NEVER adopted starves its
+                    // pool for the epoch, so the first one must not be
+                    // silent.
+                    InternalPresignCompletionKey::NotAdopted => {
+                        if self
+                            .reported_unadopted_internal_presign_completions
+                            .insert(dwallet_network_encryption_key_id)
+                        {
+                            info!(
+                                ?dwallet_network_encryption_key_id,
+                                "completed internal presign output for a key not adopted here yet \
+                                 (ordinarily a pre-adoption consensus replay after a restart); \
+                                 completion counter not advanced. If this key is never adopted, \
+                                 its internal presign pool will not refill this epoch"
+                            );
+                        } else {
+                            debug!(
+                                ?dwallet_network_encryption_key_id,
+                                "completed internal presign output for a key not adopted here yet; \
+                                 completion counter not advanced"
+                            );
+                        }
+                    }
                 }
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
