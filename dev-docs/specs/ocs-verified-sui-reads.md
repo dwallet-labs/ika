@@ -853,12 +853,24 @@ because the bytes came from a peer's disk rather than its fullnode.
       directly on both networks. It must therefore expect ONLY the original:
       accepting the upgrade id as well would admit exactly the #1908 defect
       (a constant set to the upgrade id) that this check exists to catch.
-    - **`ika_system` is one upgrade away from needing a `_v2`.** It has no
-      upgrade-defined types today (36/36 original), so no constant is missing —
-      but the first system upgrade that defines a new event type would emit
-      events tagged by the upgrade address, with nothing configured to accept
-      them. That is the #1908 failure shape (a fleet silently deaf to system
-      events) reached by a different route.
+    - **`ika_system` needs no `_v2`, and adding one would be dead weight.**
+      Nothing consumes system events by package address: the only
+      event-address filter in the node is `sui_event_into_session_request`,
+      which matches the DWALLET package (both ids) and the sessions-manager
+      module. System state is read from the system OBJECT via verified reads,
+      not from address-filtered events. `ika_system_package_id`'s only other
+      consumer is the pusher's cache-fold relevance set, where an unmatched
+      object degrades to a cache miss and a verified network read — never a
+      wrong answer. An unused `_v2` constant would just be one more value that
+      can drift, which is the #1908 hazard itself.
+    - **The dwallet filter is where the constant hazard actually recurs.** It
+      enumerates `{ika_dwallet_2pc_mpc_package_id, …_v2}`, and five of the
+      seven v2-defined types are events — so the next dwallet upgrade that
+      defines a new event type silently loses those sessions until someone
+      remembers to add a `_v3`. This filter is live on BOTH paths (the legacy
+      JSON-RPC listener and `bag_event_pump` under OCS). The durable fix is to
+      derive the accepted set from the package's `TypeOrigin` table at runtime
+      rather than enumerating constants.
 
     This is a stable equality check, not something to bump on contract
     upgrades: a Sui type tag carries the **defining** package forever, so the
