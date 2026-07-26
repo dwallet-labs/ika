@@ -27,9 +27,7 @@ use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
-use ika_types::sui::epoch_start_system::{
-    EpochStartSystemTrait, consensus_key_identity_for_version,
-};
+use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -72,24 +70,27 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
 /// so an advanced on-chain view can't hand back a wrong-epoch committee —
 /// which would make a valid handoff cert fail to verify and (via
 /// `BootstrapOutcome::Rejected`) fail-closed-halt the node.
+/// Returns ONE CANDIDATE PER IDENTITY BASIS, because the prior epoch's
+/// basis cannot be read off the chain. `AuthorityName` is the BLS protocol
+/// key below protocol v6 and the consensus key from v6, but only the
+/// CURRENT epoch's protocol version is on chain — at the activation
+/// boundary the prior epoch ran the other basis. Building this committee
+/// under the wrong basis makes every cert signer a non-member
+/// (`weight == 0`), which `verify_certified_handoff_attestation` rejects
+/// OUTRIGHT rather than degrading through quorum, fail-closing the node.
+/// Away from the boundary the two candidates simply describe the same
+/// members under two encodings, so the caller tries each and uses whichever
+/// the cert verifies against.
 pub async fn fetch_previous_committee<C: SuiClientInner>(
     sui_client: &SuiClient<C>,
     expected_prior_epoch: EpochId,
-) -> anyhow::Result<Committee> {
+) -> anyhow::Result<Vec<Committee>> {
     let (_, system_inner) = sui_client
         .get_system_inner()
         .await
         .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
     let SystemInner::V1(system_inner) = system_inner;
     let on_chain_epoch = system_inner.epoch();
-    // The identity basis of the PRIOR epoch's committee — the name space its
-    // members signed their handoff attestations under. Version-gated on the
-    // CURRENT on-chain version (the prior epoch's own version is no longer
-    // on chain): correct everywhere except when the flag activated exactly
-    // at the current epoch, where the prior committee was still BLS-named —
-    // the single-boundary limitation shared by the whole version-gated flip.
-    let consensus_key_identity =
-        consensus_key_identity_for_version(system_inner.protocol_version());
     if on_chain_epoch != expected_prior_epoch + 1 {
         anyhow::bail!(
             "on-chain epoch {on_chain_epoch} does not equal expected prior epoch \
@@ -152,6 +153,34 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
              means a corrupt prior-committee record, not wrong peers"
         );
     }
+    let candidates = [false, true]
+        .into_iter()
+        .map(|consensus_key_identity| {
+            build_prior_committee_candidate(
+                expected_prior_epoch,
+                consensus_key_identity,
+                &bls_members,
+                &staking_pools,
+                bls_committee.quorum_threshold,
+                bls_committee.validity_threshold,
+            )
+        })
+        .collect();
+    Ok(candidates)
+}
+
+/// One `fetch_previous_committee` candidate: the prior committee named under
+/// `consensus_key_identity`. Both name-keyed maps use that one basis, since
+/// `verify_certified_handoff_attestation` looks up membership and consensus
+/// keys with the same signer name.
+fn build_prior_committee_candidate(
+    expected_prior_epoch: EpochId,
+    consensus_key_identity: bool,
+    bls_members: &[(ObjectID, (AuthorityName, StakeUnit))],
+    staking_pools: &[ika_types::sui::staking::StakingPool],
+    quorum_threshold: StakeUnit,
+    validity_threshold: StakeUnit,
+) -> Committee {
     let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = if consensus_key_identity {
         // Consensus-basis prior epoch: the snapshot name derives from the
         // consensus key, whose VALUE is fixed at registration — so the
@@ -183,7 +212,7 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     // would block joiner bootstrap on a deterministic error forever, since
     // the cert only needs a quorum of the members that DO verify.
     let mut consensus_keys: HashMap<AuthorityName, Ed25519PublicKey> = HashMap::new();
-    for pool in &staking_pools {
+    for pool in staking_pools {
         let verified = match pool.validator_info.verify() {
             Ok(verified) => verified,
             Err(code) => {
@@ -209,10 +238,10 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         consensus_keys.insert(name, verified.consensus_pubkey.clone());
     }
     let voting_rights: Vec<(AuthorityName, StakeUnit)> = bls_members
-        .into_iter()
-        .filter_map(|(id, (_, stake))| Some((*snapshot_name_by_id.get(&id)?, stake)))
+        .iter()
+        .filter_map(|(id, (_, stake))| Some((*snapshot_name_by_id.get(id)?, *stake)))
         .collect();
-    Ok(Committee::new(
+    Committee::new(
         expected_prior_epoch,
         voting_rights,
         // class-groups left empty: handoff-cert verification only needs
@@ -220,9 +249,9 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         // PVSS / VSS keys are not on `Committee` at all.
         HashMap::new(),
         consensus_keys,
-        bls_committee.quorum_threshold,
-        bls_committee.validity_threshold,
-    ))
+        quorum_threshold,
+        validity_threshold,
+    )
 }
 
 fn install_joiner_provider(

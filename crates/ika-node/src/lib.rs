@@ -2447,7 +2447,7 @@ impl IkaNode {
                     .ok()
                     .flatten()
                 {
-                    Some(committee) => Some(committee),
+                    Some(committee) => Some(vec![committee]),
                     // A true joiner that never observed/persisted the prior
                     // epoch has no local committee for it, so the cross-epoch
                     // trust anchor (and the network-key blob install it gates)
@@ -2458,13 +2458,16 @@ impl IkaNode {
                     // bootstrap already chain-reads consensus pubkeys from) so
                     // bootstrap can still run.
                     None => match fetch_previous_committee(&sui_client, prior_epoch).await {
-                        Ok(committee) => {
+                        Ok(candidates) => {
                             info!(
                                 prior_epoch,
+                                candidates = candidates.len(),
                                 "prior committee absent locally; chain-read it for joiner \
-                                 bootstrap from validator_set.previous_committee"
+                                 bootstrap from validator_set.previous_committee (one \
+                                 candidate per authority-name basis — the prior epoch's \
+                                 basis is not on chain)"
                             );
-                            Some(Arc::new(committee))
+                            Some(candidates.into_iter().map(Arc::new).collect())
                         }
                         Err(error) => {
                             warn!(
@@ -2493,7 +2496,19 @@ impl IkaNode {
                     .is_some();
                 match prior_committee {
                     Some(prior_committee) => {
-                        let is_joiner = !prior_committee.authority_exists(&self_name);
+                        // Absent from the prior committee under EITHER name
+                        // basis. `self_name` is this epoch's basis, which at
+                        // the protocol-v6 identity flip differs from the one
+                        // the prior committee was named under — comparing only
+                        // that name labels every continuing validator a joiner
+                        // at the boundary.
+                        let self_name_other_basis = self.config.authority_name(
+                            !cur_epoch_store.epoch_start_state().consensus_key_identity(),
+                        );
+                        let is_joiner = !prior_committee.iter().any(|committee| {
+                            committee.authority_exists(&self_name)
+                                || committee.authority_exists(&self_name_other_basis)
+                        });
                         let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
                         // The same membership expressed under the OTHER
                         // authority-name basis. The outgoing epoch hashed
@@ -2539,15 +2554,36 @@ impl IkaNode {
                             // (chain-read by object id when the committee was
                             // built) — so it serves as the cert verifier's
                             // consensus-pubkey provider directly.
+                            // One candidate per authority-name basis when the
+                            // prior committee was chain-read (its basis is not
+                            // recoverable from chain); exactly one local record
+                            // otherwise. A signer set names members under ONE
+                            // basis, and a committee built under the other makes
+                            // every signer weight-0 — a hard rejection, not a
+                            // quorum shortfall — so try each and take the one
+                            // that verifies.
                             let verify: CertVerifier = Arc::new(move |cert| {
-                                verify_joiner_bootstrap_cert(
-                                    cert,
-                                    prior_epoch,
-                                    &prior_committee,
-                                    prior_committee.as_ref(),
-                                    expected_next.iter().copied(),
-                                    Some(expected_next_other_basis.clone()),
-                                )
+                                let mut last_error = None;
+                                for committee in &prior_committee {
+                                    match verify_joiner_bootstrap_cert(
+                                        cert,
+                                        prior_epoch,
+                                        committee,
+                                        committee.as_ref(),
+                                        expected_next.iter().copied(),
+                                        Some(expected_next_other_basis.clone()),
+                                    ) {
+                                        Ok(()) => return Ok(()),
+                                        Err(error) => last_error = Some(error),
+                                    }
+                                }
+                                Err(last_error.unwrap_or_else(|| {
+                                    ika_types::error::IkaError::Unknown(
+                                        "no prior-committee candidate to verify the handoff \
+                                         cert against"
+                                            .to_string(),
+                                    )
+                                }))
                             });
                             // Defense in depth — same policy as
                             // `prepare_handoff_anchor`: a persisted cert is
