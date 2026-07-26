@@ -158,7 +158,6 @@ use ika_core::dwallet_mpc::dwallet_mpc_service::{
 };
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::epoch_tasks::end_of_publish_sender::EndOfPublishSender;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -763,9 +762,8 @@ impl IkaNode {
         // unconditionally, by the contract), so which one a node uses can't
         // desync the network. A node opts in by configuring a trust anchor
         // (`has_anchor`); without one it uses the legacy JSON-RPC event path.
-        // This is independent of `off_chain_validator_metadata_enabled`,
-        // which still gates the v4 metadata-v2 pipeline (handoff, MPC-data
-        // announcements, peer-blob fetch, ...) further down.
+        // Orthogonal to the metadata-v2 pipeline (handoff, MPC-data
+        // announcements, peer-blob fetch, ...) wired further down.
 
         let (
             mut reader_opt,
@@ -1388,11 +1386,7 @@ impl IkaNode {
             let next_epoch = next_committee.epoch();
             if last_handled_next_epoch != Some(next_epoch) {
                 let epoch_store = node.state.load_epoch_store_one_call_per_task();
-                if epoch_store
-                    .protocol_config()
-                    .off_chain_validator_metadata_enabled()
-                    && next_epoch == epoch_store.epoch() + 1
-                {
+                if next_epoch == epoch_store.epoch() + 1 {
                     let self_name = epoch_store.name;
                     let in_next = next_committee
                         .voting_rights
@@ -2268,57 +2262,28 @@ impl IkaNode {
                     .await?;
             }
 
-            // Off-chain validator-metadata pipeline gate. When the
-            // protocol config flag is off, skip every install/spawn
-            // below — handoff signing, mpc_data announcements,
-            // joiner relay, pubkey updaters, syncer overlay sources.
-            // The tasks themselves also self-gate at the top of
-            // `run()`, but checking once here avoids the spawn churn.
-            let off_chain_metadata_enabled = cur_epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled();
-
-            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
-                components,
-            ) =
+            let handoff_signature_sender_handle = if let Some(components) =
                 &*self.validator_components.lock().await
             {
-                let end_of_publish_sender = EndOfPublishSender::new(
-                    Arc::downgrade(&cur_epoch_store),
-                    Arc::new(components.consensus_adapter.clone()),
-                    sui_data_receivers.end_of_publish_receiver.clone(),
-                    cur_epoch_store.epoch(),
-                );
-                let end_of_publish_handle = Some(tokio::spawn(async move {
-                    end_of_publish_sender.run().await;
-                }));
-
-                let handoff_handle = if off_chain_metadata_enabled {
-                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
-                    let builders = ika_core::validator_metadata::default_handoff_items_builders(
-                        &cur_epoch_store,
+                let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
+                let builders =
+                    ika_core::validator_metadata::default_handoff_items_builders(&cur_epoch_store);
+                let handoff_sender =
+                    ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        Arc::new(components.consensus_adapter.clone()),
+                        sui_data_receivers.end_of_publish_receiver.clone(),
+                        consensus_keypair,
+                        sui_data_receivers.next_epoch_committee_receiver.clone(),
+                        sui_data_receivers.network_keys_receiver.clone(),
+                        builders,
                     );
-                    let handoff_sender =
-                        ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
-                            Arc::downgrade(&cur_epoch_store),
-                            cur_epoch_store.epoch(),
-                            Arc::new(components.consensus_adapter.clone()),
-                            sui_data_receivers.end_of_publish_receiver.clone(),
-                            consensus_keypair,
-                            sui_data_receivers.next_epoch_committee_receiver.clone(),
-                            sui_data_receivers.network_keys_receiver.clone(),
-                            builders,
-                        );
-                    Some(tokio::spawn(async move {
-                        handoff_sender.run().await;
-                    }))
-                } else {
-                    None
-                };
-
-                (end_of_publish_handle, handoff_handle)
+                Some(tokio::spawn(async move {
+                    handoff_sender.run().await;
+                }))
             } else {
-                (None, None)
+                None
             };
 
             // Producer-side broadcaster: announces this validator's
@@ -2327,8 +2292,8 @@ impl IkaNode {
             // mpc_data digest and the off-chain freeze never lands,
             // which leaves the step-14 kickoff gate closed and stalls
             // network DKG / reconfig.
-            let mpc_data_announcement_handle = if off_chain_metadata_enabled
-                && let Some(components) = &*self.validator_components.lock().await
+            let mpc_data_announcement_handle = if let Some(components) =
+                &*self.validator_components.lock().await
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
                 let blob_cache = ika_core::blob_cache::BlobCache::new(
@@ -2361,7 +2326,7 @@ impl IkaNode {
             // caches them locally so the off-chain validator-mpc_data
             // assembler can resolve every committee member without a
             // chain read.
-            let peer_blob_fetcher_handle = if off_chain_metadata_enabled {
+            let peer_blob_fetcher_handle = {
                 let authority_names_to_peer_ids = cur_epoch_store
                     .epoch_start_state()
                     .get_authority_names_to_peer_ids();
@@ -2379,11 +2344,9 @@ impl IkaNode {
                     self.metrics.mpc_data_blob_fetch_total.clone(),
                 );
                 let fetcher = Arc::new(fetcher);
-                Some(tokio::spawn(async move {
+                tokio::spawn(async move {
                     fetcher.run().await;
-                }))
-            } else {
-                None
+                })
             };
 
             // Joiner bootstrap verification: a node that is a validator
@@ -2394,9 +2357,7 @@ impl IkaNode {
             // and verify it (epoch-bound, prior committee, next-committee
             // pubkey-set hash). Surfaces a tampered/wrong bootstrap; does
             // not halt on failure.
-            let joiner_bootstrap_handle = if off_chain_metadata_enabled
-                && cur_epoch_store.epoch() >= 1
-            {
+            let joiner_bootstrap_handle = if cur_epoch_store.epoch() >= 1 {
                 use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
@@ -2677,18 +2638,16 @@ impl IkaNode {
             // next-epoch committee so the per-epoch store accepts
             // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
             // instead of silently dropping them.
-            let joiner_pubkey_updater_handle = if off_chain_metadata_enabled {
+            let joiner_pubkey_updater_handle = {
                 let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_next_epoch_committee(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         sui_client.clone(),
                     );
                 let updater = Arc::new(updater);
-                Some(tokio::spawn(async move {
+                tokio::spawn(async move {
                     updater.run().await;
-                }))
-            } else {
-                None
+                })
             };
 
             // Install the off-chain blob overlay so the network-
@@ -2698,44 +2657,42 @@ impl IkaNode {
             // previous-epoch installation (if any); the `Weak`
             // adapter naturally expires when the per-epoch store
             // drops.
-            if off_chain_metadata_enabled {
-                self.sui_connector_service
-                    .install_network_key_blob_source(Box::new(
-                        ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
-                            &cur_epoch_store,
-                        )),
-                    ));
-
-                // Install the off-chain validator-mpc_data assembler so
-                // `sync_next_committee` builds the next `Committee`'s
-                // class_groups_public_keys_and_proofs from validators'
-                // own `mpc_data` announcements + the perpetual blob
-                // store instead of refetching from chain. Falls back
-                // to chain when the off-chain set is `Incomplete`.
-                self.sui_connector_service.install_mpc_data_source(Box::new(
-                    ika_core::validator_metadata::EpochStoreMpcDataSource::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        self.state.perpetual_tables(),
-                    ),
+            self.sui_connector_service
+                .install_network_key_blob_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
+                        &cur_epoch_store,
+                    )),
                 ));
 
-                // Install the joiner-announcement relay impl on the
-                // Anemo `SubmitMpcDataAnnouncement` server so a peer
-                // joiner's announcement gets verified locally and
-                // forwarded into consensus instead of being rejected
-                // with "relay not installed".
-                if let Some(components) = &*self.validator_components.lock().await {
-                    self.mpc_announcement_relay.install(Box::new(
-                        ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
-                            Arc::downgrade(&cur_epoch_store),
-                            Arc::new(components.consensus_adapter.clone()),
-                            ika_core::blob_cache::BlobCache::new(
-                                self.mpc_data_blob_store.clone(),
-                                self.state.perpetual_tables(),
-                            ),
+            // Install the off-chain validator-mpc_data assembler so
+            // `sync_next_committee` builds the next `Committee`'s
+            // class_groups_public_keys_and_proofs from validators'
+            // own `mpc_data` announcements + the perpetual blob
+            // store instead of refetching from chain. Falls back
+            // to chain when the off-chain set is `Incomplete`.
+            self.sui_connector_service.install_mpc_data_source(Box::new(
+                ika_core::validator_metadata::EpochStoreMpcDataSource::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    self.state.perpetual_tables(),
+                ),
+            ));
+
+            // Install the joiner-announcement relay impl on the
+            // Anemo `SubmitMpcDataAnnouncement` server so a peer
+            // joiner's announcement gets verified locally and
+            // forwarded into consensus instead of being rejected
+            // with "relay not installed".
+            if let Some(components) = &*self.validator_components.lock().await {
+                self.mpc_announcement_relay.install(Box::new(
+                    ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        Arc::new(components.consensus_adapter.clone()),
+                        ika_core::blob_cache::BlobCache::new(
+                            self.mpc_data_blob_store.clone(),
+                            self.state.perpetual_tables(),
                         ),
-                    ));
-                }
+                    ),
+                ));
             }
 
             let stop_condition = self
@@ -2759,10 +2716,6 @@ impl IkaNode {
                     return Ok(());
                 }
             };
-            end_of_publish_sender_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
             handoff_signature_sender_handle.map(|handle| {
                 handle.abort();
                 Some(())
@@ -2771,14 +2724,8 @@ impl IkaNode {
                 handle.abort();
                 Some(())
             });
-            joiner_pubkey_updater_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
-            peer_blob_fetcher_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
+            joiner_pubkey_updater_handle.abort();
+            peer_blob_fetcher_handle.abort();
             joiner_bootstrap_handle.map(|handle| {
                 handle.abort();
                 Some(())
@@ -3307,16 +3254,6 @@ impl IkaNode {
         cur_epoch_store: &AuthorityPerEpochStore,
         new_epoch_store: &Arc<AuthorityPerEpochStore>,
     ) {
-        // Off-chain handoff is the only thing this barrier waits for; when
-        // the protocol flag is off (pre-v4) there is no off-chain handoff
-        // data to wait for, so skip the barrier entirely.
-        if !cur_epoch_store
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return;
-        }
-
         info!(
             next_epoch,
             "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \

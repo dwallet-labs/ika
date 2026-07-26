@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! End-to-end cluster test for the OCS (Object-Checkpoint-State) verified
-//! Sui-state path, active at protocol v4
-//! (`off_chain_validator_metadata_enabled`).
+//! Sui-state path.
 //!
 //! With `.with_ocs_genesis_anchor(true)` every validator boots from the Sui
 //! localnet's epoch-0 committee (the unsafe-genesis bootstrap), which makes
-//! `has_anchor` true so the OCS stack is built. At v4 this flips MPC session-
+//! `has_anchor` true so the OCS stack is built. This flips MPC session-
 //! event ingestion from the legacy JSON-RPC `query_events` listener to the
 //! OCS `BagEventPump`, which walks the verified `session_events` bags through
 //! `OcsVerifiedReader` (every read checked against the committee via an

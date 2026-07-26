@@ -54,6 +54,11 @@ pub struct ConsensusTransaction {
 pub enum ConsensusTransactionKey {
     DWalletCheckpointSignature(AuthorityName, DWalletCheckpointSequenceNumber),
     CapabilityNotification(AuthorityName, u64 /* generation */),
+    /// Key of a decode-only V1 `EndOfPublish` (see
+    /// [`ConsensusTransactionKind::EndOfPublish`]). Still reached, because a
+    /// received V1 is keyed before it is dropped. Distinct from
+    /// [`Self::EndOfPublishV2`] so the consensus dedupe layer never conflates
+    /// the two. BCS index is wire/DB format — do not reorder.
     EndOfPublish(AuthorityName),
     /// Authority that sent the message, the session identifier, and the message itself.
     DWalletMPCMessage(AuthorityName, SessionIdentifier, Vec<u8>),
@@ -119,10 +124,8 @@ pub enum ConsensusTransactionKey {
     /// V2 of `EndOfPublish`, keyed only by `AuthorityName` (like V1).
     /// V1 and V2 are *distinct* keys (different enum variants), so
     /// they do not dedupe against each other — but they never need
-    /// to: the `off_chain_validator_metadata` flag makes emission
-    /// mutually exclusive (the standalone V1 sender exits when the
-    /// flag is on, and V2 is emitted only then), so a given authority
-    /// submits exactly one form per epoch. The bundled handoff
+    /// to: V2 is the only form any supported binary emits, so a given
+    /// authority submits exactly one form per epoch. The bundled handoff
     /// signature inside V2 is not separately keyed; the consumer
     /// routes it through the handoff aggregator after extraction.
     EndOfPublishV2(AuthorityName),
@@ -327,6 +330,17 @@ pub enum ConsensusTransactionKind {
     DWalletCheckpointSignature(Box<DWalletCheckpointSignatureMessage>),
     SystemCheckpointSignature(Box<SystemCheckpointSignatureMessage>),
     CapabilityNotificationV1(AuthorityCapabilitiesV1),
+    /// DECODE-ONLY since `MIN_PROTOCOL_VERSION = 5`. No supported binary
+    /// emits this — `EndOfPublishV2` is the only form produced, and the
+    /// consumer drops any V1 it receives (a peer sending one is
+    /// misconfigured). The variant itself must stay: its BCS index is wire
+    /// format, and removing it would renumber every variant below.
+    ///
+    /// Not `#[deprecated]` on purpose — receiving and dropping V1 is live,
+    /// required behavior, so the attribute would only force
+    /// `#[allow(deprecated)]` onto every decode site and stop meaning
+    /// anything. The dead half is *production*, which is marked on
+    /// [`ConsensusTransaction::new_end_of_publish`].
     EndOfPublish(AuthorityName),
     DWalletMPCMessage(DWalletMPCMessage),
     DWalletMPCOutput(DWalletMPCOutput),
@@ -367,10 +381,7 @@ pub enum ConsensusTransactionKind {
     /// Why a new variant rather than a field on `EndOfPublish`:
     /// the existing variant has shipped — older peers won't decode
     /// the extra field. A new variant is wire-additive (older peers
-    /// reject as unknown rather than mis-decoding existing data) and
-    /// lets producers gate emission on the existing
-    /// `off_chain_validator_metadata` protocol flag (which already
-    /// gates the rest of the off-chain pipeline that V2 is part of).
+    /// reject as unknown rather than mis-decoding existing data).
     ///
     /// Routing on the consumer side:
     /// 1. Treat the `authority` as the EndOfPublish sender — same
@@ -393,6 +404,17 @@ pub enum ConsensusTransactionKind {
 }
 
 impl ConsensusTransaction {
+    /// Builds a standalone V1 `EndOfPublish`.
+    ///
+    /// No supported binary emits this: `EndOfPublishV2` — which bundles the
+    /// vote with the sender's handoff signature — is the only form produced
+    /// since the off-chain validator-metadata pipeline became unconditional
+    /// at `MIN_PROTOCOL_VERSION = 5`, and the consumer side drops any V1 it
+    /// receives. The DECODE path for V1 is still live and must stay (the
+    /// enum variant is BCS wire format); only production is dead, which is
+    /// what this marker forbids.
+    #[deprecated(note = "V1 EndOfPublish is never emitted; use new_end_of_publish_v2. \
+                Kept only so the wire variant has a constructor for tests.")]
     pub fn new_end_of_publish(authority: AuthorityName) -> Self {
         let mut hasher = DefaultHasher::new();
         authority.hash(&mut hasher);
@@ -406,9 +428,8 @@ impl ConsensusTransaction {
     /// V2 of [`Self::new_end_of_publish`] — bundles the validator's
     /// signed handoff attestation alongside its EndOfPublish vote in a
     /// single consensus message, so the two always arrive together and
-    /// can't be reordered at peers. Producers emit this in place of
-    /// plain V1 when the `off_chain_validator_metadata` protocol flag
-    /// is on; the consumer side splits the message back into its two
+    /// can't be reordered at peers. This is the only form producers
+    /// emit; the consumer side splits the message back into its two
     /// parts and routes each through the existing v1 processing paths.
     pub fn new_end_of_publish_v2(
         authority: AuthorityName,

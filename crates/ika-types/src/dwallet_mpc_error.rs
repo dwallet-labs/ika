@@ -45,7 +45,7 @@ pub enum DwalletMPCError {
 
     #[error(
         "off-chain class-groups assembly incomplete at epoch {epoch}: {missing} missing — \
-         no chain fallback under v4 off_chain_validator_metadata; retry on the next tick"
+         no chain fallback; retry on the next tick"
     )]
     OffChainAssemblyIncomplete { epoch: EpochId, missing: usize },
 

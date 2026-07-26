@@ -1213,8 +1213,6 @@ impl DWalletMPCManager {
         // drain loop above), so the session starts on the first cycle
         // after the freeze lands.
         //
-        // Bypassed entirely when the off-chain validator metadata
-        // protocol feature is disabled — legacy chain-only behavior.
         // Gate also requires the agreed (frozen) off-chain key set to be ingested
         // — `is_mpc_data_frozen` says the set is decided, but the keys arrive on
         // a separate channel; without this a DKG could start after the freeze but
@@ -1222,14 +1220,12 @@ impl DWalletMPCManager {
         // current-epoch set; reconfiguration needs the next-epoch set.
         let off_chain_gate_passes = match &request.protocol_data {
             ProtocolData::NetworkEncryptionKeyDkg { .. } => {
-                !self.epoch_store.off_chain_validator_metadata_enabled()
-                    || (self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
-                        && self.current_epoch_keys_ingested)
+                self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                    && self.current_epoch_keys_ingested
             }
             ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
-                !self.epoch_store.off_chain_validator_metadata_enabled()
-                    || (self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
-                        && self.next_epoch_validator_mpc_keys.is_some())
+                self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                    && self.next_epoch_validator_mpc_keys.is_some()
             }
             _ => true,
         };

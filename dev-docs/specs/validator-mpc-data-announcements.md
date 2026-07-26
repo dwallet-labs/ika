@@ -1,9 +1,8 @@
 # Validator MPC-data announcements (off-chain validator metadata)
 
-Status: active under protocol v4 (`off_chain_validator_metadata_enabled`).
-Under v3 the same data is read from chain; under v4 chain writes remain
-(write-only) but the consensus + P2P pipeline described here is the only
-read path.
+Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`. Chain
+writes remain (write-only), but the consensus + P2P pipeline described
+here is the only read path.
 
 ## Problem
 
