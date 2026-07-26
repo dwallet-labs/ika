@@ -190,12 +190,13 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     // Under the identity basis this epoch actually uses: `AuthorityName` is
     // the BLS protocol key below protocol v6 and the consensus key from v6,
     // and this cluster genesises at ProtocolVersion::MAX.
-    let joiner_name = joiner.authority_name(joiner.node_handle.with(|node| {
+    let consensus_key_identity = joiner.node_handle.with(|node| {
         node.state()
             .epoch_store_for_testing()
             .epoch_start_state()
             .consensus_key_identity()
-    }));
+    });
+    let joiner_name = joiner.authority_name(consensus_key_identity);
 
     // Read the epoch-2 committee from the joiner's own node: is the
     // joiner's on-chain mpc_data record visible in this node's epoch-2
@@ -303,7 +304,13 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     // so their absence means the freeze/handoff pipeline is broken
     // outright and must never fall into the joiner-tolerance path
     // below.
-    for original in &cluster.validator_names {
+    // Under the same identity basis the cert items use.
+    let original_names = if consensus_key_identity {
+        &cluster.validator_consensus_names
+    } else {
+        &cluster.validator_names
+    };
+    for original in original_names {
         assert!(
             epoch_1_cert_validators.contains(original),
             "original validator {original:?} missing from the epoch-1 handoff cert's \

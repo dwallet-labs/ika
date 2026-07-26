@@ -98,6 +98,11 @@ pub struct IkaTestCluster {
     /// swarm stores nodes in a HashMap and `validator_nodes()` order is
     /// otherwise unspecified.
     pub validator_names: Vec<ika_types::crypto::AuthorityName>,
+    /// The same validators named under the CONSENSUS-key basis, in the same
+    /// order. `AuthorityName` is the BLS protocol key below protocol v6 and
+    /// the consensus key from v6, so a test comparing identities against a
+    /// v6 epoch's committee or handoff cert must use these instead.
+    pub validator_consensus_names: Vec<ika_types::crypto::AuthorityName>,
     /// Base port of this process's ika-node port block. Joiners added after
     /// build draw deterministic ports from here so they don't race a
     /// concurrently-running test process (see
@@ -1594,6 +1599,10 @@ impl IkaTestClusterBuilder {
             .iter()
             .map(|c| c.protocol_public_key())
             .collect();
+        let validator_consensus_names: Vec<_> = validator_configs
+            .iter()
+            .map(|c| c.authority_name(/* consensus_key_identity */ true))
+            .collect();
         // The ika epoch only advances when a Notifier node submits the
         // `process_mid_epoch` / `request_advance_epoch` transactions to Sui (the
         // validators never do — `run_epoch_switch` is gated on a notifier key).
@@ -1669,6 +1678,7 @@ impl IkaTestClusterBuilder {
             sui_rpc_url,
             publisher_address,
             validator_names,
+            validator_consensus_names,
             ika_node_port_base,
             // Initial validators consumed indices [0, num_validators); joiners
             // claim the next deterministic slots.
