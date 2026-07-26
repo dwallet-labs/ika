@@ -416,7 +416,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
