@@ -3951,8 +3951,8 @@ impl DWalletMPCManager {
                     InternalPresignCompletionKey::AdoptedUnresolvable => {
                         ika_types::report_invariant_violation!(
                             "internal_presign_output_key_id_missing",
-                        ?dwallet_network_encryption_key_id,
-                        "completed internal presign output for an ADOPTED key with no resolvable \
+                            ?dwallet_network_encryption_key_id,
+                            "completed internal presign output for an ADOPTED key with no resolvable \
                          NetworkKeyId; completion counter not advanced"
                         );
                     }

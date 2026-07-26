@@ -3,17 +3,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if matches="$(
-    rg -n 'should_never_happen\s*=\s*true' crates \
-        --glob '*.rs' \
-        --glob '!**/ika-types/src/metrics.rs'
-)"; then
+matches="$(
+    grep -RInE --include='*.rs' \
+        'should_never_happen[[:space:]]*=[[:space:]]*true[[:space:]]*,' crates \
+        | grep -v '^crates/ika-types/src/metrics.rs:' \
+        || true
+)"
+if [[ -n "$matches" ]]; then
     echo "ERROR: bare should_never_happen marker bypasses report_invariant_violation!:"
     echo "$matches"
     exit 1
 fi
 
-if ! rg -q 'tracing::error!\(should_never_happen\s*=\s*true' \
+if ! grep -Eq 'tracing::error!\(should_never_happen[[:space:]]*=[[:space:]]*true[[:space:]]*,' \
     crates/ika-types/src/metrics.rs; then
     echo "ERROR: report_invariant_violation! no longer emits should_never_happen = true"
     exit 1
