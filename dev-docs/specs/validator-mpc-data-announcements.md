@@ -50,6 +50,12 @@ which bytes* deterministic in consensus order.
    current-committee peers. Each receiver verifies the signature
    against the joiner's next-epoch consensus pubkey from chain, then
    relays it into consensus as `RelayedValidatorMpcDataAnnouncement`.
+   A relayer's `Accepted` response means the relayed announcement was
+   **observed in consensus output** (bounded wait; timeout →
+   `Rejected`), not merely handed to the relayer's submitter — the
+   joiner cannot read consensus and permanently stops fanning out
+   after `min_accepts` acceptances, so a weaker ack would let a
+   relayer crash silently strand the announcement (issue #1943).
    Joiners announce as early as possible so peers cache the blob; the
    reconfiguration never blocks waiting for a missing joiner (see
    freeze rules below — a joiner that misses the freeze window is
