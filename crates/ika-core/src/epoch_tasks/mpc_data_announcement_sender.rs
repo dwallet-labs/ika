@@ -35,6 +35,7 @@ use crate::authority::authority_per_epoch_store::{
 };
 use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
+use crate::consensus_handler::SequencedConsensusTransactionKey;
 use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, derive_mpc_data_blob, now_ms,
 };
@@ -44,7 +45,7 @@ use ika_types::committee::{CommitteeMembership, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
-use ika_types::messages_consensus::ConsensusTransaction;
+use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -225,18 +226,17 @@ pub struct MpcDataAnnouncementSender {
     /// without this, only the first emit per (authority, epoch)
     /// would reach the strict-superset gate.
     ///
-    /// KNOWN GAP (#1942): both this counter and
-    /// `last_emitted_validated_peers_count` are in-memory only, so a
-    /// mid-epoch restart resets them to 0. If an earlier emit landed
-    /// (its key is durably in `consensus_message_processed`) and a
-    /// later, wider re-emit was lost with the process, the restarted
-    /// sender re-emits the wider set under an already-processed
-    /// sequence number — every node drops it at verify time, and
-    /// since each later growth bumps the counter by one, every
-    /// re-emit stays dropped until the counter climbs past the
-    /// pre-restart maximum. Fix direction: initialize both counters
-    /// from this validator's own recorded ready signal in the
-    /// per-epoch store.
+    /// Both this counter and `last_emitted_validated_peers_count`
+    /// are in-memory, so `new` seeds them from this signer's own
+    /// recorded signal in the per-epoch store: a mid-epoch restart
+    /// must resume ABOVE the already-sequenced sequence numbers, or
+    /// its first re-emit lands under an already-processed consensus
+    /// key and every node's verify-time dedup silently drops it
+    /// (issue #1942 — the widened attestation then stayed lost until
+    /// the counter climbed past the pre-restart maximum). The seed's
+    /// one stale-row window (an in-flight emit that sequenced but
+    /// wasn't locally processed at the crash) is closed at emit time
+    /// by `reserve_unprocessed_sequence_number`.
     next_sequence_number: std::sync::atomic::AtomicU64,
     /// Number of announcement submissions so far this epoch. Used
     /// only to bound logging: the first submission (and every 30th
@@ -267,6 +267,41 @@ impl MpcDataAnnouncementSender {
         root_seed: RootSeed,
         next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     ) -> Self {
+        // Seed the re-emit gates from our own recorded signal, so a
+        // mid-epoch restart resumes ABOVE the sequence numbers that
+        // already landed instead of re-emitting under an
+        // already-processed consensus key (which every node's
+        // verify-time dedup would silently drop — issue #1942). The
+        // recorded signal is the widest one sequenced-and-accepted
+        // from us: `recorded.sequence_number + 1` clears every key
+        // OUR OWN processing has seen, and
+        // `recorded.validated_peers.len()` is the count the
+        // strict-superset gate compares against. One stale-row window
+        // remains — an in-flight emit that sequenced network-wide but
+        // wasn't locally processed at the crash — which the
+        // processed-key skip at emit time
+        // (`reserve_unprocessed_sequence_number`) closes. A fresh
+        // epoch (or a fresh validator) has no recorded row and starts
+        // at (0, 0) as before.
+        let recorded = epoch_store.upgrade().and_then(|epoch_store| {
+            epoch_store
+                .get_epoch_mpc_data_ready_signal(&authority)
+                .unwrap_or_else(|err| {
+                    // Fall back to (0, 0) — the pre-#1942 behavior —
+                    // but never silently: this is exactly the collision
+                    // state the seeding exists to prevent.
+                    warn!(
+                        ?err,
+                        "failed to read own recorded EpochMpcDataReadySignal; \
+                         re-emit gates start at 0 and the first re-emit may \
+                         collide with an already-processed consensus key"
+                    );
+                    None
+                })
+        });
+        let (next_sequence_number, last_emitted_validated_peers_count) = recorded
+            .map(|recorded| (recorded.sequence_number + 1, recorded.validated_peers.len()))
+            .unwrap_or((0, 0));
         Self {
             epoch_store,
             epoch_id,
@@ -276,8 +311,10 @@ impl MpcDataAnnouncementSender {
             root_seed,
             next_epoch_committee_receiver,
             cached_announcement: Mutex::new(None),
-            last_emitted_validated_peers_count: AtomicUsize::new(0),
-            next_sequence_number: std::sync::atomic::AtomicU64::new(0),
+            last_emitted_validated_peers_count: AtomicUsize::new(
+                last_emitted_validated_peers_count,
+            ),
+            next_sequence_number: std::sync::atomic::AtomicU64::new(next_sequence_number),
             announcement_submit_attempts: AtomicU64::new(0),
             next_committee_first_seen_ms: AtomicU64::new(0),
         }
@@ -623,6 +660,54 @@ impl MpcDataAnnouncementSender {
         )
     }
 
+    /// Reserves the next ready-signal sequence number, skipping past any
+    /// already observed in consensus output. The constructor's seed
+    /// covers everything OUR processing saw before a crash, but an
+    /// in-flight emit can sequence network-wide without being locally
+    /// processed yet — its key is then durably in
+    /// `consensus_message_processed` (locally after replay, and on every
+    /// peer) while the recorded row still shows the previous emit, and
+    /// an emit under such a key is silently dropped at verify time
+    /// everywhere. Purely local read of this node's own durable
+    /// processed-marker table; nothing consensus-visible depends on
+    /// which number we pick (a byzantine signer could pick any).
+    fn reserve_unprocessed_sequence_number(&self, epoch_store: &AuthorityPerEpochStore) -> u64 {
+        loop {
+            let sequence_number = self.next_sequence_number.fetch_add(1, Ordering::AcqRel);
+            let key = SequencedConsensusTransactionKey::External(
+                ConsensusTransactionKey::EpochMpcDataReadySignal(
+                    self.authority,
+                    self.epoch_id,
+                    sequence_number,
+                ),
+            );
+            match epoch_store.is_consensus_message_processed(&key) {
+                Ok(false) => return sequence_number,
+                Ok(true) => {
+                    debug!(
+                        epoch = self.epoch_id,
+                        sequence_number,
+                        "ready-signal sequence number already processed \
+                         (pre-restart in-flight emit landed); skipping past it"
+                    );
+                }
+                Err(err) => {
+                    // Fail open with the reserved number: a collision is
+                    // a dropped-then-retried re-emit, while refusing to
+                    // emit would hold the freeze tally hostage to a
+                    // local read error.
+                    warn!(
+                        ?err,
+                        sequence_number,
+                        "failed to check ready-signal key against processed \
+                         markers; emitting with the reserved sequence number"
+                    );
+                    return sequence_number;
+                }
+            }
+        }
+    }
+
     async fn send_epoch_ready_signal(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
         // Don't signal "ready" before our own announcement has
@@ -716,7 +801,7 @@ impl MpcDataAnnouncementSender {
         // invariant local). The first emit is seq=0; re-emits are
         // 1, 2, ... — included in the consensus key so they don't
         // get deduped at verify time.
-        let sequence_number = self.next_sequence_number.fetch_add(1, Ordering::AcqRel);
+        let sequence_number = self.reserve_unprocessed_sequence_number(&epoch_store);
         let tx = build_epoch_mpc_data_ready_signal_transaction(
             self.authority,
             self.epoch_id,
@@ -1092,6 +1177,212 @@ mod tests {
             "test setup must make the publication-grace term the binding one"
         );
         assert_eq!(deadline_gauge.get(), (tightened_ms / 1000) as i64);
+    }
+
+    /// Restart shape for issue #1942: a sender constructed over an epoch
+    /// store that already holds this signer's recorded ready signal must
+    /// resume its re-emit gates ABOVE the recorded sequence number —
+    /// starting back at 0 would re-emit under an already-processed
+    /// consensus key, which every node's verify-time dedup silently drops.
+    #[tokio::test]
+    async fn ready_signal_counters_recover_from_recorded_signal_on_restart() {
+        use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+        use crate::epoch::epoch_metrics::EpochMetrics;
+        use ika_types::committee::Committee;
+        use ika_types::digests::ChainIdentifier;
+        use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+        use ika_types::sui::epoch_start_system::EpochStartSystem;
+        use ika_types::validator_metadata::EpochMpcDataReadySignal;
+        use prometheus::Registry;
+
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(1);
+        let committee = Arc::new(committee);
+        let member = *committee.names().next().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            member,
+            committee,
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        let make_sender = || {
+            let perpetual_dir = tempfile::TempDir::new().unwrap();
+            let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+            std::mem::forget(perpetual_dir);
+            let next_committee = CommitteeMembership {
+                epoch: 1,
+                voting_rights: vec![(member, 1u64)],
+                quorum_threshold: 1,
+                validity_threshold: 1,
+            };
+            let (_ntx, next_committee_receiver) = tokio::sync::watch::channel(next_committee);
+            MpcDataAnnouncementSender::new(
+                Arc::downgrade(&epoch_store),
+                0,
+                member,
+                Arc::new(NoopAdapter),
+                BlobCache::new(InMemoryBlobStore::new(), perpetual),
+                RootSeed::new([4; 32]),
+                next_committee_receiver,
+            )
+        };
+
+        // Fresh epoch, nothing recorded: gates start at zero.
+        let fresh = make_sender();
+        assert_eq!(fresh.next_sequence_number.load(Ordering::Acquire), 0);
+        assert_eq!(
+            fresh
+                .last_emitted_validated_peers_count
+                .load(Ordering::Acquire),
+            0
+        );
+
+        // A re-emit (sequence_number 2) lands and is recorded. The
+        // single-member committee makes the member's own attestation
+        // reach quorum coverage, so the record path accepts it.
+        epoch_store
+            .record_epoch_mpc_data_ready_signal(&EpochMpcDataReadySignal {
+                authority: member,
+                epoch: 0,
+                sequence_number: 2,
+                validated_peers: vec![(member, [0x11; 32])],
+            })
+            .unwrap();
+
+        // "Restart": a new sender over the same epoch store resumes
+        // above the recorded signal instead of resetting to zero.
+        let restarted = make_sender();
+        assert_eq!(restarted.next_sequence_number.load(Ordering::Acquire), 3);
+        assert_eq!(
+            restarted
+                .last_emitted_validated_peers_count
+                .load(Ordering::Acquire),
+            1
+        );
+    }
+
+    /// The seed's residual window: an emit that sequenced network-wide
+    /// but whose record was DROPPED (here: non-superset) leaves the
+    /// recorded row stale while its key is durably processed. The
+    /// reservation must skip past such keys instead of emitting under
+    /// one (which verify-time dedup would silently drop everywhere).
+    #[tokio::test]
+    async fn sequence_reservation_skips_processed_keys_the_recorded_row_missed() {
+        use crate::authority::AuthorityMetrics;
+        use crate::authority::authority_per_epoch_store::{
+            ConsensusStats, ExecutionIndices, ExecutionIndicesWithStats,
+        };
+        use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+        use crate::consensus_handler::{ConsensusCommitInfo, SequencedConsensusTransaction};
+        use crate::dwallet_checkpoints::DWalletCheckpointService;
+        use crate::epoch::epoch_metrics::EpochMetrics;
+        use crate::system_checkpoints::SystemCheckpointService;
+        use ika_types::committee::Committee;
+        use ika_types::digests::ChainIdentifier;
+        use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+        use ika_types::sui::epoch_start_system::EpochStartSystem;
+        use ika_types::validator_metadata::EpochMpcDataReadySignal;
+        use prometheus::Registry;
+
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(1);
+        let committee = Arc::new(committee);
+        let member = *committee.names().next().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            member,
+            committee,
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        // The recorded row holds seq=0 with the member's attestation.
+        epoch_store
+            .record_epoch_mpc_data_ready_signal(&EpochMpcDataReadySignal {
+                authority: member,
+                epoch: 0,
+                sequence_number: 0,
+                validated_peers: vec![(member, [0x11; 32])],
+            })
+            .unwrap();
+
+        // A seq=1 emit with the SAME peer set sequences: processing
+        // marks its key processed but the record path drops it as a
+        // non-superset re-emit — the recorded row stays at seq=0.
+        let stale_landing = SequencedConsensusTransaction {
+            certificate_author_index: 0,
+            certificate_author: member,
+            consensus_index: ExecutionIndices::default(),
+            transaction: crate::consensus_handler::SequencedConsensusTransactionKind::External(
+                build_epoch_mpc_data_ready_signal_transaction(
+                    member,
+                    0,
+                    1,
+                    vec![(member, [0x11; 32])],
+                ),
+            ),
+        };
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![stale_landing],
+                &ExecutionIndicesWithStats {
+                    index: ExecutionIndices {
+                        last_committed_round: 1,
+                        sub_dag_index: 0,
+                        transaction_index: 0,
+                    },
+                    hash: 0,
+                    stats: ConsensusStats::default(),
+                },
+                &None::<Arc<DWalletCheckpointService>>,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(1, 1_000, true),
+                &Arc::new(AuthorityMetrics::new(&Registry::new())),
+            )
+            .await
+            .unwrap();
+        let recorded = epoch_store
+            .get_epoch_mpc_data_ready_signal(&member)
+            .unwrap()
+            .expect("row must exist");
+        assert_eq!(
+            recorded.sequence_number, 0,
+            "test setup requires the non-superset landing to leave the row stale"
+        );
+
+        // "Restart": the seed reads the stale row (next = 1), but the
+        // reservation must skip the processed seq=1 and hand out 2.
+        let perpetual_dir = tempfile::TempDir::new().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+        std::mem::forget(perpetual_dir);
+        let next_committee = CommitteeMembership {
+            epoch: 1,
+            voting_rights: vec![(member, 1u64)],
+            quorum_threshold: 1,
+            validity_threshold: 1,
+        };
+        let (_ntx, next_committee_receiver) = tokio::sync::watch::channel(next_committee);
+        let sender = MpcDataAnnouncementSender::new(
+            Arc::downgrade(&epoch_store),
+            0,
+            member,
+            Arc::new(NoopAdapter),
+            BlobCache::new(InMemoryBlobStore::new(), perpetual),
+            RootSeed::new([4; 32]),
+            next_committee_receiver,
+        );
+        assert_eq!(sender.next_sequence_number.load(Ordering::Acquire), 1);
+        assert_eq!(sender.reserve_unprocessed_sequence_number(&epoch_store), 2);
     }
 
     #[tokio::test]

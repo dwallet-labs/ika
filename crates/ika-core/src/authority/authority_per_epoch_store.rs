@@ -1622,12 +1622,18 @@ pub struct AuthorityEpochTables {
     /// honest validator only emits once per epoch.
     ///
     /// write-discipline: direct — safe because pure-function-of-table: every
-    /// consumer (`freeze_mpc_data_if_first`'s tally, the ready-quorum anchor)
-    /// folds the WHOLE table with no arrival-order or size cap, so a crash can
-    /// only leave it holding the replayed commit's own signals — which the
-    /// original run also counted before deciding. Adding a consumer that
-    /// snapshots or caps this table reintroduces the #1917 shape; the decision
-    /// it feeds must then be pinned through `ConsensusCommitOutput` instead.
+    /// consensus-visible consumer (`freeze_mpc_data_if_first`'s tally, the
+    /// ready-quorum anchor) folds the WHOLE table with no arrival-order or
+    /// size cap, so a crash can only leave it holding the replayed commit's
+    /// own signals — which the original run also counted before deciding.
+    /// Adding a consumer that snapshots or caps this table reintroduces the
+    /// #1917 shape; the decision it feeds must then be pinned through
+    /// `ConsensusCommitOutput` instead. One single-row consumer is exempt
+    /// from the fold-the-whole-table reason because it is local-only:
+    /// `MpcDataAnnouncementSender::new` reads this signer's OWN row to seed
+    /// its re-emit pacing after a restart (issue #1942) — nothing
+    /// consensus-visible reads that seed, and reading a stale row only
+    /// delays this node's own re-emit.
     pub(crate) epoch_mpc_data_ready_signals:
         DBMap<AuthorityName, ika_types::validator_metadata::EpochMpcDataReadySignal>,
 
@@ -3661,6 +3667,17 @@ impl AuthorityPerEpochStore {
             .tables()?
             .validator_mpc_data_announcements
             .get(validator)?)
+    }
+
+    /// This signer's own recorded `EpochMpcDataReadySignal`, if one has
+    /// landed this epoch. `MpcDataAnnouncementSender::new` seeds its
+    /// re-emit gates from it so a mid-epoch restart resumes above the
+    /// already-sequenced sequence numbers instead of colliding with them.
+    pub fn get_epoch_mpc_data_ready_signal(
+        &self,
+        signer: &AuthorityName,
+    ) -> IkaResult<Option<ika_types::validator_metadata::EpochMpcDataReadySignal>> {
+        Ok(self.tables()?.epoch_mpc_data_ready_signals.get(signer)?)
     }
 
     /// Computes the set of authorities whose mpc_data blob is
