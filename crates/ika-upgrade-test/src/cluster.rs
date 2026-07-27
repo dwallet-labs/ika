@@ -86,17 +86,10 @@ pub struct ClusterOfProcesses {
     /// aligned with `validators` by index; joiners append. A mirrored
     /// validator's `sui_state_mirror_peers` is built from these.
     validator_peer_ids: Vec<String>,
-    /// Protocol authorities aligned with `validators`. The convergence check
-    /// compares exact identities, not just a count that a missing validator
-    /// and an unexpected sender could accidentally satisfy.
-    validator_authorities: Vec<AuthorityPublicKeyBytes>,
-    /// The same validators named under the CONSENSUS-key basis. A
-    /// validator's `AuthorityName` is its BLS protocol key below protocol
-    /// v6 and its consensus key from v6, so a harness that knows only one
-    /// basis compares a correctly-flipped cluster against the wrong
-    /// expectation. Both are derived at construction from the init configs,
-    /// which carry both keypairs.
-    validator_consensus_authorities: Vec<AuthorityPublicKeyBytes>,
+    /// Authority namings aligned with `validators`; joiners append. The
+    /// convergence check compares exact identities, not just a count that a
+    /// missing validator and an unexpected sender could accidentally satisfy.
+    validator_authorities: Vec<AuthorityNamings>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -120,6 +113,36 @@ pub struct ValidatorSlot {
     pub address: SuiAddress,
     pub validator_id: ObjectID,
     pub validator_cap_id: ObjectID,
+}
+
+/// One validator's authority identity under BOTH naming bases. A validator's
+/// `AuthorityName` is its BLS protocol key below protocol v6 and its
+/// consensus key from v6, so a harness that knows only one basis compares a
+/// correctly-flipped cluster against the wrong expectation. One record per
+/// validator — not parallel per-basis lists — so no write path can register
+/// a validator under one naming and miss the other.
+struct AuthorityNamings {
+    /// BLS protocol-key naming (`AuthorityName` below protocol v6).
+    protocol: AuthorityPublicKeyBytes,
+    /// Consensus-key naming (`AuthorityName` from protocol v6).
+    consensus: AuthorityPublicKeyBytes,
+}
+
+impl AuthorityNamings {
+    /// Both namings, derived from the init config that carries both keypairs
+    /// — the one derivation genesis validators and joiners share.
+    fn of(init: &ValidatorInitializationConfig) -> Self {
+        Self {
+            protocol: init.key_pair.public().into(),
+            consensus: AuthorityPublicKeyBytes::from_consensus_key(
+                init.consensus_key_pair.public(),
+            ),
+        }
+    }
+
+    fn both(&self) -> [&AuthorityPublicKeyBytes; 2] {
+        [&self.protocol, &self.consensus]
+    }
 }
 
 /// Either a caller-provided persistent dir or a harness-owned temp dir.
@@ -330,13 +353,7 @@ impl ClusterBuilder {
             .collect();
         let validator_authorities = validator_init_configs
             .iter()
-            .map(|init| init.key_pair.public().into())
-            .collect();
-        let validator_consensus_authorities = validator_init_configs
-            .iter()
-            .map(|init| {
-                AuthorityPublicKeyBytes::from_consensus_key(init.consensus_key_pair.public())
-            })
+            .map(AuthorityNamings::of)
             .collect();
 
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
@@ -467,7 +484,6 @@ impl ClusterBuilder {
             committee,
             validator_peer_ids,
             validator_authorities,
-            validator_consensus_authorities,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -1336,7 +1352,7 @@ impl ClusterOfProcesses {
         let committee_authorities: BTreeSet<_> = self
             .validator_authorities
             .iter()
-            .chain(self.validator_consensus_authorities.iter())
+            .flat_map(AuthorityNamings::both)
             .map(ToString::to_string)
             .collect();
         // Byzantine quorum of the committee. These scenarios run an
@@ -1386,18 +1402,13 @@ impl ClusterOfProcesses {
                 // binary); its own authority is the candidate whose
                 // byte-equality with the v1.1.8 quorum this boundary tries
                 // to witness.
-                let candidate_authority: BTreeSet<String> = [
-                    self.validator_authorities.get(*index),
-                    self.validator_consensus_authorities.get(*index),
-                ]
-                .into_iter()
-                .flatten()
-                .map(ToString::to_string)
-                .collect();
-                ensure!(
-                    !candidate_authority.is_empty(),
-                    "validator index {index} out of range"
-                );
+                let candidate_authority: BTreeSet<String> = self
+                    .validator_authorities
+                    .get(*index)
+                    .with_context(|| format!("validator index {index} out of range"))?
+                    .both()
+                    .map(ToString::to_string)
+                    .into();
                 let (observer_canonical, observer_missing) = match canonical_network_key_outputs(
                     &body,
                     &committee_authorities,
@@ -1878,8 +1889,7 @@ impl ClusterOfProcesses {
         });
         self.validator_peer_ids
             .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
-        self.validator_authorities
-            .push(init.key_pair.public().into());
+        self.validator_authorities.push(AuthorityNamings::of(&init));
         Ok(index)
     }
 
