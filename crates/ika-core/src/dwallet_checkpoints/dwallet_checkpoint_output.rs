@@ -56,6 +56,14 @@ impl LogDWalletCheckpointOutput {
 
 #[async_trait]
 impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointToConsensus<T> {
+    /// This is the only submission of our signature for this checkpoint:
+    /// the builder never re-invokes the output for an already-built height,
+    /// and `submit_to_consensus` only hands the tx to an in-memory retry
+    /// task. A process death before sequencing therefore loses the
+    /// signature for good. Deliberate: certification needs a stake quorum,
+    /// not any specific signer, so one validator's lost signature is
+    /// absorbed — and if our own aggregator never certifies the height,
+    /// the certified checkpoint still arrives via state sync.
     #[instrument(level = "debug", skip_all)]
     async fn dwallet_checkpoint_created(
         &self,

@@ -293,22 +293,6 @@ impl ConsensusAdapter {
         self.consensus_throughput_profiler.store(Some(profiler))
     }
 
-    // todo - this probably need to hold some kind of lock to make sure epoch does not change while we are recovering
-    pub fn submit_recovered(self: &Arc<Self>, epoch_store: &Arc<AuthorityPerEpochStore>) {
-        // Currently narwhal worker might lose transactions on restart, so we need to resend them
-        // todo - get_all_pending_consensus_transactions is called twice when
-        // initializing AuthorityPerEpochStore and here, should not be a big deal but can be optimized
-        let recovered = epoch_store.get_all_pending_consensus_transactions();
-
-        debug!(
-            "Submitting {:?} recovered pending consensus transactions to consensus",
-            recovered.len()
-        );
-        for transaction in recovered {
-            self.submit_unchecked(&[transaction], epoch_store);
-        }
-    }
-
     fn await_submit_delay(
         &self,
         _committee: &Committee,
@@ -420,6 +404,13 @@ impl ConsensusAdapter {
         )
     }
 
+    /// Hands the transaction to an in-memory background task that retries
+    /// until it is sequenced by consensus — nothing is persisted, so an
+    /// in-flight transaction is lost if the process dies. That loss is
+    /// deliberate: every `ConsensusTransactionKind` submitter owns its own
+    /// restart story (regeneration, a re-submit-until-observed loop, or the
+    /// consensus replay re-driving it), so a restart-lost submission is
+    /// re-derived at the application layer, never replayed from here.
     pub fn submit_batch(
         self: &Arc<Self>,
         transactions: &[ConsensusTransaction],
@@ -427,7 +418,6 @@ impl ConsensusAdapter {
     ) -> IkaResult<JoinHandle<()>> {
         fp_ensure!(transactions.len() == 1, IkaError::InvalidTxKindInSoftBundle);
 
-        //epoch_store.insert_pending_consensus_transactions(transactions, lock)?;
         Ok(self.submit_unchecked(transactions, epoch_store))
     }
 
@@ -449,7 +439,6 @@ impl ConsensusAdapter {
         transactions: &[ConsensusTransaction],
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> JoinHandle<()> {
-        // Reconfiguration lock is dropped when pending_consensus_transactions is persisted, before it is handled by consensus
         let async_stage = self
             .clone()
             .submit_and_wait(transactions.to_vec(), epoch_store.clone());

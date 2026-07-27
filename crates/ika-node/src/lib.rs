@@ -1245,8 +1245,6 @@ impl IkaNode {
                 stranded_network_keys.clone(),
             )
             .await?;
-            // This is only needed during cold start.
-            components.consensus_adapter.submit_recovered(&epoch_store);
 
             Some(components)
         } else {
@@ -2357,6 +2355,14 @@ impl IkaNode {
                 .current_protocol_version
                 .set(config.version.as_u64() as i64);
 
+            // One-shot per epoch: a capability notification lost to process
+            // death before sequencing is never re-sent within the epoch (the
+            // consensus adapter persists nothing), leaving this validator's
+            // stake out of that epoch's protocol-upgrade tally. Deliberate:
+            // any process start re-enters this loop and regenerates the
+            // notification with a fresh, higher `generation`, which the
+            // `generation >=` guard in `record_capabilities_v1` prefers —
+            // regeneration supersedes anything a replay could deliver.
             let transaction =
                 ConsensusTransaction::new_capability_notification_v1(AuthorityCapabilitiesV1::new(
                     self.state.name,
