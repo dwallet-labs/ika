@@ -639,9 +639,8 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
 
 /// Like [`create_network_key_test`] but additionally runs a network reconfiguration
 /// (to the **same** committee at the next epoch) and installs the resulting
-/// **versioned reconfiguration output** (V4 aggregated at the default MAX
-/// protocol config; V3 pre-aggregation below the gate) on every validator's
-/// network key.
+/// **versioned reconfiguration output** (V4 aggregated — the only shape the
+/// protocol produces) on every validator's network key.
 ///
 /// Fast Schnorr (VSS) sign requires a reconfigured key: the DKG-only public output
 /// does not expose the per-curve secret-key polynomial commitments / masked parts
@@ -712,7 +711,7 @@ pub(crate) async fn reconfigure_network_key(
 
     // Reassemble the (chunked) reconfiguration public output across all
     // `RespondDWalletMPCNetworkReconfigurationOutput` messages. These bytes are
-    // already versioned (`bcs(VersionedDecryptionKeyReconfigurationOutput::V3/V4(..))`),
+    // already versioned (`bcs(VersionedDecryptionKeyReconfigurationOutput::V4(..))`),
     // so they go into `current_reconfiguration_public_output` verbatim.
     let mut reconfiguration_output_bytes = vec![];
     for message in reconfiguration_checkpoint.messages() {
