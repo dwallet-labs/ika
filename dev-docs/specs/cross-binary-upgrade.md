@@ -198,6 +198,35 @@ drives them across epochs. The surviving scenarios (current build only):
   reshares to converge byte-identically per authority with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
   validators and converge again.
+- `tests/v125_v6_upgrade.rs` — the PROTOCOL-upgrade gate, and the only
+  scenario that crosses a protocol version boundary (`v125_rollout` and
+  the churn/malicious scenarios are pure binary swaps that stay at v5;
+  the v3/v4-era transition rehearsals were retired with v3/v4 support).
+  Boot the literal v1.2.5 release at v5, run a user lifecycle while
+  identities are still BLS-derived, swap the whole committee to the
+  current build, drop the upgrade buffer stake to a bare quorum so the
+  capability vote is not left to timing, then cross v5 → v6 — the
+  boundary where every validator's `AuthorityName` flips from the BLS
+  protocol key to the Ed25519 consensus key. It asserts the upgrade
+  ACTUALLY activated (`expect_protocol_version_at_least(6)`; without
+  that assertion a network that silently stayed at v5 would pass the
+  whole scenario while exercising nothing), that the reshare executed
+  across the flip converges byte-identically with zero malicious
+  reports, that no committee member is lost to a name unresolvable
+  under the other basis, and that users are served across the boundary
+  plus one further all-v6 boundary. Required green before protocol v6
+  is voted on a live network.
+
+  **Fault-validated** (2026-07-26): removing the identity-basis
+  tolerance from the handoff-cert verifier — the one-token change that
+  reproduces the original defect — fails the scenario at the flip
+  epoch, with `handoff cert next_committee_pubkey_set_hash mismatch`
+  and a fail-closed halt in ALL FOUR validators' logs, while flows
+  through the v5 phases and the binary swap stay clean. So a green run
+  is evidence, not an act of faith. Note the halt arrives via
+  `prepare_handoff_anchor` ("prepare-then-start: …"), not the
+  epoch-start anchoring path, so grep for the hash-mismatch string
+  rather than a specific call site.
 - `tests/v125_churn.rs` — the churn counterpart: full sequential swap over
   the literal v1.2.5 committee (on-disk RocksDB continuity), then a
   peer-only-mirrored joiner folds into the reshared v1.2.5-origin key

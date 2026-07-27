@@ -13,11 +13,24 @@ use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
 use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-use ika_protocol_config::ProtocolVersion;
+use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::multiaddr::Multiaddr;
 use tracing::{error, warn};
+
+/// Whether committees of an epoch running `protocol_version` use
+/// consensus-basis authority names (`consensus_key_authority_names`, on from
+/// protocol version 6). The flag has no chain-specific override, so
+/// `Chain::Unknown` resolves it identically on every network; versions this
+/// binary no longer supports predate the flag and resolve to `false`.
+pub fn consensus_key_identity_for_version(protocol_version: u64) -> bool {
+    ProtocolConfig::get_for_version_if_supported(
+        ProtocolVersion::new(protocol_version),
+        Chain::Unknown,
+    )
+    .is_some_and(|config| config.consensus_key_authority_names())
+}
 
 #[enum_dispatch]
 pub trait EpochStartSystemTrait {
@@ -32,6 +45,10 @@ pub trait EpochStartSystemTrait {
     fn get_authority_names_to_peer_ids(&self) -> HashMap<AuthorityName, PeerId>;
     fn get_authority_names_to_hostnames(&self) -> HashMap<AuthorityName, String>;
     fn get_ika_validators(&self) -> Vec<EpochStartValidatorInfo>;
+    /// Whether THIS epoch's committee uses consensus-basis authority names
+    /// (`consensus_key_authority_names`, on from protocol version 6; always
+    /// false for V1 records, which predate the flip).
+    fn consensus_key_identity(&self) -> bool;
 }
 
 /// This type captures the minimum amount of information from `System` needed by a validator
@@ -45,6 +62,7 @@ pub trait EpochStartSystemTrait {
 #[enum_dispatch(EpochStartSystemTrait)]
 pub enum EpochStartSystem {
     V1(EpochStartSystemV1),
+    V2(EpochStartSystemV2),
 }
 
 impl EpochStartSystem {
@@ -68,6 +86,32 @@ impl EpochStartSystem {
         })
     }
 
+    /// V2 additionally records whether this epoch's committee uses
+    /// consensus-basis authority names (decided by the epoch's protocol
+    /// config at build time).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_v2(
+        epoch: EpochId,
+        protocol_version: u64,
+        epoch_start_timestamp_ms: u64,
+        epoch_duration_ms: u64,
+        active_validators: Vec<EpochStartValidatorInfoV1>,
+        quorum_threshold: u64,
+        validity_threshold: u64,
+        consensus_key_identity: bool,
+    ) -> Self {
+        Self::V2(EpochStartSystemV2 {
+            epoch,
+            protocol_version,
+            epoch_start_timestamp_ms,
+            epoch_duration_ms,
+            active_validators,
+            quorum_threshold,
+            validity_threshold,
+            consensus_key_identity,
+        })
+    }
+
     pub fn new_for_testing_with_epoch(epoch: EpochId) -> Self {
         Self::V1(EpochStartSystemV1::new_for_testing_with_epoch(epoch))
     }
@@ -84,6 +128,16 @@ impl EpochStartSystem {
                 quorum_threshold: 0,
                 validity_threshold: 0,
             }),
+            Self::V2(state) => Self::V2(EpochStartSystemV2 {
+                epoch: state.epoch + 1,
+                protocol_version: state.protocol_version,
+                epoch_start_timestamp_ms: state.epoch_start_timestamp_ms,
+                epoch_duration_ms: state.epoch_duration_ms,
+                active_validators: state.active_validators.clone(),
+                quorum_threshold: 0,
+                validity_threshold: 0,
+                consensus_key_identity: state.consensus_key_identity,
+            }),
         }
     }
 }
@@ -97,6 +151,25 @@ pub struct EpochStartSystemV1 {
     active_validators: Vec<EpochStartValidatorInfoV1>,
     quorum_threshold: u64,
     validity_threshold: u64,
+}
+
+/// V1 plus the epoch's authority-name identity basis. Persisted V1 records
+/// (written by pre-flip binaries) always describe pre-flip epochs, so V1's
+/// trait impl keeps the BLS identity basis unconditionally.
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct EpochStartSystemV2 {
+    epoch: EpochId,
+    protocol_version: u64,
+    epoch_start_timestamp_ms: u64,
+    epoch_duration_ms: u64,
+    active_validators: Vec<EpochStartValidatorInfoV1>,
+    quorum_threshold: u64,
+    validity_threshold: u64,
+    /// Whether this epoch's committee derives members' `AuthorityName`
+    /// from the consensus key — decided at record build time from the
+    /// epoch's protocol config (`consensus_key_authority_names`, on from
+    /// protocol version 6).
+    consensus_key_identity: bool,
 }
 
 impl EpochStartSystemV1 {
@@ -117,6 +190,276 @@ impl EpochStartSystemV1 {
     }
 }
 
+/// A validator's `AuthorityName` under the given identity basis: the
+/// zero-padded consensus Ed25519 key when `consensus_key_identity`, the BLS
+/// protocol key otherwise. The basis is decided per epoch from its protocol
+/// config (`consensus_key_authority_names`, on from protocol version 6).
+pub fn validator_authority_name(
+    validator: &EpochStartValidatorInfoV1,
+    consensus_key_identity: bool,
+) -> AuthorityName {
+    if consensus_key_identity {
+        AuthorityName::from_consensus_key(&validator.consensus_pubkey)
+    } else {
+        (&validator.protocol_pubkey).into()
+    }
+}
+
+fn build_committee_with_network_metadata(
+    epoch: EpochId,
+    active_validators: &[EpochStartValidatorInfoV1],
+    consensus_key_identity: bool,
+) -> CommitteeWithNetworkMetadata {
+    let validators = active_validators
+        .iter()
+        .map(|validator| {
+            // Chain reads decode the mainnet-v1.1.8 bare
+            // `ClassGroupsEncryptionKeyAndProof` shape exclusively. The
+            // off-chain-only PVSS / VSS HPKE keys are not carried on the
+            // chain-derived metadata; they reach the MPC manager via the
+            // off-chain key channels.
+            let name = validator_authority_name(validator, consensus_key_identity);
+            let class_groups_public_key_and_proof =
+                validator.mpc_data.as_ref().and_then(|mpc_data| {
+                    bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes())
+                        .map_err(|e| {
+                            error!(
+                                authority = ?name,
+                                error = ?e,
+                                "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof \
+                                 from Move-side mpc_data"
+                            );
+                        })
+                        .ok()
+                });
+
+            (
+                name,
+                (
+                    validator.voting_power,
+                    NetworkMetadata {
+                        name: validator.name.clone(),
+                        network_address: validator.network_address.clone(),
+                        consensus_address: validator.consensus_address.clone(),
+                        network_public_key: Some(validator.network_pubkey.clone()),
+                        class_groups_public_key_and_proof,
+                    },
+                ),
+            )
+        })
+        .collect();
+
+    CommitteeWithNetworkMetadata::new(epoch, validators)
+}
+
+fn build_ika_committee(
+    epoch: EpochId,
+    active_validators: &[EpochStartValidatorInfoV1],
+    quorum_threshold: u64,
+    validity_threshold: u64,
+    consensus_key_identity: bool,
+) -> Committee {
+    let voting_rights = active_validators
+        .iter()
+        .map(|validator| {
+            (
+                validator_authority_name(validator, consensus_key_identity),
+                validator.voting_power,
+            )
+        })
+        .collect();
+
+    // Chain reads decode the mainnet-v1.1.8 bare
+    // `ClassGroupsEncryptionKeyAndProof` shape exclusively — the only
+    // validator MPC key on `Committee`. The off-chain-only PVSS / VSS HPKE
+    // keys reach the MPC manager via the off-chain key channels, not here.
+    let class_groups_public_keys_and_proofs = active_validators
+        .iter()
+        .filter_map(|validator| {
+            let name = validator_authority_name(validator, consensus_key_identity);
+            let Some(mpc_data) = validator.mpc_data.as_ref() else {
+                // The fetch (`get_epoch_start_system`) fails the whole read
+                // when an active member's record is missing, so this arm is
+                // reachable only from a degraded `EpochStartSystem` persisted
+                // before that gate existed. Loud because the built committee
+                // then silently drops this member from every MPC public input
+                // seeded from it (the class-groups map must never be partial
+                // for a non-excluded member).
+                error!(
+                    should_never_happen = true,
+                    authority = ?name,
+                    "active committee member has no mpc_data record in the \
+                     persisted EpochStartSystem; its class-groups key is \
+                     missing from the committee"
+                );
+                return None;
+            };
+            match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes()) {
+                Ok(k) => Some((name, k)),
+                Err(e) => {
+                    error!(
+                        authority = ?name,
+                        error = ?e,
+                        "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof from Move-side mpc_data"
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    // Carry each validator's consensus Ed25519 key as committee data so
+    // consensus-key-signed messages (handoff certs) can be verified by name
+    // without a side provider.
+    let consensus_keys = active_validators
+        .iter()
+        .map(|validator| {
+            (
+                validator_authority_name(validator, consensus_key_identity),
+                validator.consensus_pubkey.clone(),
+            )
+        })
+        .collect();
+
+    // The BLS protocol keys are carried explicitly from the chain read
+    // rather than decoded from the names: a consensus-basis name does not
+    // contain the BLS key. Under the BLS basis the carried map is identical
+    // to what decoding the names would produce.
+    let protocol_keys = active_validators
+        .iter()
+        .map(|validator| {
+            (
+                validator_authority_name(validator, consensus_key_identity),
+                validator.protocol_pubkey.clone(),
+            )
+        })
+        .collect();
+
+    Committee::new_with_protocol_keys(
+        epoch,
+        voting_rights,
+        class_groups_public_keys_and_proofs,
+        consensus_keys,
+        protocol_keys,
+        quorum_threshold,
+        validity_threshold,
+    )
+}
+
+fn build_consensus_committee(
+    epoch: EpochId,
+    active_validators: &[EpochStartValidatorInfoV1],
+    quorum_threshold: u64,
+    validity_threshold: u64,
+    consensus_key_identity: bool,
+) -> ConsensusCommittee {
+    let ika_committee = build_ika_committee(
+        epoch,
+        active_validators,
+        quorum_threshold,
+        validity_threshold,
+        consensus_key_identity,
+    );
+    let mut authorities = vec![];
+    for (i, (name, stake)) in ika_committee.members().enumerate() {
+        let active_validator = &active_validators[i];
+        let expected_name = validator_authority_name(active_validator, consensus_key_identity);
+        if *name != expected_name {
+            error!(
+                "Mismatched authority order between Ika and Mysticeti! Index {}, Mysticeti authority {:?}\nIka authority name {:?}",
+                i, name, expected_name
+            );
+        }
+        authorities.push(Authority {
+            stake: *stake as consensus_config::Stake,
+            address: active_validator.consensus_address.clone(),
+            hostname: active_validator.hostname.clone(),
+            // Mysticeti's own authority label stays derived from the BLS
+            // protocol key in both bases — it is Sui's consensus-config
+            // namespace, not ika's `AuthorityName`, and the consensus layer
+            // authenticates via `protocol_key` (the Ed25519 consensus key)
+            // regardless.
+            authority_name: consensus_config::AuthorityName::from_bytes(
+                &[
+                    [0u8; 48],
+                    active_validator.protocol_pubkey.pubkey.to_bytes(),
+                ]
+                .concat(),
+            ),
+            protocol_key: consensus_config::ProtocolPublicKey::new(
+                active_validator.consensus_pubkey.clone(),
+            ),
+            network_key: consensus_config::NetworkPublicKey::new(
+                active_validator.network_pubkey.clone(),
+            ),
+        });
+    }
+
+    ConsensusCommittee::new(epoch as consensus_config::Epoch, authorities)
+}
+
+fn build_validator_p2p_peers(
+    active_validators: &[EpochStartValidatorInfoV1],
+    excluding_self: AuthorityName,
+    consensus_key_identity: bool,
+) -> Vec<PeerInfo> {
+    active_validators
+        .iter()
+        .filter(|validator| {
+            validator_authority_name(validator, consensus_key_identity) != excluding_self
+        })
+        .map(|validator| {
+            let address = validator
+                .p2p_address
+                .to_anemo_address()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let peer_id = PeerId(validator.network_pubkey.0.to_bytes());
+            if address.is_empty() {
+                warn!(
+                    ?peer_id,
+                    "Peer has invalid p2p address: {}", &validator.p2p_address
+                );
+            }
+            PeerInfo {
+                peer_id,
+                affinity: PeerAffinity::High,
+                address,
+            }
+        })
+        .collect()
+}
+
+fn build_authority_names_to_peer_ids(
+    active_validators: &[EpochStartValidatorInfoV1],
+    consensus_key_identity: bool,
+) -> HashMap<AuthorityName, PeerId> {
+    active_validators
+        .iter()
+        .map(|validator| {
+            let name = validator_authority_name(validator, consensus_key_identity);
+            let peer_id = PeerId(validator.network_pubkey.0.to_bytes());
+
+            (name, peer_id)
+        })
+        .collect()
+}
+
+fn build_authority_names_to_hostnames(
+    active_validators: &[EpochStartValidatorInfoV1],
+    consensus_key_identity: bool,
+) -> HashMap<AuthorityName, String> {
+    active_validators
+        .iter()
+        .map(|validator| {
+            let name = validator_authority_name(validator, consensus_key_identity);
+            let hostname = validator.hostname.clone();
+
+            (name, hostname)
+        })
+        .collect()
+}
+
 impl EpochStartSystemTrait for EpochStartSystemV1 {
     fn epoch(&self) -> EpochId {
         self.epoch
@@ -135,206 +478,39 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
     }
 
     fn get_ika_committee_with_network_metadata(&self) -> CommitteeWithNetworkMetadata {
-        let validators = self
-            .active_validators
-            .iter()
-            .map(|validator| {
-                // Chain reads decode the mainnet-v1.1.8 bare
-                // `ClassGroupsEncryptionKeyAndProof` shape exclusively. The
-                // off-chain-only PVSS / VSS HPKE keys are not carried on the
-                // chain-derived metadata; they reach the MPC manager via the
-                // off-chain key channels.
-                let class_groups_public_key_and_proof =
-                    validator.mpc_data.as_ref().and_then(|mpc_data| {
-                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.mpc_data_bytes(),
-                        )
-                        .map_err(|e| {
-                            error!(
-                                authority = ?validator.authority_name(),
-                                error = ?e,
-                                "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof \
-                                 from Move-side mpc_data"
-                            );
-                        })
-                        .ok()
-                    });
-
-                (
-                    validator.authority_name(),
-                    (
-                        validator.voting_power,
-                        NetworkMetadata {
-                            name: validator.name.clone(),
-                            network_address: validator.network_address.clone(),
-                            consensus_address: validator.consensus_address.clone(),
-                            network_public_key: Some(validator.network_pubkey.clone()),
-                            class_groups_public_key_and_proof,
-                        },
-                    ),
-                )
-            })
-            .collect();
-
-        CommitteeWithNetworkMetadata::new(self.epoch, validators)
+        build_committee_with_network_metadata(self.epoch, &self.active_validators, false)
     }
 
     fn get_ika_committee(&self) -> Committee {
-        let voting_rights = self
-            .active_validators
-            .iter()
-            .map(|validator| (validator.authority_name(), validator.voting_power))
-            .collect();
-
-        // Chain reads decode the mainnet-v1.1.8 bare
-        // `ClassGroupsEncryptionKeyAndProof` shape exclusively — the only
-        // validator MPC key on `Committee`. The off-chain-only PVSS / VSS HPKE
-        // keys reach the MPC manager via the off-chain key channels, not here.
-        let class_groups_public_keys_and_proofs = self
-            .active_validators
-            .iter()
-            .filter_map(|validator| {
-                let Some(mpc_data) = validator.mpc_data.as_ref() else {
-                    // The fetch (`get_epoch_start_system`) fails the whole read
-                    // when an active member's record is missing, so this arm is
-                    // reachable only from a degraded `EpochStartSystem` persisted
-                    // before that gate existed. Loud because the built committee
-                    // then silently drops this member from every MPC public input
-                    // seeded from it (the class-groups map must never be partial
-                    // for a non-excluded member).
-                    error!(
-                        should_never_happen = true,
-                        authority = ?validator.authority_name(),
-                        "active committee member has no mpc_data record in the \
-                         persisted EpochStartSystem; its class-groups key is \
-                         missing from the committee"
-                    );
-                    return None;
-                };
-                match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                    &mpc_data.mpc_data_bytes(),
-                ) {
-                    Ok(k) => Some((validator.authority_name(), k)),
-                    Err(e) => {
-                        error!(
-                            authority = ?validator.authority_name(),
-                            error = ?e,
-                            "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof from Move-side mpc_data"
-                        );
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        // The name is the BLS-derived label; carry each validator's consensus
-        // Ed25519 key as committee data so consensus-key-signed messages
-        // (handoff certs) can be verified by name without a side provider.
-        let consensus_keys = self
-            .active_validators
-            .iter()
-            .map(|validator| {
-                (
-                    validator.authority_name(),
-                    validator.consensus_pubkey.clone(),
-                )
-            })
-            .collect();
-
-        Committee::new(
+        build_ika_committee(
             self.epoch,
-            voting_rights,
-            class_groups_public_keys_and_proofs,
-            consensus_keys,
+            &self.active_validators,
             self.quorum_threshold,
             self.validity_threshold,
+            false,
         )
     }
 
     fn get_consensus_committee(&self) -> ConsensusCommittee {
-        let ika_committee = self.get_ika_committee();
-        let mut authorities = vec![];
-        for (i, (name, stake)) in ika_committee.members().enumerate() {
-            let active_validator = &self.active_validators[i];
-            if *name != active_validator.authority_name() {
-                error!(
-                    "Mismatched authority order between Ika and Mysticeti! Index {}, Mysticeti authority {:?}\nIka authority name {:?}",
-                    i,
-                    name,
-                    active_validator.authority_name()
-                );
-            }
-            authorities.push(Authority {
-                stake: *stake as consensus_config::Stake,
-                address: active_validator.consensus_address.clone(),
-                hostname: active_validator.hostname.clone(),
-                authority_name: consensus_config::AuthorityName::from_bytes(
-                    &[
-                        [0u8; 48],
-                        active_validator.protocol_pubkey.pubkey.to_bytes(),
-                    ]
-                    .concat(),
-                ),
-                protocol_key: consensus_config::ProtocolPublicKey::new(
-                    active_validator.consensus_pubkey.clone(),
-                ),
-                network_key: consensus_config::NetworkPublicKey::new(
-                    active_validator.network_pubkey.clone(),
-                ),
-            });
-        }
-
-        ConsensusCommittee::new(self.epoch as consensus_config::Epoch, authorities)
+        build_consensus_committee(
+            self.epoch,
+            &self.active_validators,
+            self.quorum_threshold,
+            self.validity_threshold,
+            false,
+        )
     }
 
     fn get_validator_as_p2p_peers(&self, excluding_self: AuthorityName) -> Vec<PeerInfo> {
-        self.active_validators
-            .iter()
-            .filter(|validator| validator.authority_name() != excluding_self)
-            .map(|validator| {
-                let address = validator
-                    .p2p_address
-                    .to_anemo_address()
-                    .into_iter()
-                    .collect::<Vec<_>>();
-                let peer_id = PeerId(validator.network_pubkey.0.to_bytes());
-                if address.is_empty() {
-                    warn!(
-                        ?peer_id,
-                        "Peer has invalid p2p address: {}", &validator.p2p_address
-                    );
-                }
-                PeerInfo {
-                    peer_id,
-                    affinity: PeerAffinity::High,
-                    address,
-                }
-            })
-            .collect()
+        build_validator_p2p_peers(&self.active_validators, excluding_self, false)
     }
 
     fn get_authority_names_to_peer_ids(&self) -> HashMap<AuthorityName, PeerId> {
-        self.active_validators
-            .iter()
-            .map(|validator| {
-                let name = validator.authority_name();
-                let peer_id = PeerId(validator.network_pubkey.0.to_bytes());
-
-                (name, peer_id)
-            })
-            .collect()
+        build_authority_names_to_peer_ids(&self.active_validators, false)
     }
 
     fn get_authority_names_to_hostnames(&self) -> HashMap<AuthorityName, String> {
-        self.active_validators
-            .iter()
-            .map(|validator| {
-                let name = validator.authority_name();
-                let hostname = validator.hostname.clone();
-
-                (name, hostname)
-            })
-            .collect()
+        build_authority_names_to_hostnames(&self.active_validators, false)
     }
 
     fn get_ika_validators(&self) -> Vec<EpochStartValidatorInfo> {
@@ -342,6 +518,85 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .iter()
             .map(|validator| EpochStartValidatorInfo::V1(validator.clone()))
             .collect()
+    }
+
+    fn consensus_key_identity(&self) -> bool {
+        // V1 records were written by binaries that predate the flip; they
+        // always describe pre-flip epochs.
+        false
+    }
+}
+
+impl EpochStartSystemTrait for EpochStartSystemV2 {
+    fn epoch(&self) -> EpochId {
+        self.epoch
+    }
+
+    fn protocol_version(&self) -> ProtocolVersion {
+        ProtocolVersion::new(self.protocol_version)
+    }
+
+    fn epoch_start_timestamp_ms(&self) -> u64 {
+        self.epoch_start_timestamp_ms
+    }
+
+    fn epoch_duration_ms(&self) -> u64 {
+        self.epoch_duration_ms
+    }
+
+    fn get_ika_committee_with_network_metadata(&self) -> CommitteeWithNetworkMetadata {
+        build_committee_with_network_metadata(
+            self.epoch,
+            &self.active_validators,
+            self.consensus_key_identity(),
+        )
+    }
+
+    fn get_ika_committee(&self) -> Committee {
+        build_ika_committee(
+            self.epoch,
+            &self.active_validators,
+            self.quorum_threshold,
+            self.validity_threshold,
+            self.consensus_key_identity(),
+        )
+    }
+
+    fn get_consensus_committee(&self) -> ConsensusCommittee {
+        build_consensus_committee(
+            self.epoch,
+            &self.active_validators,
+            self.quorum_threshold,
+            self.validity_threshold,
+            self.consensus_key_identity(),
+        )
+    }
+
+    fn get_validator_as_p2p_peers(&self, excluding_self: AuthorityName) -> Vec<PeerInfo> {
+        build_validator_p2p_peers(
+            &self.active_validators,
+            excluding_self,
+            self.consensus_key_identity(),
+        )
+    }
+
+    fn get_authority_names_to_peer_ids(&self) -> HashMap<AuthorityName, PeerId> {
+        build_authority_names_to_peer_ids(&self.active_validators, self.consensus_key_identity())
+    }
+
+    fn get_authority_names_to_hostnames(&self) -> HashMap<AuthorityName, String> {
+        build_authority_names_to_hostnames(&self.active_validators, self.consensus_key_identity())
+    }
+
+    fn get_ika_validators(&self) -> Vec<EpochStartValidatorInfo> {
+        self.active_validators
+            .iter()
+            .map(|validator| EpochStartValidatorInfo::V1(validator.clone()))
+            .collect()
+    }
+
+    fn consensus_key_identity(&self) -> bool {
+        self.consensus_key_identity
     }
 }
 
@@ -393,5 +648,49 @@ impl EpochStartValidatorInfoTrait for EpochStartValidatorInfoV1 {
 
     fn get_mpc_data(&self) -> Option<VersionedMPCData> {
         self.mpc_data.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v2_with(epoch: EpochId, consensus_key_identity: bool) -> EpochStartSystem {
+        EpochStartSystem::new_v2(epoch, 6, 0, 1000, vec![], 0, 0, consensus_key_identity)
+    }
+
+    /// The recorded basis is carried verbatim by the V2 record.
+    #[test]
+    fn v2_records_carry_the_identity_basis() {
+        assert!(!v2_with(10, false).consensus_key_identity());
+        assert!(v2_with(10, true).consensus_key_identity());
+    }
+
+    /// V1 records were written by pre-flip binaries and always describe
+    /// pre-flip epochs.
+    #[test]
+    fn v1_records_are_always_bls_basis() {
+        let v1 = EpochStartSystem::new_for_testing_with_epoch(42);
+        assert!(!v1.consensus_key_identity());
+    }
+
+    /// A V1 record's BCS bytes must keep decoding after the V2 variant was
+    /// added (old persisted EpochStartConfiguration records).
+    #[test]
+    fn v1_bcs_round_trip_survives_v2_addition() {
+        let v1 = EpochStartSystem::new_for_testing_with_epoch(7);
+        let bytes = bcs::to_bytes(&v1).unwrap();
+        let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, v1);
+        assert_eq!(decoded.epoch(), 7);
+    }
+
+    #[test]
+    fn v2_bcs_round_trip() {
+        let v2 = v2_with(9, true);
+        let bytes = bcs::to_bytes(&v2).unwrap();
+        let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, v2);
+        assert!(decoded.consensus_key_identity());
     }
 }

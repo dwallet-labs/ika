@@ -1380,12 +1380,20 @@ impl DWalletMPCManager {
                 return Ok(PriorCertKeysOutcome::RetryLater);
             }
         };
+        // The cert names its items in the PRIOR epoch's identity basis, which
+        // differs from this committee's at the protocol-v6 activation
+        // boundary; without translating, the intersection below is empty and
+        // a node that restarted mid-epoch — for which the cert is the only
+        // key source — stays MPC-dead for the whole epoch.
+        let translation = self.committee.name_translation();
         let prior_cert_digests: HashMap<AuthorityName, [u8; 32]> = cert
             .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
-                HandoffItemKey::ValidatorMpcData { validator } => Some((*validator, *digest)),
+                HandoffItemKey::ValidatorMpcData { validator } => {
+                    Some((*translation.get(validator).unwrap_or(validator), *digest))
+                }
                 _ => None,
             })
             .collect();

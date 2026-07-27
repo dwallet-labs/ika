@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 5;
-const MAX_PROTOCOL_VERSION: u64 = 5;
+const MAX_PROTOCOL_VERSION: u64 = 6;
 
 // Record history of protocol version allocations here:
 //
@@ -33,7 +33,20 @@ const MAX_PROTOCOL_VERSION: u64 = 5;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6 (planned): noa_checkpoints on.
+// Version 6: consensus_key_authority_names on — `AuthorityName` (validator
+//            identity) becomes the Ed25519 consensus key, zero-padded to the
+//            48-byte container so the wire encoding is unchanged. The BLS
+//            protocol key stays on chain and carried on `Committee` for BLS
+//            aggregate-certificate (checkpoint) verification.
+//
+//            ADVERTISED: every validator on this binary offers 6, so the
+//            capability vote carries a network to v6 once a quorum upgrades.
+//            The identity flip is therefore live on rollout, not on a
+//            separate decision. See the flag definition for the
+//            activation-boundary caveat, and
+//            dev-docs/specs/committee-consensus-keys.md for the
+//            consensus-key-rotation interaction.
+// Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -213,6 +226,21 @@ struct FeatureFlags {
     // a protocol version boundary, never per-binary.
     #[serde(skip_serializing_if = "is_false")]
     aggregated_network_key_public_outputs: bool,
+
+    // When on, a validator's `AuthorityName` (its canonical committee
+    // identity) is its Ed25519 consensus key (zero-padded to the 48-byte
+    // container) instead of its BLS protocol key. The BLS key remains on
+    // chain and carried on `Committee` for BLS aggregate-certificate
+    // (checkpoint) verification. KNOWN BOUNDARY LIMITATION: the next-epoch
+    // committee is assembled mid-epoch under the CURRENT epoch's version
+    // while the next epoch consumes it under its OWN — at the single
+    // activation boundary the two disagree (this asymmetry is what wedged
+    // and reverted the first flip attempt; see
+    // dev-docs/plans/authority-name-consensus-key.md). Validated by the
+    // gradual-upgrade cluster suite; genesis-at-v6 networks have no
+    // boundary and are unaffected.
+    #[serde(skip_serializing_if = "is_false")]
+    consensus_key_authority_names: bool,
 }
 
 #[allow(unused)]
@@ -469,6 +497,13 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
+    }
+
+    /// Whether `AuthorityName` is the Ed25519 consensus key (zero-padded)
+    /// instead of the BLS protocol key. See the flag definition for the
+    /// activation-boundary caveat.
+    pub fn consensus_key_authority_names(&self) -> bool {
+        self.feature_flags.consensus_key_authority_names
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -799,7 +834,10 @@ impl ProtocolConfig {
                 5 => {
                     cfg.feature_flags.aggregated_network_key_public_outputs = true;
                 }
-                // 6 => {
+                6 => {
+                    cfg.feature_flags.consensus_key_authority_names = true;
+                }
+                // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
                 // }
                 // Use this template when making changes:

@@ -146,7 +146,11 @@ async fn refresh_once(
             }
         };
         let name: AuthorityName = (&verified.protocol_pubkey).into();
-        if name == self_authority {
+        // Self-exclusion under either identity basis: `self_authority` is
+        // the node's name for its CURRENT epoch, whose basis can differ
+        // from this read's at the authority-name flip boundary.
+        let consensus_basis_name = AuthorityName::from_consensus_key(&verified.consensus_pubkey);
+        if name == self_authority || consensus_basis_name == self_authority {
             continue;
         }
         let address = verified

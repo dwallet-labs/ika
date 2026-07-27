@@ -89,12 +89,15 @@ pub struct Committee {
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     /// `AuthorityName -> BLS protocol pubkey`, for BLS aggregate-certificate
-    /// verification. The name is the BLS key, so this is decoded from it (a
-    /// cache).
-    // TODO(consensus-key-certs): once the network is fully on v4 and BLS
-    // aggregate certs are replaced by consensus-key-signed certs, drop
-    // `expanded_keys` / `public_key()` and the validators' BLS key entirely —
-    // `AuthorityName` can then become the consensus key.
+    /// verification. For BLS-basis names (committees of epochs below
+    /// protocol version 6) the name IS the BLS key, so this
+    /// is decoded from it (a cache). For consensus-basis names the BLS key
+    /// cannot be recovered from the name — such committees must be built
+    /// with [`Committee::new_with_protocol_keys`], which carries the map
+    /// from the on-chain read.
+    // TODO(consensus-key-certs): once BLS aggregate certs are replaced by
+    // consensus-key-signed certs, drop `expanded_keys` / `public_key()` and
+    // the validators' BLS key entirely.
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
     /// `AuthorityName -> consensus Ed25519 pubkey`, for verifying
     /// consensus-key-signed messages (handoff certs today, more certs later).
@@ -209,6 +212,45 @@ impl Committee {
         }
     }
 
+    /// Like [`Committee::new`], but with the `AuthorityName -> BLS protocol
+    /// pubkey` map supplied by the caller (from the on-chain read) instead of
+    /// decoded from the names. Required for committees whose names are
+    /// consensus-basis (`consensus_key_authority_names`, on from protocol
+    /// version 6): a consensus-basis name does not contain the BLS key, and
+    /// BLS aggregate-certificate verification still needs it.
+    pub fn new_with_protocol_keys(
+        epoch: EpochId,
+        voting_rights: Vec<(AuthorityName, StakeUnit)>,
+        class_groups_public_keys_and_proofs: HashMap<
+            AuthorityName,
+            ClassGroupsEncryptionKeyAndProof,
+        >,
+        consensus_keys: HashMap<AuthorityName, NetworkPublicKey>,
+        protocol_keys: HashMap<AuthorityName, AuthorityPublicKey>,
+        quorum_threshold: u64,
+        validity_threshold: u64,
+    ) -> Self {
+        assert!(!voting_rights.is_empty());
+        assert!(voting_rights.iter().any(|(_, s)| *s != 0));
+
+        let index_map = voting_rights
+            .iter()
+            .enumerate()
+            .map(|(index, (addr, _))| (*addr, index))
+            .collect();
+
+        Committee {
+            epoch,
+            voting_rights,
+            class_groups_public_keys_and_proofs,
+            expanded_keys: protocol_keys,
+            consensus_keys,
+            index_map,
+            quorum_threshold,
+            validity_threshold,
+        }
+    }
+
     /// Normalize the given weights to TOTAL_VOTING_POWER and create the committee.
     /// Used for testing only: a production system is using the voting weights
     /// of the Ika System object.
@@ -247,8 +289,14 @@ impl Committee {
     // We call this if these have not yet been computed
     /// Builds the `expanded_keys` (`AuthorityName -> BLS protocol pubkey`,
     /// for aggregate-cert verification) and `index_map`
-    /// (`AuthorityName -> position`) caches. The name IS the BLS key, so
-    /// `expanded_keys` is decoded directly from `voting_rights`.
+    /// (`AuthorityName -> position`) caches. A BLS-basis name IS the BLS
+    /// key, so `expanded_keys` is decoded directly from `voting_rights`; a
+    /// name that does not decode as a BLS key (a consensus-basis name — a
+    /// zero-padded Ed25519 key is not a valid BLS12-381 point) is skipped,
+    /// NOT an error: committees with consensus-basis names that verify BLS
+    /// certs are built via [`Committee::new_with_protocol_keys`], and one
+    /// built through this path fails closed at `public_key()` (signer not
+    /// found) rather than panicking at construction.
     pub fn load_inner(
         voting_rights: &[(AuthorityName, StakeUnit)],
     ) -> (
@@ -257,14 +305,7 @@ impl Committee {
     ) {
         let expanded_keys: HashMap<AuthorityName, AuthorityPublicKey> = voting_rights
             .iter()
-            .map(|(addr, _)| {
-                (
-                    *addr,
-                    (*addr)
-                        .try_into()
-                        .expect("Validator pubkey is always verified on-chain"),
-                )
-            })
+            .filter_map(|(addr, _)| Some((*addr, (*addr).try_into().ok()?)))
             .collect();
 
         let index_map: HashMap<AuthorityName, usize> = voting_rights
@@ -288,7 +329,9 @@ impl Committee {
     }
 
     pub fn public_key(&self, authority: &AuthorityName) -> IkaResult<&AuthorityPublicKey> {
-        debug_assert_eq!(self.expanded_keys.len(), self.voting_rights.len());
+        // NOTE: `expanded_keys` may legitimately be smaller than
+        // `voting_rights` — consensus-basis names don't decode to BLS keys,
+        // and a committee that never verifies BLS certs may carry none.
         match self.expanded_keys.get(authority) {
             Some(v) => Ok(v),
             None => Err(IkaError::InvalidCommittee(format!(
@@ -297,6 +340,34 @@ impl Committee {
                 self.expanded_keys.len()
             ))),
         }
+    }
+
+    /// Maps each member's name under EITHER identity basis to the name this
+    /// committee actually uses.
+    ///
+    /// `AuthorityName` is the BLS protocol key below protocol v6 and the
+    /// consensus key from v6, so anything one epoch names and a later epoch
+    /// reads back — prior-epoch handoff-cert items, carried-forward mpc_data —
+    /// arrives keyed in the producing epoch's name space. Away from the
+    /// activation boundary both spaces agree and every entry maps a name to
+    /// itself; at the boundary this is what stops those lookups from silently
+    /// missing every member. Derived from the committee's own key maps, so it
+    /// needs no chain read.
+    pub fn name_translation(&self) -> HashMap<AuthorityName, AuthorityName> {
+        self.voting_rights
+            .iter()
+            .flat_map(|(name, _)| {
+                let bls = self.expanded_keys.get(name).map(AuthorityName::from);
+                let consensus = self
+                    .consensus_keys
+                    .get(name)
+                    .map(AuthorityName::from_consensus_key);
+                [bls, consensus]
+                    .into_iter()
+                    .flatten()
+                    .map(move |alias| (alias, *name))
+            })
+            .collect()
     }
 
     /// The signer's consensus Ed25519 pubkey, if this committee carries it.

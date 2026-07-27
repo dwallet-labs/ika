@@ -1,10 +1,14 @@
 # Plan: consensus keys reachable by name (toward consensus-key-signed certs)
 
-Status: landed (2026-07-01, PR #1762 — `c875d88795`). The durable
-behavioral contract now lives in
+Status: landed (2026-07-01, PR #1762 — `c875d88795`); identity flip
+REINSTATED version-gated at protocol v6 (2026-07-26, PR #1911) by
+decision, accepting the boundary asymmetry documented below — the
+gradual-upgrade cluster suite is the activation gate, and the
+`consensus_key_authority_names` flag definition in ika-protocol-config
+carries the caveat. The durable behavioral contract lives in
 [`../specs/committee-consensus-keys.md`](../specs/committee-consensus-keys.md);
-this file is kept for the INTENT and, in particular, for the record of the
-rejected identity-flip approach and why it was abandoned.
+this file is kept for the INTENT and the record of the first, reverted
+flip attempt.
 
 **SHIPPED DESIGN: consensus keys are carried as `Committee` data; the
 identity (`AuthorityName`) stays the BLS key.** Jump to the

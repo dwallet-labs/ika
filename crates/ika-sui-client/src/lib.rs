@@ -12,7 +12,9 @@ use ika_types::messages_dwallet_mpc::{
     DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, IkaNetworkConfig,
     IkaObjectsConfig, IkaPackageConfig,
 };
-use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartValidatorInfoV1};
+use ika_types::sui::epoch_start_system::{
+    EpochStartSystem, EpochStartValidatorInfoV1, consensus_key_identity_for_version,
+};
 use ika_types::sui::pending_active_set::PendingActiveSet;
 use ika_types::sui::staking::StakingPool;
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
@@ -575,7 +577,10 @@ where
                     })
                     .collect::<IkaResult<Vec<_>>>()?;
 
-                let epoch_start_system_state = EpochStartSystem::new_v1(
+                let consensus_key_identity =
+                    consensus_key_identity_for_version(ika_system_state_inner.protocol_version);
+
+                let epoch_start_system_state = EpochStartSystem::new_v2(
                     ika_system_state_inner.epoch,
                     ika_system_state_inner.protocol_version,
                     ika_system_state_inner.epoch_start_timestamp_ms,
@@ -589,6 +594,7 @@ where
                         .validator_set
                         .active_committee
                         .validity_threshold,
+                    consensus_key_identity,
                 );
 
                 Ok(epoch_start_system_state)

@@ -66,6 +66,9 @@ child processes against an external `sui` localnet. Manual dispatch remains
 available. Pull requests that touch MPC, crypto dependencies, serialization,
 protocol configuration, the upgrade harness, or `Cargo.lock` automatically
 run the `v125_rollout` deployed-release gate rather than the entire matrix.
+A protocol-version *transition* is not covered by that default — dispatch
+`v125_v6_upgrade` by hand for changes that gate behavior on a new protocol
+version (see the commands below).
 
 > **The release workflow no longer runs any suite (changed 2026-07-23, PR
 > #1891).** It previously called this workflow with the candidate SHA and
@@ -114,6 +117,16 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 # (per-authority byte-equality, zero malicious), then swap the rest.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_rollout
 #   override the old side:  -f old_ref=release/mainnet-v1.2.5 -f old_bin_name=ika-validator
+
+# THE PROTOCOL-UPGRADE GATE: the only scenario that crosses a protocol
+# version boundary (v125_rollout and the others are pure binary swaps that
+# stay at v5). Boot literal v1.2.5 at v5, swap the whole committee to
+# current, cross v5 -> v6 — where AuthorityName flips from the BLS protocol
+# key to the Ed25519 consensus key — and assert the upgrade actually
+# activated, the boundary reshare converged, the committee kept all four
+# members, and users were served across it. NOT a PR default (cost); run it
+# by hand before voting protocol v6 on any live network.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v125_v6_upgrade
 
 # Test-test the gate with the compiled-in, feature-gated one-validator
 # reconfiguration-message fault. This run is expected to fail; its logs must

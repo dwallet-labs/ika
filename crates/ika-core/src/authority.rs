@@ -273,7 +273,13 @@ pub struct AuthorityState {
 /// Repeating valid commands should produce no changes and return no error.
 impl AuthorityState {
     pub fn is_validator(&self, epoch_store: &AuthorityPerEpochStore) -> bool {
-        epoch_store.committee().authority_exists(&self.name)
+        // Against the EPOCH STORE's name, not `self.name`: `self.name` is
+        // minted once at startup, while `AuthorityName`'s basis (BLS protocol
+        // key below protocol v6, consensus key from v6) is a property of the
+        // epoch. Comparing the startup name against a later epoch's committee
+        // makes a sitting validator conclude it is no longer a member the
+        // moment the basis flips.
+        epoch_store.committee().authority_exists(&epoch_store.name)
     }
 
     pub fn is_fullnode(&self, epoch_store: &AuthorityPerEpochStore) -> bool {
@@ -679,8 +685,20 @@ impl AuthorityState {
             new_committee.epoch
         );
         fail_point!("before-open-new-epoch-store");
+        // Re-derive our own committee identity for the NEW epoch's basis
+        // rather than carrying `self.name` forward. `AuthorityName` is the
+        // BLS protocol key below protocol v6 and the consensus key from v6,
+        // so at the activation boundary a name minted for the previous epoch
+        // is simply absent from the new committee — the node would conclude
+        // it is "no longer a validator" and silently drop out of its own
+        // committee (observed in the v1.2.5 -> v6 upgrade rehearsal).
+        let name = self.config.authority_name(
+            epoch_start_configuration
+                .epoch_start_state()
+                .consensus_key_identity(),
+        );
         let new_epoch_store = cur_epoch_store.new_at_next_epoch(
-            self.name,
+            name,
             new_committee,
             epoch_start_configuration,
             cur_epoch_store.get_chain_identifier(),

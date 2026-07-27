@@ -14,12 +14,13 @@ use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, NetworkPublicKey};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::error::IkaResult;
+use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
+use ika_types::sui::epoch_start_system::consensus_key_identity_for_version;
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
@@ -498,6 +499,20 @@ where
         // the keys are deterministic and the current committee is fixed within
         // an epoch, so one successful send per epoch is enough.
         let mut current_keys_sent_for_epoch: Option<EpochId> = None;
+        // `validator_id -> consensus pubkey`, populated on first sight and
+        // dropped at every epoch change. Keeps the consensus-basis re-keying
+        // below off the per-tick chain path (see
+        // `committee_names_for_basis`) WITHOUT outliving the value's own
+        // validity: a consensus key is not fixed at registration —
+        // `set_next_epoch_consensus_pubkey_bytes` is an operator-callable
+        // entry point and `rotate_next_epoch_info` effectuates it at epoch
+        // advance. Caching across epochs would keep naming a rotated
+        // validator under its old key indefinitely, and from protocol v6 —
+        // where the consensus key IS the `AuthorityName` — that is a stale
+        // IDENTITY, fleet-wide. Per-epoch is exactly right: rotation lands
+        // only at boundaries, so within an epoch the value cannot change.
+        let mut consensus_key_cache: HashMap<ObjectID, NetworkPublicKey> = HashMap::new();
+        let mut consensus_key_cache_epoch: Option<EpochId> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -512,6 +527,21 @@ where
                 Duration::from_secs(10),
             );
             let SystemInner::V1(system_inner) = system_inner;
+            // Drop keys cached for a previous epoch before anything reads
+            // them: a rotation effectuated at the boundary must be picked up
+            // this epoch, not inherited from the last one.
+            if consensus_key_cache_epoch != Some(system_inner.epoch()) {
+                consensus_key_cache.clear();
+                consensus_key_cache_epoch = Some(system_inner.epoch());
+            }
+            // Identity basis, version-gated (`consensus_key_authority_names`,
+            // on from protocol version 6). Evaluated on the CURRENT epoch's
+            // version — the only one knowable when the next-epoch committee
+            // is assembled mid-epoch. At the single activation boundary this
+            // disagrees with the next epoch's own view (documented
+            // limitation; see the protocol-config flag definition).
+            let consensus_key_identity =
+                consensus_key_identity_for_version(system_inner.protocol_version());
 
             // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
             // VSS HPKE) to the MPC manager. The within-epoch network DKG needs
@@ -543,8 +573,25 @@ where
                 && let Some(source) = off_chain_mpc_data_source.load_full()
                 && source.is_frozen()
             {
-                let current_members: Vec<AuthorityName> = system_inner
-                    .read_bls_committee(&system_inner.get_ika_active_committee())
+                let current_committee = match Self::committee_names_for_basis(
+                    &sui_client,
+                    system_inner.read_bls_committee(&system_inner.get_ika_active_committee()),
+                    consensus_key_identity,
+                    &mut consensus_key_cache,
+                )
+                .await
+                {
+                    Ok(members) => members,
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            "failed to re-key the current committee to consensus-basis \
+                             names; retrying next tick"
+                        );
+                        continue;
+                    }
+                };
+                let current_members: Vec<AuthorityName> = current_committee
                     .into_iter()
                     .map(|(_, (name, _))| name)
                     .collect();
@@ -568,7 +615,24 @@ where
                 continue;
             };
 
-            let new_next_committee = system_inner.read_bls_committee(&new_next_bls_committee);
+            let new_next_committee = match Self::committee_names_for_basis(
+                &sui_client,
+                system_inner.read_bls_committee(&new_next_bls_committee),
+                consensus_key_identity,
+                &mut consensus_key_cache,
+            )
+            .await
+            {
+                Ok(members) => members,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        "failed to re-key the next-epoch committee to consensus-basis \
+                         names; retrying next tick"
+                    );
+                    continue;
+                }
+            };
 
             // Publish the CHAIN view of the next-epoch committee
             // (members + stake, no class-groups) as soon as Sui has it
@@ -759,6 +823,67 @@ where
         }
     }
 
+    /// Re-key a chain-read committee (BLS-basis names, as
+    /// `read_bls_committee` mints them) to consensus-basis names when the
+    /// identity basis is the consensus key. The consensus keys are not in
+    /// the on-chain `BlsCommittee` (it carries `validator_id` + BLS
+    /// `protocol_pubkey` only), so a member's validator record must be
+    /// fetched by id. No-op — no fetch — under the BLS basis.
+    ///
+    /// Only ids not already cached for THIS epoch are fetched. The cache is
+    /// per-epoch rather than permanent because a consensus key can be
+    /// rotated (`set_next_epoch_consensus_pubkey_bytes`, effectuated at the
+    /// next epoch advance); within an epoch it cannot change. That matters
+    /// beyond latency: this runs on every sync tick,
+    /// and its caller skips the tick (and with it the next-committee send)
+    /// when it returns `Err`. A per-tick chain fetch in exactly this spot
+    /// wedged reconfiguration once before — `get_validators_info_by_ids`
+    /// fails transiently while validators restart during a rollout, which
+    /// is precisely when the committee must still be assembled (see
+    /// `dev-docs/plans/authority-name-consensus-key.md`). With the cache,
+    /// steady-state ticks perform no chain read at all, so a committee
+    /// whose members are already known can never be starved by RPC flake.
+    async fn committee_names_for_basis(
+        sui_client: &Arc<SuiClient<C>>,
+        members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
+        consensus_key_identity: bool,
+        consensus_key_cache: &mut HashMap<ObjectID, NetworkPublicKey>,
+    ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
+        if !consensus_key_identity {
+            return Ok(members);
+        }
+        let unknown_ids: Vec<ObjectID> = members
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| !consensus_key_cache.contains_key(id))
+            .collect();
+        let validators = if unknown_ids.is_empty() {
+            Vec::new()
+        } else {
+            sui_client.get_validators_info_by_ids(unknown_ids).await?
+        };
+        for validator in &validators {
+            let info = validator.verified_validator_info();
+            consensus_key_cache.insert(validator.id, info.consensus_pubkey.clone());
+        }
+        members
+            .into_iter()
+            .map(|(validator_id, (_, stake))| {
+                let consensus_pubkey = consensus_key_cache.get(&validator_id).ok_or_else(|| {
+                    IkaError::InvalidCommittee(format!(
+                        "validator {validator_id} missing from the fetched validator \
+                             records while re-keying to consensus-basis names"
+                    ))
+                })?;
+                Ok((
+                    validator_id,
+                    (AuthorityName::from_consensus_key(consensus_pubkey), stake),
+                ))
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn new_committee(
         sui_client: Arc<SuiClient<C>>,
         committee: Vec<(ObjectID, (AuthorityName, StakeUnit))>,

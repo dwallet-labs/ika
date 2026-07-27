@@ -27,6 +27,17 @@ name: Upgrade Test
 #                  the rest and converge again — a pure binary swap, no
 #                  protocol transition. Defaults to
 #                  old_ref=release/mainnet-v1.2.5, old_bin_name=ika-validator.
+#   v125_v6_upgrade — the PROTOCOL-upgrade gate (v125_rollout's version-
+#                  transition counterpart): boot the literal v1.2.5 release
+#                  at protocol v5, swap the whole committee to the current
+#                  build, and cross v5 -> v6 — the boundary where every
+#                  validator's AuthorityName flips from the BLS protocol key
+#                  to the Ed25519 consensus key. Asserts the upgrade actually
+#                  activates (a silent stay-at-v5 would make it vacuous), the
+#                  boundary reshare converges byte-identically with no
+#                  malicious reports, the committee keeps all 4 members, and
+#                  users are served across the flip. Same OLD defaults as
+#                  v125_rollout.
 #   v125_churn   — v125_rollout's churn counterpart: full sequential swap
 #                  over the literal v1.2.5 committee, then a mirrored OCS
 #                  joiner folds into the reshared v1.2.5-origin key (4→5)
@@ -218,7 +229,7 @@ jobs:
           TEST: ${{ inputs.test || 'v125_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_churn malicious_v125 legacy_config"
+          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -332,6 +343,7 @@ jobs:
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             v125_rollout) RUN_FLAG=RUN_V125_ROLLOUT ;;
+            v125_v6_upgrade) RUN_FLAG=RUN_V125_V6_UPGRADE ;;
             v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
             malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
@@ -342,7 +354,7 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v125_rollout | v125_churn | malicious_v125)
+            v125_rollout | v125_v6_upgrade | v125_churn | malicious_v125)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -413,7 +425,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
