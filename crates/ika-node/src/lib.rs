@@ -2674,10 +2674,12 @@ impl IkaNode {
                                             error = ?e,
                                             "the locally-persisted handoff cert FAILED \
                                              re-verification at epoch start — the local \
-                                             handoff-cert DB is tampered or corrupted \
-                                             (or, for a next_committee_pubkey_set_hash \
-                                             mismatch, an authority-name basis change \
-                                             between the signing and entering epochs). \
+                                             handoff-cert DB is tampered or corrupted — \
+                                             but for a next_committee_pubkey_set_hash \
+                                             mismatch, suspect first a member that rotated \
+                                             its consensus key at this boundary (v6 names \
+                                             the committee by consensus key), or the \
+                                             one-off v5->v6 identity flip. \
                                              Halting the node (fail-closed) rather than \
                                              anchoring the epoch on an unverified cert."
                                         );
@@ -3294,12 +3296,15 @@ impl IkaNode {
                         anchor_epoch,
                         error = ?e,
                         "prepare-then-start: the locally-persisted handoff cert FAILED \
-                         re-verification — most likely a tampered or corrupted local \
-                         handoff-cert DB, but a next_committee_pubkey_set_hash mismatch \
-                         specifically can also mean this epoch names committee members under \
-                         a different authority-name basis than the epoch that signed the cert. \
-                         Halting the node (fail-closed) rather than anchoring the epoch on an \
-                         unverified cert."
+                         re-verification. For a next_committee_pubkey_set_hash mismatch the \
+                         likeliest cause is NOT a corrupt DB: at protocol v6 the committee is \
+                         named by consensus key, so any member that ROTATED its consensus key \
+                         at this boundary is named differently by the epoch that signed the \
+                         cert and by this one — check for a recent \
+                         set_next_epoch_consensus_pubkey_bytes. The one-off v5->v6 identity \
+                         flip produces the same mismatch. A tampered or corrupted local \
+                         handoff-cert DB is the remaining explanation. Halting the node \
+                         (fail-closed) rather than anchoring the epoch on an unverified cert."
                     );
                     let _ = self.shutdown_channel_tx.send(None);
                     None
