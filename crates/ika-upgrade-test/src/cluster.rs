@@ -1965,6 +1965,16 @@ impl ClusterOfProcesses {
             .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
         self.validator_authorities
             .push(init.key_pair.public().into());
+        // Both identity bases, or the joiner's own outputs read as foreign:
+        // committee membership is checked against the UNION of the BLS and
+        // consensus-key namings (a validator's `AuthorityName` is one or the
+        // other depending on its protocol version), so registering only the
+        // BLS naming makes every output the joiner submits under the
+        // consensus-key naming fail the out-of-committee check.
+        self.validator_consensus_authorities
+            .push(AuthorityPublicKeyBytes::from_consensus_key(
+                init.consensus_key_pair.public(),
+            ));
         Ok(index)
     }
 
