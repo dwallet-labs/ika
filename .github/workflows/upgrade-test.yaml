@@ -9,7 +9,7 @@ name: Upgrade Test
 # dev-docs/specs/cross-binary-upgrade.md).
 #
 # Manual dispatch can run any scenario. Relevant pull requests run only
-# `v125_rollout`, avoiding the full expensive matrix on unrelated changes.
+# `v6_rollout`, avoiding the full expensive matrix on unrelated changes.
 # (The v3/v4-era rehearsals — cross_binary, v118_*, v121_rollout — were
 # retired when protocol v3/v4 support was removed; v125_rollout is their
 # successor against the CURRENTLY deployed release.) Pick the scenario with
@@ -27,6 +27,11 @@ name: Upgrade Test
 #                  the rest and converge again — a pure binary swap, no
 #                  protocol transition. Defaults to
 #                  old_ref=release/mainnet-v1.2.5, old_bin_name=ika-validator.
+#   v6_rollout   — the strict-only dependency compatibility gate: boot the
+#                  literal v1.2.7 release at protocol v6, upgrade one validator
+#                  to the candidate, converge two mixed strict-bound reshares,
+#                  then swap the rest. Defaults to
+#                  old_ref=release/mainnet-v1.2.7, old_bin_name=ika-validator.
 #   v125_v6_upgrade — the PROTOCOL-upgrade gate (v125_rollout's version-
 #                  transition counterpart): boot the literal v1.2.5 release
 #                  at protocol v5, swap the whole committee to the current
@@ -109,7 +114,7 @@ on:
         description: "Scenario or comma-separated scenarios"
         type: string
         required: false
-        default: "v125_rollout"
+        default: "v6_rollout"
       candidate_sha:
         description: "Exact release-candidate commit SHA to check out and test"
         type: string
@@ -162,7 +167,7 @@ on:
         required: false
         default: ""
       old_ref:
-        description: "Git ref/tag/sha for the OLD binary (empty = per-scenario default; v125_rollout uses release/mainnet-v1.2.5)"
+        description: "Git ref/tag/sha for the OLD binary (empty = per-scenario default; v6_rollout uses release/mainnet-v1.2.7)"
         type: string
         required: false
         default: ""
@@ -234,10 +239,12 @@ jobs:
     steps:
       - id: pick
         env:
-          TEST: ${{ inputs.test || 'v125_rollout' }}
+          # The candidate is strict-only and cannot run v5, so the v5
+          # v125_rollout mixed committee would diverge by design.
+          TEST: ${{ inputs.test || 'v6_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config restart_spectator"
+          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config restart_spectator v6_rollout"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -356,6 +363,7 @@ jobs:
             malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
+            v6_rollout)   RUN_FLAG=RUN_V6_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -365,6 +373,12 @@ jobs:
           case "$TEST" in
             v125_rollout | v125_v6_upgrade | v125_churn | malicious_v125)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
+              : "${OLD_BIN_NAME:=ika-validator}"
+              ;;
+            v6_rollout)
+              # OLD is the released v6-capable binary (both bounds selectable);
+              # NEW is the candidate with strict-only inkrypto.
+              : "${OLD_REF:=release/mainnet-v1.2.7}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
           esac
@@ -434,7 +448,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' || matrix.test == 'v6_rollout' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
