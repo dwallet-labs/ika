@@ -403,9 +403,19 @@ where
         // an epoch, so one successful send per epoch is enough.
         let mut current_keys_sent_for_epoch: Option<EpochId> = None;
         // `validator_id -> consensus pubkey`, populated on first sight and
-        // never invalidated (registration-fixed values). Keeps the
-        // consensus-basis re-keying below off the per-tick chain path.
+        // dropped at every epoch change. Keeps the consensus-basis re-keying
+        // below off the per-tick chain path (see
+        // `committee_names_for_basis`) WITHOUT outliving the value's own
+        // validity: a consensus key is not fixed at registration —
+        // `set_next_epoch_consensus_pubkey_bytes` is an operator-callable
+        // entry point and `rotate_next_epoch_info` effectuates it at epoch
+        // advance. Caching across epochs would keep naming a rotated
+        // validator under its old key indefinitely, and from protocol v6 —
+        // where the consensus key IS the `AuthorityName` — that is a stale
+        // IDENTITY, fleet-wide. Per-epoch is exactly right: rotation lands
+        // only at boundaries, so within an epoch the value cannot change.
         let mut consensus_key_cache: HashMap<ObjectID, NetworkPublicKey> = HashMap::new();
+        let mut consensus_key_cache_epoch: Option<EpochId> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -420,6 +430,13 @@ where
                 Duration::from_secs(10),
             );
             let SystemInner::V1(system_inner) = system_inner;
+            // Drop keys cached for a previous epoch before anything reads
+            // them: a rotation effectuated at the boundary must be picked up
+            // this epoch, not inherited from the last one.
+            if consensus_key_cache_epoch != Some(system_inner.epoch()) {
+                consensus_key_cache.clear();
+                consensus_key_cache_epoch = Some(system_inner.epoch());
+            }
             // Identity basis, version-gated (`consensus_key_authority_names`,
             // on from protocol version 6). Evaluated on the CURRENT epoch's
             // version — the only one knowable when the next-epoch committee
@@ -656,9 +673,11 @@ where
     /// `protocol_pubkey` only), so a member's validator record must be
     /// fetched by id. No-op — no fetch — under the BLS basis.
     ///
-    /// A validator's consensus public key is fixed at registration, so a
-    /// cached value never goes stale and only ids never seen before are
-    /// fetched. That matters beyond latency: this runs on every sync tick,
+    /// Only ids not already cached for THIS epoch are fetched. The cache is
+    /// per-epoch rather than permanent because a consensus key can be
+    /// rotated (`set_next_epoch_consensus_pubkey_bytes`, effectuated at the
+    /// next epoch advance); within an epoch it cannot change. That matters
+    /// beyond latency: this runs on every sync tick,
     /// and its caller skips the tick (and with it the next-committee send)
     /// when it returns `Err`. A per-tick chain fetch in exactly this spot
     /// wedged reconfiguration once before — `get_validators_info_by_ids`

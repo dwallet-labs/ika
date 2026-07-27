@@ -183,8 +183,15 @@ fn build_prior_committee_candidate(
 ) -> Committee {
     let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = if consensus_key_identity {
         // Consensus-basis prior epoch: the snapshot name derives from the
-        // consensus key, whose VALUE is fixed at registration — so the
-        // current on-chain value IS the snapshot value. A member whose
+        // consensus key, read at its CURRENT on-chain value. That equals the
+        // prior epoch's value for every member that did not rotate — and a
+        // consensus key CAN be rotated
+        // (`set_next_epoch_consensus_pubkey_bytes`, effectuated at epoch
+        // advance), in which case this names the member under its new key
+        // while the cert names it under the old one, and the signer resolves
+        // to weight 0. Rotation under a consensus-key identity is unfinished
+        // business tracked with the v6 rollout; see
+        // dev-docs/specs/committee-consensus-keys.md. A member whose
         // validator_info fails verify has no resolvable name and drops out
         // (the verify-failure warn below attributes it).
         staking_pools
@@ -225,8 +232,11 @@ fn build_prior_committee_candidate(
                 continue;
             }
         };
-        // The consensus pubkey VALUE is fixed at registration, so reading the
-        // current one is correct; only the map KEY must be the snapshot name.
+        // The VALUE is the current on-chain consensus pubkey; only the map
+        // KEY must be the snapshot name. Correct for every member that did
+        // not rotate its consensus key since the prior epoch — a rotated
+        // member's prior-epoch signatures were made with the old key and
+        // will not verify against this one (see the note above).
         let Some(name) = snapshot_name_by_id.get(&pool.id).copied() else {
             warn!(
                 validator_id = ?pool.id,
