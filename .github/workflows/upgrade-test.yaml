@@ -226,10 +226,15 @@ jobs:
     steps:
       - id: pick
         env:
-          TEST: ${{ inputs.test || 'v125_rollout' }}
+          # PRs default to v125_rollout (deployed-release gate). The chained
+          # step2 PR (base = the v6 step-1 branch) instead defaults to
+          # v6_rollout — step2 is strict-only and cannot run v5, so
+          # v125_rollout (a v5 mixed committee) would diverge by design.
+          # Revisit after step1 merges and step2 retargets to main.
+          TEST: ${{ inputs.test || (github.event.pull_request.base.ref == 'feat/protocol-v6-strict-reconfiguration-bound' && 'v6_rollout' || 'v125_rollout') }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config"
+          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config v6_rollout"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -265,7 +270,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           # Full history + tags: the OLD binary is built from an arbitrary
-          # ref (e.g. the mainnet-v1.1.8 tag) via `git worktree add`.
+          # ref (e.g. the release/mainnet-v1.2.5 tag) via `git worktree add`.
           fetch-depth: 0
           # Resolve once at trigger time; never rebuild a moving branch head.
           ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
@@ -347,6 +352,7 @@ jobs:
             v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
             malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
+            v6_rollout)   RUN_FLAG=RUN_V6_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -356,6 +362,15 @@ jobs:
           case "$TEST" in
             v125_rollout | v125_v6_upgrade | v125_churn | malicious_v125)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
+              : "${OLD_BIN_NAME:=ika-validator}"
+              ;;
+            v6_rollout)
+              # v6_rollout is the CHAINED cross-test: OLD is the v6-capable
+              # "step 1" binary (current inkrypto, both bounds selectable),
+              # NEW is the candidate (this branch's strict-only inkrypto). On a
+              # PR the step-1 binary is the base branch (the chain base); a
+              # manual dispatch must pass old_ref explicitly.
+              : "${OLD_REF:=${{ github.event.pull_request.base.ref }}}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
           esac
@@ -425,7 +440,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' || matrix.test == 'v6_rollout' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"

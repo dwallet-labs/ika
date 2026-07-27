@@ -1572,27 +1572,17 @@ impl ProtocolCryptographicData {
                         malicious_parties,
                         private_output,
                     } => {
-                        // Wrap the public output with its version: always the
-                        // aggregated (V4) shape — pre-aggregation (V3) output
-                        // production was removed with protocol v4 support.
-                        //
-                        // Deliberately the CONCRETE non-aggregated type, not the
-                        // Party's associated output type: this decode-and-upgrade
-                        // is correct only while the reconfiguration Party's wire
-                        // output is the non-aggregated shape. When the Party
-                        // migrates to the aggregated output post-upgrade, this
-                        // site must be revisited — a hardcoded type makes that a
-                        // loud failure instead of a silent misinterpretation.
-                        let public_output: twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput =
-                            bcs::from_bytes(&public_output_value)?;
+                        // The reconfiguration Party's output IS the aggregated
+                        // form — the protocol aggregates at output formation,
+                        // so no local upgrade step remains. Tag the bytes V4
+                        // as-is (mirroring the network DKG finalize path).
                         info!(
                             session_identifier=?session_identifier,
                             "persisting aggregated (V4) network-key reconfiguration output"
                         );
-                        let public_output_value =
-                            bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
-                                bcs::to_bytes(&public_output.upgrade()?)?,
-                            ))?;
+                        let public_output_value = bcs::to_bytes(
+                            &VersionedDecryptionKeyReconfigurationOutput::V4(public_output_value),
+                        )?;
 
                         Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,

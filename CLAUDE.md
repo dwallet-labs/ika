@@ -283,24 +283,37 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   pre-aggregation (V3-tagged) output PRODUCTION are all removed.
   Everything formerly v4/v5-gated (off-chain validator metadata, the
   cross-epoch handoff, deferred epoch close, aggregated network-key
-  outputs) is unconditionally on. **v6 gates one flag,
-  `consensus_key_authority_names`**: `AuthorityName` becomes the Ed25519
-  consensus key (zero-padded into the same 48-byte container, so the wire
-  encoding is unchanged) instead of the BLS protocol key, which stays on
-  chain and on `Committee` for BLS checkpoint-certificate verification.
-  v6 is ADVERTISED, so the capability vote carries a network to it once a
-  quorum upgrades — the flip is live on rollout, not a separate decision.
-  Its known boundary limitation (the next-epoch committee is assembled
-  under the current epoch's version but consumed under its own, so the two
+  outputs) is unconditionally on. **v6 gates two coordinated flips that
+  activate together**: (a) `consensus_key_authority_names` —
+  `AuthorityName` becomes the Ed25519 consensus key (zero-padded into the
+  same 48-byte container, so the wire encoding is unchanged) instead of
+  the BLS protocol key, which stays on chain and on `Committee` for BLS
+  checkpoint-certificate verification; and (b)
+  `strict_network_key_coefficient_bound` — the network-key
+  DKG/reconfiguration equality-of-coefficients proof drops the relaxed
+  `-10` discrete-log bound it has transcribed since ika v1.1.8. The
+  bound is transcribed whole into the Fiat–Shamir challenge, so it is
+  consensus-critical: a mixed-bound committee splits its reconfiguration
+  quorum and flags the odd validator malicious. v6 is ADVERTISED, so the
+  capability vote carries a network to it once a quorum upgrades — the
+  flips are live on rollout, not a separate decision. The identity flip's
+  known boundary limitation (the next-epoch committee is assembled under
+  the current epoch's version but consumed under its own, so the two
   disagree at the single activation boundary) is why the first flip
   attempt wedged: `dev-docs/specs/committee-consensus-keys.md`. v7 is
   planned for `noa_checkpoints`. What REMAINS constrained: the networks
-  persist pre-v5 state (V1-tagged chain DKG anchors, V2/V3-tagged
-  outputs), so old `Versioned*` enum variants must stay (BCS variant
-  indices are wire format) and their DECODE paths must keep working; and
-  MPC outputs must reach byte-identical quorum across a mixed-binary
-  committee, so serialization changes to active paths need a new protocol
-  version gate, never a binary-driven flip.
+  persist pre-v5 state, so old `Versioned*` enum variants must stay (BCS
+  variant indices are wire format). V1-tagged chain DKG anchors must
+  remain DECODABLE (they are never rewritten on chain; they decode via
+  the still-current `class_groups::dkg::PublicOutput`), and V2-tagged
+  outputs still decode as `PublicOutputCore` where only the core is
+  needed. V3-tagged (pre-aggregation) outputs and the bwd-compat party
+  outputs are NO LONGER decodable anywhere — inkrypto removed their
+  types — so any key whose live state is still V3-tagged must have
+  migrated to V4 before running this binary, and decode arms for them are
+  hard errors; and MPC outputs must reach byte-identical quorum across a
+  mixed-binary committee, so serialization changes to active paths need a
+  new protocol version gate, never a binary-driven flip.
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward

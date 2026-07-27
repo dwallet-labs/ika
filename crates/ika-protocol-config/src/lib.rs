@@ -33,19 +33,23 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6: consensus_key_authority_names on — `AuthorityName` (validator
-//            identity) becomes the Ed25519 consensus key, zero-padded to the
-//            48-byte container so the wire encoding is unchanged. The BLS
-//            protocol key stays on chain and carried on `Committee` for BLS
-//            aggregate-certificate (checkpoint) verification.
-//
-//            ADVERTISED: every validator on this binary offers 6, so the
-//            capability vote carries a network to v6 once a quorum upgrades.
-//            The identity flip is therefore live on rollout, not on a
-//            separate decision. See the flag definition for the
-//            activation-boundary caveat, and
-//            dev-docs/specs/committee-consensus-keys.md for the
-//            consensus-key-rotation interaction.
+// Version 6: two coordinated flips activate together at the v6 boundary.
+//   (a) consensus_key_authority_names — `AuthorityName` (validator identity)
+//            becomes the Ed25519 consensus key, zero-padded to the 48-byte
+//            container so the wire encoding is unchanged. The BLS protocol key
+//            stays on chain and carried on `Committee` for BLS
+//            aggregate-certificate (checkpoint) verification. ADVERTISED: every
+//            validator on this binary offers 6, so the capability vote carries a
+//            network to v6 once a quorum upgrades. The identity flip is
+//            therefore live on rollout, not on a separate decision. See the flag
+//            definition for the activation-boundary caveat, and
+//            dev-docs/specs/committee-consensus-keys.md.
+//   (b) strict_network_key_coefficient_bound — network-key DKG/reconfiguration
+//            migrates the equality-of-coefficients discrete-log bound from the
+//            `-10` relaxed bound (transcribed since mainnet-v1.1.8) to the strict
+//            bound. The bound is transcribed into the Fiat–Shamir challenge, so a
+//            mismatch splits the reconfiguration quorum; the whole committee
+//            switches at the v6 boundary, never per-binary.
 // Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -241,6 +245,16 @@ struct FeatureFlags {
     // boundary and are unaffected.
     #[serde(skip_serializing_if = "is_false")]
     consensus_key_authority_names: bool,
+
+    // Network-key DKG/reconfiguration equality-of-coefficients discrete-log
+    // bound. Off through v5 (the `-10` relaxed bound the network has transcribed
+    // since mainnet-v1.1.8); on at v6, selecting the strict bound. The bound is
+    // transcribed whole into the Fiat–Shamir challenge, so a mismatch makes
+    // peers reject the reconfiguration proof and flag the dealer malicious —
+    // hence a protocol-gated flip the whole committee makes at the v6 boundary,
+    // never a per-binary switch.
+    #[serde(skip_serializing_if = "is_false")]
+    strict_network_key_coefficient_bound: bool,
 }
 
 #[allow(unused)]
@@ -469,26 +483,6 @@ impl ProtocolConfig {
     /// the Rust-side defense-in-depth VSS request guard.
     pub fn fast_schnorr_supported(&self) -> bool {
         self.feature_flags.fast_schnorr_supported
-    }
-
-    /// True iff this protocol_version uses the version-3 network DKG /
-    /// validator-key-publication shape (#1707) — `ValidatorEncryptionKeysAndProofs`
-    /// (class-groups + per-curve PVSS HPKE) and
-    /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
-    /// <= 3 (mainnet-v1.1.8), where the publication is bare
-    /// `ClassGroupsEncryptionKeyAndProof` and DKG runs against
-    /// `twopc_mpc::decentralized_party_backward_compatible::dkg::Party`.
-    pub fn is_network_encryption_key_version_v3(&self) -> bool {
-        self.network_encryption_key_version.is_some_and(|v| v == 3)
-    }
-
-    /// True iff this protocol_version uses the version-3 reconfiguration
-    /// shape (#1707) — `twopc_mpc::decentralized_party::reconfiguration::Party` with
-    /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
-    /// <= 3, where reconfiguration runs against
-    /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
-    pub fn is_reconfiguration_message_version_v3(&self) -> bool {
-        self.reconfiguration_message_version.is_some_and(|v| v == 3)
     }
 
     pub fn bls_checkpoints(&self) -> bool {
@@ -836,6 +830,11 @@ impl ProtocolConfig {
                 }
                 6 => {
                     cfg.feature_flags.consensus_key_authority_names = true;
+                    // Migrate the network-key equality-of-coefficients bound
+                    // from relaxed to strict. Coordinated at the v6 boundary so
+                    // every validator's reconfiguration proof uses the same
+                    // bound (see the field comment and the flip in `input.rs`).
+                    cfg.feature_flags.strict_network_key_coefficient_bound = true;
                 }
                 // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
