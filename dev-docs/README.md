@@ -116,6 +116,12 @@ them has a bug — determine which before changing either.
   conventions (new protocols auto-instrument through the exhaustive
   `[curve, signature_algorithm, key_role]` labels), and a generated name
   inventory.
+- [`conventions/epoch-table-write-discipline.md`](conventions/epoch-table-write-discipline.md)
+  — every `AuthorityEpochTables` field declares whether it is written
+  through the consensus commit batch or directly (and, if directly, the
+  reason its consumers survive that); the reader-side rule that #1917 was
+  actually born on, and the two currently-unproven tables. CI-enforced via
+  `scripts/check-epoch-table-write-discipline.sh`.
 - [`conventions/logging.md`](conventions/logging.md) — the `tracing`
   log-level discipline: hot MPC paths are `debug!`, once-per-epoch
   lifecycle events are `info!`; why an `info!` on the per-computation
