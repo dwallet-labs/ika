@@ -14,7 +14,7 @@ use dwallet_rng::RootSeed;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
-use ika_types::error::IkaResult;
+use ika_types::error::{IkaError, IkaResult};
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
@@ -27,6 +27,7 @@ use ika_types::messages_dwallet_mpc::{
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sui_types::base_types::{EpochId, ObjectID};
@@ -126,6 +127,9 @@ pub(crate) struct IntegrationTestState {
 #[derive(Clone)]
 pub(crate) struct TestingSubmitToConsensus {
     pub(crate) submitted_messages: Arc<Mutex<Vec<ConsensusTransaction>>>,
+    /// When set, every submission is rejected (and not recorded) — for tests
+    /// exercising the submit-failure retry paths.
+    pub(crate) fail_submissions: Arc<AtomicBool>,
 }
 
 /// A testing implementation of the `AuthorityStateTrait`.
@@ -645,6 +649,7 @@ impl TestingSubmitToConsensus {
     fn new() -> Self {
         Self {
             submitted_messages: Arc::new(Mutex::new(vec![])),
+            fail_submissions: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -652,6 +657,11 @@ impl TestingSubmitToConsensus {
 #[async_trait::async_trait]
 impl DWalletMPCSubmitToConsensus for TestingSubmitToConsensus {
     async fn submit_to_consensus(&self, messages: &[ConsensusTransaction]) -> IkaResult<()> {
+        if self.fail_submissions.load(Ordering::SeqCst) {
+            return Err(IkaError::ConsensusConnectionBroken(
+                "injected submit failure".to_string(),
+            ));
+        }
         self.submitted_messages
             .lock()
             .unwrap()

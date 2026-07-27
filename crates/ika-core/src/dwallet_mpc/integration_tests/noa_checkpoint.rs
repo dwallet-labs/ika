@@ -10,20 +10,28 @@
 //! - Failure/retry through consensus
 //! - Dual-handler (DWallet + System) simultaneous routing
 
+use std::slice::from_ref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::messages_consensus::ConsensusTransactionKind;
+use ika_types::messages_dwallet_mpc::ConsensusNOAPresignDemand;
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
-use ika_types::noa_checkpoint::{SuiChainContext, SuiDWalletCheckpoint, SuiSystemCheckpoint};
+use ika_types::noa_checkpoint::{
+    NOACheckpointKindName, NOACheckpointTxObservation, NOACheckpointTxRef, NOAPresignDemandId,
+    SuiChainContext, SuiDWalletCheckpoint, SuiSystemCheckpoint,
+};
+use sui_types::base_types::ObjectID;
 use tracing::info;
 
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, build_test_state, create_test_protocol_config_guard,
+    create_test_protocol_config_guard_with_noa_checkpoints,
 };
 use crate::noa_checkpoints::{NOAChainSubmitter, NOACheckpointHandler, TxExecutionStatus};
 
@@ -537,4 +545,100 @@ async fn test_noa_checkpoint_both_handlers() {
             i
         );
     }
+}
+
+// ── Test 5: consensus submit failure → re-buffer ───────────────────────────────
+
+/// A failed consensus submission must not drop buffered NOA observations or
+/// presign demands. Their producers are one-shot — the checkpoint handler marks
+/// a tx confirmed-locally / voted-failed BEFORE emitting its observation, and a
+/// presign demand is announced at most once per epoch — so a dropped item is
+/// never re-emitted and this validator's finalization vote (or demand
+/// announcement) would be silently lost. The service must re-buffer failed
+/// items and resend them once consensus submission recovers.
+#[tokio::test]
+#[cfg(test)]
+async fn test_noa_status_update_rebuffers_on_submit_failure() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
+
+    let mut test_state = build_test_state(1);
+    let authority = *test_state.committee.names().next().unwrap();
+    let collector = test_state.sent_consensus_messages_collectors[0].clone();
+    let service = &mut test_state.dwallet_mpc_services[0];
+
+    let tx_ref = NOACheckpointTxRef {
+        kind_name: NOACheckpointKindName::SuiDWallet,
+        sequence_number: 1,
+        tx_index: 0,
+        epoch: 1,
+    };
+    let observation = NOACheckpointTxObservation::Finalized(tx_ref.clone());
+    let demand = ConsensusNOAPresignDemand {
+        authority,
+        demand_id: NOAPresignDemandId::Checkpoint {
+            tx_ref,
+            retry_round: 0,
+        },
+        signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
+        network_encryption_key_id: ObjectID::random(),
+    };
+    service.buffer_noa_observation_for_testing(observation.clone());
+    service.buffer_noa_presign_demand_for_testing(demand.clone());
+
+    // While consensus submission fails, both items must survive in their buffers.
+    collector.fail_submissions.store(true, Ordering::SeqCst);
+    service
+        .send_status_update_to_consensus_for_testing(false)
+        .await;
+
+    assert_eq!(
+        service.buffered_noa_observations_for_testing(),
+        from_ref(&observation),
+        "failed observation submission must re-buffer the observation"
+    );
+    assert_eq!(
+        service.buffered_noa_presign_demands_for_testing(),
+        from_ref(&demand),
+        "failed presign demand submission must re-buffer the demand"
+    );
+    assert!(
+        collector.submitted_messages.lock().unwrap().is_empty(),
+        "no message reaches consensus while submission fails"
+    );
+
+    // Once submission recovers, the retained items drain exactly once.
+    collector.fail_submissions.store(false, Ordering::SeqCst);
+    service
+        .send_status_update_to_consensus_for_testing(false)
+        .await;
+
+    assert!(
+        service.buffered_noa_observations_for_testing().is_empty(),
+        "observation buffer must drain after a successful submission"
+    );
+    assert!(
+        service
+            .buffered_noa_presign_demands_for_testing()
+            .is_empty(),
+        "presign demand buffer must drain after a successful submission"
+    );
+
+    let submitted = collector.submitted_messages.lock().unwrap();
+    let submitted_observations: Vec<_> = submitted
+        .iter()
+        .filter_map(|message| match &message.kind {
+            ConsensusTransactionKind::NOAObservation(msg) => Some(msg.observation.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(submitted_observations, vec![observation]);
+    let submitted_demands: Vec<_> = submitted
+        .iter()
+        .filter_map(|message| match &message.kind {
+            ConsensusTransactionKind::NOAPresignDemand(msg) => Some(msg.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(submitted_demands, vec![demand]);
 }
