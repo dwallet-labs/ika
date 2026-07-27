@@ -19,7 +19,8 @@ sequencing record.
 
 ## Why
 A fresh peer-only (`SuiStateMirrored`, fallback=None) validator boots passively —
-`wait_for_specific_peers` (ika-node lib.rs) returns once anemo `network.peer(id)` is
+`wait_for_specific_peers` (ika-node lib.rs; since renamed `wait_for_mirror_peers`)
+returns once anemo `network.peer(id)` is
 `Some` for one of its `sui_state_mirror_peers`, which an **inbound** dial satisfies. So
 the bootstrap is: existing **direct** validators (always have a Sui uplink) keep
 `pending_active_set` in their `known_peers` and **dial** the registered-but-not-yet-active
@@ -192,7 +193,7 @@ Confirm `trusted_peer_change_tx` is exposed on the node struct (it is a field; c
 
 ## 6. Upgrade-test change: delete `validator_seed_peers`, KEEP `sui_state_mirror_peers`
 
-Once the feed runs, an existing DIRECT validator's known_peers includes `pending_active_set` → it DIALS the registered-but-not-yet-committee joiner. The joiner's `wait_for_specific_peers` (`lib.rs:1434`) is satisfied by that INBOUND connection. So the static seed is no longer needed; the relay-peer config still is.
+Once the feed runs, an existing DIRECT validator's known_peers includes `pending_active_set` → it DIALS the registered-but-not-yet-committee joiner. The joiner's `wait_for_specific_peers` (`lib.rs:1434`; since renamed `wait_for_mirror_peers`) is satisfied by that INBOUND connection. So the static seed is no longer needed; the relay-peer config still is. *(No longer true: automatic mirror-peer discovery has since made `sui_state_mirror_peers` an optional pinned override — an empty list discovers serving peers through the connected set. See the OCS spec's relay-protocol section.)*
 
 In `crates/ika-upgrade-test/src/cluster.rs`:
 - **Delete** the `validator_seed_peers: Vec<SeedPeer>` field (`:75`), its init (`:293`,`:410`), the `.push(SeedPeer{...})` (`:719-722`), and `fn active_validator_seed_peers` (`:746-753`).

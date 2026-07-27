@@ -15,7 +15,12 @@
 //!   transactions (writes are notifier-gated to a direct uplink).
 //!
 //! Both adapters share an identical multi-peer health strategy: try
-//! peers in order, demote on failure.
+//! peers in order, demote on failure. The peer set comes in two modes
+//! (selected by whether `sui-state-mirror-peers` is configured):
+//! a pinned operator override, or automatic discovery — every operation
+//! snapshots the peers currently connected through Ika's discovery
+//! system, and a connected peer that doesn't serve `SuiStateMirror`
+//! fails fast (anemo route miss) and is skipped.
 //!
 //! Trust-wise, the relayer is untrusted; every byte returned through the
 //! verified-read surface is checked by the consumer-side
@@ -23,15 +28,18 @@
 
 use std::sync::Arc;
 
+use anemo::types::{PeerAffinity, PeerInfo};
 use anemo::{Network, PeerId, Request};
 use async_trait::async_trait;
+use futures::future::join_all;
+use ika_config::node::SuiStateMirrorPeer;
 use parking_lot::RwLock;
 use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use ika_sui_client::transport::{
     DynamicFieldPage, ExecutedTransaction, SuiTransport, TransportError,
@@ -58,31 +66,55 @@ const RELAY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 #[derive(Clone)]
 pub struct SuiMirrorPeers {
     network: Network,
+    /// The peer-selection working set. Pinned mode: the operator-configured
+    /// list, reordered by demotion. Automatic mode: a preference-order cache
+    /// over the currently-connected peers, reconciled against the live
+    /// connection set on every [`Self::snapshot`] (so demotion ordering
+    /// persists across passes for as long as a peer stays connected).
     peers: Arc<RwLock<Vec<PeerId>>>,
-    /// Round-robin start offset so the fleet spreads reads across serving
-    /// peers instead of every node hammering `peers[0]`. Each `try_peers`
-    /// pass still visits all peers (preserving the NotFound-only-if-all
-    /// semantics); only the *order* rotates.
+    /// True when the operator configured an explicit non-empty
+    /// `sui-state-mirror-peers` list. False selects automatic mode: every
+    /// operation works over the peers connected through Ika's discovery
+    /// system at that moment.
+    pinned: bool,
+    /// Pinned mode only: round-robin start offset so the fleet spreads reads
+    /// across serving peers instead of every node hammering `peers[0]` of the
+    /// shared operator-written list. Each `try_peers` pass still visits all
+    /// peers (preserving the NotFound-only-if-all semantics); only the *order*
+    /// rotates. Automatic mode never rotates (see `try_peers`): demotion is
+    /// its shield against non-serving/stalling peers, and rotation would cycle
+    /// the pass start right back into the demoted tail.
     next_start: Arc<std::sync::atomic::AtomicUsize>,
     metrics: Arc<ProofProviderMetrics>,
 }
 
 impl SuiMirrorPeers {
+    /// `peers` is the operator's pinned override; an EMPTY list selects
+    /// automatic mode, where each operation snapshots the peers currently
+    /// connected on the anemo network instead of a static list.
     pub fn new(network: Network, peers: Vec<PeerId>, metrics: Arc<ProofProviderMetrics>) -> Self {
+        let pinned = !peers.is_empty();
         Self {
             network,
             peers: Arc::new(RwLock::new(peers)),
+            pinned,
             next_start: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             metrics,
         }
     }
 
-    pub fn replace_peers(&self, peers: Vec<PeerId>) {
-        *self.peers.write() = peers;
-    }
-
     fn snapshot(&self) -> Vec<PeerId> {
-        self.peers.read().clone()
+        if self.pinned {
+            return self.peers.read().clone();
+        }
+        // Automatic mode: work over the peers connected RIGHT NOW — peers
+        // connect, disconnect, and change across epoch transitions, so the
+        // set must track the live discovery/network state, not a boot-time
+        // capture. The stored list is only an ordering memory layered on top.
+        let connected = self.network.peers();
+        let mut order = self.peers.write();
+        reconcile_preference_order(&mut order, connected);
+        order.clone()
     }
 
     fn demote(&self, bad: PeerId) {
@@ -106,13 +138,28 @@ impl SuiMirrorPeers {
     {
         let mut peers = self.snapshot();
         if peers.is_empty() {
+            // Pinned mode always has a non-empty list (the mode is selected by
+            // non-emptiness at construction), so an empty snapshot means
+            // automatic mode found no connected peers to try.
             return Err(TransportError::Network(format!(
-                "{op_label}: no SuiStateMirror peers configured"
+                "{op_label}: no connected p2p peers to relay through (automatic \
+                 SuiStateMirror peer discovery; is the p2p network up?)"
             )));
         }
-        // Spread load: rotate the start of the pass round-robin. Still a full
-        // pass over every peer, so the all-peers-NotFound semantics below hold.
-        if peers.len() > 1 {
+        // Pinned mode: spread load by rotating the start of the pass
+        // round-robin — the fleet shares one operator-written list, so without
+        // rotation every node would hammer `peers[0]`. Still a full pass over
+        // every peer, so the all-peers-NotFound semantics below hold.
+        //
+        // Automatic mode deliberately does NOT rotate: rotation would cycle
+        // the start through the demoted tail (non-serving committee peers, or
+        // a stalling one that costs the full per-request timeout), taxing a
+        // 1/n share of every read and neutralizing demotion. Each pass starts
+        // at the preference-order head instead — demoted peers are only
+        // revisited when everything ahead of them fails. Fleet load still
+        // spreads because each node's preference order is emergent (its own
+        // connection order + demotion history), not a shared list.
+        if self.pinned && peers.len() > 1 {
             let start = self
                 .next_start
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -132,6 +179,38 @@ impl SuiMirrorPeers {
             let mut client = SuiStateMirrorClient::new(peer);
             match tokio::time::timeout(RELAY_REQUEST_TIMEOUT, op(&mut client)).await {
                 Ok(Ok(resp)) => return Ok(resp.into_inner()),
+                Ok(Err(status)) if is_service_unimplemented(&status) => {
+                    // The peer is connected but doesn't serve `SuiStateMirror`
+                    // at all (anemo's router fallback for an unregistered
+                    // route). Expected in automatic mode, where discovery
+                    // connects every committee peer, mirrored/peer-only ones
+                    // included — but a misconfigured entry in pinned mode, so
+                    // that mode keeps the warn + failover metric the error arm
+                    // would have produced. Either way the peer is treated like
+                    // a not-connected one: demoted and skipped WITHOUT
+                    // counting as "reached", so a set of non-serving peers can
+                    // neither manufacture an all-peers-NotFound data-absence
+                    // verdict nor destroy one produced by genuinely-serving
+                    // peers.
+                    if self.pinned {
+                        warn!(
+                            ?peer_id,
+                            "{op_label}: configured sui-state-mirror peer does not serve \
+                             SuiStateMirror (misconfigured pin?), trying next"
+                        );
+                        self.metrics
+                            .relay_peer_failover_total
+                            .with_label_values(&[op_label, &peer_id.to_string()])
+                            .inc();
+                    } else {
+                        debug!(
+                            ?peer_id,
+                            "{op_label}: peer does not serve SuiStateMirror, trying next"
+                        );
+                    }
+                    self.demote(peer_id);
+                    last_err = Some(format!("peer {peer_id} does not serve SuiStateMirror"));
+                }
                 Ok(Err(status)) => {
                     // Only a genuine NotFound keeps the all-peers-NotFound verdict
                     // alive; any other error is a peer/network failure.
@@ -210,6 +289,107 @@ fn classify_failed_pass(
             last_err.unwrap_or_else(|| "no peers reachable".into())
         ))
     }
+}
+
+/// Reconcile the automatic-mode preference order with the currently-connected
+/// set: drop peers no longer connected, append newly-connected peers at the
+/// back. Peers already in the order keep their positions, so proven peers stay
+/// preferred and demoted ones stay at the back until they disconnect.
+fn reconcile_preference_order(order: &mut Vec<PeerId>, connected: Vec<PeerId>) {
+    order.retain(|peer_id| connected.contains(peer_id));
+    for peer_id in connected {
+        if !order.contains(&peer_id) {
+            order.push(peer_id);
+        }
+    }
+}
+
+/// True when `status` is anemo's router fallback for an unregistered route — a
+/// bare `NotFound` with no `status-message` header — meaning the peer does not
+/// serve the `SuiStateMirror` service at all. Every data-absence `NotFound`
+/// the service itself returns goes through the server's `map_err`, which
+/// always attaches a message (carried on the wire in the `status-message`
+/// header), so header presence is what separates "the peer answered: the data
+/// does not exist" from "the peer has no such service".
+fn is_service_unimplemented(status: &anemo::rpc::Status) -> bool {
+    status.status() == anemo::types::response::StatusCode::NotFound
+        && !status
+            .headers()
+            .contains_key(anemo::types::header::STATUS_MESSAGE)
+}
+
+/// Per-peer timeout for [`find_serving_mirror_peer`] probes: generous for a
+/// healthy peer's trivial `get_chain_identifier` round-trip, short enough that
+/// a hung peer doesn't stall the startup wait loop it is called from.
+const SERVING_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Probe the currently-connected peers for one that actually serves the
+/// `SuiStateMirror` service (a cheap `get_chain_identifier` round-trip; a peer
+/// without the service fails fast on anemo's route miss). Used by the
+/// sui-state-mirrored startup wait in automatic discovery mode, where mere
+/// connectivity is not enough: discovery connects every committee peer and
+/// most may be mirrored nodes that don't serve the relay.
+pub async fn find_serving_mirror_peer(network: &Network) -> Option<PeerId> {
+    let probes = network.peers().into_iter().filter_map(|peer_id| {
+        let peer = network.peer(peer_id)?;
+        Some(async move {
+            let mut client = SuiStateMirrorClient::new(peer);
+            let probe = client.get_chain_identifier(Request::new(()));
+            match tokio::time::timeout(SERVING_PROBE_TIMEOUT, probe).await {
+                Ok(Ok(_)) => Some(peer_id),
+                _ => None,
+            }
+        })
+    });
+    join_all(probes).await.into_iter().flatten().next()
+}
+
+/// Register the ADDRESSED `sui-state-mirror-peers` entries as high-affinity
+/// known peers, so anemo's connection manager dials and maintains a
+/// connection to each — the same mechanism that keeps seed peers connected.
+/// Bare (id-only) entries carry no address and are skipped: they select among
+/// connections the p2p layer establishes by other means. Malformed entries
+/// warn and are skipped here; the strict parse at OCS stack construction
+/// rejects them loudly. Returns how many peers were registered.
+pub fn register_addressed_mirror_peers(network: &Network, peers: &[SuiStateMirrorPeer]) -> usize {
+    let mut registered = 0;
+    for entry in peers {
+        let Some(address) = entry.address() else {
+            continue;
+        };
+        let peer_id = match entry.parse_peer_id() {
+            Ok(peer_id) => peer_id,
+            Err(e) => {
+                warn!(
+                    peer = %entry.peer_id_hex(),
+                    error = %e,
+                    "skipping malformed sui-state-mirror-peers entry"
+                );
+                continue;
+            }
+        };
+        let Ok(anemo_address) = address.to_anemo_address() else {
+            warn!(
+                %peer_id,
+                p2p_address = %address,
+                "sui-state-mirror-peers address is not a valid anemo address; the peer is only \
+                 reachable if something else connects it"
+            );
+            continue;
+        };
+        info!(
+            %peer_id,
+            address = %address,
+            "registering addressed sui-state-mirror peer for dialing (high affinity)"
+        );
+        network.known_peers().insert(PeerInfo {
+            peer_id,
+            affinity: PeerAffinity::High,
+            address: vec![anemo_address],
+        });
+        registered += 1;
+    }
+    registered
 }
 
 // -- Verified-read surface --------------------------------------------------------------------
@@ -506,5 +686,252 @@ mod tests {
             TransportError::Network(msg) => assert!(msg.contains("no peers reachable")),
             other => panic!("no peer reached must be Network, got {other:?}"),
         }
+    }
+
+    /// `reconcile_preference_order` (the automatic-mode snapshot core): peers
+    /// already in the order keep their positions (so demotion survives across
+    /// passes), disconnected peers drop out, newly-connected peers append at
+    /// the back behind the proven ones.
+    #[test]
+    fn reconcile_preference_order_keeps_order_drops_gone_appends_new() {
+        let first = PeerId([1; 32]);
+        let second = PeerId([2; 32]);
+        let third = PeerId([3; 32]);
+        let fourth = PeerId([4; 32]);
+
+        // `second` was demoted behind `third`; `third` disconnects; `fourth`
+        // is newly connected. Connected-set order must not matter.
+        let mut order = vec![first, third, second];
+        reconcile_preference_order(&mut order, vec![fourth, second, first]);
+        assert_eq!(order, vec![first, second, fourth]);
+
+        // Steady state is idempotent.
+        reconcile_preference_order(&mut order, vec![fourth, second, first]);
+        assert_eq!(order, vec![first, second, fourth]);
+
+        // Everything disconnected -> empty.
+        reconcile_preference_order(&mut order, vec![]);
+        assert!(order.is_empty());
+    }
+
+    /// Classification of anemo's route-miss `NotFound` (the peer has no
+    /// `SuiStateMirror` service) vs the service's own data-absence `NotFound`:
+    /// the service always attaches a message (`map_err` puts it on the wire in
+    /// the `status-message` header), the router fallback never does.
+    /// Misclassifying a route miss as data absence would let a set of
+    /// non-serving peers manufacture the all-peers-NotFound verdict the
+    /// committee ratchet keys its fallback decision on (spec invariant 6).
+    #[test]
+    fn route_miss_not_found_is_service_absent_not_data_absence() {
+        use anemo::rpc::Status;
+        use anemo::types::header::STATUS_MESSAGE;
+        use anemo::types::response::{IntoResponse, StatusCode};
+
+        // Wire shapes: data-absence carries the status-message header...
+        let genuine = Status::new_with_message(StatusCode::NotFound, "gone").into_response();
+        assert!(genuine.headers().contains_key(STATUS_MESSAGE));
+        // ...anemo's route-miss fallback is a bare NotFound without it.
+        let route_miss = StatusCode::NotFound.into_response();
+        assert!(!route_miss.headers().contains_key(STATUS_MESSAGE));
+
+        // Classification over client-side `Status` values of the same shapes.
+        assert!(is_service_unimplemented(&Status::new(StatusCode::NotFound)));
+        assert!(!is_service_unimplemented(
+            &Status::new(StatusCode::NotFound).with_header(STATUS_MESSAGE, "gone")
+        ));
+        assert!(!is_service_unimplemented(&Status::internal("boom")));
+    }
+
+    /// Minimal `SuiStateMirror` impl for the automatic-discovery test below:
+    /// `get_chain_identifier` answers, `last_checkpoint_of_epoch` returns the
+    /// service's genuine (message-bearing) data-absence `NotFound`, everything
+    /// else errors as unused.
+    struct StubMirror;
+
+    #[anemo::async_trait]
+    impl crate::sui_state_mirror::SuiStateMirror for StubMirror {
+        async fn get_chain_identifier(
+            &self,
+            _: Request<()>,
+        ) -> Result<anemo::Response<String>, anemo::rpc::Status> {
+            Ok(anemo::Response::new("test-chain".to_string()))
+        }
+        async fn get_current_epoch(
+            &self,
+            _: Request<()>,
+        ) -> Result<anemo::Response<u64>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn get_latest_checkpoint(
+            &self,
+            _: Request<()>,
+        ) -> Result<anemo::Response<CertifiedCheckpointSummary>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _: Request<GetCheckpointSummaryByDigestRequest>,
+        ) -> Result<anemo::Response<CertifiedCheckpointSummary>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn get_full_checkpoint(
+            &self,
+            _: Request<GetFullCheckpointRequest>,
+        ) -> Result<anemo::Response<CheckpointData>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn changeset_page(
+            &self,
+            _: Request<ChangesetPageRequest>,
+        ) -> Result<anemo::Response<ChangesetPageResponse>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _: Request<LastCheckpointOfEpochRequest>,
+        ) -> Result<anemo::Response<CheckpointSequenceNumber>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::new_with_message(
+                anemo::types::response::StatusCode::NotFound,
+                "epoch not on chain yet",
+            ))
+        }
+        async fn verified_object(
+            &self,
+            _: Request<VerifiedObjectRequest>,
+        ) -> Result<anemo::Response<VerifiedObjectResponse>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _: Request<BatchVerifiedObjectsRequest>,
+        ) -> Result<anemo::Response<BatchVerifiedObjectsResponse>, anemo::rpc::Status> {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn verified_dynamic_fields_page(
+            &self,
+            _: Request<VerifiedDynamicFieldsPageRequest>,
+        ) -> Result<anemo::Response<VerifiedDynamicFieldsPageResponse>, anemo::rpc::Status>
+        {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+    }
+
+    /// End-to-end automatic discovery over real anemo networks: a consumer
+    /// connected to one serving and one non-serving peer must (a) probe out
+    /// the serving peer, (b) serve reads through it on every round-robin
+    /// offset (the pass that starts at the non-serving peer proves the route
+    /// miss is skipped, not fatal), (c) preserve a genuine data-absence
+    /// NotFound from the serving peer (the non-serving peer must not downgrade
+    /// the verdict), and (d) degrade to a Network error — never NotFound —
+    /// once the serving peer disconnects and only the non-serving one remains.
+    #[tokio::test]
+    async fn automatic_mode_skips_non_serving_peers_and_tracks_connections() {
+        use crate::sui_state_mirror::SuiStateMirrorServer;
+        use crate::utils::build_network;
+
+        let serving =
+            build_network(|router| router.add_rpc_service(SuiStateMirrorServer::new(StubMirror)));
+        let non_serving = build_network(|router| router);
+        let consumer = build_network(|router| router);
+
+        let serving_id = consumer.connect(serving.local_addr()).await.unwrap();
+        let non_serving_id = consumer.connect(non_serving.local_addr()).await.unwrap();
+        assert_eq!(serving_id, serving.peer_id());
+        assert_eq!(non_serving_id, non_serving.peer_id());
+
+        // (a) the startup probe finds exactly the serving peer.
+        assert_eq!(find_serving_mirror_peer(&consumer).await, Some(serving_id));
+
+        // (b) automatic mode (empty configured list): reads succeed repeatedly.
+        // Automatic passes start at the preference-order head (no rotation),
+        // so if the non-serving peer happens to sit first it is skipped on its
+        // route miss and demoted; (c) below then visits BOTH peers
+        // deterministically (the serving peer's NotFound is not a success, so
+        // the pass continues into the non-serving one).
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let peers = SuiMirrorPeers::new(consumer.clone(), vec![], metrics);
+        let transport = SuiMirrorTransport::new(peers);
+        for _ in 0..2 {
+            assert_eq!(
+                transport.get_chain_identifier().await.unwrap(),
+                "test-chain"
+            );
+        }
+
+        // (c) the serving peer's genuine NotFound survives the non-serving
+        // peer's presence in the pass (route misses don't count as "reached").
+        match transport.last_checkpoint_of_epoch(7).await {
+            Err(TransportError::NotFound(_)) => {}
+            other => panic!("expected data-absence NotFound, got {other:?}"),
+        }
+
+        // (d) disconnect the serving peer and wait until the connection set
+        // reflects it; the next pass sees only the non-serving peer.
+        consumer.disconnect(serving_id).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while consumer.peers().contains(&serving_id) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("serving peer should leave the connected set");
+        match transport.get_chain_identifier().await {
+            Err(TransportError::Network(_)) => {}
+            other => panic!("expected Network error with no serving peer, got {other:?}"),
+        }
+    }
+
+    /// Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
+    /// registered as high-affinity known peers, so anemo's connection manager
+    /// dials and maintains the connection on its own — a pinned relay outside
+    /// every other dial path (p2p seeds, committee discovery) still becomes
+    /// reachable. Bare (id-only) entries register nothing: they only select
+    /// among connections established by other means.
+    #[tokio::test]
+    async fn addressed_mirror_peers_are_dialed_via_known_peers() {
+        use crate::sui_state_mirror::SuiStateMirrorServer;
+        use crate::utils::{build_network, build_network_with_anemo_config};
+        use ika_config::node::AddressedSuiStateMirrorPeer;
+
+        let serving =
+            build_network(|router| router.add_rpc_service(SuiStateMirrorServer::new(StubMirror)));
+        // Fast connectivity checks so the auto-dial happens promptly (the
+        // production default is 5s).
+        let mut anemo_config = anemo::Config::default();
+        anemo_config.connectivity_check_interval_ms = Some(200);
+        let (consumer, _key) = build_network_with_anemo_config(|router| router, anemo_config);
+
+        // Bare entries carry no address: nothing to register.
+        let bare = SuiStateMirrorPeer::PeerId(hex::encode(serving.peer_id().0));
+        assert_eq!(register_addressed_mirror_peers(&consumer, &[bare]), 0);
+        assert!(consumer.peers().is_empty());
+
+        // Addressed entry: registered, and anemo establishes the connection
+        // with no explicit connect() call anywhere. Derive the multiaddr from
+        // the actual bound socket — `build_network` binds `localhost:0`, which
+        // may resolve to either 127.0.0.1 or ::1, and a hard-coded /ip4 would
+        // silently dial the wrong stack on an ::1 bind.
+        let bound = serving.local_addr();
+        let address = match bound {
+            std::net::SocketAddr::V4(v4) => format!("/ip4/{}/udp/{}", v4.ip(), v4.port()),
+            std::net::SocketAddr::V6(v6) => format!("/ip6/{}/udp/{}", v6.ip(), v6.port()),
+        };
+        let addressed = SuiStateMirrorPeer::Addressed(AddressedSuiStateMirrorPeer {
+            peer_id: hex::encode(serving.peer_id().0),
+            address: address.parse().unwrap(),
+        });
+        assert_eq!(register_addressed_mirror_peers(&consumer, &[addressed]), 1);
+
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while consumer.peer(serving.peer_id()).is_none() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("anemo should dial the registered high-affinity addressed peer");
+        assert_eq!(
+            find_serving_mirror_peer(&consumer).await,
+            Some(serving.peer_id())
+        );
     }
 }

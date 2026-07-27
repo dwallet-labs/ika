@@ -10,10 +10,11 @@
 //! `pending_active_set` before it is active and before it can read anything over
 //! the OCS relay. With that set in `known_peers`, the existing DIRECT validators
 //! DIAL it; that inbound connection is what lets a peer-only joiner boot — its
-//! `wait_for_specific_peers` is satisfied by an inbound dial, with no fallback
-//! uplink and no static seed peers. The read rides the node's own
-//! `SuiConnector` (direct gRPC on a direct node, the OCS verified relay on a
-//! peer-only node), so there is no parallel reader.
+//! `wait_for_mirror_peers` gate is satisfied by an inbound dial (a pinned peer
+//! connecting, or in automatic mode a dialing peer that answers the
+//! SuiStateMirror probe), with no fallback uplink and no static seed peers.
+//! The read rides the node's own `SuiConnector` (direct gRPC on a direct node,
+//! the OCS verified relay on a peer-only node), so there is no parallel reader.
 //!
 //! The set is pushed via `TrustedPeerChangeEvent`, which the discovery service
 //! MERGEs into `known_peers` (it never prunes), so this coexists with the

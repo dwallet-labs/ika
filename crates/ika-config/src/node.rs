@@ -585,6 +585,59 @@ pub fn select_sui_transport(
     }
 }
 
+/// One `sui-state-mirror-peers` entry: a bare hex-encoded anemo peer id (the
+/// backward-compatible form), or a `{peer-id, address}` pair that is also
+/// dialable on its own — see the field docs on
+/// [`SuiConnectorConfig::sui_state_mirror_peers`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum SuiStateMirrorPeer {
+    /// Bare hex peer id: selects the peer among connections the p2p layer
+    /// already establishes (seed peers, fixed peers, committee discovery).
+    PeerId(String),
+    /// Peer id + p2p address: additionally registered as a high-affinity
+    /// known peer (the seed-peer mechanism), so anemo dials and maintains a
+    /// connection even when nothing else would.
+    Addressed(AddressedSuiStateMirrorPeer),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AddressedSuiStateMirrorPeer {
+    /// Hex-encoded anemo peer id (the peer's network public key).
+    pub peer_id: String,
+    /// The peer's p2p multiaddr, e.g. `/dns/relay1/udp/8084`.
+    pub address: Multiaddr,
+}
+
+impl SuiStateMirrorPeer {
+    pub fn peer_id_hex(&self) -> &str {
+        match self {
+            Self::PeerId(id) => id,
+            Self::Addressed(peer) => &peer.peer_id,
+        }
+    }
+
+    pub fn address(&self) -> Option<&Multiaddr> {
+        match self {
+            Self::PeerId(_) => None,
+            Self::Addressed(peer) => Some(&peer.address),
+        }
+    }
+
+    /// Parse the entry's hex-encoded anemo peer id.
+    pub fn parse_peer_id(&self) -> Result<anemo::PeerId, hex::FromHexError> {
+        let bytes: [u8; 32] = hex::FromHex::from_hex(self.peer_id_hex())?;
+        Ok(anemo::PeerId(bytes))
+    }
+}
+
+impl From<String> for SuiStateMirrorPeer {
+    fn from(peer_id_hex: String) -> Self {
+        Self::PeerId(peer_id_hex)
+    }
+}
+
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -606,12 +659,21 @@ pub struct SuiConnectorConfig {
     /// this path is the anchor-verified `BagEventPump`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sui_data_source: Option<SuiDataSource>,
-    /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
+    /// Optional pinned override of the peers used for `SuiStateMirror` reads.
     /// If empty when reading over the mirror (`SuiDataSource::SuiStateMirrored`),
     /// the connector will try every connected peer (relying on those that
-    /// don't implement the service to error fast).
+    /// don't implement the service to error fast). When non-empty, ONLY the
+    /// listed peers are used — the override is logged loudly at startup so it
+    /// isn't missed.
+    ///
+    /// Each entry is either a bare hex-encoded anemo peer id (the peer's
+    /// network public key), selecting the peer among connections the p2p
+    /// layer already establishes, or a `{peer-id, address}` pair that is
+    /// ALSO dialable on its own: it is registered as a high-affinity known
+    /// peer (like a seed peer) so a connection is established and maintained
+    /// even when nothing else would dial it.
     #[serde(default)]
-    pub sui_state_mirror_peers: Vec<String>,
+    pub sui_state_mirror_peers: Vec<SuiStateMirrorPeer>,
     /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root. On
     /// boot the node loads this blob, recomputes its genesis checkpoint digest,
     /// verifies it against the compiled-in chain identifier for
@@ -1476,6 +1538,51 @@ mod tests {
     fn unreadable_root_seed() -> RootSeedWithPath {
         serde_yaml::from_str("path: notifier-root-seed-must-not-be-read\n")
             .expect("a root-seed path descriptor must deserialize without reading the path")
+    }
+
+    /// `sui-state-mirror-peers` entries come in two YAML shapes — a bare hex
+    /// peer-id string (the backward-compatible form every deployed binary
+    /// reads) and a `{peer-id, address}` map — and both must parse from one
+    /// list. The round-trip must keep bare entries as bare strings: builder
+    /// harnesses (`ika-upgrade-test`) feed serialized configs to OLD release
+    /// binaries, which reject anything but plain strings.
+    #[test]
+    fn sui_state_mirror_peers_parse_both_shapes_and_round_trip() {
+        let peer_id_hex = "aa".repeat(32);
+        let yaml =
+            format!("- {peer_id_hex}\n- peer-id: {peer_id_hex}\n  address: /dns/relay1/udp/8084\n");
+        let peers: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str(&yaml).expect("both entry shapes must parse");
+        assert_eq!(peers.len(), 2);
+
+        assert!(matches!(&peers[0], SuiStateMirrorPeer::PeerId(_)));
+        assert_eq!(peers[0].peer_id_hex(), peer_id_hex);
+        assert!(peers[0].address().is_none());
+        assert_eq!(peers[0].parse_peer_id().unwrap(), anemo::PeerId([0xaa; 32]));
+
+        assert!(matches!(&peers[1], SuiStateMirrorPeer::Addressed(_)));
+        assert_eq!(peers[1].peer_id_hex(), peer_id_hex);
+        assert_eq!(
+            peers[1].address().expect("addressed entry").to_string(),
+            "/dns/relay1/udp/8084"
+        );
+        assert_eq!(peers[1].parse_peer_id().unwrap(), anemo::PeerId([0xaa; 32]));
+
+        // Round-trip: the bare entry serializes back to a bare string.
+        let reserialized = serde_yaml::to_string(&peers).expect("must serialize");
+        assert!(
+            reserialized.contains(&format!("- {peer_id_hex}")),
+            "bare peer-id entries must stay bare strings for old binaries: {reserialized}"
+        );
+        let reparsed: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str(&reserialized).expect("round-trip must parse");
+        assert!(matches!(&reparsed[0], SuiStateMirrorPeer::PeerId(_)));
+        assert!(matches!(&reparsed[1], SuiStateMirrorPeer::Addressed(_)));
+
+        // A malformed id parses as an entry but fails peer-id parsing.
+        let malformed: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str("- not-hex\n").expect("string entries always parse");
+        assert!(malformed[0].parse_peer_id().is_err());
     }
 
     #[test]

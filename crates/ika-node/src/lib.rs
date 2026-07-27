@@ -559,13 +559,23 @@ impl IkaNode {
                 None,
             )?;
             // Anemo dials seed peers asynchronously; `build_sui_connector_stack`
-            // probes the relay at construction, so wait for a configured mirror
-            // peer to be reachable first (as the sui-state-mirrored path does).
+            // probes the relay at construction, so wait for a usable mirror
+            // peer first (as the sui-state-mirrored path does): a configured
+            // one when `sui_state_mirror_peers` pins the set, else the first
+            // connected peer that answers a SuiStateMirror probe. A peer-only
+            // node has no committee to publish to discovery yet (reading it is
+            // what this stack is for) — its peers come from configured p2p
+            // seeds and the inbound dials of validators running the
+            // trusted-peer refresh loop.
             let mirror_peer_ids =
                 sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
-            Self::wait_for_specific_peers(
+            Self::wait_for_mirror_peers(
                 &p2p.p2p_network,
                 &mirror_peer_ids,
+                !config
+                    .sui_connector_config
+                    .sui_state_mirror_peers
+                    .is_empty(),
                 std::time::Duration::from_secs(60),
             )
             .await;
@@ -596,7 +606,7 @@ impl IkaNode {
             // mirrored-with-fallback path tolerates a failed initial ratchet
             // because its bootstrap reads go over direct gRPC instead.)
             // Retry *transient* (transport) failures with capped backoff — the
-            // relay peer was reachable moments ago in wait_for_specific_peers,
+            // relay peer was reachable moments ago in wait_for_mirror_peers,
             // so a flake should clear. But a non-retryable result (a broken or
             // pruned proof chain, a checkpoint that fails BLS verification or
             // isn't end-of-epoch, a wrong-epoch fallback, a missing committee)
@@ -862,6 +872,24 @@ impl IkaNode {
             )?
         };
 
+        // Publish the initial trusted-peer set (this epoch's committee) to the
+        // p2p stack now that the network exists. We must explicitly send this
+        // instead of relying on the watch channel's initial value to trigger a
+        // change notification, so that state-sync and discovery are able to
+        // process it. It must also happen BEFORE the sui-state-mirrored wait
+        // below: discovery only dials committee peers once it sees this event,
+        // and automatic mirror-peer discovery (no configured
+        // `sui_state_mirror_peers`) needs those dials to produce a serving
+        // peer — sending it later would leave the wait dependent on inbound
+        // dials alone. (The peer-only path can't do this: it has no committee
+        // to publish before its relay stack exists.)
+        send_trusted_peer_change(
+            &config,
+            &trusted_peer_change_tx,
+            epoch_store.epoch_start_state(),
+        )
+        .expect("Initial trusted peers must be set");
+
         if is_sui_state_mirrored && !peer_only {
             // sui-state-mirrored *with* a fallback URL: the OCS stack is built
             // here, after the network is up. (Peer-only — mirrored with no
@@ -869,14 +897,20 @@ impl IkaNode {
             //
             // Anemo connects to seed peers asynchronously. `build_sui_connector_stack`
             // probes the transport (`get_latest_checkpoint`) at construction; if it
-            // runs before any configured sui-state-direct mirror peer is reachable
-            // the probe fails with "no peers reachable". Wait specifically for one
-            // of the configured `sui_state_mirror_peers` to come online.
+            // runs before any serving mirror peer is reachable the probe fails
+            // with "no peers reachable". Wait for a usable peer first: a
+            // configured one when `sui_state_mirror_peers` pins the set, else
+            // (automatic discovery) the first connected peer that answers a
+            // SuiStateMirror probe.
             let mirror_peer_ids =
                 sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
-            Self::wait_for_specific_peers(
+            Self::wait_for_mirror_peers(
                 &p2p_network,
                 &mirror_peer_ids,
+                !config
+                    .sui_connector_config
+                    .sui_state_mirror_peers
+                    .is_empty(),
                 std::time::Duration::from_secs(60),
             )
             .await;
@@ -1039,15 +1073,6 @@ impl IkaNode {
                 }
             });
         }
-
-        // We must explicitly send this instead of relying on the initial value to trigger
-        // watch value change, so that state-sync is able to process it.
-        send_trusted_peer_change(
-            &config,
-            &trusted_peer_change_tx,
-            epoch_store.epoch_start_state(),
-        )
-        .expect("Initial trusted peers must be set");
 
         info!("start state archival");
         // Start archiving local state to remote store
@@ -1531,30 +1556,75 @@ impl IkaNode {
         }
     }
 
-    /// Block until at least one of `wanted` peers is connected, or `timeout`
-    /// elapses. Used by sui-state-mirrored startup so the OCS stack's transport
-    /// probe doesn't run before a sui-state-direct mirror peer is reachable.
-    async fn wait_for_specific_peers(
+    /// Block until the SuiStateMirror relay client has a usable peer, or
+    /// `timeout` elapses (the OCS stack build then proceeds and surfaces its
+    /// own error). Used by sui-state-mirrored startup so the OCS stack's
+    /// transport probe doesn't run before a serving mirror peer is reachable.
+    ///
+    /// Pinned mode (`pinned_configured`, the operator wrote a non-empty
+    /// `sui-state-mirror-peers` override): wait until one of the parsed peer
+    /// ids is connected — presence is enough, the operator asserted they serve
+    /// the mirror. `pinned` is the *leniently* parsed id list; when the config
+    /// listed only malformed entries it is empty, and the wait is skipped
+    /// entirely — the strict parse inside the OCS stack build is about to fail
+    /// boot loudly, so probing for discovered peers here (automatic-mode
+    /// behavior the operator did NOT choose) would only delay and confuse that
+    /// diagnosis.
+    ///
+    /// Automatic mode (no configured override): wait until at least one
+    /// *connected* peer answers a cheap SuiStateMirror probe. Mere
+    /// connectivity is not enough here — discovery connects every committee
+    /// peer, and most may be mirrored nodes that don't serve the relay.
+    async fn wait_for_mirror_peers(
         network: &anemo::Network,
-        wanted: &[PeerId],
+        pinned: &[PeerId],
+        pinned_configured: bool,
         timeout: std::time::Duration,
     ) {
-        if wanted.is_empty() {
+        let automatic = !pinned_configured;
+        if pinned_configured && pinned.is_empty() {
+            warn!(
+                "every configured sui-state-mirror-peers entry is malformed; skipping the \
+                 mirror-peer wait (the OCS stack build below will reject the config)"
+            );
             return;
         }
         let deadline = tokio::time::Instant::now() + timeout;
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
-            if wanted.iter().any(|p| network.peer(*p).is_some()) {
+            if automatic {
+                if let Some(peer_id) =
+                    ika_network::sui_state_mirror::find_serving_mirror_peer(network).await
+                {
+                    info!(
+                        ?peer_id,
+                        "automatic SuiStateMirror peer discovery found a serving peer"
+                    );
+                    return;
+                }
+            } else if pinned.iter().any(|p| network.peer(*p).is_some()) {
                 return;
             }
             if tokio::time::Instant::now() >= deadline {
-                warn!(
-                    timeout_secs = timeout.as_secs(),
-                    wanted_count = wanted.len(),
-                    "no configured sui-state-direct peer connected within timeout; proceeding anyway \
-                     (sui-state-mirrored OCS build is likely to fail and the node will exit)"
-                );
+                if automatic {
+                    warn!(
+                        timeout_secs = timeout.as_secs(),
+                        connected_peers = network.peers().len(),
+                        "no connected peer serves SuiStateMirror within the startup timeout \
+                         (automatic discovery: no `sui-state-mirror-peers` configured); check \
+                         p2p connectivity and that at least one committee validator runs \
+                         sui-state-direct with serve-mirror; proceeding anyway (the OCS build \
+                         is likely to fail and the node will exit)"
+                    );
+                } else {
+                    warn!(
+                        timeout_secs = timeout.as_secs(),
+                        wanted_count = pinned.len(),
+                        "no configured sui-state-direct peer connected within timeout; proceeding \
+                         anyway (sui-state-mirrored OCS build is likely to fail and the node will \
+                         exit)"
+                    );
+                }
                 return;
             }
             interval.tick().await;
@@ -1737,6 +1807,21 @@ impl IkaNode {
 
             network
         };
+
+        // Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
+        // dialable on their own: register them as high-affinity known peers so
+        // anemo establishes and maintains the connection — like a seed peer,
+        // but scoped to the mirrored data source (the field is meaningless
+        // otherwise, and a stale list on a direct node must not create dials).
+        if matches!(
+            config.sui_connector_config.sui_data_source,
+            Some(ika_config::node::SuiDataSource::SuiStateMirrored { .. })
+        ) {
+            ika_network::sui_state_mirror::register_addressed_mirror_peers(
+                &p2p_network,
+                &config.sui_connector_config.sui_state_mirror_peers,
+            );
+        }
 
         let discovery_handle =
             discovery.start(p2p_network.clone(), config.network_key_pair().copy());

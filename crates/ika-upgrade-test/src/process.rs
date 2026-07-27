@@ -32,7 +32,8 @@ fn rewrite_config_to_mirrored(config_path: &Path, mirror_peers: Vec<String>) -> 
     config.sui_connector_config.sui_data_source = Some(SuiDataSource::SuiStateMirrored {
         fallback_grpc_url: None,
     });
-    config.sui_connector_config.sui_state_mirror_peers = mirror_peers;
+    config.sui_connector_config.sui_state_mirror_peers =
+        mirror_peers.into_iter().map(Into::into).collect();
     let yaml = serde_yaml::to_string(&config).context("serialize node config")?;
     std::fs::write(config_path, yaml)
         .with_context(|| format!("write {}", config_path.display()))?;
