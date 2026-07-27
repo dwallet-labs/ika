@@ -381,8 +381,8 @@ impl Committee {
     pub fn name_translation(&self) -> HashMap<AuthorityName, AuthorityName> {
         let missing_bls = self.members_without_bls_protocol_key();
         if !missing_bls.is_empty() {
-            tracing::error!(
-                should_never_happen = true,
+            crate::report_invariant_violation!(
+                "committee_bls_aliases_missing",
                 epoch = self.epoch,
                 members = self.voting_rights.len(),
                 missing = missing_bls.len(),
