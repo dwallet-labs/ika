@@ -1541,7 +1541,17 @@ impl DWalletMPCService {
                         return false;
                     }
 
-                    match self.epoch_store.pop_presign(
+                    // Atomic + idempotent (see `serve_global_presign`): pops the
+                    // pool head and records what it served in ONE committed
+                    // batch, or returns the presign already served for this
+                    // sequence number without popping. A bare `pop_presign`
+                    // here would re-pop when this loop replays the epoch's
+                    // rounds after a restart — against a pool the replay never
+                    // reset — and answer the request with a different presign
+                    // than the never-crashed peers put in their checkpoint
+                    // message for the same presign id.
+                    match self.epoch_store.serve_global_presign(
+                        request.session_sequence_number,
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {

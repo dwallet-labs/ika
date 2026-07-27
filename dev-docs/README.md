@@ -76,6 +76,11 @@ them has a bug — determine which before changing either.
   peers: the continuous feed of active/next/previous committee +
   `pending_active_set` into anemo `known_peers`, the inbound-dial
   bootstrap, and the `ExtendedField` BCS framing the read depends on.
+- [`specs/internal-presign-pool.md`](specs/internal-presign-pool.md) —
+  the internal presign pool: fill and drain paths, why out-of-sequence
+  fills make a restart's full-epoch round replay bind different presigns
+  than never-crashed peers, and the fill/serve idempotency rule that
+  keeps a restarted validator's checkpoint messages byte-identical.
 
 ### playbooks/ — how to run and debug this system
 - [`playbooks/ci-suites.md`](playbooks/ci-suites.md) — running the heavy

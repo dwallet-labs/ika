@@ -290,8 +290,25 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// Concurrency safety: This method is only called from the MPC manager
     /// during consensus round processing, which is single-threaded (one round
     /// at a time). There is no concurrent access to the presign pool.
+    ///
+    /// Self-committing and NOT idempotent — see the note on the inherent
+    /// method. Work that is replayed from a consensus round stream must use
+    /// `serve_global_presign` / `assign_noa_presign` / `assign_presign`.
     fn pop_presign(
         &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
+
+    /// Serves a global presign request out of the internal pool atomically and
+    /// idempotently: an already-served sequence number returns the SAME presign
+    /// without popping, otherwise the pop and the record of what it served land
+    /// in ONE committed batch (they must not be separable — a replayed request
+    /// that re-pops binds a different presign than its peers). Returns `None`
+    /// only when the pool is empty.
+    fn serve_global_presign(
+        &self,
+        session_sequence_number: u64,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
@@ -599,6 +616,20 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
         let tables = self.tables()?;
         tables.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
+    }
+
+    fn serve_global_presign(
+        &self,
+        session_sequence_number: u64,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        let tables = self.tables()?;
+        tables.serve_global_presign(
+            session_sequence_number,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        )
     }
 
     fn next_idle_status_update(
@@ -1220,6 +1251,35 @@ pub struct AuthorityEpochTables {
     /// Value is the count.
     internal_presign_pool_sizes: DBMap<(DWalletSignatureAlgorithm, ObjectID), u64>,
 
+    /// Pool slots already filled from an internal-presign output, keyed exactly
+    /// like the pool entry the fill creates: `(signature algorithm, network
+    /// encryption key ID, session sequence number)`. Written in the SAME batch
+    /// as the fill it records.
+    ///
+    /// The DWallet MPC service replays every consensus round of the epoch after
+    /// a restart (its round cursor is in-memory and starts unset), so the same
+    /// internal-presign output reaches quorum again and would be absorbed a
+    /// second time — on top of a pool that was NOT reset. Absorbing twice both
+    /// double-counts `internal_presign_pool_sizes` (an inflated count reads as a
+    /// full pool and suppresses top-ups until the pool physically starves) and
+    /// resurrects presigns that were already served, which would hand the same
+    /// presign to a second on-chain presign id.
+    filled_presign_pool_slots: DBMap<(DWalletSignatureAlgorithm, ObjectID, u64), ()>,
+
+    /// Presign served to each global presign request, keyed by the request's
+    /// consensus-assigned session sequence number. Written in the SAME batch as
+    /// the pop that produced it, and read back instead of popping when the
+    /// request is seen again.
+    ///
+    /// The pop cannot stand alone: the replayed pool is not the pool the
+    /// original run popped from (surviving entries whose sequence number is
+    /// lower than the head at that round win the pop, and internal presign
+    /// sessions in one batch complete in consensus order, not sequence order),
+    /// so a bare re-pop serves a DIFFERENT presign than the never-crashed peers
+    /// put in their checkpoint message for the same presign id. Per-epoch, like
+    /// `noa_assigned_presigns`, whose idempotency this mirrors.
+    served_global_presigns: DBMap<u64, (SessionIdentifier, u16, Vec<u8>)>,
+
     /// Idle status updates by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     idle_status_updates: DBMap<Round, Vec<IdleStatusUpdate>>,
@@ -1495,6 +1555,14 @@ impl AuthorityEpochTables {
 
     /// Inserts presigns into the pool for the given signature algorithm and network encryption key.
     /// The presigns are keyed by (network_encryption_key_id, session_sequence_number).
+    ///
+    /// Idempotent per pool slot: the second and later calls for a given
+    /// `(signature_algorithm, dwallet_network_encryption_key_id,
+    /// session_sequence_number)` are no-ops. This is load-bearing, not
+    /// defensive — the DWallet MPC service replays the whole epoch's consensus
+    /// rounds after a restart, so every internal-presign output that already
+    /// filled a slot reaches quorum a second time against a pool that was not
+    /// reset. See `filled_presign_pool_slots`.
     pub fn insert_presigns(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -1503,6 +1571,22 @@ impl AuthorityEpochTables {
         session_identifier: SessionIdentifier,
         presigns: Vec<Vec<u8>>,
     ) -> IkaResult<()> {
+        let slot_key = (
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+            session_sequence_number,
+        );
+        if self.filled_presign_pool_slots.contains_key(&slot_key)? {
+            debug!(
+                ?signature_algorithm,
+                ?dwallet_network_encryption_key_id,
+                session_sequence_number,
+                ?session_identifier,
+                "internal presign output re-absorbed after a replay; pool slot already filled"
+            );
+            return Ok(());
+        }
+
         let num_presigns = presigns.len() as u64;
         let table = self.presign_pool_table(signature_algorithm);
         let key = (dwallet_network_encryption_key_id, session_sequence_number);
@@ -1520,13 +1604,16 @@ impl AuthorityEpochTables {
             .get(&size_key)?
             .unwrap_or(0);
 
-        // Batch both writes atomically to prevent size counter drift.
+        // Batch all three writes atomically: a fill that landed without its
+        // slot marker would be re-absorbed on the next replay, and a marker
+        // that landed without its fill would lose the presigns entirely.
         let mut batch = table.batch();
         batch.insert_batch(table, [(&key, &(session_identifier, blended_presigns))])?;
         batch.insert_batch(
             &self.internal_presign_pool_sizes,
             [(&size_key, &(current_size + num_presigns))],
         )?;
+        batch.insert_batch(&self.filled_presign_pool_slots, [(&slot_key, &())])?;
         batch.write()?;
 
         Ok(())
@@ -1546,10 +1633,60 @@ impl AuthorityEpochTables {
             .unwrap_or(0))
     }
 
+    /// Serves a global presign request out of the internal pool, atomically and
+    /// idempotently.
+    ///
+    /// If this request's sequence number was already served, returns the SAME
+    /// presign without popping. Otherwise pops the pool head and records the
+    /// serve in the SAME committed batch as the pop.
+    ///
+    /// Both halves are load-bearing. The request stream is a per-epoch table
+    /// that the DWallet MPC service replays in full after a restart, so a bare
+    /// `pop_presign` here re-pops on replay — and the replayed pool is not the
+    /// pool the original run popped from, because the surviving entries were
+    /// never cleared. An entry whose sequence number is lower than the head at
+    /// that round wins the replayed pop even though it did not exist yet when
+    /// the round was first processed (internal presign sessions in one batch
+    /// complete in consensus order, not sequence order, so a lower sequence
+    /// number filling later is ordinary). The replayed request would then be
+    /// answered with a different presign than the never-crashed peers put in
+    /// their checkpoint message for the same presign id: byte-divergent
+    /// checkpoints from an honest validator. Mirrors `assign_noa_presign`.
+    pub fn serve_global_presign(
+        &self,
+        session_sequence_number: u64,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        if let Some(served) = self.served_global_presigns.get(&session_sequence_number)? {
+            return Ok(Some(served));
+        }
+        let Some((mut batch, session_identifier, blending_index, presign)) =
+            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+        batch.insert_batch(
+            &self.served_global_presigns,
+            [(
+                &session_sequence_number,
+                &(session_identifier, blending_index, presign.clone()),
+            )],
+        )?;
+        batch.write()?;
+        Ok(Some((session_identifier, blending_index, presign)))
+    }
+
     /// Pops a single presign from the pool for the given signature algorithm and network
     /// encryption key. Returns the session identifier, the presign's blending index, and presign
     /// bytes, or None if the pool is empty. Presigns are consumed in order of session sequence
     /// number (lowest first).
+    ///
+    /// Self-committing and NOT idempotent: the pool advances the moment this
+    /// returns. Any caller whose work is replayed from a consensus round stream
+    /// must instead pop through a method that records what it popped in the pop's
+    /// own batch (`serve_global_presign`, `assign_noa_presign`, `assign_presign`),
+    /// or the replay binds a different presign than its peers did.
     pub fn pop_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -6748,6 +6885,153 @@ mod tests {
         assert_eq!(presign, vec![20u8]);
 
         assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+    }
+
+    /// One replayed consensus round's effect on the presign pool: either an
+    /// internal-presign output reaching quorum (a fill), or a global presign
+    /// request being served out of the pool.
+    enum PresignPoolRound {
+        Fill {
+            session_sequence_number: u64,
+            presigns: Vec<Vec<u8>>,
+        },
+        Serve {
+            request_sequence_number: u64,
+        },
+    }
+
+    /// Replays a round stream against a pool, returning what each `Serve` round
+    /// served — `None` when the pool had nothing left to serve, which is itself
+    /// a divergence from a run that served that round.
+    fn replay_presign_pool_rounds(
+        tables: &AuthorityEpochTables,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        rounds: &[PresignPoolRound],
+    ) -> Vec<Option<Vec<u8>>> {
+        rounds
+            .iter()
+            .filter_map(|round| match round {
+                PresignPoolRound::Fill {
+                    session_sequence_number,
+                    presigns,
+                } => {
+                    tables
+                        .insert_presigns(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            *session_sequence_number,
+                            make_session_id([*session_sequence_number as u8; 32]),
+                            presigns.clone(),
+                        )
+                        .unwrap();
+                    None
+                }
+                PresignPoolRound::Serve {
+                    request_sequence_number,
+                } => Some(
+                    tables
+                        .serve_global_presign(
+                            *request_sequence_number,
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                        )
+                        .unwrap()
+                        .map(|(_, _, presign)| presign),
+                ),
+            })
+            .collect()
+    }
+
+    /// The DWallet MPC service replays EVERY consensus round of the epoch after
+    /// a restart (its round cursor is in-memory and starts unset), but the
+    /// presign pool is durable per-epoch state that the replay does NOT start
+    /// from empty. A fill whose session sequence number is LOWER than one
+    /// already in the pool — normal, since a batch of concurrently instantiated
+    /// internal presign sessions completes in consensus order, not sequence
+    /// order — survives the crash and is visible to pops replayed at rounds
+    /// BEFORE its own fill round. A bare re-pop there binds a different presign
+    /// than the original run did, so this validator's checkpoint message stops
+    /// matching its never-crashed peers'.
+    #[tokio::test]
+    async fn presign_pool_replay_after_crash_serves_the_same_presigns() {
+        let signature_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        let key_id = ObjectID::random();
+
+        let rounds = vec![
+            PresignPoolRound::Fill {
+                session_sequence_number: 2,
+                presigns: vec![vec![0xb0], vec![0xb1]],
+            },
+            PresignPoolRound::Serve {
+                request_sequence_number: 10,
+            },
+            PresignPoolRound::Serve {
+                request_sequence_number: 11,
+            },
+            // Sequence number 1 reaches output quorum only now, after 2's.
+            PresignPoolRound::Fill {
+                session_sequence_number: 1,
+                presigns: vec![vec![0xa0], vec![0xa1]],
+            },
+            PresignPoolRound::Serve {
+                request_sequence_number: 12,
+            },
+        ];
+
+        // Control: a validator that never crashed.
+        let control = create_tables();
+        let control_served =
+            replay_presign_pool_rounds(&control, signature_algorithm, key_id, &rounds);
+
+        // Crashed validator: the same stream, then a restart that replays the
+        // whole epoch from round zero on top of the pool that survived.
+        let crashed = create_tables();
+        replay_presign_pool_rounds(&crashed, signature_algorithm, key_id, &rounds);
+        let replayed_served =
+            replay_presign_pool_rounds(&crashed, signature_algorithm, key_id, &rounds);
+
+        assert_eq!(
+            replayed_served, control_served,
+            "a replayed round must bind the same presign it bound before the crash; \
+             binding a different one byte-diverges this validator's checkpoint message \
+             from its never-crashed peers"
+        );
+        // A request that arrives AFTER the replay must draw a presign that was
+        // never served before: a replay that re-absorbed its fills would have
+        // resurrected already-served presigns and handed one to a second
+        // on-chain presign id.
+        let fresh_request_sequence_number = 13;
+        let crashed_fresh = crashed
+            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
+            .unwrap()
+            .map(|(_, _, presign)| presign);
+        let control_fresh = control
+            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
+            .unwrap()
+            .map(|(_, _, presign)| presign);
+        assert!(
+            !control_served.contains(&crashed_fresh),
+            "the replay must not resurrect an already-served presign into the pool: \
+             {crashed_fresh:?} was already served to an earlier request"
+        );
+        assert_eq!(
+            crashed_fresh, control_fresh,
+            "a post-replay request must be served the same presign a never-crashed \
+             validator serves it"
+        );
+
+        assert_eq!(
+            crashed
+                .presign_pool_size(signature_algorithm, key_id)
+                .unwrap(),
+            control
+                .presign_pool_size(signature_algorithm, key_id)
+                .unwrap(),
+            "the pool size counter must converge with a never-crashed validator's; \
+             an inflated counter reads as a full pool, suppresses internal presign \
+             top-ups, and starves the pool"
+        );
     }
 
     #[tokio::test]
