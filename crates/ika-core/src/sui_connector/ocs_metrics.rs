@@ -72,6 +72,14 @@ pub struct OcsMetrics {
     // BagEventPump — omission detection via verified parent state.
     pub bag_omission_suspected_total: IntCounterVec, // labels: ["bag"]
 
+    /// A singleton anchor's on-chain type names a package other than the one
+    /// this binary compiled in for that role. Always fatal (the node refuses
+    /// to run — the constant is baked into the build), so any non-zero value
+    /// names the cause of a node that will not start. Scrape it from the
+    /// crash-loop window or the last scrape before exit; a node down for this
+    /// reason otherwise presents only as absent series.
+    pub identity_mismatch_total: IntCounterVec, // labels: ["anchor"]
+
     /// End-to-end verify latency on the consumer side (transport
     /// round-trip + proof verify). Captures what consumers actually
     /// experience.
@@ -186,6 +194,13 @@ impl OcsMetrics {
                 "ika_ocs_bag_omission_suspected_total",
                 "Bag walk returned fewer children than the verified parent's `Bag.size` claimed (suspected relay omission; could also be a benign race when entries are removed mid-walk — only a hard signal if it persists)",
                 &["bag"],
+                registry,
+            )
+            .unwrap(),
+            identity_mismatch_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_identity_mismatch_total",
+                "A singleton anchor object's on-chain type names a package other than the one this binary compiled in for that role (System -> ika_system_package_id, DWalletCoordinator -> ika_dwallet_2pc_mpc_package_id). Always fatal: the node refuses to run, since a compiled-in constant cannot be fixed by retrying",
+                &["anchor"],
                 registry,
             )
             .unwrap(),

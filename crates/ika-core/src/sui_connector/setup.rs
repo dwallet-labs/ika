@@ -36,7 +36,8 @@ use std::sync::Arc;
 
 use anemo::PeerId;
 use ika_config::node::{
-    SuiConnectorConfig, SuiDataSource, SuiStateMirrorPeer, resolve_sui_checkpoint_archive,
+    SuiConnectorConfig, SuiDataSource, SuiStateMirrorPeer, compiled_in_ika_identity,
+    resolve_sui_checkpoint_archive,
 };
 use ika_network::proof_provider::{
     LocalProofProvider, ProofCacheConfig, ProofProvider, ProofProviderMetrics,
@@ -444,18 +445,30 @@ pub async fn build_sui_connector_stack(
     // checkpoints) yet catches an unboundedly-falling-behind pusher.
     const CACHE_STALENESS_BOUND_CHECKPOINTS: u64 = 100;
     let staleness_bound = cache_first_reads.then_some(CACHE_STALENESS_BOUND_CHECKPOINTS);
-    let reader = Arc::new(
-        OcsVerifiedReader::new(
-            proof_provider.clone(),
-            committees.clone(),
-            metrics.clone(),
-            None,
-            state_cache.clone(),
-            cache_first_reads,
-            staleness_bound,
-        )
-        .with_changeset_index(changeset_index),
-    );
+    // Pin the compiled-in package identity for the two singleton anchors, so
+    // every verified read of them asserts the chain agrees with what this
+    // binary was built for. Sourced from `compiled_in_ika_identity` rather
+    // than the config fields because it is the ORIGINAL (defining) package —
+    // which is what a Sui type tag carries forever — and because it is `None`
+    // on localnet, where ids are generated per genesis and a config-supplied
+    // `ika_system_package_id` may legitimately name a later upgrade.
+    let reader_base = OcsVerifiedReader::new(
+        proof_provider.clone(),
+        committees.clone(),
+        metrics.clone(),
+        None,
+        state_cache.clone(),
+        cache_first_reads,
+        staleness_bound,
+    )
+    .with_changeset_index(changeset_index);
+    let reader = Arc::new(match compiled_in_ika_identity(cfg.sui_chain_identifier) {
+        Some(identity) => reader_base.with_expected_identity(
+            identity.ika_system_package_id,
+            identity.ika_dwallet_2pc_mpc_package_id,
+        ),
+        None => reader_base,
+    });
 
     // Publish the head epoch we booted at so dashboards can correlate
     // when this node started ratcheting.

@@ -801,6 +801,94 @@ because the bytes came from a peer's disk rather than its fullnode.
    modification (or after its deletion/wrapping) returns `NotCurrent`. The
    backing changeset fold is contiguity-enforced, so a skipped modification
    is detectable, not silently dropped.
+10. **A verified read of either singleton anchor asserts that the chain's
+    object is typed by the package this binary compiled in for that role**
+    (`System` → `ika_system_package_id`, `DWalletCoordinator` →
+    `ika_dwallet_2pc_mpc_package_id`). Mismatch is `IdentityMismatch`, counted
+    as `ika_ocs_identity_mismatch_total{anchor}`, and is **terminal**: the node
+    refuses to run rather than retrying, because no amount of retrying changes
+    a constant baked into the build. (The counter names the cause on the last
+    scrape before exit; a node down for this reason otherwise presents only as
+    absent series.)
+
+    **This asserts the object's TYPE, which is a different address from the
+    current executable package — both are live at once.** The object's type is
+    its ORIGINAL defining package and never moves; the `package_id` FIELD names
+    the latest upgrade and is read at runtime, which is why no constant here
+    tracks contract upgrades. Testnet shows both packages already upgraded and
+    the types still on the originals (checked 2026-07-25):
+
+    | anchor | type (asserted) | `package_id` field (executable) |
+    |---|---|---|
+    | `System` | `0xae71e386…` | `0xde05f49e…` |
+    | `DWalletCoordinator` | `0xf02f5960…` (dwallet **v1**) | `0x6573a6c1…` (**v2**) |
+
+    **An upgraded package holds a MIX of type addresses, so "the package id" is
+    not one value.** Sui records type identity per datatype in the package's
+    `TypeOrigin` table (`{module_name, datatype_name, package}`): a type
+    carried forward from the previous version keeps the ORIGINAL address, while
+    a type **first defined in the upgrade** carries the UPGRADE address. Both
+    networks show the same split (checked 2026-07-25):
+
+    | package | types at original | types at upgrade |
+    |---|---|---|
+    | dwallet | 79 | **7** |
+    | ika_system | 36 | **0** |
+
+    The seven dwallet upgrade-defined types include five **events**
+    (`DWalletDKGRequestEvent`, `CompletedDWalletDKGEvent`,
+    `RejectedDWalletDKGEvent`, `SignDuringDKGRequestEvent`,
+    `UserSecretKeyShareEventType`). That is why
+    `ika_dwallet_2pc_mpc_package_id_v2` exists and why event filtering accepts
+    both addresses — it is **load-bearing**, not defensive: without it those DKG
+    events are dropped.
+
+    Two consequences:
+
+    - **This invariant is unaffected.** It asserts the type of the two
+      singleton ANCHOR objects, and those were created by the original
+      packages — their types sit in the original's `TypeOrigin` entries, and
+      `System::try_migrate` mutates the object in place (`&mut System`) rather
+      than recreating it, so an existing object's type can never move. Verified
+      directly on both networks. It must therefore expect ONLY the original:
+      accepting the upgrade id as well would admit exactly the #1908 defect
+      (a constant set to the upgrade id) that this check exists to catch.
+    - **`ika_system` needs no `_v2`, and adding one would be dead weight.**
+      Nothing consumes system events by package address: the only
+      event-address filter in the node is `sui_event_into_session_request`,
+      which matches the DWALLET package (both ids) and the sessions-manager
+      module. System state is read from the system OBJECT via verified reads,
+      not from address-filtered events. `ika_system_package_id`'s only other
+      consumer is the pusher's cache-fold relevance set, where an unmatched
+      object degrades to a cache miss and a verified network read — never a
+      wrong answer. An unused `_v2` constant would just be one more value that
+      can drift, which is the #1908 hazard itself.
+    - **The dwallet filter is where the constant hazard actually recurs.** It
+      enumerates `{ika_dwallet_2pc_mpc_package_id, …_v2}`, and five of the
+      seven v2-defined types are events — so the next dwallet upgrade that
+      defines a new event type silently loses those sessions until someone
+      remembers to add a `_v3`. This filter is live on BOTH paths (the legacy
+      JSON-RPC listener and `bag_event_pump` under OCS). The durable fix is to
+      derive the accepted set from the package's `TypeOrigin` table at runtime
+      rather than enumerating constants.
+
+    This is a stable equality check, not something to bump on contract
+    upgrades: a Sui type tag carries the **defining** package forever, so the
+    system object stays `{original}::system::System` across every upgrade.
+    The expectation therefore comes from `compiled_in_ika_identity` (the
+    ORIGINAL package) and never from the config's `ika_system_package_id`,
+    which on a localnet may legitimately name a later upgrade. It is `None`
+    on Devnet/Custom, where ids are generated per genesis and there is
+    nothing to assert against.
+
+    Why it exists: #1908 shipped the system package's **v2 upgrade id** as the
+    compiled-in identity — a value matching zero live event type tags — and
+    because that PR removed the config escape hatch on public chains, the only
+    remedy was another release. The symptom was a fleet silently deaf to
+    system events. A unit test can pin what a human once verified; it cannot
+    catch the next drift between compiled identity and chain reality. This
+    turns that class of failure into a node that refuses to start with both
+    values in the error. See #1913.
 
 ## Residuals and known gaps
 

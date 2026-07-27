@@ -220,6 +220,14 @@ where
                 match reader.verified_system_inner(id).await {
                     Ok(v) => return v,
                     Err(e) => {
+                        // A compiled-in/chain identity mismatch can never be
+                        // fixed by retrying — the constant is baked into this
+                        // build. Refuse to run rather than spin: silently
+                        // retrying forever is the very failure mode this
+                        // check exists to replace.
+                        if e.is_terminal() {
+                            panic!("{e}");
+                        }
                         attempts += 1;
                         let backoff = verified_read_retry_backoff(attempts);
                         if attempts <= 3 {
@@ -257,6 +265,11 @@ where
                 match reader.verified_dwallet_coordinator_inner(id).await {
                     Ok(v) => return v,
                     Err(e) => {
+                        // See `must_get_system_inner`: an identity mismatch is
+                        // permanent, so fail loudly instead of retrying.
+                        if e.is_terminal() {
+                            panic!("{e}");
+                        }
                         attempts += 1;
                         let backoff = verified_read_retry_backoff(attempts);
                         if attempts <= 3 {
