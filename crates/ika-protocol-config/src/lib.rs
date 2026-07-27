@@ -33,19 +33,23 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6: consensus_key_authority_names on — `AuthorityName` (validator
-//            identity) becomes the Ed25519 consensus key, zero-padded to the
-//            48-byte container so the wire encoding is unchanged. The BLS
-//            protocol key stays on chain and carried on `Committee` for BLS
-//            aggregate-certificate (checkpoint) verification.
-//
-//            ADVERTISED: every validator on this binary offers 6, so the
-//            capability vote carries a network to v6 once a quorum upgrades.
-//            The identity flip is therefore live on rollout, not on a
-//            separate decision. See the flag definition for the
-//            activation-boundary caveat, and
-//            dev-docs/specs/committee-consensus-keys.md for the
-//            consensus-key-rotation interaction.
+// Version 6: two coordinated flips activate together at the v6 boundary.
+//   (a) consensus_key_authority_names — `AuthorityName` (validator identity)
+//            becomes the Ed25519 consensus key, zero-padded to the 48-byte
+//            container so the wire encoding is unchanged. The BLS protocol key
+//            stays on chain and carried on `Committee` for BLS
+//            aggregate-certificate (checkpoint) verification. ADVERTISED: every
+//            validator on this binary offers 6, so the capability vote carries a
+//            network to v6 once a quorum upgrades. The identity flip is
+//            therefore live on rollout, not on a separate decision. See the flag
+//            definition for the activation-boundary caveat, and
+//            dev-docs/specs/committee-consensus-keys.md.
+//   (b) strict_network_key_coefficient_bound — network-key DKG/reconfiguration
+//            migrates the equality-of-coefficients discrete-log bound from the
+//            `-10` relaxed bound (transcribed since mainnet-v1.1.8) to the strict
+//            bound. The bound is transcribed into the Fiat–Shamir challenge, so a
+//            mismatch splits the reconfiguration quorum; the whole committee
+//            switches at the v6 boundary, never per-binary.
 // Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -241,6 +245,16 @@ struct FeatureFlags {
     // boundary and are unaffected.
     #[serde(skip_serializing_if = "is_false")]
     consensus_key_authority_names: bool,
+
+    // Network-key DKG/reconfiguration equality-of-coefficients discrete-log
+    // bound. Off through v5 (the `-10` relaxed bound the network has transcribed
+    // since mainnet-v1.1.8); on at v6, selecting the strict bound. The bound is
+    // transcribed whole into the Fiat–Shamir challenge, so a mismatch makes
+    // peers reject the reconfiguration proof and flag the dealer malicious —
+    // hence a protocol-gated flip the whole committee makes at the v6 boundary,
+    // never a per-binary switch.
+    #[serde(skip_serializing_if = "is_false")]
+    strict_network_key_coefficient_bound: bool,
 }
 
 #[allow(unused)]
@@ -489,6 +503,18 @@ impl ProtocolConfig {
     /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
     pub fn is_reconfiguration_message_version_v3(&self) -> bool {
         self.reconfiguration_message_version.is_some_and(|v| v == 3)
+    }
+
+    /// The equality-of-coefficients discrete-log bound selector passed as the
+    /// `backward_compatible` argument to the network-key DKG/reconfiguration
+    /// crypto public-input constructors. `true` selects the `-10` relaxed bound
+    /// the network has transcribed since mainnet-v1.1.8; `false` selects the
+    /// strict bound. Flips to `false` at v6 (`strict_network_key_coefficient_bound`),
+    /// so every validator moves to the strict bound together at the v6 boundary
+    /// — the bound is in the Fiat–Shamir transcript, so a mixed-bound committee
+    /// would split its reconfiguration quorum.
+    pub fn network_key_backward_compatible_coefficient_bound(&self) -> bool {
+        !self.feature_flags.strict_network_key_coefficient_bound
     }
 
     pub fn bls_checkpoints(&self) -> bool {
@@ -836,6 +862,11 @@ impl ProtocolConfig {
                 }
                 6 => {
                     cfg.feature_flags.consensus_key_authority_names = true;
+                    // Migrate the network-key equality-of-coefficients bound
+                    // from relaxed to strict. Coordinated at the v6 boundary so
+                    // every validator's reconfiguration proof uses the same
+                    // bound (see the field comment and the flip in `input.rs`).
+                    cfg.feature_flags.strict_network_key_coefficient_bound = true;
                 }
                 // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;

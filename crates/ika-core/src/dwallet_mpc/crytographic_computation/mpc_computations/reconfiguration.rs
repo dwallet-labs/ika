@@ -45,9 +45,11 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
         // Equality-of-coefficients discrete-log bound selector: `true` = `-10`
-        // relaxed (+519) bound the deployed network transcribes, `false` = strict
-        // (+529) reserved for a future format. Derived from the protocol version
-        // (`is_reconfiguration_message_version_v3()`) at the call site.
+        // relaxed (+519) bound the network has transcribed since v1.1.8, `false`
+        // = strict (+529). Derived from the protocol version
+        // (`network_key_backward_compatible_coefficient_bound()`) at the call
+        // site; `true` through v5, `false` from v6 on (the coordinated
+        // relaxed→strict flip).
         backward_compatible: bool,
     ) -> DwalletMPCResult<<ReconfigurationParty as mpc::Party>::PublicInput>;
 }

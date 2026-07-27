@@ -3,7 +3,7 @@
 
 //! CLI entry point for the cross-binary upgrade test harness.
 //!
-//! `dev` vs `mainnet-v1.1.8` is the default example, not a baked-in constant —
+//! `dev` vs `tag:release/mainnet-v1.2.5` is the default example, not a baked-in constant —
 //! both sides are `--old` / `--new` binary specs (`path:` / `tag:` / `sha:` /
 //! `branch:`, or a bare value the resolver classifies).
 
@@ -22,7 +22,7 @@ struct Args {
     #[arg(long, default_value_t = 4)]
     validators: usize,
 
-    /// Old binary spec, e.g. `tag:mainnet-v1.1.8`.
+    /// Old binary spec, e.g. `tag:release/mainnet-v1.2.5`.
     #[arg(long)]
     old: String,
 

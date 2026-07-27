@@ -860,10 +860,10 @@ pub(crate) fn network_dkg_v2_public_input(
         ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
     >,
     // Selects the equality-of-coefficients discrete-log bound: `true` picks the
-    // `-10` relaxed (+519) bound the deployed network transcribes, `false` the
-    // strict (+529) bound reserved for a future, not-yet-deployed format. Derived
-    // from the protocol version (`is_network_encryption_key_version_v3()`) at the
-    // call site; TEMPORARY until the network migrates off the relaxed bound.
+    // `-10` relaxed (+519) bound the network has transcribed since v1.1.8,
+    // `false` the strict (+529) bound. Derived from the protocol version
+    // (`network_key_backward_compatible_coefficient_bound()`) at the call site;
+    // `true` through v5, `false` from v6 on (the coordinated relaxed→strict flip).
     backward_compatible: bool,
 ) -> DwalletMPCResult<<dkg::Party as mpc::Party>::PublicInput> {
     let public_input = <dkg::Party as mpc::Party>::PublicInput::new(
