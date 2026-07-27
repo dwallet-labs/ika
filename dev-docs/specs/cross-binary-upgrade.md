@@ -233,9 +233,11 @@ drives them across epochs. The surviving scenarios (current build only):
   binary, per-validator pinned advertised version ranges, walking 1/4 →
   2/4 → 4/4 v6 supporters and asserting v6 does NOT activate below the
   4/4 buffer-stake effective threshold before crossing the same
-  cross-basis boundary. It runs in the ordinary cluster suite on every
-  PR, so the capability-vote machinery and the in-process transition
-  paths are gated continuously rather than only when this release-gated
+  cross-basis boundary. It runs in the ordinary cluster suite — nightly
+  via Scheduled — All Heavy Suites, plus per-branch dispatch
+  (`test-cluster.yaml` is workflow_dispatch-only, not PR-triggered) — so
+  the capability-vote machinery and the in-process transition paths are
+  gated on a fixed cadence rather than only when this release-gated
   harness runs. Fault-validated (2026-07-27): withholding one
   validator's upgrade (3/4 = stake quorum, below the effective
   threshold) fails it at the activation assertion.
