@@ -7,7 +7,7 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_POOL_MINIMUM_SIZE, apply_test_presign_pool_overrides, build_test_state,
     create_test_protocol_config_guard,
 };
-use crate::dwallet_mpc::mpc_manager::ParkedInternalPresignRequest;
+use crate::dwallet_mpc::mpc_manager::{InternalPresignCompletionKey, ParkedInternalPresignRequest};
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignRequest, ValidatorMpcKeysByPartyId};
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
@@ -1483,6 +1483,48 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
                 "validator {service_index}: an unresolvable adopted key must not fail a session"
             );
         }
+    }
+
+    // === Phase 5: completion-path classification ===
+    // A completed internal-presign output whose key does not resolve moves no
+    // counter either way, so the ONLY difference between "genuine invariant
+    // violation" and "ordinary pre-adoption replay after a restart" is how
+    // it is classified. Pin both directions: K2 is adopted-but-unresolvable
+    // (the real should-never-happen), while an identical unresolvable key
+    // that was never adopted is the post-restart replay shape — the one that
+    // used to raise a false `should_never_happen=true` alarm on every
+    // binary-swap restart (a burst of them in the v1.2.5 upgrade scenario).
+    let never_adopted_id = ObjectID::random();
+    for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        let manager = service.dwallet_mpc_manager();
+        assert!(
+            manager
+                .internal_presign_network_key_id(&never_adopted_id)
+                .is_none(),
+            "validator {service_index}: the never-adopted key must be unresolvable, so the two \
+             cases differ only by adoption"
+        );
+        assert_eq!(
+            manager.classify_internal_presign_completion(&k2_id),
+            InternalPresignCompletionKey::AdoptedUnresolvable,
+            "validator {service_index}: an ADOPTED key that cannot resolve is a genuine \
+             should-never-happen"
+        );
+        assert_eq!(
+            manager.classify_internal_presign_completion(&never_adopted_id),
+            InternalPresignCompletionKey::NotAdopted,
+            "validator {service_index}: a not-yet-adopted key is an ordinary pre-adoption \
+             replay, not an invariant violation"
+        );
+        // The installed, adopted keys still resolve — the classification did
+        // not turn the healthy path into a silent skip.
+        assert!(
+            matches!(
+                manager.classify_internal_presign_completion(&k0_id),
+                InternalPresignCompletionKey::Resolved(_)
+            ),
+            "validator {service_index}: an installed adopted key must still resolve"
+        );
     }
 
     info!(
