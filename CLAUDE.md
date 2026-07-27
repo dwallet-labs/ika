@@ -284,10 +284,17 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   output PRODUCTION are all removed. Everything formerly v4/v5-gated
   (off-chain validator metadata, the cross-epoch handoff, deferred epoch
   close, aggregated network-key outputs) is unconditionally on. What
-  REMAINS constrained: the networks persist pre-v5 state (V1-tagged
-  chain DKG anchors, V2/V3-tagged outputs), so old `Versioned*` enum
-  variants must stay (BCS variant indices are wire format) and their
-  DECODE paths must keep working; and MPC outputs must reach
+  REMAINS constrained: the networks persist pre-v5 state, so old
+  `Versioned*` enum variants must stay (BCS variant indices are wire
+  format). V1-tagged chain DKG anchors must remain DECODABLE (they are
+  never rewritten on chain; they decode via the still-current
+  `class_groups::dkg::PublicOutput`), and V2-tagged outputs still decode
+  as `PublicOutputCore` where only the core is needed. V3-tagged
+  (pre-aggregation) outputs and the bwd-compat party outputs are NO
+  LONGER decodable anywhere — inkrypto removed their types — so any key
+  whose live state is still V3-tagged must have migrated to V4 before
+  running this binary, and decode arms for them are hard errors; and MPC
+  outputs must reach
   byte-identical quorum across a mixed-binary committee, so
   serialization changes to active paths need a new protocol version
   gate, never a binary-driven flip.

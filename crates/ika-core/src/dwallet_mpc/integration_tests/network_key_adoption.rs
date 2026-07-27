@@ -239,8 +239,8 @@ async fn stale_epoch_network_key_data_is_not_spawned() {
     );
 }
 
-/// The canonical network DKG output migrates V2->V3 exactly once — when the
-/// cert-pinned reconfiguration output becomes V3 and the validator mirrors the
+/// The canonical network DKG output migrates V2->V4 exactly once — when the
+/// cert-pinned reconfiguration output becomes V4 and the validator mirrors the
 /// reconstructed full output. For that one epoch the overlay's DKG digest moves
 /// past the PRIOR epoch's V2 cert. An ALREADY-adopted key must survive that
 /// mismatch (keeping its adopted value), not be dropped — mirroring how a moved
@@ -267,7 +267,7 @@ async fn already_adopted_key_survives_dkg_output_migration() {
     crate::network_key_id_mapping::register(key_id, network_key_id);
 
     let v2_dkg_output = b"v2 anchor network dkg output".to_vec();
-    let reconfiguration_output = b"v3 network reconfiguration output".to_vec();
+    let reconfiguration_output = b"v4 network reconfiguration output".to_vec();
 
     // The prior epoch's cert pins the V2 DKG digest and the reconfiguration
     // digest (items sorted by `HandoffItemKey`: DKG < reconfiguration).
@@ -322,21 +322,21 @@ async fn already_adopted_key_survives_dkg_output_migration() {
         "the cert-matching V2 key must be adopted"
     );
 
-    // Second adopt: the overlay's DKG output has migrated to a different (V3)
+    // Second adopt: the overlay's DKG output has migrated to a different (V4)
     // value while the prior cert still pins V2. The already-adopted key must
     // survive — kept at its adopted V2 value, not dropped, not overwritten by
     // the mismatching overlay.
-    let v3_dkg_output = b"v3 reconstructed full network dkg output".to_vec();
-    let v3_overlay = Arc::new(HashMap::from([(
+    let v4_dkg_output = b"v4 reconstructed full network dkg output".to_vec();
+    let v4_overlay = Arc::new(HashMap::from([(
         key_id,
         network_key_data(
             key_id,
             epoch_id,
-            v3_dkg_output,
+            v4_dkg_output,
             reconfiguration_output.clone(),
         ),
     )]));
-    manager.adopt_cert_verified_keys(&v3_overlay);
+    manager.adopt_cert_verified_keys(&v4_overlay);
     let adopted = manager
         .adopted_network_key_data
         .get(&key_id)

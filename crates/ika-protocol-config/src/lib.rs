@@ -485,38 +485,6 @@ impl ProtocolConfig {
         self.feature_flags.fast_schnorr_supported
     }
 
-    /// True iff this protocol_version uses the version-3 network DKG /
-    /// validator-key-publication shape (#1707) — `ValidatorEncryptionKeysAndProofs`
-    /// (class-groups + per-curve PVSS HPKE) and
-    /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
-    /// <= 3 (mainnet-v1.1.8), where the publication is bare
-    /// `ClassGroupsEncryptionKeyAndProof` and DKG runs against
-    /// `twopc_mpc::decentralized_party_backward_compatible::dkg::Party`.
-    pub fn is_network_encryption_key_version_v3(&self) -> bool {
-        self.network_encryption_key_version.is_some_and(|v| v == 3)
-    }
-
-    /// True iff this protocol_version uses the version-3 reconfiguration
-    /// shape (#1707) — `twopc_mpc::decentralized_party::reconfiguration::Party` with
-    /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
-    /// <= 3, where reconfiguration runs against
-    /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
-    pub fn is_reconfiguration_message_version_v3(&self) -> bool {
-        self.reconfiguration_message_version.is_some_and(|v| v == 3)
-    }
-
-    /// The equality-of-coefficients discrete-log bound selector passed as the
-    /// `backward_compatible` argument to the network-key DKG/reconfiguration
-    /// crypto public-input constructors. `true` selects the `-10` relaxed bound
-    /// the network has transcribed since mainnet-v1.1.8; `false` selects the
-    /// strict bound. Flips to `false` at v6 (`strict_network_key_coefficient_bound`),
-    /// so every validator moves to the strict bound together at the v6 boundary
-    /// — the bound is in the Fiat–Shamir transcript, so a mixed-bound committee
-    /// would split its reconfiguration quorum.
-    pub fn network_key_backward_compatible_coefficient_bound(&self) -> bool {
-        !self.feature_flags.strict_network_key_coefficient_bound
-    }
-
     pub fn bls_checkpoints(&self) -> bool {
         self.feature_flags.bls_checkpoints
     }
