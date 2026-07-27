@@ -133,6 +133,15 @@ pub enum Step {
         needle: String,
         present: bool,
     },
+    /// Assert ONE validator's `node.log` contains `needle`. Logs are
+    /// truncated on each (re)start, so this is the probe for a boot-time
+    /// decision of a specific validator — the whole-cluster
+    /// [`Step::ExpectLogLine`] would demand the line of validators whose
+    /// last boot predates the condition under test.
+    ExpectLogLineOnValidator {
+        index: usize,
+        needle: String,
+    },
 }
 
 impl std::fmt::Display for Step {
@@ -210,6 +219,12 @@ impl std::fmt::Display for Step {
             Step::ExpectLogLine { needle, present } => {
                 let polarity = if *present { "present" } else { "absent" };
                 write!(f, "expect_log_line_{polarity}({needle:?})")
+            }
+            Step::ExpectLogLineOnValidator { index, needle } => {
+                write!(
+                    f,
+                    "expect_log_line_present_on_validator({index}, {needle:?})"
+                )
             }
         }
     }
@@ -540,6 +555,21 @@ impl Scenario {
         self.steps.push(Step::ExpectLogLine {
             needle: needle.into(),
             present: false,
+        });
+        self
+    }
+
+    /// Assert the validator at `index`'s `node.log` contains `needle`. See
+    /// [`Step::ExpectLogLineOnValidator`] for when to prefer this over the
+    /// whole-cluster assertion.
+    pub fn expect_log_line_present_on_validator(
+        mut self,
+        index: usize,
+        needle: impl Into<String>,
+    ) -> Self {
+        self.steps.push(Step::ExpectLogLineOnValidator {
+            index,
+            needle: needle.into(),
         });
         self
     }
@@ -940,6 +970,28 @@ impl Scenario {
                         needle = needle.as_str(),
                         present = *present,
                         "log-line assertion passed on every expected validator"
+                    );
+                }
+                Step::ExpectLogLineOnValidator { index, needle } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectLogLineOnValidator before StartAll")?;
+                    let proc = c
+                        .validators
+                        .get(*index)
+                        .with_context(|| format!("validator index {index} out of range"))?;
+                    let log = std::fs::read_to_string(proc.log_path()).with_context(|| {
+                        format!("read validator log {}", proc.log_path().display())
+                    })?;
+                    ensure!(
+                        log.contains(needle.as_str()),
+                        "expected {needle:?} to be present in {}, but it was absent",
+                        proc.log_path().display(),
+                    );
+                    tracing::info!(
+                        index = *index,
+                        needle = needle.as_str(),
+                        "per-validator log-line assertion passed"
                     );
                 }
                 Step::RunWorkload { label } => {

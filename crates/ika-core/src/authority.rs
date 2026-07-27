@@ -40,7 +40,7 @@ use crate::epoch::committee_store::CommitteeStore;
 use ika_config::node::AuthorityOverloadConfig;
 use ika_types::{
     committee::Committee,
-    crypto::{AuthorityName, AuthoritySignature},
+    crypto::AuthoritySignature,
     error::{IkaError, IkaResult},
 };
 use sui_types::base_types::*;
@@ -241,10 +241,14 @@ impl AuthorityStateTrait for AuthorityState {
 }
 
 pub struct AuthorityState {
-    // Fixed size, static, identity of the authority
-    /// The name of this authority.
-    pub name: AuthorityName,
-    /// The signature key of the authority.
+    // Deliberately no `name` field: `AuthorityName` is per-epoch, not static
+    // — its basis is the BLS protocol key below protocol v6 and the consensus
+    // key from v6, so the node's committee identity lives on
+    // `AuthorityPerEpochStore::name` (re-derived for each epoch's basis at
+    // reconfiguration). A name minted once at startup goes stale at the
+    // activation boundary and misreports membership against later committees.
+    /// The BLS signature key of the authority (static; signs aggregate stake
+    /// certificates regardless of which key the committee is named by).
     pub secret: StableSyncAuthoritySigner,
 
     pub(crate) perpetual_tables: Arc<AuthorityPerpetualTables>,
@@ -273,12 +277,10 @@ pub struct AuthorityState {
 /// Repeating valid commands should produce no changes and return no error.
 impl AuthorityState {
     pub fn is_validator(&self, epoch_store: &AuthorityPerEpochStore) -> bool {
-        // Against the EPOCH STORE's name, not `self.name`: `self.name` is
-        // minted once at startup, while `AuthorityName`'s basis (BLS protocol
-        // key below protocol v6, consensus key from v6) is a property of the
-        // epoch. Comparing the startup name against a later epoch's committee
-        // makes a sitting validator conclude it is no longer a member the
-        // moment the basis flips.
+        // The epoch store's name: `AuthorityName`'s basis (BLS protocol key
+        // below protocol v6, consensus key from v6) is a property of the
+        // epoch, so membership is only meaningful for a name derived under
+        // the same epoch as the committee it is checked against.
         epoch_store.committee().authority_exists(&epoch_store.name)
     }
 
@@ -327,7 +329,6 @@ impl AuthorityState {
     }
 
     pub async fn new(
-        name: AuthorityName,
         secret: StableSyncAuthoritySigner,
         supported_protocol_versions: SupportedProtocolVersions,
         perpetual_tables: Arc<AuthorityPerpetualTables>,
@@ -355,7 +356,6 @@ impl AuthorityState {
         let epoch = epoch_store.epoch();
 
         Arc::new(AuthorityState {
-            name,
             secret,
             perpetual_tables,
             execution_lock: RwLock::new(epoch),
@@ -686,12 +686,13 @@ impl AuthorityState {
         );
         fail_point!("before-open-new-epoch-store");
         // Re-derive our own committee identity for the NEW epoch's basis
-        // rather than carrying `self.name` forward. `AuthorityName` is the
-        // BLS protocol key below protocol v6 and the consensus key from v6,
-        // so at the activation boundary a name minted for the previous epoch
-        // is simply absent from the new committee — the node would conclude
-        // it is "no longer a validator" and silently drop out of its own
-        // committee (observed in the v1.2.5 -> v6 upgrade rehearsal).
+        // rather than carrying the outgoing epoch's name forward.
+        // `AuthorityName` is the BLS protocol key below protocol v6 and the
+        // consensus key from v6, so at the activation boundary a name minted
+        // for the previous epoch is simply absent from the new committee —
+        // the node would conclude it is "no longer a validator" and silently
+        // drop out of its own committee (observed in the v1.2.5 -> v6
+        // upgrade rehearsal).
         let name = self.config.authority_name(
             epoch_start_configuration
                 .epoch_start_state()

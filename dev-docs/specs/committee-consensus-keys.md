@@ -95,6 +95,27 @@ decision. Two known gaps come with it:
    THIS, not an incident. It self-heals the following epoch, when the member
    announces under its new identity.
 
+**Node-side naming discipline.** A node's own `AuthorityName` is
+per-epoch state, never process state: it lives on
+`AuthorityPerEpochStore::name` (derived by `NodeConfig::authority_name`
+from the basis recorded on the epoch's `EpochStartSystem` — at boot and
+again at every reconfiguration), and `AuthorityState` deliberately
+carries no name field. Every self-identifying value the node emits must
+read the epoch store's name: the state-sync notifier decision at boot,
+`ConsensusAdapter`'s own-position lookup, capability notifications,
+checkpoint-signature attribution, and log fields. A name minted once at
+process start (historically the BLS protocol key) is absent from a
+consensus-basis committee, with two concrete failure modes: a validator
+restarting after the flip boots state-sync in pull mode as a non-member,
+and a capability notification naming the BLS key is dropped by
+`verify_consensus_transaction` (consensus attributes the submission
+under the committee's basis), silencing the node's upgrade vote — on a
+whole fleet of startup-minted names, no post-v6 protocol or Move
+upgrade can ever pass. Restart-after-flip is covered by the
+`v125_v6_upgrade` scenario: one validator reboots after activation and
+must log a consensus-basis, committee-member state-sync boot identity,
+then cross the next epoch boundary.
+
 **Why the 48-byte container is not ambiguous across bases.** A
 consensus-basis name is the 32-byte Ed25519 key followed by 16 zero bytes;
 a BLS-basis name is a valid BLS12-381 G1 point. For the two to collide an
