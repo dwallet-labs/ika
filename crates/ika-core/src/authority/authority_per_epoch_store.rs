@@ -1035,6 +1035,39 @@ type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec
 type PreparedPresignPop = (DBBatch, SessionIdentifier, u16, Vec<u8>);
 
 /// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
+///
+/// WRITE DISCIPLINE — read before adding a table, a write site, or a
+/// consumer. This store deliberately holds two persistence patterns, and
+/// confusing them has produced real divergence bugs (#1829, #1917/#1920).
+/// Every field below therefore ends its doc comment with one
+/// `write-discipline:` line, in one of these forms:
+///
+/// - `write-discipline: commit-batched` — the only writer is
+///   `ConsensusCommitOutput::write_to_batch`, so the row lands in the same
+///   atomic batch as the processed-markers of the commit that produced it.
+///   A crash before that batch replays the whole commit and re-derives the
+///   row. This is the required discipline for anything a consensus-visible
+///   decision (close round, freeze partition, checkpoint content) reads.
+/// - `write-discipline: direct — safe because <reason>: <consumer>` — the
+///   row is written outside the commit batch, followed by the argument that
+///   makes the table's consumers survive that. Fixed vocabulary:
+///   `pure-function-of-table` (every consumer folds the WHOLE table, with no
+///   arrival-order or size cap), `idempotent-replay` (re-running the
+///   producing work rewrites the same key with the same value),
+///   `local-only` (nothing consensus-visible reads it — only this node's own
+///   scheduling, secrets, or operator overrides), `content-addressed` (the
+///   key is a hash of the value).
+/// - `write-discipline: direct — UNPROVEN (#NNNN)` — a direct write whose
+///   safety argument does not currently close. Tracked, not blessed.
+///
+/// The reason must name the consumer it protects, because this class of bug
+/// is born on the READER side: #1917 was a direct write that was fine until
+/// `all_voted` folded an arrival-order-capped view of an uncapped table.
+/// So a new consumer of a direct-written table is as much a change to this
+/// contract as a new write site. Full rule (including what to do when the
+/// reason no longer holds):
+/// `dev-docs/conventions/epoch-table-write-discipline.md`, enforced by
+/// `scripts/check-epoch-table-write-discipline.sh` in CI.
 #[derive(DBMapUtils)]
 #[allow(clippy::type_complexity)]
 pub struct AuthorityEpochTables {
@@ -1046,9 +1079,19 @@ pub struct AuthorityEpochTables {
     /// Entries in this table can be garbage collected whenever we can prove that we won't receive
     /// another handle_consensus_transaction call for the given digest. This probably means at
     /// epoch change.
+    ///
+    /// write-discipline: commit-batched — this IS the marker the other
+    /// commit-batched tables are made atomic with; a marker durable ahead of
+    /// its commit's effects would let `is_consensus_message_processed` skip a
+    /// transaction whose effects were lost.
     consensus_message_processed: DBMap<SequencedConsensusTransactionKey, bool>,
 
     /// Map stores pending transactions that this authority submitted to consensus
+    ///
+    /// write-discipline: none — the table has no writer on this branch (the
+    /// persist in `ConsensusAdapter::submit` is commented out), so its only
+    /// consumer, `get_all_pending_consensus_transactions` (consensus-adapter
+    /// resubmit-on-restart), always reads empty.
     #[default_options_override_fn = "pending_consensus_transactions_table_default_config"]
     pending_consensus_transactions: DBMap<ConsensusTransactionKey, ConsensusTransaction>,
 
@@ -1056,6 +1099,10 @@ pub struct AuthorityEpochTables {
     /// represents the index of the latest consensus message this authority processed, running hash of
     /// transactions, and accumulated stats of consensus output.
     /// This field is written by a single process (consensus handler).
+    ///
+    /// write-discipline: commit-batched — `get_last_consensus_stats` seeds the
+    /// consensus handler's replay cursor at startup, so a row durable ahead of
+    /// its commit's effects would skip that commit entirely.
     last_consensus_stats: DBMap<u64, ExecutionIndicesWithStats>,
 
     /// This table has information for the checkpoints for which we constructed all the data
@@ -1066,40 +1113,91 @@ pub struct AuthorityEpochTables {
     /// Non-empty list of transactions here might result in empty list when we are forming checkpoint.
     /// Because we don't want to create checkpoints with empty content(see CheckpointBuilder::write_checkpoint),
     /// the sequence number of checkpoint does not match height here.
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: written by
+    /// the `DWalletMPCService` round loop, keyed by the consensus round it
+    /// derived the messages from, out of commit-batched inputs
+    /// (`dwallet_mpc_messages` / `dwallet_mpc_outputs` /
+    /// `verified_dwallet_checkpoint_messages`). A crash before the service's
+    /// cursor advances re-derives the same height with the same content. Its
+    /// only consumer is this node's checkpoint builder
+    /// (`process_pending_dwallet_checkpoint`).
     #[default_options_override_fn = "pending_checkpoints_table_default_config"]
     pending_dwallet_checkpoints: DBMap<DWalletCheckpointHeight, PendingDWalletCheckpoint>,
 
+    /// write-discipline: commit-batched — the `DWalletMPCService` replay walks
+    /// this table in lockstep with `dwallet_mpc_messages` and requires it to be
+    /// dense and round-aligned with the commits that produced it.
     #[default_options_override_fn = "verified_dwallet_checkpoint_messages_table_default_config"]
     verified_dwallet_checkpoint_messages:
         DBMap<DWalletCheckpointHeight, Vec<DWalletCheckpointMessageKind>>,
 
+    /// write-discipline: commit-batched — same round-alignment requirement as
+    /// `verified_dwallet_checkpoint_messages`, on the system-checkpoint stream.
     #[default_options_override_fn = "verified_system_checkpoint_messages_table_default_config"]
     verified_system_checkpoint_messages: DBMap<Round, Vec<SystemCheckpointMessageKind>>,
 
     /// Stores pending signatures
     /// The key in this table is checkpoint sequence number and an arbitrary integer
+    ///
+    /// write-discipline: direct — safe because local-only: the only consumer is
+    /// this node's signature aggregator (`dwallet_checkpoints`), whose output is
+    /// a stake-quorum certificate submitted to Sui. Which quorum subset it
+    /// aggregates, and when a peer's row lands, is not observable to peers and
+    /// feeds no consensus-visible decision.
     pub(crate) pending_dwallet_checkpoint_signatures:
         DBMap<(DWalletCheckpointSequenceNumber, u64), DWalletCheckpointSignatureMessage>,
 
     /// Maps sequence number to checkpoint summary, used by CheckpointBuilder to build checkpoint within epoch
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: written in the
+    /// same batch that deletes the `pending_dwallet_checkpoints` entries it
+    /// consumed, so a crash before that batch rebuilds the identical summary
+    /// from the unchanged pending queue. Consumers
+    /// (`last_built_dwallet_checkpoint_message*`) read only this node's own
+    /// build progress.
     pub(crate) builder_dwallet_checkpoint_message_v1:
         DBMap<DWalletCheckpointSequenceNumber, BuilderDWalletCheckpointMessage>,
 
+    /// write-discipline: commit-batched for inserts (`write_to_batch`), so the
+    /// system-checkpoint builder never sees a pending entry for a commit whose
+    /// effects were lost. The build-time delete of the consumed prefix is
+    /// direct and local-only — it rides the same batch as the
+    /// `builder_system_checkpoint_v1` rows that replace it.
     #[default_options_override_fn = "pending_checkpoints_table_default_config"]
     pending_system_checkpoints: DBMap<SystemCheckpointHeight, PendingSystemCheckpoint>,
 
     /// Stores pending signatures
     /// The key in this table is ika system checkpoint sequence number and an arbitrary integer
+    ///
+    /// write-discipline: direct — safe because local-only: mirrors
+    /// `pending_dwallet_checkpoint_signatures` on the system-checkpoint
+    /// aggregator.
     pub(crate) pending_system_checkpoint_signatures:
         DBMap<(DWalletCheckpointSequenceNumber, u64), SystemCheckpointSignatureMessage>,
 
     /// Maps sequence number to ika system checkpoint summary, used by SystemCheckpointBuilder to build checkpoint within epoch
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: mirrors
+    /// `builder_dwallet_checkpoint_message_v1` (written in the same batch that
+    /// deletes the pending entries it consumed).
     builder_system_checkpoint_v1: DBMap<DWalletCheckpointSequenceNumber, BuilderSystemCheckpoint>,
 
     /// Record of the capabilities advertised by each authority.
+    ///
+    /// write-discipline: direct — safe because pure-function-of-table:
+    /// `get_capabilities_v1` folds the WHOLE table into the protocol-upgrade
+    /// vote tally, with no arrival-order or size cap, and the
+    /// `generation >=` guard in `record_capabilities_v1` makes a replayed
+    /// receipt a no-op.
     authority_capabilities_v1: DBMap<AuthorityName, AuthorityCapabilitiesV1>,
 
     /// Validators that sent a EndOfPublish message in this epoch.
+    ///
+    /// write-discipline: commit-batched — the vote set must never run ahead of
+    /// the commit that sequenced it, or the aggregator rehydrates on restart
+    /// with votes the replayed commit has not re-counted and the close gate
+    /// fires at a different round than peers (#1917/#1920).
     end_of_publish: DBMap<AuthorityName, ()>,
 
     /// Single-entry (key `0`) record of the consensus leader round at which
@@ -1108,6 +1206,11 @@ pub struct AuthorityEpochTables {
     /// validator restarting mid-grace closes the epoch at the same round as
     /// its peers (the close — and the final checkpoint it builds — must be
     /// consensus-deterministic).
+    ///
+    /// write-discipline: commit-batched — must commit atomically with the
+    /// commit that observed the quorum; the close-grace consumer
+    /// (`should_close_epoch`) would otherwise anchor on a round no commit
+    /// re-derives.
     end_of_publish_quorum_round: DBMap<u64, u64>,
 
     /// Single-entry (key `0`) record of how many authorities were in the
@@ -1124,6 +1227,13 @@ pub struct AuthorityEpochTables {
     /// than a never-restarted peer holds; without this record a restarted
     /// validator could satisfy `all_voted`, skip the grace, and close the
     /// epoch at a different round than the rest of the committee. See #1917.
+    ///
+    /// write-discipline: commit-batched — written in the same batch as
+    /// `end_of_publish_quorum_round` so the anchor and the pinned count can
+    /// never disagree. This field is the canonical example of why the
+    /// discipline must name its reader: the value exists ONLY because the
+    /// `all_voted` consumer folds an arrival-order-capped view of the
+    /// uncapped `end_of_publish` table.
     end_of_publish_quorum_voted_count: DBMap<u64, u64>,
 
     /// Single-entry (key `0`) marker set when the deferred epoch-close
@@ -1131,6 +1241,10 @@ pub struct AuthorityEpochTables {
     /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
     /// restarted validator does not re-emit the close at a later commit
     /// (which would fork its checkpoint stream from peers).
+    ///
+    /// write-discipline: commit-batched — the marker and the close messages it
+    /// records must land or die together; the consumer is the epoch-store-open
+    /// `reconfig_state` restore.
     epoch_close_emitted: DBMap<u64, ()>,
 
     /// Single-entry (key `0`) record of the consensus leader round at which
@@ -1139,6 +1253,11 @@ pub struct AuthorityEpochTables {
     /// freeze grace; written atomically with the observing commit's batch so
     /// every validator (including one restarting mid-grace) freezes at the
     /// same round on the same signal set.
+    ///
+    /// write-discipline: commit-batched — same atomicity requirement as
+    /// `end_of_publish_quorum_round`; the freeze-grace consumer
+    /// (`freeze_mpc_data_if_first`'s caller) must anchor on a round every
+    /// validator re-derives from the same commit.
     mpc_data_ready_quorum_round: DBMap<u64, u64>,
 
     /// Single-entry (key `0`) record of the consensus leader round at which
@@ -1150,6 +1269,11 @@ pub struct AuthorityEpochTables {
     /// gauge never invents a freeze round from the current round. Absent
     /// when the freeze hasn't fired (or fired under a binary predating this
     /// table, in which case the gauge stays at its `-1` sentinel).
+    ///
+    /// write-discipline: commit-batched — written with the freeze partition it
+    /// timestamps. Its only consumer is the gauge re-seed, but batching costs
+    /// nothing here and keeps the observability claim ("this is the round the
+    /// frozen set was decided at") true by construction.
     mpc_data_freeze_round: DBMap<u64, u64>,
 
     /// Single-key (0) table holding the `commit_timestamp_ms` of the FIRST
@@ -1161,10 +1285,21 @@ pub struct AuthorityEpochTables {
     /// commit's timestamp is otherwise unrecoverable. Identical across
     /// honest validators up to consensus determinism; consumed only for
     /// emit timing, never for signal content.
+    ///
+    /// write-discipline: commit-batched — the anchor must be the timestamp of a
+    /// commit that actually persisted, so the ready-signal backstop deadline
+    /// consumer computes the same deadline before and after a restart.
     epoch_first_commit_timestamp_ms: DBMap<u64, u64>,
 
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
+    ///
+    /// write-discipline: direct — safe because local-only: set and cleared by
+    /// this node's operator over the admin interface
+    /// (`AuthorityState::set_override_protocol_upgrade_buffer_stake`). It is a
+    /// deliberately per-node knob — the consumer,
+    /// `get_effective_buffer_stake_bps`, only shifts when THIS validator votes
+    /// to upgrade, and the protocol tolerates validators disagreeing on it.
     override_protocol_upgrade_buffer_stake: DBMap<u64, u64>,
 
     /// Holds all the DWallet MPC related messages that have been
@@ -1172,12 +1307,23 @@ pub struct AuthorityEpochTables {
     /// The key is the consensus round number,
     /// the value is the dWallet-mpc messages that have been received in that
     /// round.
+    ///
+    /// write-discipline: commit-batched — this is the dense per-round driver
+    /// the `DWalletMPCService` replay advances on; a round present here without
+    /// its commit's other streams trips the replay's round-equality check.
     #[default_options_override_fn = "dwallet_mpc_messages_table_default_config"]
     dwallet_mpc_messages: DBMap<Round, Vec<DWalletMPCMessage>>,
     /// Consensus round -> Output.
+    ///
+    /// write-discipline: commit-batched — replayed in lockstep with
+    /// `dwallet_mpc_messages` by the MPC service.
     #[default_options_override_fn = "dwallet_mpc_outputs_table_default_config"]
     dwallet_mpc_outputs: DBMap<Round, Vec<DWalletMPCOutput>>,
     /// Consensus round -> Output.
+    ///
+    /// write-discipline: commit-batched — same round-aligned replay as
+    /// `dwallet_mpc_outputs` (written only while `internal_presign_sessions`
+    /// is live, which the replay reads gate on identically).
     #[default_options_override_fn = "dwallet_internal_mpc_outputs_table_default_config"]
     dwallet_internal_mpc_outputs: DBMap<Round, Vec<DWalletInternalMPCOutput>>,
 
@@ -1186,16 +1332,37 @@ pub struct AuthorityEpochTables {
     /// Presigns are consumed in order (lowest session sequence number first) within a given key ID.
     /// Value is (SessionIdentifier, Vec<(blending_index, presign_bytes)>) - the session ID and
     /// list of presigns, each tagged with its blending index (position in the inserted vector).
+    ///
+    /// write-discipline: direct — UNPROVEN (#1928). `prepare_pop_presign` and
+    /// `insert_presigns` mutate the pool (and `internal_presign_pool_sizes`) in
+    /// their OWN batch, committed independently of the consensus commit that
+    /// consumed the presign. A crash between the pool batch and the commit
+    /// batch lets replay re-pop and hand the sign session a DIFFERENT presign
+    /// than peers bound to it — the false-malicious class — for any consumer
+    /// that requires pool-head determinism. The NOA path closed this by
+    /// batching the pop with an idempotent assignment record (see
+    /// `noa_assigned_presigns` / `assign_noa_presign`); the external
+    /// `assign_presign` path has not been audited to the same standard.
+    /// Do not add a consumer that assumes cross-validator pop identity until
+    /// #1928 lands.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_ecdsa_secp256k1:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_ecdsa_secp256r1:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_eddsa: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_taproot: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
@@ -1206,38 +1373,69 @@ pub struct AuthorityEpochTables {
     /// presigns, consumed lowest-sequence-number-first within a given key ID. Kept
     /// separate from their AHE siblings because VSS presign bytes are a different
     /// format (a VSS sign must never pop an AHE presign, or vice versa).
+    ///
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_taproot_vss:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_eddsa_vss:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `internal_presign_pool_ecdsa_secp256k1`.
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate_vss:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
 
     /// Tracks the total count of presigns in each pool by (signature algorithm, network encryption key ID).
     /// Value is the count.
+    ///
+    /// write-discipline: direct — UNPROVEN (#1928): always written in the same
+    /// batch as the pool mutation it counts (so the counter cannot drift from
+    /// the pool), but that batch is the pool's own, not the commit's — so this
+    /// counter inherits the pool's re-pop exposure. `presign_pool_size` is a
+    /// local scheduling input, but the divergent-pool state it reports is the
+    /// suspected substrate of #1830.
     internal_presign_pool_sizes: DBMap<(DWalletSignatureAlgorithm, ObjectID), u64>,
 
     /// Idle status updates by consensus round.
+    ///
+    /// write-discipline: commit-batched — round-aligned with
+    /// `dwallet_mpc_messages` for the MPC service replay.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     idle_status_updates: DBMap<Round, Vec<IdleStatusUpdate>>,
 
     /// Sui chain observation updates by consensus round.
+    ///
+    /// write-discipline: commit-batched — round-aligned with
+    /// `dwallet_mpc_messages` for the MPC service replay.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     sui_chain_observation_updates: DBMap<Round, Vec<SuiChainObservationUpdate>>,
 
     /// Global presign requests by consensus round.
+    ///
+    /// write-discipline: commit-batched — round-aligned with
+    /// `dwallet_mpc_messages` for the MPC service replay.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     global_presign_requests: DBMap<Round, Vec<ConsensusGlobalPresignRequest>>,
 
     /// NOA checkpoint observations by consensus round.
+    ///
+    /// write-discipline: commit-batched — round-aligned with
+    /// `dwallet_mpc_messages` for the MPC service replay.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
 
     /// NOA sign presign demands by consensus round. Drained in consensus order
     /// to assign each demand a presign identically on every validator.
+    ///
+    /// write-discipline: commit-batched — round-aligned with
+    /// `dwallet_mpc_messages`; the drain that assigns presigns walks this table
+    /// in consensus order, so a round persisted without its commit would let
+    /// two validators drain different demand sequences.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
 
@@ -1248,6 +1446,14 @@ pub struct AuthorityEpochTables {
     /// dropped on rotation) like `used_presigns`; the demand queue that feeds it
     /// is rebuilt empty when the per-epoch service restarts, and idempotency here
     /// makes re-drains safe.
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: keyed by the
+    /// demand digest and written in the SAME batch as the pool pop and the
+    /// `used_presigns` marker (`assign_noa_presign`), so a re-drain after a
+    /// crash returns the recorded assignment instead of popping again. This is
+    /// the shape the raw pool tables lack (#1928): the consumer that needs
+    /// cross-validator identity — sign-session instantiation — reads THIS
+    /// table, never the pool head.
     noa_assigned_presigns: DBMap<[u8; 32], NoaAssignedPresign>,
 
     /// Tracks presigns that have been consumed for signing.
@@ -1255,27 +1461,57 @@ pub struct AuthorityEpochTables {
     /// the blended vector produced by the presign session that created it.
     /// Value: () - just marks it as used
     /// Once a presign is used, it should never be used again.
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: a monotone
+    /// marker keyed by the presign it retires, written either inside
+    /// `assign_noa_presign`'s pop batch or standalone by
+    /// `mark_presign_as_used`. Re-writing it is a no-op, and the consumer
+    /// (`is_presign_used`) only ever gates THIS node's reuse of a presign it
+    /// already consumed.
     used_presigns: DBMap<(SessionIdentifier, u16), ()>,
 
     /// Assigned presigns pools for external presigns.
     /// Key: (SessionIdentifier, blending_index) - uniquely identifies this assigned presign
     /// Value: AssignedPresign - contains presign data, user verification key, dwallet_id (for non-global), and epoch
     /// These expire at the end of the epoch and are used for external sign requests.
+    ///
+    /// write-discipline: direct — UNPROVEN (#1928): the insert rides
+    /// `assign_presign`'s pop batch (so an assignment can never exist without
+    /// its pool removal), but that batch is the pool's own, not the consuming
+    /// commit's — so WHICH presign a replayed assignment binds inherits the
+    /// pool's re-pop exposure. Unlike `noa_assigned_presigns` the key is the
+    /// popped presign, not the request, so a re-pop yields a new row rather
+    /// than hitting an idempotence guard.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_ecdsa_secp256k1: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_ecdsa_secp256r1: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_eddsa: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_taproot: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_schnorrkel_substrate: DBMap<(SessionIdentifier, u16), AssignedPresign>,
-    // Fast Schnorr (VSS) assigned-presign pools (separate from AHE siblings).
+    /// Fast Schnorr (VSS) assigned-presign pools (separate from AHE siblings).
+    ///
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_taproot_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_eddsa_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    /// write-discipline: direct — UNPROVEN (#1928), see
+    /// `assigned_presigns_ecdsa_secp256k1`.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_schnorrkel_substrate_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
 
@@ -1292,6 +1528,12 @@ pub struct AuthorityEpochTables {
     /// Self-prunes on epoch rotation (per-epoch physical DB drop). A missing row at
     /// sign time is a soft-fail that excludes this validator's contribution, not a
     /// hard error — the 2f+1 quorum absorbs it.
+    ///
+    /// write-discipline: direct — safe because local-only: this validator's own
+    /// secret share, never compared across validators. The consumer
+    /// (`get_presign_private_output`, at sign-party build) soft-fails on a
+    /// missing row, so a write lost to a crash costs one contribution, not
+    /// divergence.
     presign_private_outputs: DBMap<(CommitmentSizedNumber, u16), Vec<u8>>,
 
     /// Latest `ValidatorMpcDataAnnouncement` observed for each
@@ -1301,6 +1543,14 @@ pub struct AuthorityEpochTables {
     /// the strictly-newer-timestamp entry per validator wins (replays
     /// and duplicates are dropped). Off-chain consumers (later steps)
     /// freeze a snapshot of this table when 2f+1 ready signals land.
+    ///
+    /// write-discipline: direct — safe because local-only + idempotent-replay:
+    /// the strict-newer-timestamp guard in `insert_validator_mpc_data_announcement`
+    /// makes a replayed announcement a no-op, and no consensus-visible decision
+    /// reads it — `freeze_mpc_data_if_first` deliberately tallies the ready
+    /// signals ONLY (reading this table there would let a locally-dropped
+    /// relayed announcement shrink one validator's frozen set). Its consumers
+    /// are this node's blob fetcher and its own emitted `validated_peers`.
     pub(crate) validator_mpc_data_announcements: DBMap<AuthorityName, ValidatorMpcDataAnnouncement>,
 
     /// Map signer -> `EpochMpcDataReadySignal` for this epoch.
@@ -1309,6 +1559,14 @@ pub struct AuthorityEpochTables {
     /// when tallying per-announcer attestations. Re-broadcasts
     /// from the same signer are last-write-wins; in practice an
     /// honest validator only emits once per epoch.
+    ///
+    /// write-discipline: direct — safe because pure-function-of-table: every
+    /// consumer (`freeze_mpc_data_if_first`'s tally, the ready-quorum anchor)
+    /// folds the WHOLE table with no arrival-order or size cap, so a crash can
+    /// only leave it holding the replayed commit's own signals — which the
+    /// original run also counted before deciding. Adding a consumer that
+    /// snapshots or caps this table reintroduces the #1917 shape; the decision
+    /// it feeds must then be pinned through `ConsensusCommitOutput` instead.
     pub(crate) epoch_mpc_data_ready_signals:
         DBMap<AuthorityName, ika_types::validator_metadata::EpochMpcDataReadySignal>,
 
@@ -1327,6 +1585,9 @@ pub struct AuthorityEpochTables {
     /// partition lands atomically with the commit's processed-markers
     /// (issue #1829: a partial write latched a shrunken, divergent
     /// frozen set forever).
+    ///
+    /// write-discipline: commit-batched — see above; the freeze is
+    /// once-per-epoch and never revisited, so a partial write is permanent.
     pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
 
     /// Announcers that crossed the freeze gate's "announcement
@@ -1339,6 +1600,11 @@ pub struct AuthorityEpochTables {
     /// as "this validator is excluded from the working set for
     /// this epoch — same semantics as today's `bad chain mpc_data
     /// → ignore that validator`."
+    ///
+    /// write-discipline: commit-batched — the other half of the freeze
+    /// partition; must land in the same batch as
+    /// `frozen_validator_mpc_data_input_set` or the two disagree about who is
+    /// in the epoch's working set.
     pub(crate) epoch_excluded_validators: DBMap<AuthorityName, ()>,
 
     /// Per-signer Ed25519 signatures over this epoch's handoff
@@ -1349,6 +1615,19 @@ pub struct AuthorityEpochTables {
     /// `CertifiedHandoffAttestation` which is persisted forever in
     /// `AuthorityPerpetualTables` (perpetual persist lands in step
     /// 7c).
+    ///
+    /// write-discipline: direct — UNPROVEN (#1927). Two writers:
+    /// `record_handoff_signature` on the consensus `EndOfPublishV2` arm
+    /// (consensus-sequenced, but written out-of-band relative to the commit
+    /// batch) and the buffered drain in
+    /// `install_expected_handoff_attestation`, which runs at WALL-CLOCK local
+    /// install time. The close gate reads this table
+    /// (`handoff_signatures_meet_quorum`), so a validator whose install lags
+    /// its peers' signature commits can observe the gate satisfied at a
+    /// different round — the property #1920 removed from the `all_voted` half
+    /// of the same gate. The pure-function-of-table argument holds for the
+    /// consensus arm alone; the drain breaks it, because drained rows are not
+    /// attributable to any commit ≤ the evaluating one.
     pub(crate) handoff_signatures: DBMap<AuthorityName, fastcrypto::ed25519::Ed25519Signature>,
 
     /// Local cache of network DKG output digests for this epoch,
@@ -1357,12 +1636,22 @@ pub struct AuthorityEpochTables {
     /// consumed by the handoff trigger when assembling the
     /// attestation items list. Blob bytes go into the perpetual
     /// `mpc_artifact_blobs` table so peers can fetch them by digest.
+    ///
+    /// write-discipline: direct — safe because content-addressed: the value is
+    /// the Blake2b256 digest of the output bytes, so any rewrite of the same
+    /// logical output stores the same bytes and a replay is a no-op. The
+    /// cross-validator agreement the handoff-attestation consumer needs comes
+    /// from the canonical encoding of the output (see the DETERMINISM note on
+    /// `cache_protocol_output`), never from when the row landed.
     pub(crate) network_dkg_output_digests: DBMap<ObjectID, [u8; 32]>,
 
     /// Local cache of network reconfiguration output digests for
     /// this epoch — same shape and lifecycle as
     /// `network_dkg_output_digests`. Per-epoch (not perpetual)
     /// because a key's reconfig output is by definition per-epoch.
+    ///
+    /// write-discipline: direct — safe because content-addressed, exactly as
+    /// `network_dkg_output_digests`.
     pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
