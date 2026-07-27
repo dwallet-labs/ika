@@ -580,12 +580,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(true)
     }
 
-    fn off_chain_validator_metadata_enabled(&self) -> bool {
-        // Tests exercise the off-chain pipeline regardless of
-        // protocol-config version, so report enabled.
-        true
-    }
-
     fn get_frozen_mpc_data_input_set_trait(
         &self,
     ) -> IkaResult<std::collections::HashMap<ika_types::crypto::AuthorityName, [u8; 32]>> {

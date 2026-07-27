@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! End-to-end cluster test for the OCS (Object-Checkpoint-State) verified
-//! Sui-state path, active at protocol v4
-//! (`off_chain_validator_metadata_enabled`).
+//! Sui-state path.
 //!
 //! With `.with_ocs_genesis_anchor(true)` every validator boots from the Sui
 //! localnet's epoch-0 committee (the unsafe-genesis bootstrap), which makes
-//! `has_anchor` true so the OCS stack is built. At v4 this flips MPC session-
+//! `has_anchor` true so the OCS stack is built. This flips MPC session-
 //! event ingestion from the legacy JSON-RPC `query_events` listener to the
 //! OCS `BagEventPump`, which walks the verified `session_events` bags through
 //! `OcsVerifiedReader` (every read checked against the committee via an
@@ -146,6 +145,51 @@ async fn ocs_verifier_v4_mirrored_relay_drives_user_dkg_and_epoch_advance() {
     // With four validators the MPC quorum is three, so completing the DKGs
     // requires a mirrored validator's relay reads to have succeeded.
     drive_dkg_and_epoch_advance(&mut cluster, "mirrored-relay").await;
+}
+
+/// The mirrored-relay topology with NO pinned `sui_state_mirror_peers`: the
+/// two `SuiStateMirrored` validators must find the serving (direct) validators
+/// through **automatic peer discovery** — the preferred operator default,
+/// where every relay operation tries the peers currently connected through
+/// Ika's discovery system instead of a configured list.
+///
+/// This exercises the whole automatic-mode pipeline end-to-end:
+///   * the initial committee trusted-peer set is published to discovery
+///     before the mirrored OCS build, so the mirrored validators dial the
+///     committee (rather than depending on inbound dials) and the startup
+///     wait can find a serving peer;
+///   * the startup wait probes connected peers for one that actually serves
+///     `SuiStateMirror` (the other mirrored validator is connected too and
+///     serves nothing);
+///   * every relay read then works over a per-operation connection snapshot,
+///     skipping the connected-but-non-serving mirrored peer on its route-miss
+///     fast failure.
+///
+/// As in the pinned mirrored test, the MPC quorum (three of four) cannot be
+/// reached by the two direct validators alone, so completing the DKGs and
+/// crossing an epoch boundary *requires* automatic discovery to have produced
+/// working relay reads on a mirrored validator.
+#[tokio::test(flavor = "multi_thread")]
+async fn ocs_verifier_v4_mirrored_relay_automatic_peer_discovery_drives_user_dkg_and_epoch_advance()
+{
+    telemetry_subscribers::init_for_testing();
+
+    // Same shape as the pinned mirrored test: 2 direct validators (serve the
+    // relay) + 2 mirrored validators, protocol v4, OCS anchored on the
+    // localnet genesis committee — but the mirrored validators' peer list is
+    // left empty (automatic discovery).
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(10_000)
+        .with_protocol_version(ProtocolVersion::MAX)
+        .with_ocs_genesis_anchor(true)
+        .with_sui_state_direct_count(2)
+        .with_automatic_mirror_peers(true)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    drive_dkg_and_epoch_advance(&mut cluster, "mirrored-relay-automatic-discovery").await;
 }
 
 /// Same end-to-end OCS path, but with *peer-only* mirrored validators: the two

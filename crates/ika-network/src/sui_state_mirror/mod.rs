@@ -44,7 +44,10 @@ use crate::proof_provider::{
     VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
 };
 
-pub use client::{SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport};
+pub use client::{
+    SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport, find_serving_mirror_peer,
+    register_addressed_mirror_peers,
+};
 pub use generated::{
     sui_state_mirror_client::SuiStateMirrorClient,
     sui_state_mirror_server::{SuiStateMirror, SuiStateMirrorServer},

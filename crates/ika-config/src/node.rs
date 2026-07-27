@@ -222,12 +222,20 @@ impl fmt::Display for SuiChainIdentifier {
 }
 
 /// ika's on-chain identity (Move package + object IDs) for a public chain.
-/// Deployment constants: the object IDs are immutable, and the package IDs are
-/// the exact values the node config expects — the dwallet base id is the
-/// **original v1** with the upgrade in `_v2` (event filtering accepts both),
-/// and the system id is the **current/latest**. Sourced from
-/// `deployed_contracts/{mainnet,testnet}/address.yaml` (NOT `ika_sui_config.yaml`,
-/// which flattens packages to their latest under the base name).
+/// Deployment constants: the object IDs are immutable, and every package ID is
+/// the **original (defining) publication** — the dwallet base id is the
+/// original v1 with the upgrade in `_v2` (event filtering accepts both), and
+/// `ika_system_package_id` is likewise the ORIGINAL system package, never a
+/// later upgrade. These ids feed type/event matching and the OCS relevance
+/// set, and Sui type tags carry the *defining* package forever — the system
+/// object itself is typed `{original}::system::System` even after upgrades.
+/// The *current executable* system package is resolved at runtime from the
+/// system object's `package_id` field (`sui_executor` reads
+/// `system.package_id`), so NO constant here needs bumping when contracts
+/// upgrade. Sourced from the BASE keys of
+/// `deployed_contracts/{mainnet,testnet}/address.yaml` (`ika_system_package_id`,
+/// not `ika_system_package_id_v2`; and NOT `ika_sui_config.yaml`, which
+/// flattens packages to their latest under the base name).
 #[derive(Clone, Copy, Debug)]
 pub struct IkaOnChainIdentity {
     pub ika_package_id: ObjectID,
@@ -262,7 +270,7 @@ pub fn compiled_in_ika_identity(chain: SuiChainIdentifier) -> Option<IkaOnChainI
                 "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
             ),
             ika_system_package_id: oid(
-                "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+                "0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486",
             ),
             ika_system_object_id: oid(
                 "0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80",
@@ -285,7 +293,7 @@ pub fn compiled_in_ika_identity(chain: SuiChainIdentifier) -> Option<IkaOnChainI
                 "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
             ),
             ika_system_package_id: oid(
-                "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+                "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148",
             ),
             ika_system_object_id: oid(
                 "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6",
@@ -577,6 +585,59 @@ pub fn select_sui_transport(
     }
 }
 
+/// One `sui-state-mirror-peers` entry: a bare hex-encoded anemo peer id (the
+/// backward-compatible form), or a `{peer-id, address}` pair that is also
+/// dialable on its own — see the field docs on
+/// [`SuiConnectorConfig::sui_state_mirror_peers`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum SuiStateMirrorPeer {
+    /// Bare hex peer id: selects the peer among connections the p2p layer
+    /// already establishes (seed peers, fixed peers, committee discovery).
+    PeerId(String),
+    /// Peer id + p2p address: additionally registered as a high-affinity
+    /// known peer (the seed-peer mechanism), so anemo dials and maintains a
+    /// connection even when nothing else would.
+    Addressed(AddressedSuiStateMirrorPeer),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AddressedSuiStateMirrorPeer {
+    /// Hex-encoded anemo peer id (the peer's network public key).
+    pub peer_id: String,
+    /// The peer's p2p multiaddr, e.g. `/dns/relay1/udp/8084`.
+    pub address: Multiaddr,
+}
+
+impl SuiStateMirrorPeer {
+    pub fn peer_id_hex(&self) -> &str {
+        match self {
+            Self::PeerId(id) => id,
+            Self::Addressed(peer) => &peer.peer_id,
+        }
+    }
+
+    pub fn address(&self) -> Option<&Multiaddr> {
+        match self {
+            Self::PeerId(_) => None,
+            Self::Addressed(peer) => Some(&peer.address),
+        }
+    }
+
+    /// Parse the entry's hex-encoded anemo peer id.
+    pub fn parse_peer_id(&self) -> Result<anemo::PeerId, hex::FromHexError> {
+        let bytes: [u8; 32] = hex::FromHex::from_hex(self.peer_id_hex())?;
+        Ok(anemo::PeerId(bytes))
+    }
+}
+
+impl From<String> for SuiStateMirrorPeer {
+    fn from(peer_id_hex: String) -> Self {
+        Self::PeerId(peer_id_hex)
+    }
+}
+
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -598,12 +659,21 @@ pub struct SuiConnectorConfig {
     /// this path is the anchor-verified `BagEventPump`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sui_data_source: Option<SuiDataSource>,
-    /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
+    /// Optional pinned override of the peers used for `SuiStateMirror` reads.
     /// If empty when reading over the mirror (`SuiDataSource::SuiStateMirrored`),
     /// the connector will try every connected peer (relying on those that
-    /// don't implement the service to error fast).
+    /// don't implement the service to error fast). When non-empty, ONLY the
+    /// listed peers are used — the override is logged loudly at startup so it
+    /// isn't missed.
+    ///
+    /// Each entry is either a bare hex-encoded anemo peer id (the peer's
+    /// network public key), selecting the peer among connections the p2p
+    /// layer already establishes, or a `{peer-id, address}` pair that is
+    /// ALSO dialable on its own: it is registered as a high-affinity known
+    /// peer (like a seed peer) so a connection is established and maintained
+    /// even when nothing else would dial it.
     #[serde(default)]
-    pub sui_state_mirror_peers: Vec<String>,
+    pub sui_state_mirror_peers: Vec<SuiStateMirrorPeer>,
     /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root. On
     /// boot the node loads this blob, recomputes its genesis checkpoint digest,
     /// verifies it against the compiled-in chain identifier for
@@ -1479,6 +1549,51 @@ mod tests {
             .expect("a root-seed path descriptor must deserialize without reading the path")
     }
 
+    /// `sui-state-mirror-peers` entries come in two YAML shapes — a bare hex
+    /// peer-id string (the backward-compatible form every deployed binary
+    /// reads) and a `{peer-id, address}` map — and both must parse from one
+    /// list. The round-trip must keep bare entries as bare strings: builder
+    /// harnesses (`ika-upgrade-test`) feed serialized configs to OLD release
+    /// binaries, which reject anything but plain strings.
+    #[test]
+    fn sui_state_mirror_peers_parse_both_shapes_and_round_trip() {
+        let peer_id_hex = "aa".repeat(32);
+        let yaml =
+            format!("- {peer_id_hex}\n- peer-id: {peer_id_hex}\n  address: /dns/relay1/udp/8084\n");
+        let peers: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str(&yaml).expect("both entry shapes must parse");
+        assert_eq!(peers.len(), 2);
+
+        assert!(matches!(&peers[0], SuiStateMirrorPeer::PeerId(_)));
+        assert_eq!(peers[0].peer_id_hex(), peer_id_hex);
+        assert!(peers[0].address().is_none());
+        assert_eq!(peers[0].parse_peer_id().unwrap(), anemo::PeerId([0xaa; 32]));
+
+        assert!(matches!(&peers[1], SuiStateMirrorPeer::Addressed(_)));
+        assert_eq!(peers[1].peer_id_hex(), peer_id_hex);
+        assert_eq!(
+            peers[1].address().expect("addressed entry").to_string(),
+            "/dns/relay1/udp/8084"
+        );
+        assert_eq!(peers[1].parse_peer_id().unwrap(), anemo::PeerId([0xaa; 32]));
+
+        // Round-trip: the bare entry serializes back to a bare string.
+        let reserialized = serde_yaml::to_string(&peers).expect("must serialize");
+        assert!(
+            reserialized.contains(&format!("- {peer_id_hex}")),
+            "bare peer-id entries must stay bare strings for old binaries: {reserialized}"
+        );
+        let reparsed: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str(&reserialized).expect("round-trip must parse");
+        assert!(matches!(&reparsed[0], SuiStateMirrorPeer::PeerId(_)));
+        assert!(matches!(&reparsed[1], SuiStateMirrorPeer::Addressed(_)));
+
+        // A malformed id parses as an entry but fails peer-id parsing.
+        let malformed: Vec<SuiStateMirrorPeer> =
+            serde_yaml::from_str("- not-hex\n").expect("string entries always parse");
+        assert!(malformed[0].parse_peer_id().is_err());
+    }
+
     #[test]
     fn notifier_config_without_root_seed_is_accepted() {
         let config = config_for_mode(NodeMode::Notifier);
@@ -2092,5 +2207,50 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 "mode={mode}: error should mention the OCS path, got: {err}"
             );
         }
+    }
+
+    /// The compiled-in `ika_system_package_id` must be the ORIGINAL (defining)
+    /// system package, not a later upgrade. Every consumer of this field
+    /// matches Sui type tags (event filters, the system object's own type, the
+    /// OCS relevance set), and type tags carry the defining package forever;
+    /// the current executable package is resolved at runtime from the system
+    /// object's `package_id` field, never from here. Chain receipts
+    /// (sui_getObject, 2026-07-25): the testnet system object's type is
+    /// `0xae71e386…::system::System` with content `package_id: 0xde05f49e…`
+    /// (v2 upgrade); mainnet's type is `0xb874c9b5…::system::System` with
+    /// `package_id: 0xd69f947d…`. Pinning both directions because the v2 ids
+    /// sit one line below the base ids in
+    /// `deployed_contracts/{mainnet,testnet}/address.yaml`
+    /// (`ika_system_package_id` vs `ika_system_package_id_v2`) — the exact
+    /// copy mistake that shipped once.
+    #[test]
+    fn compiled_in_system_package_id_is_the_original_not_the_v2_upgrade() {
+        let testnet = compiled_in_ika_identity(SuiChainIdentifier::Testnet).unwrap();
+        assert_eq!(
+            testnet.ika_system_package_id.to_hex_literal(),
+            "0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148",
+            "testnet ika_system_package_id must be the ORIGINAL system package \
+             (the defining id in the system object's type tag)"
+        );
+        assert_ne!(
+            testnet.ika_system_package_id.to_hex_literal(),
+            "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+            "0xde05f49e… is the testnet system package's v2 UPGRADE - resolved \
+             at runtime from the system object, never compiled in"
+        );
+
+        let mainnet = compiled_in_ika_identity(SuiChainIdentifier::Mainnet).unwrap();
+        assert_eq!(
+            mainnet.ika_system_package_id.to_hex_literal(),
+            "0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486",
+            "mainnet ika_system_package_id must be the ORIGINAL system package \
+             (the defining id in the system object's type tag)"
+        );
+        assert_ne!(
+            mainnet.ika_system_package_id.to_hex_literal(),
+            "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+            "0xd69f947d… is the mainnet system package's v2 UPGRADE - resolved \
+             at runtime from the system object, never compiled in"
+        );
     }
 }

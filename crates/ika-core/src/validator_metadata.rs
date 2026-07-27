@@ -1004,11 +1004,9 @@ pub struct OffChainCommitteeBundles {
 /// Outcome of trying to assemble the committee's class-groups
 /// public-keys map from off-chain announcements + the local blob
 /// store. `Complete` means every supplied authority resolved
-/// successfully. `Incomplete` means *at least one* didn't; under
-/// off-chain mode (`off_chain_validator_metadata_enabled`) the
+/// successfully. `Incomplete` means *at least one* didn't; the
 /// caller returns `OffChainAssemblyIncomplete` and the outer sync
-/// loop retries on the next tick, while in legacy mode the caller
-/// falls back to reading mpc_data from chain. Partial maps are
+/// loop retries on the next tick. Partial maps are
 /// never returned — reconfig MPC reads
 /// `Committee.class_groups_public_keys_and_proofs` directly and a
 /// missing entry silently drops that validator's share.
@@ -1017,6 +1015,7 @@ pub enum OffChainMpcDataAssembly {
     Complete(Box<OffChainCommitteeBundles>),
     Incomplete {
         missing: Vec<AuthorityName>,
+        reason: OffChainAssemblyMissingReason,
     },
     /// Permanent for this epoch: the freeze partition excluded EVERY
     /// requested committee member, so there is no attested mpc_data to
@@ -1026,6 +1025,35 @@ pub enum OffChainMpcDataAssembly {
     /// escalates this to `error!` instead of retrying it as a transient
     /// `Incomplete` miss.
     EverythingExcluded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OffChainAssemblyMissingReason {
+    Announcement,
+    BlobMissingOrInvalid,
+    SourceUnavailable,
+    NoInput,
+    EverythingExcluded,
+}
+
+impl OffChainAssemblyMissingReason {
+    pub const ALL: [Self; 5] = [
+        Self::Announcement,
+        Self::BlobMissingOrInvalid,
+        Self::SourceUnavailable,
+        Self::NoInput,
+        Self::EverythingExcluded,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Announcement => "announcement",
+            Self::BlobMissingOrInvalid => "blob_missing_or_invalid",
+            Self::SourceUnavailable => "source_unavailable",
+            Self::NoInput => "no_input",
+            Self::EverythingExcluded => "everything_excluded",
+        }
+    }
 }
 
 /// Tries to assemble a committee's class-groups public-keys-and-
@@ -1105,6 +1133,7 @@ where
     if !saw_any {
         return OffChainMpcDataAssembly::Incomplete {
             missing: Vec::new(),
+            reason: OffChainAssemblyMissingReason::NoInput,
         };
     }
     if missing.is_empty() {
@@ -1116,7 +1145,10 @@ where
             vss_hpke,
         }))
     } else {
-        OffChainMpcDataAssembly::Incomplete { missing }
+        OffChainMpcDataAssembly::Incomplete {
+            missing,
+            reason: OffChainAssemblyMissingReason::BlobMissingOrInvalid,
+        }
     }
 }
 
@@ -1386,6 +1418,7 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             // caller retries or falls back per its own policy.
             return OffChainMpcDataAssembly::Incomplete {
                 missing: committee_authorities.to_vec(),
+                reason: OffChainAssemblyMissingReason::SourceUnavailable,
             };
         };
         let frozen = store
@@ -1403,7 +1436,10 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             }) {
                 AssemblyInputDecision::Pairs(pairs) => pairs,
                 AssemblyInputDecision::AnnouncementMissing(missing) => {
-                    return OffChainMpcDataAssembly::Incomplete { missing };
+                    return OffChainMpcDataAssembly::Incomplete {
+                        missing,
+                        reason: OffChainAssemblyMissingReason::Announcement,
+                    };
                 }
                 AssemblyInputDecision::EverythingExcluded => {
                     return OffChainMpcDataAssembly::EverythingExcluded;
@@ -1430,18 +1466,22 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
                 .expect("assembled_cache lock poisoned") =
                 Some((pairs.clone(), (**bundles).clone()));
         }
-        if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
-            let blob_only_missing: Vec<_> = missing
+        if let OffChainMpcDataAssembly::Incomplete {
+            ref missing,
+            reason,
+        } = result
+        {
+            let blob_only_missing = missing
                 .iter()
                 .filter(|m| pairs.iter().any(|(a, _)| a == *m))
-                .collect();
+                .count();
             tracing::debug!(
                 store_epoch = store.epoch(),
                 requested = committee_authorities.len(),
                 excluded = excluded.len(),
                 announcement_present = pairs.len(),
-                blob_missing_in_perpetual = blob_only_missing.len(),
-                ?blob_only_missing,
+                blob_missing_in_perpetual = blob_only_missing,
+                reason = reason.label(),
                 "off-chain validator-mpc_data assembly incomplete; \
                  waiting for P2P propagation to converge"
             );
@@ -2060,9 +2100,9 @@ mod tests {
 
     #[test]
     fn end_of_publish_v1_and_v2_have_distinct_keys() {
-        // Keep V1 and V2 keyed under different variants so the
-        // consensus dedupe layer doesn't conflate the two during a
-        // protocol-flag flip.
+        // Both variants remain on the wire (V1 is still decoded, and
+        // dropped, on receipt). Keep them keyed under different
+        // variants so the consensus dedupe layer never conflates the two.
         use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
         let kps = random_committee_key_pairs_of_size(1);
         let signer = name_of(&kps[0]);
@@ -2070,6 +2110,10 @@ mod tests {
         let att = build_handoff_attestation(9, [0xFF; 32], vec![]).expect("build");
         let handoff_msg = sign_handoff_attestation(att, signer, consensus_kp);
 
+        // Constructing a V1 is exactly what this test is for — it pins the
+        // key of a variant we still decode. This is the one sanctioned use
+        // of the deprecated producer.
+        #[allow(deprecated)]
         let v1 = ConsensusTransaction::new_end_of_publish(signer);
         let v2 = ConsensusTransaction::new_end_of_publish_v2(signer, handoff_msg);
         assert!(matches!(v1.key(), ConsensusTransactionKey::EndOfPublish(_)));
@@ -2533,7 +2577,7 @@ mod tests {
                 store.get(d).cloned()
             });
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert_eq!(missing, vec![name_b]);
             }
             other => panic!("expected Incomplete, got {other:?}"),
@@ -2734,7 +2778,7 @@ mod tests {
         let outcome =
             assemble_committee_mpc_data_off_chain(std::iter::empty(), |d| store.get(d).cloned());
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert!(
                     missing.is_empty(),
                     "pure helper has no committee context; missing is empty"
@@ -2761,7 +2805,7 @@ mod tests {
             store.get(d).cloned()
         });
         match outcome {
-            OffChainMpcDataAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing, .. } => {
                 assert_eq!(missing, vec![name]);
             }
             other => panic!("expected Incomplete, got {other:?}"),

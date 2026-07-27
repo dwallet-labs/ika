@@ -197,7 +197,10 @@ impl ValidatorConfigBuilder {
                 sui_state_mirror_peers: self
                     .sui_state_mirror_peers_override
                     .clone()
-                    .unwrap_or_default(),
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
                 sui_genesis: self.sui_genesis.clone(),
                 sui_checkpoint_archive: None,
                 sui_chain_identifier: SuiChainIdentifier::Custom,

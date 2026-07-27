@@ -114,6 +114,11 @@ pub struct EpochMetrics {
     /// epoch-store open.
     pub consensus_last_committed_leader_round: IntGauge,
 
+    /// Consensus timestamp (unix seconds) of the latest commit processed at
+    /// the Ika commit boundary. Zero until this process handles its first
+    /// commit; metric collection never mutates it.
+    pub consensus_last_committed_timestamp_seconds: IntGauge,
+
     /// The configured `mpc_data_freeze_grace_rounds` for the current
     /// protocol version, or `-1` when the off-chain-metadata feature
     /// (and thus the freeze) is disabled for it or the value is
@@ -312,6 +317,12 @@ impl EpochMetrics {
                 "ika_consensus_last_committed_leader_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
+                registry
+            )
+            .unwrap(),
+            consensus_last_committed_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_consensus_last_committed_timestamp_seconds",
+                "Consensus timestamp in unix seconds of the latest commit processed at the Ika commit boundary; 0 until this process handles its first commit",
                 registry
             )
             .unwrap(),

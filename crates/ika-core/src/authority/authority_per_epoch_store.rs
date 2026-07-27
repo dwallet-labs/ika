@@ -50,7 +50,7 @@ use crate::dwallet_mpc::{
 };
 use crate::epoch::epoch_metrics::EpochMetrics;
 use crate::epoch_tasks::mpc_data_announcement_sender::ready_signal_deadline_ms;
-use crate::stake_aggregator::{InsertResult, StakeAggregator};
+use crate::stake_aggregator::StakeAggregator;
 use crate::system_checkpoints::{
     BuilderSystemCheckpoint, PendingSystemCheckpoint, PendingSystemCheckpointInfo,
     PendingSystemCheckpointV1, SystemCheckpointHeight, SystemCheckpointService,
@@ -107,13 +107,6 @@ pub enum CancelConsensusCertificateReason {
 }
 
 pub enum ConsensusCertificateResult {
-    /// The last checkpoint message of the epoch.
-    /// After the Sui smart contract receives this message, it knows that no more system checkpoints will get created
-    /// in this epoch, and it allows external calls to advance the epoch.
-    ///
-    /// This is a certificate result, so both the system & dwallet checkpointing mechanisms will create
-    /// separate checkpoint messages, to update both the DWallet Coordinator & Ika System Sui objects.
-    EndOfPublish,
     /// The consensus message was ignored (e.g. because it has already been processed).
     Ignored,
     /// Everything else, e.g. AuthorityCapabilities, CheckpointSignatures, etc.
@@ -457,14 +450,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// `process_consensus_transactions_and_commit_boundary`), so the frozen
     /// set is a deterministic function of the consensus sequence.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
-
-    /// Reflects the per-epoch `protocol_config` flag that gates
-    /// the entire off-chain validator-metadata pipeline. When
-    /// false, the producer task, peer-blob fetcher, attestation-
-    /// tally freeze, and handoff-cert path are all disabled, and
-    /// DKG/reconfiguration kickoff falls back to the legacy
-    /// chain-only behavior.
-    fn off_chain_validator_metadata_enabled(&self) -> bool;
 
     /// Returns the freeze-time `validator -> blob_hash` snapshot
     /// for this epoch (post-attestation-tally working set), or an
@@ -853,11 +838,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
     }
 
-    fn off_chain_validator_metadata_enabled(&self) -> bool {
-        self.protocol_config()
-            .off_chain_validator_metadata_enabled()
-    }
-
     fn get_frozen_mpc_data_input_set_trait(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
         self.get_frozen_validator_mpc_data_input_set()
     }
@@ -1130,7 +1110,23 @@ pub struct AuthorityEpochTables {
     /// consensus-deterministic).
     end_of_publish_quorum_round: DBMap<u64, u64>,
 
-    /// Single-entry (key `0`) marker set when the deferred (v4) epoch-close
+    /// Single-entry (key `0`) record of how many authorities were in the
+    /// in-memory `end_of_publish` aggregator at the commit that first
+    /// observed quorum — the input to the close's `all_voted` fast path.
+    ///
+    /// Persisted for the same reason as `end_of_publish_quorum_round`, and it
+    /// is NOT derivable from `end_of_publish` above. That table records every
+    /// vote, but the live aggregator stops accepting inserts the moment
+    /// quorum is reached, so its membership is a prefix of the CONSENSUS
+    /// ARRIVAL ORDER — which the table does not store (its value is `()`, and
+    /// iteration is by `AuthorityName`). Rebuilding the aggregator from the
+    /// table on restart therefore yields the FULL vote set, a larger count
+    /// than a never-restarted peer holds; without this record a restarted
+    /// validator could satisfy `all_voted`, skip the grace, and close the
+    /// epoch at a different round than the rest of the committee. See #1917.
+    end_of_publish_quorum_voted_count: DBMap<u64, u64>,
+
+    /// Single-entry (key `0`) marker set when the deferred epoch-close
     /// message set was emitted. Written atomically with that commit's batch;
     /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
     /// restarted validator does not re-emit the close at a later commit
@@ -1948,18 +1944,10 @@ impl AuthorityPerEpochStore {
                 .get(&0)?
                 .map_or(-1, |round| round as i64),
         );
-        // Gated like the deadline gauge below: under a protocol version
-        // where the off-chain-metadata feature (and thus the freeze) is
-        // disabled, a healthy-looking grace value beside permanently -1
-        // freeze gauges would mislead.
         metrics.dwallet_mpc_data_freeze_grace_rounds.set(
-            if protocol_config.off_chain_validator_metadata_enabled() {
-                protocol_config
-                    .mpc_data_freeze_grace_rounds_as_option()
-                    .map_or(-1, |grace| grace as i64)
-            } else {
-                -1
-            },
+            protocol_config
+                .mpc_data_freeze_grace_rounds_as_option()
+                .map_or(-1, |grace| grace as i64),
         );
         let last_committed_leader_round = tables
             .get_last_consensus_stats()?
@@ -1973,36 +1961,30 @@ impl AuthorityPerEpochStore {
         // and the sender re-tightens the gauge once it re-observes the
         // next-epoch committee (matching the emit gate's actual post-restart
         // behavior). Consensus-clock seconds, not local wall clock.
-        let ready_signal_deadline_seconds =
-            if protocol_config.off_chain_validator_metadata_enabled() {
-                tables
-                    .epoch_first_commit_timestamp_ms
-                    .get(&0)?
-                    .and_then(|first_commit_ts_ms| {
-                        ready_signal_deadline_ms(
-                            Some(first_commit_ts_ms),
-                            epoch_start_configuration
-                                .epoch_start_state()
-                                .epoch_duration_ms(),
-                            None,
-                        )
-                    })
-                    .map_or(-1, |deadline_ms| (deadline_ms / 1000) as i64)
-            } else {
-                -1
-            };
+        let ready_signal_deadline_seconds = tables
+            .epoch_first_commit_timestamp_ms
+            .get(&0)?
+            .and_then(|first_commit_ts_ms| {
+                ready_signal_deadline_ms(
+                    Some(first_commit_ts_ms),
+                    epoch_start_configuration
+                        .epoch_start_state()
+                        .epoch_duration_ms(),
+                    None,
+                )
+            })
+            .map_or(-1, |deadline_ms| (deadline_ms / 1000) as i64);
         metrics
             .dwallet_mpc_data_ready_signal_deadline_timestamp_seconds
             .set(ready_signal_deadline_seconds);
         let end_of_publish =
             StakeAggregator::from_iter(committee.clone(), tables.end_of_publish.safe_iter())?;
-        // Restore the closed state across a restart: the deferred (v4) close
+        // Restore the closed state across a restart: the deferred close
         // persists `epoch_close_emitted` atomically with the closing commit,
         // so reopening with `AcceptAllCerts` here would both re-emit the
         // close set at a later commit (forking this validator's checkpoint
         // stream from peers) and re-open transaction acceptance that the
-        // rest of the committee has closed. Only the v4 deferred close ever
-        // writes this marker, so v3 restart behavior is unchanged.
+        // rest of the committee has closed.
         let initial_reconfig_status = if tables.epoch_close_emitted.get(&0)?.is_some() {
             ReconfigCertStatus::RejectAllTx
         } else {
@@ -2353,13 +2335,6 @@ impl AuthorityPerEpochStore {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub fn record_end_of_publish_vote(&self, origin_authority: &AuthorityName) -> IkaResult {
-        self.tables()?
-            .end_of_publish
-            .insert(origin_authority, &())?;
-        Ok(())
-    }
-
     /// Whether `authority`'s EndOfPublish vote has been sequenced and
     /// recorded in this epoch's durable table. The handoff signature
     /// sender uses this to confirm its own `EndOfPublishV2` actually
@@ -2369,6 +2344,11 @@ impl AuthorityPerEpochStore {
     /// epoch boundary (exactly when `EndOfPublishV2` fires) or on crash.
     /// Restart-safe — the table is reloaded into the in-memory
     /// aggregator at epoch-store construction.
+    ///
+    /// Votes become visible here at the batch write of the commit that
+    /// sequenced them, not the instant they are processed (they ride
+    /// `ConsensusCommitOutput`), so a `true` here means the vote is durable —
+    /// which is precisely what this check is asking.
     pub fn has_recorded_end_of_publish_vote(&self, authority: &AuthorityName) -> IkaResult<bool> {
         Ok(self.tables()?.end_of_publish.get(authority)?.is_some())
     }
@@ -2389,12 +2369,6 @@ impl AuthorityPerEpochStore {
         announcement: &ValidatorMpcDataAnnouncement,
         blob: &[u8],
     ) -> IkaResult {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(());
-        }
         let current_epoch = self.epoch();
         if announcement.epoch != current_epoch {
             warn!(
@@ -2461,12 +2435,6 @@ impl AuthorityPerEpochStore {
         signed: &SignedValidatorMpcDataAnnouncement,
         blob: &[u8],
     ) -> IkaResult {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(());
-        }
         // Persist the joiner's blob immediately (hash-verified,
         // content-addressed) even if the announcement itself must be
         // buffered until the joiner pubkey provider installs: bytes
@@ -3098,12 +3066,6 @@ impl AuthorityPerEpochStore {
         &self,
         msg: &ika_types::handoff::HandoffSignatureMessage,
     ) -> IkaResult<()> {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(());
-        }
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
             // No expected attestation yet — this validator hasn't
             // finished its own snapshot ready check. Buffer the
@@ -3302,18 +3264,11 @@ impl AuthorityPerEpochStore {
     /// `EpochMpcDataReadySignal.validated_peers` should be
     /// populated with at emit time.
     ///
-    /// Returns an empty vec when off-chain mode is disabled (v3),
-    /// when perpetual storage isn't attached, or when no
-    /// announcements have arrived yet — callers should treat
+    /// Returns an empty vec when perpetual storage isn't attached, or
+    /// when no announcements have arrived yet — callers should treat
     /// "fewer than stake-quorum coverage" as "not yet ready to
     /// signal."
     pub fn compute_locally_validated_peers(&self) -> IkaResult<Vec<AuthorityName>> {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(Vec::new());
-        }
         let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
             return Ok(Vec::new());
         };
@@ -3440,7 +3395,7 @@ impl AuthorityPerEpochStore {
     /// re-install of a DIFFERENT attestation DELETES rows endorsing the
     /// superseded one — so the value can move down as well as up, at
     /// wall-clock-determined commits that differ across validators. See the
-    /// call-site NOTE in `decide_v4_epoch_close` for why the close stays
+    /// call-site NOTE in `decide_deferred_epoch_close` for why the close stays
     /// safe anyway, and
     /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md for the
     /// planned replacement by a sequence-pure tally.
@@ -3456,7 +3411,7 @@ impl AuthorityPerEpochStore {
         Ok(stake >= committee.quorum_threshold())
     }
 
-    /// Pure v4 epoch-close decision (#1736), factored out so the handoff-cert
+    /// Pure epoch-close decision (#1736), factored out so the handoff-cert
     /// coupling is unit-tested independently of the consensus machinery.
     /// Returns `None` to keep waiting, `Some(false)` for a normal close
     /// (handoff-cert quorum reached), `Some(true)` for a liveness-backstop close
@@ -3467,7 +3422,7 @@ impl AuthorityPerEpochStore {
     /// backstop (a small multiple of the EndOfPublish grace), which closes
     /// regardless to preserve liveness against a genuinely non-signing
     /// validator. The close never fires before EndOfPublish readiness.
-    fn decide_v4_epoch_close(
+    fn decide_deferred_epoch_close(
         eop_ready: bool,
         handoff_cert_quorum: bool,
         rounds_since_quorum: u64,
@@ -3507,12 +3462,6 @@ impl AuthorityPerEpochStore {
         &self,
         signal: &ika_types::validator_metadata::EpochMpcDataReadySignal,
     ) -> IkaResult {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(());
-        }
         let current_epoch = self.epoch();
         if signal.epoch != current_epoch {
             warn!(
@@ -3750,8 +3699,8 @@ impl AuthorityPerEpochStore {
         // A missing perpetual handle at a freeze commit is a LOCAL
         // initialization fault, not a chain-true no-cert case: both
         // epoch-store creation sites install the handle before consensus can
-        // process a commit, and the freeze only runs under v4 where the
-        // handle must be present. Fail the commit (replay) like the read
+        // process a commit, so the handle must be present at any freeze
+        // commit. Fail the commit (replay) like the read
         // error below — a silent Ok(empty) here would reintroduce the exact
         // shrunken-set fork this function exists to close, via the arm two
         // lines above the fix. Unreachable today; guards future init-order
@@ -3952,7 +3901,7 @@ impl AuthorityPerEpochStore {
     /// The consensus leader round at which this validator observed the
     /// `EndOfPublish` stake quorum — the persisted anchor of the
     /// deferred-close grace countdown — or `None` if quorum hasn't been
-    /// reached this epoch (or the epoch closed inline under v3 rules).
+    /// reached this epoch.
     pub fn end_of_publish_quorum_round(&self) -> IkaResult<Option<u64>> {
         Ok(self.tables()?.end_of_publish_quorum_round.get(&0)?)
     }
@@ -4151,28 +4100,16 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
                 ..
             }) => {
-                if &transaction.sender_authority() != authority {
-                    warn!(
-                        "EndOfPublish authority {} does not match its author from consensus {}",
-                        authority, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-                // Under v4 (off_chain_validator_metadata_enabled),
-                // the EndOfPublishV2 bundled variant is the only
-                // legitimate way to vote EOP. A peer emitting
-                // standalone V1 is misconfigured — drop it so we
-                // don't count the vote against a missing handoff.
-                if self
-                    .protocol_config()
-                    .off_chain_validator_metadata_enabled()
-                {
-                    warn!(
-                        %authority,
-                        "EndOfPublish (V1) received under v4 — drop (V2 is the only valid variant)"
-                    );
-                    return None;
-                }
+                // The EndOfPublishV2 bundled variant is the only
+                // legitimate way to vote EOP at every supported
+                // protocol version. A peer emitting standalone V1 is
+                // misconfigured — drop it so we don't count the vote
+                // against a missing handoff.
+                warn!(
+                    %authority,
+                    "EndOfPublish (V1) received — drop (V2 is the only valid variant)"
+                );
+                return None;
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind:
@@ -4182,22 +4119,6 @@ impl AuthorityPerEpochStore {
                     },
                 ..
             }) => {
-                // Under v3 (off_chain_validator_metadata_enabled
-                // is false), V2 isn't part of the protocol —
-                // `record_handoff_signature` no-ops in v3 but
-                // `process_end_of_publish_vote` would still count
-                // the V2 vote and create a half-processed message.
-                // Drop V2 outright under v3.
-                if !self
-                    .protocol_config()
-                    .off_chain_validator_metadata_enabled()
-                {
-                    warn!(
-                        %authority,
-                        "EndOfPublishV2 received under v3 — drop (V1 is the only valid variant)"
-                    );
-                    return None;
-                }
                 if &transaction.sender_authority() != authority {
                     warn!(
                         "EndOfPublishV2 authority {} does not match its author from consensus {}",
@@ -4475,6 +4396,9 @@ impl AuthorityPerEpochStore {
         self.metrics
             .consensus_last_committed_leader_round
             .set(consensus_commit_info.round as i64);
+        self.metrics
+            .consensus_last_committed_timestamp_seconds
+            .set((consensus_commit_info.timestamp / 1000) as i64);
 
         let mut verified_dwallet_checkpoint_certificates =
             VecDeque::with_capacity(transactions.len() + 1);
@@ -4519,36 +4443,13 @@ impl AuthorityPerEpochStore {
                     ignored = true;
                     // filter_roots = true;
                 }
-                ConsensusCertificateResult::EndOfPublish => {
-                    // v3 inline close (pre-v4 binaries close here too, so the
-                    // timing and per-commit transaction cutoff must match them
-                    // exactly — including the `break` that stops processing the
-                    // remainder of this commit). Under v4 this arm is
-                    // unreachable: `process_end_of_publish_vote` returns
-                    // `ConsensusMessage` and the close is deferred to the
-                    // grace check at the commit boundary below.
-                    let (dwallet_close_messages, system_close_messages) =
-                        self.build_epoch_close_checkpoint_messages()?;
-                    for message in system_close_messages {
-                        verified_system_checkpoint_certificates.push_back(message);
-                    }
-                    for message in dwallet_close_messages {
-                        verified_dwallet_checkpoint_certificates.push_back(message);
-                    }
-                    let mut reconfig_state = self.reconfig_state.write();
-                    reconfig_state.status = ReconfigCertStatus::RejectAllTx;
-                    break;
-                }
             }
             if !ignored {
                 output.record_consensus_message_processed(key.clone());
             }
         }
 
-        // EndOfPublish close grace (v4 ONLY — under v3 the epoch closes inline
-        // at the quorum-crossing vote, matching pre-v4 binaries; gating here
-        // keeps the close timing identical across binaries at the same
-        // protocol version during a rolling upgrade): once a stake-quorum of
+        // EndOfPublish close grace: once a stake-quorum of
         // EndOfPublish votes is in, defer the epoch close
         // `end_of_publish_grace_rounds` (protocol config) more consensus
         // rounds (unless every committee member has already voted) so
@@ -4560,11 +4461,7 @@ impl AuthorityPerEpochStore {
             self.reconfig_state.read().status,
             ReconfigCertStatus::RejectAllTx
         );
-        if self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-            && !already_closed
-        {
+        if !already_closed {
             let (has_quorum, voted_count) = {
                 let end_of_publish = self.end_of_publish.lock();
                 (end_of_publish.has_quorum(), end_of_publish.keys().count())
@@ -4593,7 +4490,30 @@ impl AuthorityPerEpochStore {
                         consensus_commit_info.round
                     }
                 };
-                let all_voted = voted_count >= self.committee().num_members();
+                // The `all_voted` input is pinned at the quorum-observing
+                // commit and read back from storage thereafter, so it cannot
+                // grow underneath a restart (#1917). Reading the LIVE
+                // aggregator here would make the close round depend on
+                // whether this validator happened to restart: the live count
+                // stops at the quorum-crossing membership, while the
+                // restart-hydrated one is the full vote set.
+                //
+                // Written in the same commit batch as the anchor above, so
+                // the two are always consistent. The `None` arm also covers
+                // an epoch that reached quorum under a binary predating this
+                // record: the in-memory count is then exactly what that
+                // binary itself used at this commit, so adopting it keeps
+                // close timing identical across the upgrade.
+                let quorum_voted_count =
+                    match self.tables()?.end_of_publish_quorum_voted_count.get(&0)? {
+                        Some(count) => count,
+                        None => {
+                            let count = voted_count as u64;
+                            output.set_end_of_publish_quorum_voted_count(count);
+                            count
+                        }
+                    };
+                let all_voted = quorum_voted_count >= self.committee().num_members() as u64;
                 // Consensus leader rounds advance in sequence but NOT by a
                 // fixed +1 per commit — rounds skip when a leader is not
                 // committed — so the grace is measured as the leader-round
@@ -4628,7 +4548,7 @@ impl AuthorityPerEpochStore {
                 // deterministic function of the sequence; it comes from
                 // buffered-quorum adoption (a lagging validator reaches quorum
                 // from peers' signatures at the same sequenced bundle index) plus
-                // the `grace*4` liveness backstop in `decide_v4_epoch_close`,
+                // the `grace*4` liveness backstop in `decide_deferred_epoch_close`,
                 // which also covers the deletion-flipped validator (it closes
                 // late via the backstop; its cert recovery is the barrier
                 // peer-fetch).
@@ -4636,9 +4556,9 @@ impl AuthorityPerEpochStore {
 
                 // The close decision (and the liveness backstop for a genuinely
                 // non-signing validator) is the pure, unit-tested
-                // `decide_v4_epoch_close`: `Some(on_backstop)` closes, `None`
+                // `decide_deferred_epoch_close`: `Some(on_backstop)` closes, `None`
                 // keeps waiting for the handoff-cert quorum.
-                if let Some(backstop_close) = Self::decide_v4_epoch_close(
+                if let Some(backstop_close) = Self::decide_deferred_epoch_close(
                     eop_ready,
                     handoff_cert_quorum,
                     rounds_since_quorum,
@@ -4679,7 +4599,7 @@ impl AuthorityPerEpochStore {
             }
         }
 
-        // mpc_data freeze (v4 only): decided HERE, at the commit boundary,
+        // mpc_data freeze: decided HERE, at the commit boundary,
         // so the frozen set is a deterministic function of the consensus
         // sequence — every validator evaluates the same ready-signal table
         // at the same commit. (Triggering the freeze from the wall-clock
@@ -4695,11 +4615,7 @@ impl AuthorityPerEpochStore {
         //     config) leader rounds past the quorum-observing round —
         //     consensus progress, not wall-clock — giving slower
         //     validators' blobs time to propagate before the set is pinned.
-        if self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-            && !self.is_mpc_data_frozen().unwrap_or(false)
-        {
+        if !self.is_mpc_data_frozen().unwrap_or(false) {
             let tables = self.tables()?;
             let mut signals: std::collections::BTreeMap<
                 AuthorityName,
@@ -4975,7 +4891,7 @@ impl AuthorityPerEpochStore {
     #[instrument(level = "trace", skip_all)]
     async fn process_consensus_transaction<C: DWalletCheckpointServiceNotify>(
         &self,
-        _output: &mut ConsensusCommitOutput,
+        output: &mut ConsensusCommitOutput,
         transaction: &VerifiedSequencedConsensusTransaction,
         checkpoint_service: &Option<Arc<C>>,
         system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
@@ -5090,7 +5006,7 @@ impl AuthorityPerEpochStore {
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
                 ..
-            }) => self.process_end_of_publish_vote(authority),
+            }) => self.process_end_of_publish_vote(output, authority),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind:
                     ConsensusTransactionKind::EndOfPublishV2 {
@@ -5115,7 +5031,7 @@ impl AuthorityPerEpochStore {
                 // the handoff cert only needs a quorum of valid
                 // signatures, not all of them.
                 self.record_handoff_signature(handoff_signature)?;
-                self.process_end_of_publish_vote(authority)
+                self.process_end_of_publish_vote(output, authority)
             }
         }
     }
@@ -5190,34 +5106,33 @@ impl AuthorityPerEpochStore {
     /// arms.
     fn process_end_of_publish_vote(
         &self,
+        output: &mut ConsensusCommitOutput,
         authority: &AuthorityName,
     ) -> IkaResult<ConsensusCertificateResult> {
-        self.record_end_of_publish_vote(authority)?;
+        // Through the commit batch, NOT an out-of-band table write. Both
+        // durable views of the vote set must land or be lost together: an
+        // immediate insert survives a crash that loses this commit's batch,
+        // and replay would then rebuild the aggregator from a table holding
+        // votes the replayed commit has not re-counted — pinning a larger
+        // count than the sequence implies and reintroducing #1917 through
+        // crash-replay. Batched, the table reflects exactly the pre-commit
+        // state on replay and the votes re-count through the guard below in
+        // consensus order.
+        output.record_end_of_publish_vote(*authority);
         let mut end_of_publish = self.end_of_publish.lock();
         // Duplicate votes can't double-count (the aggregator is a HashMap).
-        let quorum_crossed = !end_of_publish.has_quorum()
-            && matches!(
-                end_of_publish.insert_generic(*authority, ()),
-                InsertResult::QuorumReached(_)
-            );
-        // Version split — the close timing is consensus-critical and must
-        // match what every binary at the SAME protocol version does:
-        // - v3 (off_chain_validator_metadata disabled): close inline at the
-        //   quorum-crossing vote, exactly like the pre-v4 binaries this
-        //   network may still be running during a rolling upgrade.
-        // - v4: do NOT close here. The close is deferred
-        //   `end_of_publish_grace_rounds` (protocol config) more consensus
-        //   rounds past quorum (the grace check at the commit boundary in
-        //   `process_consensus_transactions_and_commit_boundary`), so
-        //   straggler `EndOfPublishV2` bundles — carrying their handoff
-        //   signatures — are still collected before the epoch closes.
-        if quorum_crossed
-            && !self
-                .protocol_config()
-                .off_chain_validator_metadata_enabled()
-        {
-            return Ok(ConsensusCertificateResult::EndOfPublish);
+        // The pre-quorum guard is load-bearing, not an optimization: it is
+        // what stops post-quorum stragglers from raising the aggregator's
+        // count, which is the `voted_count` the deferred-close grace reads.
+        if !end_of_publish.has_quorum() {
+            end_of_publish.insert_generic(*authority, ());
         }
+        // The epoch NEVER closes inline at the quorum-crossing vote. It is
+        // deferred `end_of_publish_grace_rounds` (protocol config) more
+        // consensus rounds past quorum (the grace check at the commit
+        // boundary in `process_consensus_transactions_and_commit_boundary`),
+        // so straggler `EndOfPublishV2` bundles — carrying their handoff
+        // signatures — are still collected before the epoch closes.
         Ok(ConsensusCertificateResult::ConsensusMessage)
     }
 
@@ -5531,12 +5446,23 @@ pub(crate) struct ConsensusCommitOutput {
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
     verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
 
+    /// EndOfPublish votes sequenced in this commit. Batched rather than
+    /// written on sight so the durable vote set can never run ahead of the
+    /// commit that sequenced it: on crash-replay the table must reflect the
+    /// pre-commit state, or the aggregator rehydrates with votes the replayed
+    /// commit has not re-counted (#1917).
+    end_of_publish_votes: Vec<AuthorityName>,
     /// First commit round at which the EndOfPublish stake quorum was
     /// observed (the grace anchor). Written through this batch so it
     /// commits atomically with the commit that observed it — an
     /// out-of-band write could desync from the commit on crash-replay.
     end_of_publish_quorum_round: Option<u64>,
-    /// Set when this commit emitted the deferred (v4) epoch-close message
+    /// Size of the in-memory EndOfPublish aggregator at that same
+    /// quorum-observing commit — the pinned `all_voted` input. Written in
+    /// this batch alongside the anchor above so the two can never disagree
+    /// (see the table's doc comment and #1917).
+    end_of_publish_quorum_voted_count: Option<u64>,
+    /// Set when this commit emitted the deferred epoch-close message
     /// set. Persisted atomically with the commit so a restarted validator
     /// neither re-emits the close (marker present ⇒ `reconfig_state` is
     /// restored to `RejectAllTx` on epoch-store open) nor loses it (a crash
@@ -5573,8 +5499,16 @@ impl ConsensusCommitOutput {
         self.dwallet_mpc_round_messages = new_value;
     }
 
+    pub(crate) fn record_end_of_publish_vote(&mut self, authority: AuthorityName) {
+        self.end_of_publish_votes.push(authority);
+    }
+
     pub(crate) fn set_end_of_publish_quorum_round(&mut self, round: u64) {
         self.end_of_publish_quorum_round = Some(round);
+    }
+
+    pub(crate) fn set_end_of_publish_quorum_voted_count(&mut self, voted_count: u64) {
+        self.end_of_publish_quorum_voted_count = Some(voted_count);
     }
 
     pub(crate) fn set_epoch_close_emitted(&mut self) {
@@ -5747,8 +5681,20 @@ impl ConsensusCommitOutput {
             )?;
         }
 
+        batch.insert_batch(
+            &tables.end_of_publish,
+            self.end_of_publish_votes
+                .into_iter()
+                .map(|authority| (authority, ())),
+        )?;
         if let Some(round) = self.end_of_publish_quorum_round {
             batch.insert_batch(&tables.end_of_publish_quorum_round, [(0u64, round)])?;
+        }
+        if let Some(voted_count) = self.end_of_publish_quorum_voted_count {
+            batch.insert_batch(
+                &tables.end_of_publish_quorum_voted_count,
+                [(0u64, voted_count)],
+            )?;
         }
         if self.epoch_close_emitted {
             batch.insert_batch(&tables.epoch_close_emitted, [(0u64, ())])?;
@@ -5870,13 +5816,13 @@ mod tests {
         AuthorityEpochTables::open(0, dir.path(), None)
     }
 
-    /// #1736: the v4 epoch close must require a handoff-cert quorum (not just
+    /// #1736: the epoch close must require a handoff-cert quorum (not just
     /// EndOfPublish readiness), with a bounded liveness backstop.
     #[test]
-    fn v4_epoch_close_requires_handoff_cert_quorum() {
+    fn epoch_close_requires_handoff_cert_quorum() {
         let grace = 50u64;
         let backstop = grace * 4; // HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER
-        let decide = AuthorityPerEpochStore::decide_v4_epoch_close;
+        let decide = AuthorityPerEpochStore::decide_deferred_epoch_close;
 
         // Not EndOfPublish-ready: never close, regardless of the cert quorum or
         // how many rounds have passed.
@@ -5919,7 +5865,7 @@ mod tests {
     /// at STEP 1 (reconfig flips to `RejectAllTx`, an `EndOfPublish` close
     /// message is emitted) and FAIL the STEP 1 assertions.
     #[tokio::test]
-    async fn v4_epoch_close_wiring_defers_until_handoff_cert_quorum() {
+    async fn epoch_close_wiring_defers_until_handoff_cert_quorum() {
         // Four equal-weight validators: quorum_threshold = 3, validity = 2.
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let committee = Arc::new(committee);
@@ -5941,15 +5887,6 @@ mod tests {
         )
         .unwrap();
 
-        // The whole close block is gated on this protocol flag; assert it so a
-        // protocol-version drift fails loudly here, not silently.
-        assert!(
-            epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled(),
-            "off-chain-metadata gate must be on (protocol >= 4), else the close \
-             block is never reached"
-        );
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
         assert!(
             grace > 0,
@@ -6005,7 +5942,7 @@ mod tests {
         );
 
         // STEP 1: EndOfPublish-ready (grace elapsed) + handoff sub-quorum.
-        // Fix: decide_v4_epoch_close(true, false, grace, grace) == None ⇒ defer.
+        // Fix: decide_deferred_epoch_close(true, false, grace, grace) == None ⇒ defer.
         // Base: `all_voted || grace_elapsed` == true ⇒ close (fails here).
         let mut output = ConsensusCommitOutput::new(close_window_round);
         let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
@@ -6044,7 +5981,7 @@ mod tests {
             "handoff signatures now at quorum (3 of 4)"
         );
 
-        // Fix: decide_v4_epoch_close(true, true, grace, grace) == Some(false) ⇒
+        // Fix: decide_deferred_epoch_close(true, true, grace, grace) == Some(false) ⇒
         // close. A fresh output per commit (the output is a per-commit batch).
         let mut output = ConsensusCommitOutput::new(close_window_round);
         let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
@@ -6072,6 +6009,279 @@ mod tests {
         );
     }
 
+    /// #1917: a validator that RESTARTS after every EndOfPublish vote has landed
+    /// must still close at the same round as its never-restarted peers.
+    ///
+    /// The two views of the vote set disagree by construction. The live
+    /// aggregator stops accepting inserts at the quorum-crossing membership (3
+    /// of 4 here), while `record_end_of_publish_vote` persists ALL votes and
+    /// restart hydration rebuilds the aggregator from that full table (4 of 4).
+    /// Reading `all_voted` from the live aggregator therefore flips it from
+    /// false to true across a restart, making `eop_ready` true immediately and
+    /// closing the epoch before the grace elapses — while peers keep waiting.
+    ///
+    /// The fix pins the count at the quorum-observing commit and reads it back
+    /// from storage. This test DISCRIMINATES fix from base: on base, the
+    /// post-restart commit closes and both STEP 3 assertions fail.
+    ///
+    /// Committee size 4 is deliberate — it is the smallest size where the test
+    /// helper's quorum formula `(2n).div_ceil(3)` and the chain's
+    /// `2*(n/3)+1` agree (both 3), so the scenario matches production. At n = 3
+    /// they differ (2 vs 3) and quorum is unanimity on chain, where `all_voted`
+    /// is legitimately true and there is nothing to discriminate.
+    #[tokio::test]
+    async fn epoch_close_all_voted_survives_restart_after_all_votes_land() {
+        let (base_committee, names) = freeze_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(grace > 1, "test needs a non-trivial grace window");
+
+        // Handoff-cert quorum satisfied throughout, so the close hinges purely
+        // on EndOfPublish readiness — i.e. on `all_voted` vs the grace.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(3) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(epoch_store.handoff_signatures_meet_quorum().unwrap());
+
+        // STEP 1: reproduce the live path's two views as they stand once
+        // EARLIER commits have durably landed every vote — the table holds all
+        // four, while the in-memory aggregator stopped at the quorum-crossing
+        // membership (the pre-quorum guard in `process_end_of_publish_vote`).
+        // Written straight to the table here because these votes belong to
+        // already-committed batches, not the commit this test drives.
+        for name in names.iter() {
+            epoch_store
+                .tables()
+                .unwrap()
+                .end_of_publish
+                .insert(name, &())
+                .unwrap();
+        }
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(end_of_publish.has_quorum(), "quorum at 3 of 4");
+            assert_eq!(end_of_publish.keys().count(), 3, "live view is capped");
+        }
+
+        // STEP 2: the quorum-observing commit pins both the anchor and the
+        // count. Well inside the grace, so no close fires here.
+        let quorum_round = 100u64;
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        let mut output = ConsensusCommitOutput::new(quorum_round);
+        epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        let mut batch = epoch_store.db_batch().unwrap();
+        output.write_to_batch(&epoch_store, &mut batch).unwrap();
+        batch.write().unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "no close yet — the grace has not elapsed"
+        );
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .end_of_publish_quorum_voted_count
+                .get(&0u64)
+                .unwrap(),
+            Some(3),
+            "the capped count must be pinned at the quorum-observing commit"
+        );
+        drop(epoch_store);
+
+        // STEP 3: restart. Hydration rebuilds the aggregator from the full
+        // table, so the LIVE view now says 4 of 4 — the input that would make
+        // `all_voted` true and close the epoch early.
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+        assert_eq!(
+            epoch_store.end_of_publish.lock().keys().count(),
+            4,
+            "restart hydrates the FULL vote set — this is the hazard being guarded"
+        );
+
+        let mut output = ConsensusCommitOutput::new(quorum_round + 1);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round + 1, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "#1917: the restarted validator must NOT close early — `all_voted` \
+             must come from the pinned count (3), not the hydrated view (4)"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1917: no close message may be emitted one round past quorum"
+        );
+    }
+
+    /// #1917 crash-replay variant: a crash between PROCESSING the
+    /// quorum-observing commit and WRITING its batch must not let the pinned
+    /// count come back larger than the consensus sequence implies.
+    ///
+    /// This is the window that survives pinning the count alone. If the vote
+    /// insert is an out-of-band table write, it is durable the moment the
+    /// commit is processed, while the anchor and the count ride the batch. Lose
+    /// the batch and the table is AHEAD of the replayed commit: hydration
+    /// rebuilds an already-over-quorum aggregator, the replayed commit's
+    /// pre-quorum guard therefore counts nothing, and the count re-pins at the
+    /// hydrated size instead of the quorum-crossing one — `all_voted` true, and
+    /// the epoch closes early exactly as in #1917. It needs the quorum commit
+    /// to carry more than the crossing vote, which is the common shape at an
+    /// epoch boundary where every validator votes off the same signal.
+    ///
+    /// Routing the vote insert through `ConsensusCommitOutput` closes it: the
+    /// table can only ever be as current as the last committed batch.
+    ///
+    /// No failpoint needed — "crash before the batch write" is faithfully
+    /// modelled by processing the commit and simply never writing its batch.
+    #[tokio::test]
+    async fn epoch_close_all_voted_survives_crash_before_quorum_commit_batch() {
+        let (base_committee, names) = freeze_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(3) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+
+        // The quorum-observing commit carries ALL FOUR votes: the third crosses
+        // quorum, the fourth is the one that must not inflate the pinned count.
+        let quorum_round = 100u64;
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        let mut output = ConsensusCommitOutput::new(quorum_round);
+        for name in names.iter() {
+            epoch_store
+                .process_end_of_publish_vote(&mut output, name)
+                .unwrap();
+        }
+        epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+
+        // CRASH: the batch is dropped, never written. Nothing this commit
+        // produced — votes, anchor, count — may have reached storage.
+        drop(output);
+        assert!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .end_of_publish
+                .safe_iter()
+                .next()
+                .is_none(),
+            "votes must ride the commit batch — an out-of-band insert would \
+             have survived the crash and is what reopens the #1917 window"
+        );
+        drop(epoch_store);
+
+        // Replay: consensus redelivers the lost commit, this time to completion.
+        let epoch_store = open_freeze_test_store(
+            dir.path(),
+            &base_committee,
+            0,
+            EpochMetrics::new(&Registry::new()),
+        );
+        assert_eq!(
+            epoch_store.end_of_publish.lock().keys().count(),
+            0,
+            "hydration must see the pre-commit state, not a half-applied commit"
+        );
+        let mut output = ConsensusCommitOutput::new(quorum_round);
+        for name in names.iter() {
+            epoch_store
+                .process_end_of_publish_vote(&mut output, name)
+                .unwrap();
+        }
+        epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        let mut batch = epoch_store.db_batch().unwrap();
+        output.write_to_batch(&epoch_store, &mut batch).unwrap();
+        batch.write().unwrap();
+
+        assert_eq!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .end_of_publish_quorum_voted_count
+                .get(&0u64)
+                .unwrap(),
+            Some(3),
+            "#1917: replay must re-derive the quorum-crossing count (3), not the \
+             number of votes the commit carried (4)"
+        );
+        assert!(
+            epoch_store.should_accept_tx(),
+            "#1917: the replayed commit must not close the epoch early"
+        );
+    }
+
     /// #1736 LIVENESS BACKSTOP (wiring): EndOfPublish-ready but the handoff-cert
     /// quorum never forms (handoff_signatures stays 2/4). The close must still
     /// FIRE at the backstop (rounds_since_quorum == grace * 4) so a genuinely
@@ -6083,7 +6293,7 @@ mod tests {
     /// or its multiplier changed — either of which would turn a permanently
     /// missing cert quorum into an indefinite epoch hang.
     #[tokio::test]
-    async fn v4_epoch_close_backstop_fires_without_handoff_cert_quorum() {
+    async fn epoch_close_backstop_fires_without_handoff_cert_quorum() {
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
@@ -6103,12 +6313,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled(),
-            "off-chain-metadata gate must be on (protocol >= 4)"
-        );
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
         assert!(
             grace > 0,
@@ -6797,6 +7001,10 @@ mod tests {
             -1
         );
         assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            0
+        );
+        assert_eq!(
             registry_gauge(
                 &registry,
                 "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
@@ -6822,12 +7030,6 @@ mod tests {
         let (base_committee, names) = freeze_test_committee();
         let epoch_store =
             open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
-        assert!(
-            epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled(),
-            "the freeze block is gated on the off-chain-metadata flag"
-        );
         let grace = epoch_store.protocol_config().mpc_data_freeze_grace_rounds();
         assert!(grace > 1, "test needs a non-trivial grace window");
 
@@ -6856,6 +7058,15 @@ mod tests {
             100
         );
         assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            100
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
+            100,
+            "scraping must not change the last-commit timestamp"
+        );
+        assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signal_stake"),
             3
         );
@@ -6874,6 +7085,10 @@ mod tests {
         );
         assert_eq!(
             registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            (100 + grace - 1) as i64
+        );
+        assert_eq!(
+            registry_gauge(&registry, "ika_consensus_last_committed_timestamp_seconds"),
             (100 + grace - 1) as i64
         );
         assert!(!epoch_store.is_mpc_data_frozen().unwrap());

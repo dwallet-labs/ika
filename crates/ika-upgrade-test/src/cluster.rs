@@ -1739,7 +1739,7 @@ impl ClusterOfProcesses {
     /// no static p2p seed peers: the running validators continuously feed the
     /// on-chain `pending_active_set` into their trusted peers, so a direct
     /// validator dials this registered-but-not-yet-active joiner (inbound),
-    /// which is what its `wait_for_specific_peers` boot gate needs.
+    /// which is what its `wait_for_mirror_peers` boot gate needs.
     pub async fn add_joiner_validator_mirrored(
         &mut self,
         binary: PathBuf,

@@ -60,6 +60,21 @@ defect-correlated kinds. They increment
 - `local_computation_pending_at_session_completion`
 - `local_computation_update_received_after_session_became_non_active`
 
+Consensus can also deliver protocol messages after output quorum has already
+made the local session terminal. The session still rejects those messages.
+They do not enter the anomaly snapshot system and normal-completion arrivals
+are debug-only; every arrival increments
+`ika_dwallet_mpc_messages_after_terminal_session_total{terminal_status,session_type}`.
+`terminal_status` is `completed` or `failed`, and `session_type` is the
+canonical bounded session-type label (or `unknown` when the request was never
+observed). A failed-session arrival warns immediately; completed-session
+arrivals warn only after 100 arrive inside a 60-second aggregation window.
+Ongoing degradation warns at most once per 60 seconds. After a warned burst
+goes quiet for 60 seconds, one recovery transition reports its aggregate
+completed/failed counts; isolated events do not produce recovery noise. The
+metric has no session, sender, authority, digest, protocol-name, or error
+label.
+
 When a defect trigger fires for the same quorum (rejection, conflicting
 reports, malicious attribution), the first two conditions are still attached
 to that snapshot's `trigger_conditions` as context, and the snapshot fields

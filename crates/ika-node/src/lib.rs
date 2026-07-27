@@ -162,7 +162,6 @@ use ika_core::dwallet_mpc::dwallet_mpc_service::{
 };
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::epoch_tasks::end_of_publish_sender::EndOfPublishSender;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -564,13 +563,23 @@ impl IkaNode {
                 None,
             )?;
             // Anemo dials seed peers asynchronously; `build_sui_connector_stack`
-            // probes the relay at construction, so wait for a configured mirror
-            // peer to be reachable first (as the sui-state-mirrored path does).
+            // probes the relay at construction, so wait for a usable mirror
+            // peer first (as the sui-state-mirrored path does): a configured
+            // one when `sui_state_mirror_peers` pins the set, else the first
+            // connected peer that answers a SuiStateMirror probe. A peer-only
+            // node has no committee to publish to discovery yet (reading it is
+            // what this stack is for) — its peers come from configured p2p
+            // seeds and the inbound dials of validators running the
+            // trusted-peer refresh loop.
             let mirror_peer_ids =
                 sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
-            Self::wait_for_specific_peers(
+            Self::wait_for_mirror_peers(
                 &p2p.p2p_network,
                 &mirror_peer_ids,
+                !config
+                    .sui_connector_config
+                    .sui_state_mirror_peers
+                    .is_empty(),
                 std::time::Duration::from_secs(60),
             )
             .await;
@@ -601,7 +610,7 @@ impl IkaNode {
             // mirrored-with-fallback path tolerates a failed initial ratchet
             // because its bootstrap reads go over direct gRPC instead.)
             // Retry *transient* (transport) failures with capped backoff — the
-            // relay peer was reachable moments ago in wait_for_specific_peers,
+            // relay peer was reachable moments ago in wait_for_mirror_peers,
             // so a flake should clear. But a non-retryable result (a broken or
             // pruned proof chain, a checkpoint that fails BLS verification or
             // isn't end-of-epoch, a wrong-epoch fallback, a missing committee)
@@ -772,9 +781,8 @@ impl IkaNode {
         // unconditionally, by the contract), so which one a node uses can't
         // desync the network. A node opts in by configuring a trust anchor
         // (`has_anchor`); without one it uses the legacy JSON-RPC event path.
-        // This is independent of `off_chain_validator_metadata_enabled`,
-        // which still gates the v4 metadata-v2 pipeline (handoff, MPC-data
-        // announcements, peer-blob fetch, ...) further down.
+        // Orthogonal to the metadata-v2 pipeline (handoff, MPC-data
+        // announcements, peer-blob fetch, ...) wired further down.
 
         let (
             mut reader_opt,
@@ -873,6 +881,24 @@ impl IkaNode {
             )?
         };
 
+        // Publish the initial trusted-peer set (this epoch's committee) to the
+        // p2p stack now that the network exists. We must explicitly send this
+        // instead of relying on the watch channel's initial value to trigger a
+        // change notification, so that state-sync and discovery are able to
+        // process it. It must also happen BEFORE the sui-state-mirrored wait
+        // below: discovery only dials committee peers once it sees this event,
+        // and automatic mirror-peer discovery (no configured
+        // `sui_state_mirror_peers`) needs those dials to produce a serving
+        // peer — sending it later would leave the wait dependent on inbound
+        // dials alone. (The peer-only path can't do this: it has no committee
+        // to publish before its relay stack exists.)
+        send_trusted_peer_change(
+            &config,
+            &trusted_peer_change_tx,
+            epoch_store.epoch_start_state(),
+        )
+        .expect("Initial trusted peers must be set");
+
         if is_sui_state_mirrored && !peer_only {
             // sui-state-mirrored *with* a fallback URL: the OCS stack is built
             // here, after the network is up. (Peer-only — mirrored with no
@@ -880,14 +906,20 @@ impl IkaNode {
             //
             // Anemo connects to seed peers asynchronously. `build_sui_connector_stack`
             // probes the transport (`get_latest_checkpoint`) at construction; if it
-            // runs before any configured sui-state-direct mirror peer is reachable
-            // the probe fails with "no peers reachable". Wait specifically for one
-            // of the configured `sui_state_mirror_peers` to come online.
+            // runs before any serving mirror peer is reachable the probe fails
+            // with "no peers reachable". Wait for a usable peer first: a
+            // configured one when `sui_state_mirror_peers` pins the set, else
+            // (automatic discovery) the first connected peer that answers a
+            // SuiStateMirror probe.
             let mirror_peer_ids =
                 sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
-            Self::wait_for_specific_peers(
+            Self::wait_for_mirror_peers(
                 &p2p_network,
                 &mirror_peer_ids,
+                !config
+                    .sui_connector_config
+                    .sui_state_mirror_peers
+                    .is_empty(),
                 std::time::Duration::from_secs(60),
             )
             .await;
@@ -1050,15 +1082,6 @@ impl IkaNode {
                 }
             });
         }
-
-        // We must explicitly send this instead of relying on the initial value to trigger
-        // watch value change, so that state-sync is able to process it.
-        send_trusted_peer_change(
-            &config,
-            &trusted_peer_change_tx,
-            epoch_store.epoch_start_state(),
-        )
-        .expect("Initial trusted peers must be set");
 
         info!("start state archival");
         // Start archiving local state to remote store
@@ -1397,11 +1420,7 @@ impl IkaNode {
             let next_epoch = next_committee.epoch();
             if last_handled_next_epoch != Some(next_epoch) {
                 let epoch_store = node.state.load_epoch_store_one_call_per_task();
-                if epoch_store
-                    .protocol_config()
-                    .off_chain_validator_metadata_enabled()
-                    && next_epoch == epoch_store.epoch() + 1
-                {
+                if next_epoch == epoch_store.epoch() + 1 {
                     let self_name = epoch_store.name;
                     // The next committee's names use the NEXT epoch's
                     // identity basis, which differs from this epoch's at the
@@ -1566,30 +1585,75 @@ impl IkaNode {
         }
     }
 
-    /// Block until at least one of `wanted` peers is connected, or `timeout`
-    /// elapses. Used by sui-state-mirrored startup so the OCS stack's transport
-    /// probe doesn't run before a sui-state-direct mirror peer is reachable.
-    async fn wait_for_specific_peers(
+    /// Block until the SuiStateMirror relay client has a usable peer, or
+    /// `timeout` elapses (the OCS stack build then proceeds and surfaces its
+    /// own error). Used by sui-state-mirrored startup so the OCS stack's
+    /// transport probe doesn't run before a serving mirror peer is reachable.
+    ///
+    /// Pinned mode (`pinned_configured`, the operator wrote a non-empty
+    /// `sui-state-mirror-peers` override): wait until one of the parsed peer
+    /// ids is connected — presence is enough, the operator asserted they serve
+    /// the mirror. `pinned` is the *leniently* parsed id list; when the config
+    /// listed only malformed entries it is empty, and the wait is skipped
+    /// entirely — the strict parse inside the OCS stack build is about to fail
+    /// boot loudly, so probing for discovered peers here (automatic-mode
+    /// behavior the operator did NOT choose) would only delay and confuse that
+    /// diagnosis.
+    ///
+    /// Automatic mode (no configured override): wait until at least one
+    /// *connected* peer answers a cheap SuiStateMirror probe. Mere
+    /// connectivity is not enough here — discovery connects every committee
+    /// peer, and most may be mirrored nodes that don't serve the relay.
+    async fn wait_for_mirror_peers(
         network: &anemo::Network,
-        wanted: &[PeerId],
+        pinned: &[PeerId],
+        pinned_configured: bool,
         timeout: std::time::Duration,
     ) {
-        if wanted.is_empty() {
+        let automatic = !pinned_configured;
+        if pinned_configured && pinned.is_empty() {
+            warn!(
+                "every configured sui-state-mirror-peers entry is malformed; skipping the \
+                 mirror-peer wait (the OCS stack build below will reject the config)"
+            );
             return;
         }
         let deadline = tokio::time::Instant::now() + timeout;
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
-            if wanted.iter().any(|p| network.peer(*p).is_some()) {
+            if automatic {
+                if let Some(peer_id) =
+                    ika_network::sui_state_mirror::find_serving_mirror_peer(network).await
+                {
+                    info!(
+                        ?peer_id,
+                        "automatic SuiStateMirror peer discovery found a serving peer"
+                    );
+                    return;
+                }
+            } else if pinned.iter().any(|p| network.peer(*p).is_some()) {
                 return;
             }
             if tokio::time::Instant::now() >= deadline {
-                warn!(
-                    timeout_secs = timeout.as_secs(),
-                    wanted_count = wanted.len(),
-                    "no configured sui-state-direct peer connected within timeout; proceeding anyway \
-                     (sui-state-mirrored OCS build is likely to fail and the node will exit)"
-                );
+                if automatic {
+                    warn!(
+                        timeout_secs = timeout.as_secs(),
+                        connected_peers = network.peers().len(),
+                        "no connected peer serves SuiStateMirror within the startup timeout \
+                         (automatic discovery: no `sui-state-mirror-peers` configured); check \
+                         p2p connectivity and that at least one committee validator runs \
+                         sui-state-direct with serve-mirror; proceeding anyway (the OCS build \
+                         is likely to fail and the node will exit)"
+                    );
+                } else {
+                    warn!(
+                        timeout_secs = timeout.as_secs(),
+                        wanted_count = pinned.len(),
+                        "no configured sui-state-direct peer connected within timeout; proceeding \
+                         anyway (sui-state-mirrored OCS build is likely to fail and the node will \
+                         exit)"
+                    );
+                }
                 return;
             }
             interval.tick().await;
@@ -1772,6 +1836,21 @@ impl IkaNode {
 
             network
         };
+
+        // Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
+        // dialable on their own: register them as high-affinity known peers so
+        // anemo establishes and maintains the connection — like a seed peer,
+        // but scoped to the mirrored data source (the field is meaningless
+        // otherwise, and a stale list on a direct node must not create dials).
+        if matches!(
+            config.sui_connector_config.sui_data_source,
+            Some(ika_config::node::SuiDataSource::SuiStateMirrored { .. })
+        ) {
+            ika_network::sui_state_mirror::register_addressed_mirror_peers(
+                &p2p_network,
+                &config.sui_connector_config.sui_state_mirror_peers,
+            );
+        }
 
         let discovery_handle =
             discovery.start(p2p_network.clone(), config.network_key_pair().copy());
@@ -2299,57 +2378,28 @@ impl IkaNode {
                     .await?;
             }
 
-            // Off-chain validator-metadata pipeline gate. When the
-            // protocol config flag is off, skip every install/spawn
-            // below — handoff signing, mpc_data announcements,
-            // joiner relay, pubkey updaters, syncer overlay sources.
-            // The tasks themselves also self-gate at the top of
-            // `run()`, but checking once here avoids the spawn churn.
-            let off_chain_metadata_enabled = cur_epoch_store
-                .protocol_config()
-                .off_chain_validator_metadata_enabled();
-
-            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
-                components,
-            ) =
+            let handoff_signature_sender_handle = if let Some(components) =
                 &*self.validator_components.lock().await
             {
-                let end_of_publish_sender = EndOfPublishSender::new(
-                    Arc::downgrade(&cur_epoch_store),
-                    Arc::new(components.consensus_adapter.clone()),
-                    sui_data_receivers.end_of_publish_receiver.clone(),
-                    cur_epoch_store.epoch(),
-                );
-                let end_of_publish_handle = Some(tokio::spawn(async move {
-                    end_of_publish_sender.run().await;
-                }));
-
-                let handoff_handle = if off_chain_metadata_enabled {
-                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
-                    let builders = ika_core::validator_metadata::default_handoff_items_builders(
-                        &cur_epoch_store,
+                let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
+                let builders =
+                    ika_core::validator_metadata::default_handoff_items_builders(&cur_epoch_store);
+                let handoff_sender =
+                    ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        Arc::new(components.consensus_adapter.clone()),
+                        sui_data_receivers.end_of_publish_receiver.clone(),
+                        consensus_keypair,
+                        sui_data_receivers.next_epoch_committee_receiver.clone(),
+                        sui_data_receivers.network_keys_receiver.clone(),
+                        builders,
                     );
-                    let handoff_sender =
-                        ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
-                            Arc::downgrade(&cur_epoch_store),
-                            cur_epoch_store.epoch(),
-                            Arc::new(components.consensus_adapter.clone()),
-                            sui_data_receivers.end_of_publish_receiver.clone(),
-                            consensus_keypair,
-                            sui_data_receivers.next_epoch_committee_receiver.clone(),
-                            sui_data_receivers.network_keys_receiver.clone(),
-                            builders,
-                        );
-                    Some(tokio::spawn(async move {
-                        handoff_sender.run().await;
-                    }))
-                } else {
-                    None
-                };
-
-                (end_of_publish_handle, handoff_handle)
+                Some(tokio::spawn(async move {
+                    handoff_sender.run().await;
+                }))
             } else {
-                (None, None)
+                None
             };
 
             // Producer-side broadcaster: announces this validator's
@@ -2358,8 +2408,8 @@ impl IkaNode {
             // mpc_data digest and the off-chain freeze never lands,
             // which leaves the step-14 kickoff gate closed and stalls
             // network DKG / reconfig.
-            let mpc_data_announcement_handle = if off_chain_metadata_enabled
-                && let Some(components) = &*self.validator_components.lock().await
+            let mpc_data_announcement_handle = if let Some(components) =
+                &*self.validator_components.lock().await
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
                 let blob_cache = ika_core::blob_cache::BlobCache::new(
@@ -2392,7 +2442,7 @@ impl IkaNode {
             // caches them locally so the off-chain validator-mpc_data
             // assembler can resolve every committee member without a
             // chain read.
-            let peer_blob_fetcher_handle = if off_chain_metadata_enabled {
+            let peer_blob_fetcher_handle = {
                 let authority_names_to_peer_ids = cur_epoch_store
                     .epoch_start_state()
                     .get_authority_names_to_peer_ids();
@@ -2410,11 +2460,9 @@ impl IkaNode {
                     self.metrics.mpc_data_blob_fetch_total.clone(),
                 );
                 let fetcher = Arc::new(fetcher);
-                Some(tokio::spawn(async move {
+                tokio::spawn(async move {
                     fetcher.run().await;
-                }))
-            } else {
-                None
+                })
             };
 
             // Joiner bootstrap verification: a node that is a validator
@@ -2425,9 +2473,7 @@ impl IkaNode {
             // and verify it (epoch-bound, prior committee, next-committee
             // pubkey-set hash). Surfaces a tampered/wrong bootstrap; does
             // not halt on failure.
-            let joiner_bootstrap_handle = if off_chain_metadata_enabled
-                && cur_epoch_store.epoch() >= 1
-            {
+            let joiner_bootstrap_handle = if cur_epoch_store.epoch() >= 1 {
                 use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
@@ -2756,18 +2802,16 @@ impl IkaNode {
             // next-epoch committee so the per-epoch store accepts
             // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
             // instead of silently dropping them.
-            let joiner_pubkey_updater_handle = if off_chain_metadata_enabled {
+            let joiner_pubkey_updater_handle = {
                 let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_next_epoch_committee(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         sui_client.clone(),
                     );
                 let updater = Arc::new(updater);
-                Some(tokio::spawn(async move {
+                tokio::spawn(async move {
                     updater.run().await;
-                }))
-            } else {
-                None
+                })
             };
 
             // Install the off-chain blob overlay so the network-
@@ -2777,44 +2821,42 @@ impl IkaNode {
             // previous-epoch installation (if any); the `Weak`
             // adapter naturally expires when the per-epoch store
             // drops.
-            if off_chain_metadata_enabled {
-                self.sui_connector_service
-                    .install_network_key_blob_source(Box::new(
-                        ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
-                            &cur_epoch_store,
-                        )),
-                    ));
-
-                // Install the off-chain validator-mpc_data assembler so
-                // `sync_next_committee` builds the next `Committee`'s
-                // class_groups_public_keys_and_proofs from validators'
-                // own `mpc_data` announcements + the perpetual blob
-                // store instead of refetching from chain. Falls back
-                // to chain when the off-chain set is `Incomplete`.
-                self.sui_connector_service.install_mpc_data_source(Box::new(
-                    ika_core::validator_metadata::EpochStoreMpcDataSource::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        self.state.perpetual_tables(),
-                    ),
+            self.sui_connector_service
+                .install_network_key_blob_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
+                        &cur_epoch_store,
+                    )),
                 ));
 
-                // Install the joiner-announcement relay impl on the
-                // Anemo `SubmitMpcDataAnnouncement` server so a peer
-                // joiner's announcement gets verified locally and
-                // forwarded into consensus instead of being rejected
-                // with "relay not installed".
-                if let Some(components) = &*self.validator_components.lock().await {
-                    self.mpc_announcement_relay.install(Box::new(
-                        ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
-                            Arc::downgrade(&cur_epoch_store),
-                            Arc::new(components.consensus_adapter.clone()),
-                            ika_core::blob_cache::BlobCache::new(
-                                self.mpc_data_blob_store.clone(),
-                                self.state.perpetual_tables(),
-                            ),
+            // Install the off-chain validator-mpc_data assembler so
+            // `sync_next_committee` builds the next `Committee`'s
+            // class_groups_public_keys_and_proofs from validators'
+            // own `mpc_data` announcements + the perpetual blob
+            // store instead of refetching from chain. Falls back
+            // to chain when the off-chain set is `Incomplete`.
+            self.sui_connector_service.install_mpc_data_source(Box::new(
+                ika_core::validator_metadata::EpochStoreMpcDataSource::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    self.state.perpetual_tables(),
+                ),
+            ));
+
+            // Install the joiner-announcement relay impl on the
+            // Anemo `SubmitMpcDataAnnouncement` server so a peer
+            // joiner's announcement gets verified locally and
+            // forwarded into consensus instead of being rejected
+            // with "relay not installed".
+            if let Some(components) = &*self.validator_components.lock().await {
+                self.mpc_announcement_relay.install(Box::new(
+                    ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        Arc::new(components.consensus_adapter.clone()),
+                        ika_core::blob_cache::BlobCache::new(
+                            self.mpc_data_blob_store.clone(),
+                            self.state.perpetual_tables(),
                         ),
-                    ));
-                }
+                    ),
+                ));
             }
 
             let stop_condition = self
@@ -2838,10 +2880,6 @@ impl IkaNode {
                     return Ok(());
                 }
             };
-            end_of_publish_sender_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
             handoff_signature_sender_handle.map(|handle| {
                 handle.abort();
                 Some(())
@@ -2850,14 +2888,8 @@ impl IkaNode {
                 handle.abort();
                 Some(())
             });
-            joiner_pubkey_updater_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
-            peer_blob_fetcher_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
+            joiner_pubkey_updater_handle.abort();
+            peer_blob_fetcher_handle.abort();
             joiner_bootstrap_handle.map(|handle| {
                 handle.abort();
                 Some(())
@@ -3395,16 +3427,6 @@ impl IkaNode {
         cur_epoch_store: &AuthorityPerEpochStore,
         new_epoch_store: &Arc<AuthorityPerEpochStore>,
     ) {
-        // Off-chain handoff is the only thing this barrier waits for; when
-        // the protocol flag is off (pre-v4) there is no off-chain handoff
-        // data to wait for, so skip the barrier entirely.
-        if !cur_epoch_store
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return;
-        }
-
         info!(
             next_epoch,
             "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \

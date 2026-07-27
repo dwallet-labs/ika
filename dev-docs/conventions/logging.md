@@ -53,6 +53,25 @@ line on the compute path, it is `debug!`.
   correct *because* of that guard; the same log without a guard would be
   spam and belongs at `debug!`.
 - Epoch open/close, reconfiguration start/finish, committee changes.
+- Recovery from a previously warned bounded degradation. Recovery is a state
+  transition, not a success line for every retry.
+
+## Aggregate hot asynchronous races
+
+Do not warn once per consensus-delivered item when the item can legitimately
+race a local state transition. Count every item with bounded labels, retain
+only fixed-size aggregation state, and log:
+
+- per-item detail at `debug!`, without payloads;
+- the first sustained-degradation transition at `warn!`, with aggregate
+  counts and a fixed reason code;
+- reminders no more than once per documented interval;
+- one `info!` transition after a warned period recovers.
+
+Messages arriving after an MPC session reaches `Completed` are the canonical
+example. `Failed` remains a separate metric/log status; rejection,
+conflicting-output, quorum-failure, and malicious-self paths keep their
+immediate anomaly diagnostics.
 
 ## Test-subscriber trap
 

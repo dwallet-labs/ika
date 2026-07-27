@@ -73,6 +73,15 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/ika-core/Cargo.toml"
+      # authority.rs holds the protocol-upgrade activation decision
+      # (capability tally / effective threshold); authority/** holds the
+      # per-epoch store — epoch-close timing, EndOfPublish accounting,
+      # reconfiguration state. Both are exactly what the mixed-binary
+      # scenarios assert, and were previously missing from this filter:
+      # the #1917 close-timing fix would have merged without v125_rollout
+      # ever running had it not been dispatched by hand.
+      - "crates/ika-core/src/authority.rs"
+      - "crates/ika-core/src/authority/**"
       - "crates/ika-core/src/dwallet_mpc/**"
       - "crates/ika-core/src/dwallet_session_request.rs"
       - "crates/ika-core/src/request_protocol_data.rs"

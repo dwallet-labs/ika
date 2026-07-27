@@ -63,3 +63,23 @@ and the peer set before bringing it back.
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)).
 - `ika_dwallet_handoff_signatures_rejected_total` increasing → a peer is signing
   divergent attestations (benign if transient at boundaries).
+- `rate(ika_dwallet_mpc_messages_after_terminal_session_total{terminal_status="completed"}[5m])`
+  → expected late-delivery volume. Alert only on a sustained baseline change;
+  an isolated increase is not a correctness failure.
+- `rate(ika_dwallet_mpc_messages_after_terminal_session_total{terminal_status="failed"}[5m]) > 0`
+  → investigate with the session failure/anomaly diagnostics. The counter does
+  not replace the immediate failure diagnostic.
+- `ika_off_chain_assembly_incomplete == 1` with
+  `ika_off_chain_assembly_incomplete_duration_seconds > 300` → announcement or
+  blob propagation is not converging. Split by the bounded
+  `ika_off_chain_assembly_missing{reason}` gauges; a successful recovery clears
+  them and updates `ika_off_chain_assembly_last_success_timestamp_seconds`.
+- `time() - ika_consensus_last_committed_timestamp_seconds` is commit staleness
+  after the gauge becomes non-zero. This is the Ika-owned progress signal for
+  the dependency-owned Mysticeti warning
+  `Skip scheduling new commit fetches: consensus handler is lagging`; Ika does
+  not patch or rate-limit that upstream log line.
+- `time() - ika_ocs_last_successful_relay_timestamp_seconds` is verified relay
+  read staleness after the gauge becomes non-zero. Correlate it with
+  `ika_ocs_proof_verify_failures_total`,
+  `ika_ocs_high_water_violations_total`, and relay request/failure counters.
