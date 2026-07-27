@@ -265,7 +265,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           # Full history + tags: the OLD binary is built from an arbitrary
-          # ref (e.g. the mainnet-v1.1.8 tag) via `git worktree add`.
+          # ref (e.g. the release/mainnet-v1.2.5 tag) via `git worktree add`.
           fetch-depth: 0
           # Resolve once at trigger time; never rebuild a moving branch head.
           ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
