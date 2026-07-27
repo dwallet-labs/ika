@@ -1445,6 +1445,11 @@ pub struct AuthorityEpochTables {
     /// full pool and suppresses top-ups until the pool physically starves) and
     /// resurrects presigns that were already served, which would hand the same
     /// presign to a second on-chain presign id.
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: this marker
+    /// is what MAKES `insert_presigns` idempotent — written in the fill's own
+    /// batch and consulted before absorbing, so a replayed fill is a no-op;
+    /// protects `internal_presign_pool_sizes` and the top-up decision (#1934).
     filled_presign_pool_slots: DBMap<(DWalletSignatureAlgorithm, ObjectID, u64), ()>,
 
     /// Presign served to each global presign request, keyed by the request's
@@ -1459,6 +1464,11 @@ pub struct AuthorityEpochTables {
     /// so a bare re-pop serves a DIFFERENT presign than the never-crashed peers
     /// put in their checkpoint message for the same presign id. Per-epoch, like
     /// `noa_assigned_presigns`, whose idempotency this mirrors.
+    ///
+    /// write-discipline: direct — safe because idempotent-replay: written in
+    /// the pop's own batch and read back on a re-served sequence number, so a
+    /// replayed request returns the identical presign; protects the
+    /// checkpoint-message bytes that must match across the committee (#1934).
     served_global_presigns: DBMap<u64, (SessionIdentifier, u16, Vec<u8>)>,
 
     /// Idle status updates by consensus round.
