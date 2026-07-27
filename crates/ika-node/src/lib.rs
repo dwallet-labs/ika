@@ -253,7 +253,14 @@ pub struct IkaNode {
 impl fmt::Debug for IkaNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("IkaNode")
-            .field("name", &self.state.name.concise())
+            .field(
+                "name",
+                &self
+                    .state
+                    .load_epoch_store_one_call_per_task()
+                    .name
+                    .concise(),
+            )
             .finish()
     }
 }
@@ -420,7 +427,6 @@ impl IkaNode {
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),
         );
-        let authority_name = config.protocol_public_key();
         let archive_readers =
             ArchiveReaderBalancer::new(config.archive_reader_config(), &prometheus_registry)?;
         let (trusted_peer_change_tx, trusted_peer_change_rx) = watch::channel(Default::default());
@@ -867,6 +873,20 @@ impl IkaNode {
             // Built before the bootstrap reads (see the transport gate); reuse.
             p2p
         } else {
+            // state_sync's pull mode ("notifier") is committee membership
+            // under THIS epoch's name basis — `epoch_store.name`, the
+            // consensus key from protocol v6. The BLS protocol key is absent
+            // from a consensus-basis committee, so deriving this from it
+            // would make a validator restarting after the v6 flip boot
+            // state-sync as a pull-mode non-committee node.
+            let is_state_sync_notifier =
+                !epoch_store.committee().authority_exists(&epoch_store.name);
+            info!(
+                name = ?epoch_store.name.concise(),
+                consensus_key_identity,
+                is_state_sync_notifier,
+                "state-sync boot identity"
+            );
             Self::create_p2p_network(
                 &config,
                 state_sync_store.clone(),
@@ -874,7 +894,7 @@ impl IkaNode {
                 trusted_peer_change_rx,
                 archive_readers.clone(),
                 &prometheus_registry,
-                !epoch_store.committee().authority_exists(&authority_name),
+                is_state_sync_notifier,
                 on_chain_checkpoint_cursors.clone(),
                 perpetual_tables.clone(),
                 sui_state_mirror_server,
@@ -1091,7 +1111,6 @@ impl IkaNode {
 
         info!("create authority state");
         let state = AuthorityState::new(
-            authority_name,
             secret,
             config.supported_protocol_versions.unwrap(),
             perpetual_tables.clone(),
@@ -1895,7 +1914,10 @@ impl IkaNode {
         let consensus_adapter = Arc::new(Self::construct_consensus_adapter(
             &committee,
             consensus_config,
-            state.name,
+            // The epoch store's name, not a startup-minted one: the adapter's
+            // committee is this epoch's, and the name basis (BLS below
+            // protocol v6, consensus key from v6) is a property of the epoch.
+            epoch_store.name,
             connection_monitor_status.clone(),
             &registry_service.default_registry(),
             epoch_store.protocol_config().clone(),
@@ -2359,7 +2381,14 @@ impl IkaNode {
 
             let transaction =
                 ConsensusTransaction::new_capability_notification_v1(AuthorityCapabilitiesV1::new(
-                    self.state.name,
+                    // MUST be this epoch's name: consensus attributes the
+                    // submission under the epoch committee's basis, and
+                    // `verify_consensus_transaction` drops a capability whose
+                    // `authority` field disagrees with that attribution — a
+                    // BLS-basis name here silences every capability vote (and
+                    // with it all future upgrades) once the committee is
+                    // consensus-key-named.
+                    cur_epoch_store.name,
                     cur_epoch_store.get_chain_identifier().chain(),
                     self.config
                         .supported_protocol_versions

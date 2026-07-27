@@ -36,6 +36,12 @@
 //!    resolve under the other basis (`expect_committee_size(4)`).
 //! 4. **Users keep being served** across the flip, on state (RocksDB, network
 //!    key) created by the literal v1.2.5 release under BLS-basis names.
+//! 5. **A restart against the consensus-basis committee re-joins as a
+//!    member.** One validator is rebooted after the flip and must derive its
+//!    startup identity under the epoch's basis — a BLS-derived startup name is
+//!    absent from a v6 committee, which would boot state-sync in pull mode as
+//!    a non-member ("notifier") — and must then carry its duties across the
+//!    next epoch boundary.
 //!
 //! Genesis is protocol v5 (`ProtocolVersion::MIN`), which the deployed
 //! v1.2.5 release supports; the current build advertises `MIN..=MAX` = 5..=6,
@@ -138,7 +144,7 @@ async fn v125_upgrade_activates_v6_and_flips_authority_names() {
         // must survive the flip.
         .run_workload("v125-at-v5-pre-flip")
         // ── Full committee swap: every validator moves to the current build. ─
-        .stop_and_swap(&[0, 1, 2, 3], current)
+        .stop_and_swap(&[0, 1, 2, 3], current.clone())
         .expect_all_validators_healthy()
         // With n=4 the default 50% buffer stake requires all four capability
         // votes at the tally, and a fresh capability can land just after it;
@@ -179,9 +185,31 @@ async fn v125_upgrade_activates_v6_and_flips_authority_names() {
         .expect_reconfiguration_output_version_at_least(4)
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
+        // ── Restart-after-flip: reboot one validator (same binary) against
+        //    the now consensus-basis committee. Startup must derive the
+        //    node's identity under the EPOCH's basis; a BLS-derived startup
+        //    name is absent from a v6 committee, so the node would boot
+        //    state-sync in pull mode as a non-member ("notifier").
+        .stop_and_swap(&[1], current)
+        .expect_all_validators_healthy()
+        // The restarted validator's boot-identity line (its log truncates on
+        // restart, so only the post-flip boot is visible): consensus-key
+        // basis AND recognized committee membership.
+        .expect_log_line_present_on_validator(
+            1,
+            "consensus_key_identity=true is_state_sync_notifier=false",
+        )
         // Users must still be served after the flip, on the v1.2.5-origin
-        // network key and against dWallets created before it.
+        // network key and against dWallets created before it — with the
+        // restarted member back in the committee.
         .run_workload("post-flip-at-v6")
+        // Re-joining means carrying duties across the NEXT boundary
+        // (mpc_data announcement, freeze, reshare), not merely reporting
+        // membership at boot: the epoch cannot advance without the restarted
+        // member's participation converging.
+        .wait_for_epoch(5)
+        .wait_for_all_validators_local_epoch(5)
+        .expect_all_validators_healthy()
         // Whole-run backstops: a late diverging output or a consensus
         // submission failure is a hard failure even if every polled gate
         // above happened to pass.
@@ -191,12 +219,15 @@ async fn v125_upgrade_activates_v6_and_flips_authority_names() {
         .await
         .expect(
             "literal v1.2.5 committee must upgrade to protocol v6, flip authority names to \
-             the consensus key, and keep converging and serving across the boundary",
+             the consensus key, keep converging and serving across the boundary, and \
+             re-admit a restarted validator as a committee member",
         );
 
     tracing::info!(
         "v125 -> v6 upgrade PASSED: literal v1.2.5 committee crossed v5 -> v6, authority \
          names flipped to the consensus key, both boundary and steady-state reshares \
-         converged, and users were served throughout"
+         converged, users were served throughout, and a validator restarted after the \
+         flip re-joined as a committee member (not a notifier) and crossed the next \
+         epoch boundary"
     );
 }

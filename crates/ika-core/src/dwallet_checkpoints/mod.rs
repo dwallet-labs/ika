@@ -1034,7 +1034,7 @@ impl DWalletCheckpointSignatureAggregator {
                 sequence_number=local_checkpoint_message.sequence_number,
                 ?digests_by_stake_messages,
                 remaining_stake=self.signatures_by_digest.uncommitted_stake(),
-                local_validator=?self.state.name,
+                local_validator=?epoch_store.name,
                 ?digest_to_validators,
                 ?local_checkpoint_message,
                 ?committee,
