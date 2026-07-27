@@ -45,6 +45,9 @@ type PresignPrivateOutputs = Arc<Mutex<HashMap<(commitment::CommitmentSizedNumbe
 /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
 type AssignedPresigns =
     Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>;
+/// Presign served to each global presign request, keyed by the request's session
+/// sequence number. Value: (presign session id, blending index, presign bytes).
+type ServedGlobalPresigns = Arc<Mutex<HashMap<u64, (SessionIdentifier, u16, Vec<u8>)>>>;
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
@@ -74,6 +77,10 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// NOA presigns assigned in consensus order, keyed by demand-id digest.
     /// Value: (presign session id, blending index, raw presign bytes, network key id).
     pub(crate) noa_assigned_presigns: Arc<Mutex<HashMap<[u8; 32], NoaAssignedPresign>>>,
+    /// Presign served to each global presign request, keyed by the request's
+    /// session sequence number. Mirrors the real store's `served_global_presigns`:
+    /// a re-seen request is answered from here instead of popping again.
+    pub(crate) served_global_presigns: ServedGlobalPresigns,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
     pub(crate) presign_pools: TestPresignPool,
@@ -159,6 +166,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_presign_demands: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             noa_assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
+            served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
@@ -312,6 +320,33 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         let mut pools = self.presign_pools.lock().unwrap();
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
         Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
+    }
+
+    fn serve_global_presign(
+        &self,
+        session_sequence_number: u64,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        if let Some(served) = self
+            .served_global_presigns
+            .lock()
+            .unwrap()
+            .get(&session_sequence_number)
+            .cloned()
+        {
+            return Ok(Some(served));
+        }
+        let Some(served) =
+            self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+        self.served_global_presigns
+            .lock()
+            .unwrap()
+            .insert(session_sequence_number, served.clone());
+        Ok(Some(served))
     }
 
     fn mark_presign_as_used(

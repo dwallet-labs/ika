@@ -59,3 +59,8 @@ here.
   the continuous committee + `pending_active_set` feed into anemo
   `known_peers`, the inbound-dial bootstrap, and the `ExtendedField` BCS
   framing the read depends on.
+- [`internal-presign-pool.md`](internal-presign-pool.md) — how the
+  internal presign pool is filled and drained, why out-of-sequence fills
+  make a restart's full-epoch replay bind different presigns than peers,
+  and the fill/serve idempotency rule that keeps a restarted validator's
+  checkpoint messages byte-identical.
