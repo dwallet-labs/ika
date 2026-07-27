@@ -225,7 +225,7 @@ pub struct MpcDataAnnouncementSender {
     /// without this, only the first emit per (authority, epoch)
     /// would reach the strict-superset gate.
     ///
-    /// KNOWN GAP: both this counter and
+    /// KNOWN GAP (#1942): both this counter and
     /// `last_emitted_validated_peers_count` are in-memory only, so a
     /// mid-epoch restart resets them to 0. If an earlier emit landed
     /// (its key is durably in `consensus_message_processed`) and a

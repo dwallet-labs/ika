@@ -143,7 +143,7 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         // accepted + forwarded it. Bounded: an honest joiner stops fanning
         // out once `min_accepts` relayers accept.
         //
-        // KNOWN GAP: returning Ok here acks the joiner at SUBMIT level —
+        // KNOWN GAP (#1943): returning Ok here acks the joiner at SUBMIT level —
         // `submit_to_consensus` only hands the tx to an in-memory retry
         // task, and this handler keeps no record and never re-submits. A
         // relayer that dies between this ack and sequencing loses the
