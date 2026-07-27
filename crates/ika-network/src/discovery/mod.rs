@@ -25,7 +25,7 @@ use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 const ONE_DAY_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
@@ -590,8 +590,8 @@ fn update_known_peers(
             //     "Failed to convert anemo PeerId {:?} to Ed25519PublicKey",
             //     peer_info.peer_id
             // );
-            error!(
-                should_never_happen = true,
+            ika_types::report_invariant_violation!(
+                "discovery_peer_id_invalid",
                 ?peer_info,
                 "Failed to convert anemo PeerId to Ed25519PublicKey"
             );

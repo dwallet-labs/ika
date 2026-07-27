@@ -1,12 +1,25 @@
-# Production alerts — the failure modes that don't page by themselves
+# Production alerts — failure modes that don't page by themselves
 
-The v4 off-chain pipeline has three designed halt/block modes. They are
-safety-first BY DESIGN (a stopped validator beats one running with wrong
-parameters), which means the node looks healthy from the outside while
-blocked — no crash, no restart loop. The metrics exist; what must live
-in the alerting config are the rules below.
+Several safety-first failures leave the process running but unable to make
+progress, while broken-invariant events can be hidden in an operator's private
+logs. The metrics exist; what must live in the alerting config are the rules
+below.
 
-## Alert 1: prepare-then-start barrier blocked
+## Alert 1: broken invariant observed
+
+```promql
+sum by (host, site) (increase(ika_invariant_violations_total[10m])) > 0
+# no for-duration: fire immediately
+```
+
+Any event is investigation-worthy by definition; there is no benign threshold.
+The bounded `site` label identifies the failing call site, and the matching
+structured log carries the dynamic context. The counter is not pre-populated,
+so an absent series means that site has recorded zero violations. **Operator
+action**: inspect the matching `should_never_happen = true` log on the affected
+host and correlate it with subsystem metrics around the event timestamp.
+
+## Alert 2: prepare-then-start barrier blocked
 
 ```promql
 ika_handoff_prepare_waiting == 1
@@ -22,7 +35,7 @@ missing input; `ika_handoff_prepare_retries_total` and the duration
 histogram quantify the wait. See `../specs/handoff.md`
 ("Prepare-then-start barrier").
 
-## Alert 2: off-chain assembly permanently wedged
+## Alert 3: off-chain assembly permanently wedged
 
 ```promql
 ika_off_chain_assembly_wedged != 0
@@ -38,7 +51,7 @@ announcement/ready-signal logs for why attestation coverage collapsed
 (propagation outage, mass restart inside the announcement window);
 recovery requires operator intervention, not waiting.
 
-## Alert 3 (log-based): joiner bootstrap fail-closed halt
+## Alert 4 (log-based): joiner bootstrap fail-closed halt
 
 There is no gauge for this one — the node **halts** when every
 current-committee peer served a handoff certificate and none verified

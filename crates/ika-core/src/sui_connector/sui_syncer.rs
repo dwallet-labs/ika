@@ -1073,8 +1073,8 @@ where
             .iter()
             .map(|(id, (name, _))| {
                 let mpc_data = committee_mpc_data.get(id).ok_or_else(|| {
-                    error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "chain_fallback_mpc_data_missing",
                         authority = ?name,
                         validator_id = ?id,
                         "committee member has no decodable on-chain mpc_data record; \
@@ -1088,8 +1088,8 @@ where
                 let key_and_proof =
                     bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes())
                         .map_err(|e| {
-                            error!(
-                                should_never_happen = true,
+                            ika_types::report_invariant_violation!(
+                                "chain_fallback_mpc_data_decode",
                                 authority = ?name,
                                 validator_id = ?id,
                                 error = ?e,

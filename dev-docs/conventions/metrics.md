@@ -75,6 +75,14 @@ cross-binary malicious-detection test asserts exclusion programmatically
 instead of matching a log line. Log-level discipline itself lives in
 [`logging.md`](logging.md).
 
+`ika_invariant_violations_total{site}` shadows every structured
+`should_never_happen = true` error across the node. Call sites use
+`report_invariant_violation!` with a stable literal `site`; the macro emits the
+error and increments the counter together. Dynamic values must remain log
+fields, never label values. The counter vector does not create a series until a
+site fires, so an absent series means zero violations. CI rejects bare
+`should_never_happen = true` markers outside the macro.
+
 Per-authority output observations are collected protocol-generically but
 **exported only for an allow-listed set of protocols** (currently network-key
 reconfiguration; see `OUTPUT_OBSERVATION_EXPORT_PROTOCOLS` in `mpc_manager.rs`).
@@ -284,6 +292,7 @@ ika_highest_synced_dwallet_checkpoint
 ika_highest_synced_system_checkpoint
 ika_highest_verified_dwallet_checkpoint
 ika_highest_verified_system_checkpoint
+ika_invariant_violations_total
 ika_joiner_bootstrap_outcomes_total
 ika_last_certified_dwallet_checkpoint
 ika_last_certified_dwallet_checkpoint_age

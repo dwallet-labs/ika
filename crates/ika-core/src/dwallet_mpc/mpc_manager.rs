@@ -1148,10 +1148,10 @@ impl DWalletMPCManager {
             let Ok(sender_party_id) =
                 authority_name_to_party_id_from_committee(&self.committee, &update.authority)
             else {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "idle_update_unknown_authority",
                     sender_authority=?update.authority,
                     consensus_round,
-                    should_never_happen = true,
                     "got an idle status update for an authority without party ID",
                 );
                 continue;
@@ -1165,10 +1165,10 @@ impl DWalletMPCManager {
             let Ok(sender_party_id) =
                 authority_name_to_party_id_from_committee(&self.committee, &observation.authority)
             else {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "chain_observation_unknown_authority",
                     sender_authority=?observation.authority,
                     consensus_round,
-                    should_never_happen = true,
                     "got a chain observation update for an authority without party ID",
                 );
                 continue;
@@ -1209,10 +1209,10 @@ impl DWalletMPCManager {
             let Ok(sender_party_id) =
                 authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
             else {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "presign_request_unknown_authority",
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen = true,
                     "got a presign request for an authority without party ID",
                 );
                 continue;
@@ -1498,8 +1498,8 @@ impl DWalletMPCManager {
                 // `assemble_committee_mpc_data_off_chain` never returns this
                 // variant (it belongs to the pre-assembly decision); guard
                 // defensively rather than panic.
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "prior_cert_everything_excluded",
                     prior_epoch,
                     "off-chain assembly returned EverythingExcluded for a non-empty \
                      prior-cert pair set"
@@ -2028,10 +2028,10 @@ impl DWalletMPCManager {
             let Ok(sender_party_id) =
                 authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
             else {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "noa_observation_unknown_authority",
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen = true,
                     "got an NOA observation for an authority without party ID",
                 );
                 continue;
@@ -2292,7 +2292,12 @@ impl DWalletMPCManager {
                 let is_expected_error_class = e.is_network_key_data_not_ready()
                     || matches!(e, DwalletMPCError::VssShamirCacheUnavailable(_));
                 if is_internal && !is_expected_error_class {
-                    error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
+                    ika_types::report_invariant_violation!(
+                        "internal_session_input",
+                        error=?e,
+                        ?request,
+                        "create internal session input from dWallet request with error"
+                    );
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");
                 }
@@ -2374,8 +2379,8 @@ impl DWalletMPCManager {
             // `None` is a should-never-happen — skip the key rather than fall
             // back to a divergent identity axis.
             let Some(network_key_id) = self.internal_presign_network_key_id(&key_id) else {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "internal_presign_key_id_missing",
                     ?key_id,
                     "adopted network key has no resolvable NetworkKeyId in the internal-presign \
                      top-up loop; skipping its pools this iteration"
@@ -2720,7 +2725,12 @@ impl DWalletMPCManager {
             }
             Err(e) if e.is_network_key_data_not_ready() => Err(Box::new(request)),
             Err(e) => {
-                error!(should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
+                ika_types::report_invariant_violation!(
+                    "internal_presign_session_input",
+                    error=?e,
+                    ?request,
+                    "create internal session input from dWallet request with error"
+                );
                 self.new_session(
                     &session_identifier,
                     SessionStatus::Failed,
@@ -2817,10 +2827,10 @@ impl DWalletMPCManager {
                 .map(|id| id.0.to_vec())
                 .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
             Err(e) => {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "noa_sign_network_key_missing",
                     ?dwallet_network_encryption_key_id,
                     error = ?e,
-                    should_never_happen = true,
                     "Failed to get network encryption key data for network-owned-address sign session"
                 );
                 return false;
@@ -2842,9 +2852,9 @@ impl DWalletMPCManager {
         let wrapped_presign = match bcs::to_bytes(&versioned) {
             Ok(bytes) => bytes,
             Err(e) => {
-                error!(
+                ika_types::report_invariant_violation!(
+                    "noa_sign_presign_wrap",
                     error = ?e,
-                    should_never_happen = true,
                     "Failed to wrap presign for network-owned-address sign session"
                 );
                 return false;
@@ -3102,8 +3112,8 @@ impl DWalletMPCManager {
                 let should_advance = match request.session_type {
                     SessionType::User => {
                         if request.session_sequence_number.is_none() {
-                            error!(
-                                should_never_happen = true,
+                            ika_types::report_invariant_violation!(
+                                "user_session_sequence_missing",
                                 session_identifier = ?request.session_identifier,
                                 "User session missing session_sequence_number",
                             );
@@ -3167,8 +3177,8 @@ impl DWalletMPCManager {
                     request,
                 } = &session.status
                 else {
-                    error!(
-                        should_never_happen = true,
+                    ika_types::report_invariant_violation!(
+                        "inactive_computation_session",
                         session_identifier=?session.session_identifier,
                         "session is not active, cannot perform cryptographic computation",
                     );
@@ -3938,12 +3948,14 @@ impl DWalletMPCManager {
                             *completed += 1;
                         }
                     }
-                    InternalPresignCompletionKey::AdoptedUnresolvable => error!(
-                        should_never_happen = true,
-                        ?dwallet_network_encryption_key_id,
-                        "completed internal presign output for an ADOPTED key with no resolvable \
+                    InternalPresignCompletionKey::AdoptedUnresolvable => {
+                        ika_types::report_invariant_violation!(
+                            "internal_presign_output_key_id_missing",
+                            ?dwallet_network_encryption_key_id,
+                            "completed internal presign output for an ADOPTED key with no resolvable \
                          NetworkKeyId; completion counter not advanced"
-                    ),
+                        );
+                    }
                     // Deduped to once per key: a restart replays a burst of
                     // these, but a key that is NEVER adopted starves its
                     // pool for the epoch, so the first one must not be
@@ -3998,10 +4010,10 @@ impl DWalletMPCManager {
                     .network_owned_address_sign_output_sender
                     .try_send(sign_output)
                 {
-                    error!(
+                    ika_types::report_invariant_violation!(
+                        "noa_sign_output_channel",
                         ?session_identifier,
                         error = ?e,
-                        should_never_happen = true,
                         "Failed to send network-owned-address sign output to channel"
                     );
                 }
@@ -4020,8 +4032,8 @@ impl DWalletMPCManager {
         let presigns = match bcs::from_bytes::<Vec<P::Presign>>(&public_output) {
             Ok(presigns) => presigns,
             Err(e) => {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "internal_presign_output_deserialize",
                     error = ?e,
                     "failed to deserialize an internal presign output"
                 );
@@ -4036,8 +4048,8 @@ impl DWalletMPCManager {
         {
             Ok(presigns) => presigns,
             Err(e) => {
-                error!(
-                    should_never_happen = true,
+                ika_types::report_invariant_violation!(
+                    "internal_presign_output_serialize",
                     error = ?e,
                     "failed to serialize an internal presign output"
                 );

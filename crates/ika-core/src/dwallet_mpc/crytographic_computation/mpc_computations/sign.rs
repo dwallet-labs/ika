@@ -33,7 +33,6 @@ use mpc::{GuaranteedOutputDeliveryRoundResult, Party, Weight, WeightedThresholdA
 use rand_core::SeedableRng;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
 use twopc_mpc::sign;
 
@@ -1984,12 +1983,12 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
             ) {
                 Ok(signature) => Ok(signature),
                 Err(e) => {
-                    error!(
+                    ika_types::report_invariant_violation!(
+                        "sign_output_deserialize",
                         session_identifier=?session_id,
                         ?e,
                         ?malicious_parties,
                         signature_algorithm=?sign_data.signature_algorithm,
-                        should_never_happen = true,
                         "failed to deserialize sign session result "
                     );
 
@@ -2051,12 +2050,12 @@ pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
             ) {
                 Ok(signature) => Ok(signature),
                 Err(e) => {
-                    error!(
+                    ika_types::report_invariant_violation!(
+                        "dkg_and_sign_output_deserialize",
                         session_identifier=?session_id,
                         ?e,
                         ?malicious_parties,
                         ?signature_algorithm,
-                        should_never_happen = true,
                         "failed to deserialize sign session result "
                     );
 
