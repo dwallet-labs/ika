@@ -42,21 +42,6 @@
 //! so once the whole committee runs it, the capability vote carries the
 //! network to v6.
 //!
-//! ## Cannot pass until protocol v6 is advertised — by design
-//!
-//! `MAX_PROTOCOL_VERSION` is deliberately held at 5, so no validator
-//! advertises 6, the capability vote can never carry the network there, and
-//! `expect_protocol_version_at_least(6)` below cannot be satisfied. That is
-//! intentional: the v6 code ships inert and the activation PR — which raises
-//! MAX — is what makes this scenario runnable, and is the natural place to
-//! extend it with the consensus-key rotation flow.
-//!
-//! It is opt-in and never part of any default CI selection (pull requests
-//! run `v125_rollout`), so nothing is red in the meantime; a manual dispatch
-//! before activation will simply fail at the version assertion. This
-//! scenario HAS passed end-to-end, and been fault-validated, against a build
-//! with MAX = 6 — see dev-docs/specs/cross-binary-upgrade.md.
-//!
 //! Opt-in (real binaries + long-running), via `RUN_V125_V6_UPGRADE=1`:
 //!
 //! ```bash

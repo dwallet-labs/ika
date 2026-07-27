@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 5;
-const MAX_PROTOCOL_VERSION: u64 = 5;
+const MAX_PROTOCOL_VERSION: u64 = 6;
 
 // Record history of protocol version allocations here:
 //
@@ -33,22 +33,19 @@ const MAX_PROTOCOL_VERSION: u64 = 5;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6 (DEFINED, NOT YET ADVERTISED — MAX is deliberately held at 5):
-//            consensus_key_authority_names on — `AuthorityName` (validator
+// Version 6: consensus_key_authority_names on — `AuthorityName` (validator
 //            identity) becomes the Ed25519 consensus key, zero-padded to the
 //            48-byte container so the wire encoding is unchanged. The BLS
 //            protocol key stays on chain and carried on `Committee` for BLS
 //            aggregate-certificate (checkpoint) verification.
 //
-//            The whole v6 code path ships inert: with MAX = 5 no validator
-//            advertises 6, so the capability vote can never carry a network
-//            there and `consensus_key_authority_names` is unreachable at
-//            runtime. Raising MAX is the single deliberate act that starts
-//            the activation clock, and it belongs in the activation PR
-//            together with the two unfinished pieces this one does NOT
-//            solve: the cert-hash straddle across a consensus-key rotation
-//            (see the flag definition) and the prior-epoch artifact naming
-//            gap (dev-docs/specs/committee-consensus-keys.md).
+//            ADVERTISED: every validator on this binary offers 6, so the
+//            capability vote carries a network to v6 once a quorum upgrades.
+//            The identity flip is therefore live on rollout, not on a
+//            separate decision. See the flag definition for the
+//            activation-boundary caveat, and
+//            dev-docs/specs/committee-consensus-keys.md for the
+//            consensus-key-rotation interaction.
 // Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -837,14 +834,9 @@ impl ProtocolConfig {
                 5 => {
                     cfg.feature_flags.aggregated_network_key_public_outputs = true;
                 }
-                // Held back deliberately: uncommenting this line together with
-                // MAX_PROTOCOL_VERSION = 6 is what activates consensus-key
-                // authority names, and it belongs in the activation PR. Until
-                // then `consensus_key_authority_names()` is false everywhere
-                // and the entire v6 identity path is unreachable at runtime.
-                // 6 => {
-                //     cfg.feature_flags.consensus_key_authority_names = true;
-                // }
+                6 => {
+                    cfg.feature_flags.consensus_key_authority_names = true;
+                }
                 // 7 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
                 // }

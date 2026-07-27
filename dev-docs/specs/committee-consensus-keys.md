@@ -43,12 +43,13 @@ snapshot names under the current version's basis (mis-based only in the
 activation epoch itself). The `v125_v6_upgrade` scenario is the gate for
 activating v6 on a live network; genesis-at-v6 networks have no boundary.
 
-**Status: v6 is DEFINED but NOT ADVERTISED.** `MAX_PROTOCOL_VERSION` is
-held at 5, so `consensus_key_authority_names` is unreachable at runtime and
-everything below describes behaviour that activates only when a later PR
-raises MAX. Two known gaps must be resolved in that PR, not assumed away:
+**Status: v6 is ADVERTISED — `MAX_PROTOCOL_VERSION` is 6.** Every validator
+on this binary offers 6, so the capability vote carries a network to v6 once
+a quorum upgrades: the identity flip goes live on rollout, not on a separate
+decision. Two known gaps come with it:
 
-1. **The cert-hash straddle across a consensus-key rotation.** A consensus
+1. **The cert-hash straddle across a consensus-key rotation — OPEN, and the
+   one with fleet-wide blast radius.** A consensus
    key is NOT fixed at registration — `set_next_epoch_consensus_pubkey_bytes`
    is operator-callable and `rotate_next_epoch_info` effectuates it at
    `advance_epoch`. `next_committee_pubkey_set_hash` is therefore computed
@@ -58,7 +59,9 @@ raises MAX. Two known gaps must be resolved in that PR, not assumed away:
    is structurally before the boundary and the consumer after. The agreed
    resolution is to hash the committee's VALIDATOR IDs rather than its
    names, which removes both rotation and the basis flip from the hash's
-   sensitivity permanently.
+   sensitivity permanently. Until that lands, rotating a consensus key at
+   an epoch boundary on a v6 network halts the fleet: treat consensus-key
+   rotation as an operational hazard, not a routine action.
 
 2. **Prior-epoch artifacts are keyed by the rotating member's old identity**
    — ACCEPTED DEGRADATION, deliberately not fixed. The prior epoch's handoff
