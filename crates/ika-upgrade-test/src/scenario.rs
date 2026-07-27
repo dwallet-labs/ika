@@ -261,6 +261,11 @@ pub struct Scenario {
     /// runs on rollout day. Not compatible with `direct_validators` or
     /// mirrored joiners (those require `sui-data-source`).
     pub legacy_sui_config: bool,
+    /// Genesis protocol version. `None` genesis-es at `ProtocolVersion::MIN`
+    /// (the usual rolling-upgrade start). Set this to start the cluster at a
+    /// higher version — e.g. a strict-bound v6 committee that has no relaxed
+    /// (v5) phase because the binaries under test only agree at v6.
+    pub genesis_protocol_version: Option<ProtocolVersion>,
 }
 
 impl Scenario {
@@ -284,7 +289,14 @@ impl Scenario {
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
             direct_validators: Vec::new(),
             legacy_sui_config: false,
+            genesis_protocol_version: None,
         }
+    }
+
+    /// Override the genesis protocol version (default `ProtocolVersion::MIN`).
+    pub fn with_genesis_protocol_version(mut self, v: ProtocolVersion) -> Self {
+        self.genesis_protocol_version = Some(v);
+        self
     }
 
     /// Boot the whole cluster from old-style (1.1.8-shape) configs — the
@@ -592,7 +604,10 @@ impl Scenario {
                     )
                     .with_num_validators(self.num_validators)
                     .with_epoch_duration_ms(self.epoch_duration_ms)
-                    .with_genesis_protocol_version(ProtocolVersion::MIN)
+                    .with_genesis_protocol_version(
+                        self.genesis_protocol_version
+                            .unwrap_or(ProtocolVersion::MIN),
+                    )
                     .with_genesis_global_presign_config(self.genesis_global_presign_config);
                     if self.legacy_sui_config {
                         builder = builder.with_legacy_sui_config();
