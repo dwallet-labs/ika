@@ -40,9 +40,52 @@ place: the joiner watcher matches next-committee membership under either
 basis; `EpochStartSystem::V2` records the basis per epoch so restarts
 within an epoch are stable; prior-committee handoff verification keys
 snapshot names under the current version's basis (mis-based only in the
-activation epoch itself). The gradual-upgrade cluster suite is the
-gate for activating v6 on a live network; genesis-at-v6 networks have
-no boundary.
+activation epoch itself). The `v125_v6_upgrade` scenario is the gate for
+activating v6 on a live network; genesis-at-v6 networks have no boundary.
+
+**Status: v6 is DEFINED but NOT ADVERTISED.** `MAX_PROTOCOL_VERSION` is
+held at 5, so `consensus_key_authority_names` is unreachable at runtime and
+everything below describes behaviour that activates only when a later PR
+raises MAX. Two known gaps must be resolved in that PR, not assumed away:
+
+1. **The cert-hash straddle across a consensus-key rotation.** A consensus
+   key is NOT fixed at registration — `set_next_epoch_consensus_pubkey_bytes`
+   is operator-callable and `rotate_next_epoch_info` effectuates it at
+   `advance_epoch`. `next_committee_pubkey_set_hash` is therefore computed
+   during epoch E from PRE-effectuation keys and re-verified in E+1 against
+   POST-effectuation keys, so one rotation changes the digest and every node
+   fail-closed halts. Per-epoch read freshness cannot fix this: the producer
+   is structurally before the boundary and the consumer after. The agreed
+   resolution is to hash the committee's VALIDATOR IDs rather than its
+   names, which removes both rotation and the basis flip from the hash's
+   sensitivity permanently.
+
+2. **Prior-epoch artifacts are keyed by the rotating member's old identity**
+   — ACCEPTED DEGRADATION, deliberately not fixed. The prior epoch's handoff
+   cert names members under the keys they held then; `name_translation` is
+   built from the current committee and aliases only the current consensus
+   key and the BLS key, so a member that rotated at the boundary resolves to
+   nothing. Consequences, all confined to that one member for one epoch:
+   its `ValidatorMpcData` carry-forward misses and it lands in
+   `epoch_excluded_validators` (only if it also did not freshly announce
+   that epoch); prior-cert key ingest misses, leaving it MPC-dead for the
+   epoch if it also restarted mid-epoch; and its prior-cert blob repair
+   silently no-ops. This is a per-member degradation that quorum absorbs —
+   rotation is not a fleet-wide simultaneous action, and handoff certs carry
+   more signatures than quorum.
+
+   **For on-call:** a freeze-laggard or excluded-validator alert naming a
+   validator that rotated its consensus key at the preceding boundary is
+   THIS, not an incident. It self-heals the following epoch, when the member
+   announces under its new identity.
+
+**Why the 48-byte container is not ambiguous across bases.** A
+consensus-basis name is the 32-byte Ed25519 key followed by 16 zero bytes;
+a BLS-basis name is a valid BLS12-381 G1 point. For the two to collide an
+attacker would need a valid G1 point whose last 16 bytes are zero AND whose
+discrete log it knows — roughly 2^128 grinding past the registration
+proof-of-possession — so the dual-basis tolerances resolve an encoding
+ambiguity without widening what is accepted.
 
 ```rust
 // ika-types/src/committee.rs

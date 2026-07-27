@@ -437,6 +437,14 @@ pub(crate) fn quorum_attestation_in_buffer(
 /// carry a stake quorum of valid signatures over the attestation. It is the
 /// same tolerance the `AuthorityName` deserializer applies to the 48- and
 /// 32-byte encodings of one key.
+///
+/// INVARIANT: the alternate set MUST be derived locally, from the caller's
+/// own trusted chain read of the same membership — never taken from the
+/// cert, a peer, or any other remote input. The binding this hash provides
+/// is "the signers committed to THIS committee"; supplying a
+/// remotely-influenced alternate would let a caller be talked into accepting
+/// a cert for a different one, which is precisely what the check exists to
+/// prevent.
 pub fn verify_joiner_bootstrap_cert(
     cert: &CertifiedHandoffAttestation,
     expected_prior_epoch: EpochId,
