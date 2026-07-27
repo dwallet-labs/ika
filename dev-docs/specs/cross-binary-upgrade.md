@@ -227,6 +227,18 @@ drives them across epochs. The surviving scenarios (current build only):
   `prepare_handoff_anchor` ("prepare-then-start: …"), not the
   epoch-start anchoring path, so grep for the hash-mismatch string
   rather than a specific call site.
+
+  Its IN-PROCESS counterpart is
+  `crates/ika-test-cluster/tests/protocol_version_transition.rs`: one
+  binary, per-validator pinned advertised version ranges, walking 1/4 →
+  2/4 → 4/4 v6 supporters and asserting v6 does NOT activate below the
+  4/4 buffer-stake effective threshold before crossing the same
+  cross-basis boundary. It runs in the ordinary cluster suite on every
+  PR, so the capability-vote machinery and the in-process transition
+  paths are gated continuously rather than only when this release-gated
+  harness runs. Fault-validated (2026-07-27): withholding one
+  validator's upgrade (3/4 = stake quorum, below the effective
+  threshold) fails it at the activation assertion.
 - `tests/v125_churn.rs` — the churn counterpart: full sequential swap over
   the literal v1.2.5 committee (on-disk RocksDB continuity), then a
   peer-only-mirrored joiner folds into the reshared v1.2.5-origin key
