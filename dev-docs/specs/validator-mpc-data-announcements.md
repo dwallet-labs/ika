@@ -64,6 +64,13 @@ which bytes* deterministic in consensus order.
   strictly (the `sequence_number` exists so consensus dedup does not
   drop re-emits). Per-signer rows REPLACE — the latest signal from a
   signer is its current attestation.
+  Restart: the sender seeds its sequence counter and last-emitted
+  count from its own stored row (analogous to the announcement-cache
+  seeding above), and additionally skips any sequence number already
+  present in its processed-marker table before emitting — without
+  both, a mid-epoch restart re-emits under an already-processed
+  consensus key, which every node's dedup silently drops (issue
+  #1942).
 - **Emit gate** (`decide_ready_to_finalize`, producer-side): each
   validator withholds its first ready signal until the next-epoch
   committee is published AND every one of its members is **covered** —
