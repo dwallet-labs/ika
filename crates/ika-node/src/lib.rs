@@ -2609,7 +2609,16 @@ impl IkaNode {
                             // quorum shortfall — so try each and take the one
                             // that verifies.
                             let verify: CertVerifier = Arc::new(move |cert| {
-                                let mut last_error = None;
+                                // Report EVERY candidate's failure, not just the
+                                // last. The wrong-basis candidate always fails
+                                // with "signer is not a member", which says
+                                // nothing about why the cert is bad, and it
+                                // would mask the real reason from the candidate
+                                // whose basis matched — a below-quorum cert
+                                // surfaced as a membership error in a
+                                // fault-injection run, sending the reader after
+                                // the wrong thing entirely.
+                                let mut errors = Vec::new();
                                 for committee in &prior_committee {
                                     match verify_joiner_bootstrap_cert(
                                         cert,
@@ -2620,14 +2629,20 @@ impl IkaNode {
                                         Some(expected_next_other_basis.clone()),
                                     ) {
                                         Ok(()) => return Ok(()),
-                                        Err(error) => last_error = Some(error),
+                                        Err(error) => errors.push(error.to_string()),
                                     }
                                 }
-                                Err(last_error.unwrap_or_else(|| {
-                                    ika_types::error::IkaError::Unknown(
-                                        "no prior-committee candidate to verify the handoff \
-                                         cert against"
-                                            .to_string(),
+                                Err(ika_types::error::IkaError::Unknown(if errors.is_empty() {
+                                    "no prior-committee candidate to verify the handoff cert \
+                                     against"
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "handoff cert verified against none of the {} \
+                                         prior-committee candidates (one per authority-name \
+                                         basis); failures: [{}]",
+                                        errors.len(),
+                                        errors.join("; ")
                                     )
                                 }))
                             });
