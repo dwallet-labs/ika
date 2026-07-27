@@ -142,6 +142,17 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         // without this record the committee side has no trace of having
         // accepted + forwarded it. Bounded: an honest joiner stops fanning
         // out once `min_accepts` relayers accept.
+        //
+        // KNOWN GAP (#1943): returning Ok here acks the joiner at SUBMIT level —
+        // `submit_to_consensus` only hands the tx to an in-memory retry
+        // task, and this handler keeps no record and never re-submits. A
+        // relayer that dies between this ack and sequencing loses the
+        // relay permanently; if every acking relayer does, the joiner's
+        // announcement never reaches consensus while its fanout loop
+        // believes it succeeded, and the joiner is excludable at the
+        // freeze. Fix direction: await the tx's processed notification
+        // (bounded) before acking, so a timeout keeps the joiner fanning
+        // out.
         info!(
             joiner = ?joiner,
             epoch = joiner_epoch,

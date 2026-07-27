@@ -56,6 +56,10 @@ impl LogSystemCheckpointOutput {
 
 #[async_trait]
 impl<T: SubmitToConsensus> SystemCheckpointOutput for SubmitSystemCheckpointToConsensus<T> {
+    /// This is the only submission of our signature for this checkpoint —
+    /// same restart-loss decision as `SubmitDWalletCheckpointToConsensus::
+    /// dwallet_checkpoint_created`: a signature lost to process death is
+    /// never re-sent; quorum certification and state sync absorb it.
     #[instrument(level = "debug", skip_all)]
     async fn system_checkpoint_created(
         &self,

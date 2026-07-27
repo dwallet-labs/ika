@@ -1117,15 +1117,6 @@ pub struct AuthorityEpochTables {
     /// transaction whose effects were lost.
     consensus_message_processed: DBMap<SequencedConsensusTransactionKey, bool>,
 
-    /// Map stores pending transactions that this authority submitted to consensus
-    ///
-    /// write-discipline: none — the table has no writer on this branch (the
-    /// persist in `ConsensusAdapter::submit` is commented out), so its only
-    /// consumer, `get_all_pending_consensus_transactions` (consensus-adapter
-    /// resubmit-on-restart), always reads empty.
-    #[default_options_override_fn = "pending_consensus_transactions_table_default_config"]
-    pending_consensus_transactions: DBMap<ConsensusTransactionKey, ConsensusTransaction>,
-
     /// The following table is used to store a single value (the corresponding key is a constant). The value
     /// represents the index of the latest consensus message this authority processed, running hash of
     /// transactions, and accumulated stats of consensus output.
@@ -1725,12 +1716,6 @@ pub struct AuthorityEpochTables {
     pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
-fn pending_consensus_transactions_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
 fn verified_dwallet_checkpoint_messages_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
@@ -1806,14 +1791,6 @@ impl AuthorityEpochTables {
 
     pub fn path(epoch: EpochId, parent_path: &Path) -> PathBuf {
         parent_path.join(format!("{EPOCH_DB_PREFIX}{epoch}"))
-    }
-
-    pub fn get_all_pending_consensus_transactions(&self) -> IkaResult<Vec<ConsensusTransaction>> {
-        Ok(self
-            .pending_consensus_transactions
-            .safe_iter()
-            .map(|item| item.map(|(_k, v)| v))
-            .collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn get_last_consensus_index(&self) -> IkaResult<Option<ExecutionIndices>> {
@@ -2593,14 +2570,6 @@ impl AuthorityPerEpochStore {
                 })
             }
         }
-    }
-
-    pub fn get_all_pending_consensus_transactions(&self) -> Vec<ConsensusTransaction> {
-        // The except() here is on purpose, because the epoch can't run without it.
-        self.tables()
-            .expect("recovery should not cross epoch boundary")
-            .get_all_pending_consensus_transactions()
-            .expect("failed to get pending consensus transactions")
     }
 
     /// Returns true if all messages with the given keys were processed by consensus.

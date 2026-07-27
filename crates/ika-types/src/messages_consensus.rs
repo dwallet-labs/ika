@@ -129,10 +129,10 @@ pub enum ConsensusTransactionKey {
     /// signature inside V2 is not separately keyed; the consumer
     /// routes it through the handoff aggregator after extraction.
     EndOfPublishV2(AuthorityName),
-    // WIRE/DB-FORMAT DISCIPLINE: BCS-serialized as the key of persisted
-    // DBMaps (pending_consensus_transactions, consensus_message_processed)
-    // and rebuilt across binary upgrades - variants are APPEND-ONLY, same
-    // as ConsensusTransactionKind above.
+    // WIRE/DB-FORMAT DISCIPLINE: BCS-serialized as part of the key of the
+    // persisted `consensus_message_processed` DBMap and rebuilt across
+    // binary upgrades - variants are APPEND-ONLY, same as
+    // ConsensusTransactionKind above.
     /// A NOA sign presign demand, keyed by its `demand_id` digest ONLY (not
     /// authority), so redundant announcements of the same demand from different
     /// validators collapse to a single consensus transaction.

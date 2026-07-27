@@ -224,6 +224,19 @@ pub struct MpcDataAnnouncementSender {
     /// `verify_consensus_transaction` doesn't drop the re-emits —
     /// without this, only the first emit per (authority, epoch)
     /// would reach the strict-superset gate.
+    ///
+    /// KNOWN GAP (#1942): both this counter and
+    /// `last_emitted_validated_peers_count` are in-memory only, so a
+    /// mid-epoch restart resets them to 0. If an earlier emit landed
+    /// (its key is durably in `consensus_message_processed`) and a
+    /// later, wider re-emit was lost with the process, the restarted
+    /// sender re-emits the wider set under an already-processed
+    /// sequence number — every node drops it at verify time, and
+    /// since each later growth bumps the counter by one, every
+    /// re-emit stays dropped until the counter climbs past the
+    /// pre-restart maximum. Fix direction: initialize both counters
+    /// from this validator's own recorded ready signal in the
+    /// per-epoch store.
     next_sequence_number: std::sync::atomic::AtomicU64,
     /// Number of announcement submissions so far this epoch. Used
     /// only to bound logging: the first submission (and every 30th
