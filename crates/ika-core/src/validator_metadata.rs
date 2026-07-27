@@ -2957,17 +2957,16 @@ mod tests {
         )
         .expect("verify");
 
-        // Joiner expects a different committee than what's pinned →
-        // refuse, even though signatures are individually valid.
+        // The next-committee hash is ADVISORY: a cert pinning a different
+        // committee than the joiner derives is still accepted, because a
+        // stake quorum of the prior committee signed it. The digest has no
+        // per-signer weighting, so an exact comparison would reject a cert
+        // over one member's renaming no matter how much valid stake backed
+        // it — which under v6, where the name IS the consensus key, a single
+        // key rotation produces.
         let wrong_pubkeys = vec![names[2], names[3]];
-        let err =
-            verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, wrong_pubkeys, None)
-                .expect_err("should mismatch");
-        let msg = format!("{:?}", err);
-        assert!(
-            msg.contains("next_committee_pubkey_set_hash mismatch"),
-            "unexpected error: {msg}"
-        );
+        verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, wrong_pubkeys, None)
+            .expect("a quorum-signed cert is accepted despite a next-committee naming mismatch");
 
         // Joiner expects to anchor to a different prior epoch than
         // the cert attests → refuse before the committee/hash checks,
@@ -2986,48 +2985,47 @@ mod tests {
         let msg = format!("{:?}", err);
         assert!(msg.contains("epoch mismatch"), "unexpected error: {msg}");
 
-        // The identity-basis boundary: a cert pinning the committee under
-        // the OTHER basis is rejected when no alternate is offered, and
-        // accepted when it is — the whole point of the tolerance. Signatures
-        // and epoch are untouched, so only the hash check is exercised.
+        // The identity-basis alternate still matters — not for accept/reject
+        // (both paths accept now) but for how the divergence is REPORTED:
+        // matching the alternate is the recognised v5->v6 flip and logs at
+        // info, anything else logs at warn. Both must verify.
         let other_basis_pubkeys = vec![names[2], names[3]];
-        let err = verify_joiner_bootstrap_cert(
+        verify_joiner_bootstrap_cert(
             &cert,
             7,
             &committee,
             &provider,
             other_basis_pubkeys.clone(),
-            None,
+            Some(next_pubkeys.clone()),
         )
-        .expect_err("no alternate offered → strict");
-        assert!(
-            format!("{err:?}").contains("next_committee_pubkey_set_hash mismatch"),
-            "unexpected error: {err:?}"
-        );
+        .expect("the alternate basis must be accepted at the flip boundary");
         verify_joiner_bootstrap_cert(
             &cert,
             7,
             &committee,
             &provider,
             other_basis_pubkeys,
-            Some(next_pubkeys.clone()),
+            Some(vec![names[3]]),
         )
-        .expect("the alternate basis must be accepted at the flip boundary");
+        .expect("an unmatched alternate is advisory too — quorum still decides");
 
-        // The tolerance must not become a blanket bypass: an alternate that
-        // matches NEITHER set is still refused.
+        // What quorum-decides does NOT relax: a cert whose signatures do not
+        // reach the committee's quorum threshold is still refused, mismatched
+        // hash or not. This is the check the whole guarantee now rests on.
+        let mut short = cert.clone();
+        short.signatures.truncate(1);
         let err = verify_joiner_bootstrap_cert(
-            &cert,
+            &short,
             7,
             &committee,
             &provider,
             vec![names[2], names[3]],
-            Some(vec![names[3]]),
+            None,
         )
-        .expect_err("an unrelated alternate must not be accepted");
+        .expect_err("below quorum must still be rejected");
         assert!(
-            format!("{err:?}").contains("next_committee_pubkey_set_hash mismatch"),
-            "unexpected error: {err:?}"
+            !format!("{err:?}").contains("next_committee_pubkey_set_hash mismatch"),
+            "must fail on quorum, not on the advisory hash: {err:?}"
         );
     }
 

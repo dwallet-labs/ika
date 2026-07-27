@@ -22,7 +22,7 @@ use ika_types::handoff::{
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
@@ -423,28 +423,37 @@ pub(crate) fn quorum_attestation_in_buffer(
 ///   matching committee. Binding it explicitly keeps the
 ///   cross-epoch anchor unambiguous.
 ///
-/// `also_accept_next_committee_pubkeys` covers the identity-basis
-/// activation boundary. `AuthorityName` is the BLS protocol key below
-/// protocol v6 and the consensus key from v6, and this hash is computed by
-/// the OUTGOING epoch (under its basis) but re-checked by the INCOMING one
-/// (under its own). At the single epoch where those differ the two sides
-/// derive different names for the same members, and a strict comparison
-/// fail-closed halts every node. Passing the same membership expressed in
-/// the other basis makes that boundary verifiable.
+/// ## The next-committee hash is ADVISORY — quorum decides
 ///
-/// This is an encoding ambiguity, not a weakened binding: both sets list the
-/// same committee, so an attacker gains no freedom — the cert still has to
-/// carry a stake quorum of valid signatures over the attestation. It is the
-/// same tolerance the `AuthorityName` deserializer applies to the 48- and
-/// 32-byte encodings of one key.
+/// A mismatch is logged, not rejected. The digest covers the whole
+/// membership set and every signer signs the identical attestation, so it is
+/// a single equality with no per-signer weighting: any disagreement between
+/// the signing epoch's naming and the entering epoch's rejects the cert
+/// outright, no matter how much valid stake signed it. Under protocol v6,
+/// where `AuthorityName` IS the consensus key, that made two routine events
+/// fatal fleet-wide — the v5->v6 identity flip, and ANY validator rotating
+/// its consensus key at a boundary (the outgoing epoch names it by the old
+/// key, the entering epoch by the new one).
 ///
-/// INVARIANT: the alternate set MUST be derived locally, from the caller's
-/// own trusted chain read of the same membership — never taken from the
-/// cert, a peer, or any other remote input. The binding this hash provides
-/// is "the signers committed to THIS committee"; supplying a
-/// remotely-influenced alternate would let a caller be talked into accepting
-/// a cert for a different one, which is precisely what the check exists to
-/// prevent.
+/// By decision, a cert carrying a stake quorum of valid signatures from the
+/// prior committee is accepted even when it commits to a different naming of
+/// the next committee than we derive locally: the outgoing committee's
+/// quorum view wins over our own read.
+///
+/// Still enforced, and now the whole of the guarantee:
+/// `attestation.epoch == expected_prior_epoch`; every signature valid; every
+/// signer a member of the verifying committee; summed stake >= the quorum
+/// threshold.
+///
+/// Given up: the assurance that the cert attests to the committee we believe
+/// we are entering. With the epoch binding retained, the residual exposure
+/// is a cert from a forked or divergent view of the SAME epoch, signed by a
+/// quorum of that epoch's committee.
+///
+/// `also_accept_next_committee_pubkeys` is kept so the expected identity
+/// basis is recognised and logged at info rather than warn — it separates
+/// "the known v5->v6 flip" from "an unexplained divergence" in the logs. It
+/// must still be derived LOCALLY, never from the cert or a peer.
 pub fn verify_joiner_bootstrap_cert(
     cert: &CertifiedHandoffAttestation,
     expected_prior_epoch: EpochId,
@@ -463,19 +472,33 @@ pub fn verify_joiner_bootstrap_cert(
     let expected_hash = hash_next_committee_pubkey_set(expected_next_committee_pubkeys);
     if cert.attestation.next_committee_pubkey_set_hash != expected_hash {
         let alternate_hash = also_accept_next_committee_pubkeys.map(hash_next_committee_pubkey_set);
-        if alternate_hash != Some(cert.attestation.next_committee_pubkey_set_hash) {
-            return Err(IkaError::Unknown(format!(
-                "handoff cert next_committee_pubkey_set_hash mismatch: cert {:?} vs expected \
-                 {expected_hash:?} (alternate identity basis {alternate_hash:?})",
-                cert.attestation.next_committee_pubkey_set_hash
-            )));
+        if alternate_hash == Some(cert.attestation.next_committee_pubkey_set_hash) {
+            info!(
+                prior_epoch = expected_prior_epoch,
+                "handoff cert commits to the next committee under the OTHER authority-name \
+                 basis; this is the protocol-v6 identity-flip boundary, where the signing \
+                 epoch and the entering epoch name the same members differently"
+            );
+        } else {
+            // Advisory, not fatal: the quorum check below decides. The
+            // likeliest cause is a member that rotated its consensus key at
+            // this boundary — under v6 the committee is named BY that key, so
+            // the outgoing epoch names it by the old one and this epoch by the
+            // new one, and no amount of valid stake could satisfy an exact
+            // digest comparison. Loud because the remaining explanation is
+            // that this node's view of the next committee diverges from the
+            // signing quorum's.
+            warn!(
+                prior_epoch = expected_prior_epoch,
+                cert_hash = ?cert.attestation.next_committee_pubkey_set_hash,
+                ?expected_hash,
+                ?alternate_hash,
+                "handoff cert commits to a DIFFERENT next-committee naming than this node \
+                 derives; proceeding on the prior committee's quorum signatures. Expected \
+                 when a validator rotated its consensus key at this boundary; otherwise \
+                 this node's view of the next committee diverges from the signing quorum's"
+            );
         }
-        info!(
-            prior_epoch = expected_prior_epoch,
-            "handoff cert commits to the next committee under the OTHER authority-name \
-             basis; accepted — this is the protocol-v6 identity-flip boundary, where the \
-             signing epoch and the entering epoch name the same members differently"
-        );
     }
     verify_certified_handoff_attestation(cert, prior_committee, prior_consensus_pubkeys)
 }
