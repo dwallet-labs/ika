@@ -27,7 +27,20 @@ zero-padded consensus key, and the BLS keys are then carried explicitly
 too (`Committee::new_with_protocol_keys` — a consensus-basis name cannot
 be decoded into a BLS key, and BLS aggregate-certificate verification
 still needs it; `Committee::load_inner`'s name-decode is lossy, failing
-closed at `public_key()` instead of panicking).
+closed at `public_key()` instead of panicking). The lossy decode makes
+the split wiring-dependent: a consensus-basis committee mis-built through
+`Committee::new` carries an EMPTY `expanded_keys` with no construction
+error. `public_key()` on it fails closed per lookup, and
+`name_translation()` — whose callers all fall back to identity on a
+missing entry, so a degraded map would silently reinstate the boundary
+misses it exists to prevent — logs a `should_never_happen` error naming
+every member whose BLS alias is unrecoverable. Both production
+`Committee::new` sites that can carry consensus-basis names are safe by
+audit, not by type: the `SuiSyncer::new_committee` committees feed only
+the reconfiguration MPC input, and the prior-committee fetch
+(`pubkey_provider_updater.rs`) verifies handoff certs through
+`consensus_key()` only — neither reaches `public_key()` or
+`name_translation()`.
 
 **Identity-basis rule (v6 flip).** The basis of a committee's names is
 decided by the protocol version its builder evaluates
@@ -150,13 +163,12 @@ not count toward quorum.
 
 ## Where committees are built
 
-Three sites populate `consensus_keys`, all from chain:
+Two sites populate `consensus_keys`, both from chain:
 
 - **`EpochStartSystem::get_ika_committee`** (`ika-types/src/sui/epoch_start_system.rs`)
   — the current epoch's committee, from each active validator's
   `consensus_pubkey`. This is the CHAIN view; see the two-committee-objects
   warning in [`../learnings/pitfalls.md`](../learnings/pitfalls.md).
-- **`SuiSyncer::new_committee`** — the next epoch's committee.
 - **The prior-committee fetch** (`sui_connector/pubkey_provider_updater.rs`)
   — reconstructs the *previous* committee for handoff-certificate
   verification, reading each member's
@@ -164,6 +176,11 @@ Three sites populate `consensus_keys`, all from chain:
   the name from the `previous_committee` snapshot (invariant 2). Members
   absent from that snapshot, or whose `validator_info` fails `verify()`,
   are skipped (invariant 3).
+
+`SuiSyncer::new_committee` (the next-epoch committee assembled for the
+reconfiguration MPC input) deliberately carries an EMPTY map: that
+committee never verifies consensus-key-signed messages (invariant 4) —
+handoff verification uses the epoch store's `get_ika_committee` committee.
 
 `StaticConsensusPubkeyProvider` exists for tests and as the empty default
 before the syncer is up. It is not a production source.
