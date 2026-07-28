@@ -56,11 +56,13 @@ VSS path is internal NOA-VSS.
 - The per-curve VSS Shamir cache (`VssShamirCachePerKey` — `first_` /
   `second_secret_key_polynomial_commitments` per curve) derives **only from a
   version-3 network-key DKG output**. A pre-version-3 key has no VSS cache.
-  The full-shape output is the aggregated (V4) wire tag — the only one the
-  current crypto crates can decode (the pre-aggregation V3 type was removed
-  from inkrypto; a V3-tagged output is a hard derivation failure, and such
-  state must have migrated to V4 before this binary runs). The cache
-  derivation runs on the aggregated form, so recovering a Shamir share
+  The full-shape output comes in two wire tags — V3 (pre-aggregation, what
+  testnet persists at protocol v4) and V4 (aggregated). Reconfiguration
+  outputs flipped V3→V4 at protocol v5, so with `MIN_PROTOCOL_VERSION = 5`
+  V4 is the only format produced; fresh network DKG outputs are V4
+  unconditionally (no deployed network persisted a pre-aggregation fresh DKG
+  output). The cache derivation runs on the **aggregated** form either way (a
+  V3 output is upgraded on first derivation), so recovering a Shamir share
   costs a single class-group decryption per curve-part.
 
 ## Transport — how PVSS reaches the network DKG
