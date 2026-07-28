@@ -142,6 +142,15 @@ pub enum Step {
         index: usize,
         needle: String,
     },
+    /// Poll ONE validator's `node.log` until `needle` appears (or the
+    /// epoch timeout elapses). The immediate [`Step::ExpectLogLineOnValidator`]
+    /// asserts a decision that already happened; this is the variant for a
+    /// condition the scenario is WAITING to happen (e.g. a restarted
+    /// validator resuming a background loop).
+    WaitForLogLineOnValidator {
+        index: usize,
+        needle: String,
+    },
 }
 
 impl std::fmt::Display for Step {
@@ -225,6 +234,9 @@ impl std::fmt::Display for Step {
                     f,
                     "expect_log_line_present_on_validator({index}, {needle:?})"
                 )
+            }
+            Step::WaitForLogLineOnValidator { index, needle } => {
+                write!(f, "wait_for_log_line_on_validator({index}, {needle:?})")
             }
         }
     }
@@ -556,6 +568,21 @@ impl Scenario {
         needle: impl Into<String>,
     ) -> Self {
         self.steps.push(Step::ExpectLogLineOnValidator {
+            index,
+            needle: needle.into(),
+        });
+        self
+    }
+
+    /// Poll the validator at `index`'s `node.log` until `needle` appears,
+    /// failing after the scenario's epoch timeout. See
+    /// [`Step::WaitForLogLineOnValidator`].
+    pub fn wait_for_log_line_on_validator(
+        mut self,
+        index: usize,
+        needle: impl Into<String>,
+    ) -> Self {
+        self.steps.push(Step::WaitForLogLineOnValidator {
             index,
             needle: needle.into(),
         });
@@ -978,6 +1005,35 @@ impl Scenario {
                         needle = needle.as_str(),
                         "per-validator log-line assertion passed"
                     );
+                }
+                Step::WaitForLogLineOnValidator { index, needle } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("WaitForLogLineOnValidator before StartAll")?;
+                    let proc = c
+                        .validators
+                        .get(*index)
+                        .with_context(|| format!("validator index {index} out of range"))?;
+                    let deadline = std::time::Instant::now() + self.epoch_timeout;
+                    loop {
+                        let log = std::fs::read_to_string(proc.log_path()).with_context(|| {
+                            format!("read validator log {}", proc.log_path().display())
+                        })?;
+                        if log.contains(needle.as_str()) {
+                            tracing::info!(
+                                index = *index,
+                                needle = needle.as_str(),
+                                "per-validator log line appeared"
+                            );
+                            break;
+                        }
+                        ensure!(
+                            std::time::Instant::now() < deadline,
+                            "timed out waiting for {needle:?} in {}",
+                            proc.log_path().display(),
+                        );
+                        sleep(Duration::from_secs(2)).await;
+                    }
                 }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;

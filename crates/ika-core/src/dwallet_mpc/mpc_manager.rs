@@ -548,11 +548,22 @@ pub(crate) struct DWalletMPCManager {
     /// starts fresh at 1 whenever it starts, identically on every validator —
     /// PROVIDED the start skew stays under one batch lifecycle. A validator
     /// entering a pool only after a full batch quorum-completed elsewhere
-    /// (mid-epoch restart, very late install) is permanently ordinal-offset
-    /// for that pool; see the top-up loop comment for the scope and the
-    /// tracked fast-forward heal.
+    /// (mid-epoch restart, very late install) would otherwise be permanently
+    /// ordinal-offset for that pool (#1952): the counter is in-memory, so it
+    /// is seeded on first touch from the persisted
+    /// `filled_presign_pool_slots` high-water, and the mint path
+    /// fast-forwards across ordinals whose sessions are already terminal —
+    /// see `instantiate_internal_presign_session`.
     pub(crate) next_internal_presign_sequence_number:
         HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
+
+    /// Pools whose ordinal stream was seeded from a persisted fill high-water
+    /// (i.e. this process joined a pool mid-epoch — a restart or a very late
+    /// key install). Drained on each pool's first live mint to emit the
+    /// one-shot "resumed live instantiation" marker the #1952 regression
+    /// scenario gates on.
+    internal_presign_restart_seeded_pools:
+        HashSet<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm)>,
 
     /// Monotonically increasing count of instantiated internal presign sessions
     /// per (network_key, curve, signature_algorithm). Incremented when a
@@ -795,6 +806,7 @@ impl DWalletMPCManager {
             untracked_anomalies: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: HashMap::new(),
+            internal_presign_restart_seeded_pools: HashSet::new(),
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
             internal_presign_batch_instantiated_at_round: HashMap::new(),
@@ -2009,6 +2021,15 @@ impl DWalletMPCManager {
         if deferred_unmapped_key {
             return;
         }
+        // Never memoize an EMPTY overlay (#1952): the syncer only publishes a
+        // new overlay Arc on a pass that fetched something, so a
+        // wholly-empty first publish would otherwise pin `Arc::ptr_eq` true
+        // for the rest of the epoch and this pass would never look again —
+        // even after keys appear downstream of a recovered registry read.
+        // The empty pass is O(1), so re-running it every tick costs nothing.
+        if overlay.is_empty() {
+            return;
+        }
         self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
     }
 
@@ -2359,17 +2380,14 @@ impl DWalletMPCManager {
         // longer depends on when other keys are adopted or the iteration order.
         // Per-pool ordinals are START-TIME-INVARIANT: a key adopted at a
         // different round on different validators still derives identical
-        // session identifiers for its pool, as long as the skew stays under
-        // one batch lifecycle. A validator whose first top-up of a pool lags
-        // past a full batch's quorum completion (mid-epoch restart replaying
-        // rounds before adoption lands, a very late install) starts its
-        // ordinal stream offset from its peers' and never converges — it sits
-        // out that pool's live sessions for the rest of the epoch (peers'
-        // quorum keeps the pool serving; the loss is this validator's
-        // redundancy). The heal — fast-forwarding the pool counter from the
-        // completed sequence numbers observed in consensus outputs — is
-        // tracked as follow-up work; the same exposure existed with the old
-        // shared counter, with cross-pool blast radius on top.
+        // session identifiers for its pool. A validator whose first top-up of
+        // a pool lags past a full batch's quorum completion (mid-epoch
+        // restart, a very late install) would otherwise start its ordinal
+        // stream offset from its peers' and never converge (#1952); the heal
+        // is in `instantiate_internal_presign_session` — the counter seeds on
+        // first touch from the persisted `filled_presign_pool_slots`
+        // high-water, and the mint path fast-forwards across ordinals whose
+        // sessions are already terminal.
         let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
@@ -2509,25 +2527,34 @@ impl DWalletMPCManager {
                     && current_pool_size < minimal_pool_size)
                     || (network_is_idle && current_pool_size < maximum_pool_size)
                 {
+                    let mut minted = 0u64;
                     for _ in 1..=sessions_to_instantiate {
-                        self.instantiate_internal_presign_session(
+                        // Only a mint that produced a live session (activated
+                        // or parked-for-retry) counts against the
+                        // instantiated/completed batch guard: a mint the
+                        // fast-forward resolved as already-completed history
+                        // will never produce a completion of its own, and
+                        // counting it would wedge the guard (#1952).
+                        if self.instantiate_internal_presign_session(
                             consensus_round,
                             network_key_id,
                             key_id,
                             curve,
                             signature_algorithm,
-                        );
-                        *self
-                            .instantiated_internal_presign_sessions
-                            .entry((network_key_id, curve, signature_algorithm))
-                            .or_insert(0) += 1;
+                        ) {
+                            minted += 1;
+                            *self
+                                .instantiated_internal_presign_sessions
+                                .entry((network_key_id, curve, signature_algorithm))
+                                .or_insert(0) += 1;
+                        }
                     }
                     self.internal_presign_batch_instantiated_at_round.insert(
                         (network_key_id, curve, signature_algorithm),
                         consensus_round,
                     );
                     pools_filled.push(format!(
-                        "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
+                        "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{minted}"
                     ));
                 }
             }
@@ -2613,53 +2640,177 @@ impl DWalletMPCManager {
         dwallet_network_encryption_key_id: ObjectID,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
-    ) {
-        // Consume the sequence number, keyed by the key's content-derived
-        // `NetworkKeyId` — the SAME identity bound into the session
-        // identifier below, so the counter and the identifier can never use
-        // divergent key axes. The counter is PER (`NetworkKeyId`, curve,
-        // algorithm) pool: a key adopted at a different round on different
-        // validators starts its own pool's stream fresh at 1 without
-        // perturbing any other pool's stream.
-        let sequence_entry = self
+    ) -> bool {
+        let counter_key = (network_key_id, curve, signature_algorithm);
+        // Seed the pool's ordinal stream on its first touch this process from
+        // the persisted fill high-water, NOT from 1 (#1952). The counter is
+        // in-memory, so a mid-epoch restart used to restart the stream at 1 —
+        // every minted ordinal was one the committee had already completed,
+        // and each dead mint was "released" only by a live peer completion
+        // advancing the pool-aggregated completed counter, so the offset to
+        // the live ordinal window never closed and the validator sat out
+        // registry-driven instantiation for the rest of the epoch. The
+        // `filled_presign_pool_slots` markers are written on every fill and
+        // re-confirmed by the post-restart consensus replay, so the
+        // high-water is always at-or-behind the replay frontier: the small
+        // remainder is covered by the fast-forward below.
+        if !self
             .next_internal_presign_sequence_number
-            .entry((network_key_id, curve, signature_algorithm))
-            .or_insert(1);
-        let session_sequence_number = *sequence_entry;
-        *sequence_entry += 1;
+            .contains_key(&counter_key)
+        {
+            let seed = match self.epoch_store.max_filled_presign_pool_slot(
+                signature_algorithm,
+                dwallet_network_encryption_key_id,
+            ) {
+                Ok(Some(high_water)) => {
+                    info!(
+                        ?curve,
+                        ?signature_algorithm,
+                        ?dwallet_network_encryption_key_id,
+                        high_water,
+                        "seeded internal-presign ordinal stream from the persisted \
+                         pool-slot high-water (mid-epoch restart resume)",
+                    );
+                    self.internal_presign_restart_seeded_pools
+                        .insert(counter_key);
+                    high_water.saturating_add(1)
+                }
+                Ok(None) => 1,
+                Err(e) => {
+                    warn!(
+                        error=?e,
+                        ?curve,
+                        ?signature_algorithm,
+                        "failed to read the persisted pool-slot high-water; seeding the \
+                         internal-presign ordinal stream from 1 (fast-forward will converge)",
+                    );
+                    1
+                }
+            };
+            self.next_internal_presign_sequence_number
+                .insert(counter_key, seed);
+        }
 
-        // `consensus_round` is logged for traceability but is
-        // deliberately NOT part of the request/session identifier:
-        // validators reach this point at different rounds (the network
-        // key installs asynchronously), and the identifier must come out
-        // identical on every committee member.
-        let request = DWalletSessionRequest::new_internal_presign(
-            self.epoch_id,
-            session_sequence_number,
-            curve,
-            signature_algorithm,
-            dwallet_network_encryption_key_id,
-            &network_key_id.0,
-        );
+        // Bound on ordinals skipped per mint. The seed lands at-or-behind the
+        // replay frontier, so the residue (fills whose replay landed after the
+        // first mint's seed read) is a handful of ordinals; hundreds of
+        // consecutive already-terminal ordinals past the seed means the seed
+        // source is stale relative to the session map, which should never
+        // happen.
+        const MAX_ORDINAL_FAST_FORWARD_PER_MINT: u64 = 512;
+        let mut fast_forwarded: u64 = 0;
+        loop {
+            let sequence_entry = self
+                .next_internal_presign_sequence_number
+                .get_mut(&counter_key)
+                .expect("seeded above");
+            let session_sequence_number = *sequence_entry;
+            *sequence_entry += 1;
 
-        if let Err(request) = self.try_activate_internal_presign_request(consensus_round, request) {
-            // The key's data isn't locally available yet (typically the VSS
-            // pools at epoch entry, before the frozen off-chain validator
-            // key set has been ingested; or a key installed on peers but not
-            // here). Park the request and retry once per service iteration;
-            // peers that already have the data run the session meanwhile,
-            // and any of their messages buffer in a
-            // `WaitingForSessionRequest` entry until activation.
-            info!(
-                consensus_round,
-                ?curve,
-                ?signature_algorithm,
-                ?session_sequence_number,
-                session_identifier=?request.session_identifier,
-                "network key data not ready for internal presign session; parking it for retry",
+            // `consensus_round` is logged for traceability but is
+            // deliberately NOT part of the request/session identifier:
+            // validators reach this point at different rounds (the network
+            // key installs asynchronously), and the identifier must come out
+            // identical on every committee member.
+            let request = DWalletSessionRequest::new_internal_presign(
+                self.epoch_id,
+                session_sequence_number,
+                curve,
+                signature_algorithm,
+                dwallet_network_encryption_key_id,
+                &network_key_id.0,
             );
-            self.internal_presign_requests_pending_for_network_key_data
-                .push(ParkedInternalPresignRequest(request));
+
+            match self
+                .sessions
+                .get(&request.session_identifier)
+                .map(|s| &s.status)
+            {
+                // The committee already finished this ordinal (a restart
+                // replay reconstructed it terminal). Minting it again can
+                // never produce live work — skip ahead so the stream
+                // converges on the live window instead of trailing it by a
+                // constant offset (#1952).
+                Some(
+                    SessionStatus::Completed
+                    | SessionStatus::ComputationCompleted
+                    | SessionStatus::Failed,
+                ) => {
+                    fast_forwarded += 1;
+                    if fast_forwarded >= MAX_ORDINAL_FAST_FORWARD_PER_MINT {
+                        ika_types::report_invariant_violation!(
+                            "internal_presign_ordinal_fast_forward_exhausted",
+                            consensus_round,
+                            ?curve,
+                            ?signature_algorithm,
+                            last_skipped_sequence_number = session_sequence_number,
+                            fast_forwarded,
+                            "internal-presign ordinal stream is still inside \
+                             already-completed history after the per-mint fast-forward \
+                             budget; the persisted seed disagrees with the session map — \
+                             continuing from here next tick",
+                        );
+                        return false;
+                    }
+                    continue;
+                }
+                // Already instantiated by this process — a mint here would
+                // double-count the batch guard.
+                Some(SessionStatus::Active { .. }) => return false,
+                Some(SessionStatus::WaitingForSessionRequest) | None => {}
+            }
+
+            if fast_forwarded > 0 {
+                info!(
+                    consensus_round,
+                    ?curve,
+                    ?signature_algorithm,
+                    fast_forwarded,
+                    resumed_at_sequence_number = session_sequence_number,
+                    "internal-presign ordinal stream fast-forwarded past \
+                     already-completed sessions and resumed at the live window",
+                );
+            }
+
+            if let Err(request) =
+                self.try_activate_internal_presign_request(consensus_round, request)
+            {
+                // The key's data isn't locally available yet (typically the VSS
+                // pools at epoch entry, before the frozen off-chain validator
+                // key set has been ingested; or a key installed on peers but not
+                // here). Park the request and retry once per service iteration;
+                // peers that already have the data run the session meanwhile,
+                // and any of their messages buffer in a
+                // `WaitingForSessionRequest` entry until activation.
+                info!(
+                    consensus_round,
+                    ?curve,
+                    ?signature_algorithm,
+                    ?session_sequence_number,
+                    session_identifier=?request.session_identifier,
+                    "network key data not ready for internal presign session; parking it for retry",
+                );
+                self.internal_presign_requests_pending_for_network_key_data
+                    .push(ParkedInternalPresignRequest(request));
+            }
+            // One-shot per pool after a seeded (re)join: the unambiguous
+            // "this validator is participating in live registry-driven
+            // instantiation again" marker — the #1952 regression scenario
+            // gates on this line on the restarted validator.
+            if self
+                .internal_presign_restart_seeded_pools
+                .remove(&counter_key)
+            {
+                info!(
+                    consensus_round,
+                    ?curve,
+                    ?signature_algorithm,
+                    live_sequence_number = session_sequence_number,
+                    "internal presign top-up resumed live instantiation after a \
+                     mid-epoch restart",
+                );
+            }
+            return true;
         }
     }
 

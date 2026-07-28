@@ -84,6 +84,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
     pub(crate) presign_pools: TestPresignPool,
+    /// Highest internal-presign session sequence number that filled each
+    /// pool, mirroring the real store's `filled_presign_pool_slots` high-water
+    /// mark (the #1952 restart ordinal-seed source).
+    pub(crate) filled_presign_slot_high_water:
+        Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), u64>>>,
     /// Tracks which individual presigns have been consumed for signing.
     /// Keyed by (session_identifier, blending_index) to uniquely identify a single presign
     /// within the blended vector produced by a presign session.
@@ -168,6 +173,7 @@ impl TestingAuthorityPerEpochStore {
             noa_assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
+            filled_presign_slot_high_water: Arc::new(Mutex::new(HashMap::new())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
@@ -273,10 +279,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-        _session_sequence_number: u64,
+        session_sequence_number: u64,
         session_identifier: SessionIdentifier,
         presigns: Vec<Vec<u8>>,
     ) -> IkaResult<()> {
+        {
+            let mut high_water = self.filled_presign_slot_high_water.lock().unwrap();
+            let slot = high_water
+                .entry((signature_algorithm, dwallet_network_encryption_key_id))
+                .or_insert(session_sequence_number);
+            *slot = (*slot).max(session_sequence_number);
+        }
         let mut pools = self.presign_pools.lock().unwrap();
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
         let pool = pools.entry(key).or_default();
@@ -310,6 +323,19 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         let pools = self.presign_pools.lock().unwrap();
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
         Ok(pools.get(&key).map_or(0, |pool| pool.len() as u64))
+    }
+
+    fn max_filled_presign_pool_slot(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<u64>> {
+        Ok(self
+            .filled_presign_slot_high_water
+            .lock()
+            .unwrap()
+            .get(&(signature_algorithm, dwallet_network_encryption_key_id))
+            .copied())
     }
 
     fn pop_presign(
@@ -858,9 +884,57 @@ fn create_dwallet_mpc_service(
     Sender<NetworkOwnedAddressSignRequest>,
     Receiver<NetworkOwnedAddressSignOutput>,
 ) {
+    let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
+    let (
+        service,
+        sui_data_senders,
+        dwallet_submit_to_consensus,
+        checkpoint_notify,
+        sign_request_sender,
+        sign_output_receiver,
+    ) = create_dwallet_mpc_service_over_epoch_store(
+        authority_name,
+        committee,
+        seed,
+        bundles,
+        epoch_store.clone(),
+    );
+    (
+        service,
+        sui_data_senders,
+        dwallet_submit_to_consensus,
+        epoch_store,
+        checkpoint_notify,
+        sign_request_sender,
+        sign_output_receiver,
+    )
+}
+
+/// Builds one validator's service over a CALLER-supplied epoch store — the
+/// mid-epoch-restart shape (#1952): every in-memory structure starts fresh
+/// (session map, internal-presign ordinal counters and batch guards, the
+/// consensus-round cursor), while the store's consensus rounds, pool fills,
+/// and slot markers survive to be replayed. Channel deliveries are re-seeded
+/// exactly as at process start (the off-chain key bundles); durable-only
+/// context the production syncer re-fetches (the network key overlay,
+/// `last_session_to_complete_in_current_epoch`) is the caller's to restore.
+#[allow(clippy::type_complexity)]
+pub(crate) fn create_dwallet_mpc_service_over_epoch_store(
+    authority_name: &AuthorityName,
+    committee: Committee,
+    seed: RootSeed,
+    bundles: crate::validator_metadata::OffChainCommitteeBundles,
+    epoch_store: Arc<TestingAuthorityPerEpochStore>,
+) -> (
+    DWalletMPCService,
+    SuiDataSenders,
+    Arc<TestingSubmitToConsensus>,
+    Arc<TestingDWalletCheckpointNotify>,
+    Sender<NetworkOwnedAddressSignRequest>,
+    Receiver<NetworkOwnedAddressSignOutput>,
+) {
     let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
     let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
-    let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
     let checkpoint_notify = Arc::new(TestingDWalletCheckpointNotify::new());
     let (service, sign_request_sender, sign_output_receiver) = DWalletMPCService::new_for_testing(
         epoch_store.clone(),
@@ -894,7 +968,6 @@ fn create_dwallet_mpc_service(
         service,
         sui_data_senders,
         dwallet_submit_to_consensus,
-        epoch_store,
         checkpoint_notify,
         sign_request_sender,
         sign_output_receiver,
