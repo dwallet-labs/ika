@@ -1214,6 +1214,48 @@ where
                     HashMap::new()
                 });
 
+            // Silence-proofing (#1952): an empty registry read while the
+            // coordinator itself reports existing keys is indistinguishable
+            // from the healthy "no keys yet" state at every layer above this
+            // one — empty-success is legal everywhere downstream, so without
+            // this marker the condition is invisible until sessions stop.
+            // The loop keeps retrying on its own cadence either way.
+            {
+                let DWalletCoordinatorInner::V1(coordinator_inner_v1) = &dwallet_coordinator_inner;
+                let on_chain_registry_size =
+                    coordinator_inner_v1.dwallet_network_encryption_keys.size;
+                if network_encryption_keys.is_empty() && on_chain_registry_size > 0 {
+                    ika_types::report_invariant_violation!(
+                        "network_key_registry_read_empty",
+                        on_chain_registry_size,
+                        current_epoch,
+                        "network-key registry read returned an empty map while the \
+                         coordinator reports existing keys — retrying next tick",
+                    );
+                }
+            }
+
+            // Recovery widening (#1952/#1852): the stranded-key chain-read
+            // recovery below can only run for keys PRESENT in the fetched
+            // registry map. A stranded key the registry read failed to return
+            // means the audited recovery is silently pinned — surface it
+            // instead of falling through to the healthy-looking
+            // "No new network keys to fetch" line.
+            {
+                let stranded_snapshot = stranded_network_keys.load();
+                for stranded_id in stranded_snapshot.iter() {
+                    if !network_encryption_keys.contains_key(stranded_id) {
+                        ika_types::report_invariant_violation!(
+                            "stranded_network_key_missing_from_registry_read",
+                            key_id = ?stranded_id,
+                            current_epoch,
+                            "a network key flagged for chain-sourced recovery is absent \
+                             from the registry read — recovery cannot run this tick",
+                        );
+                    }
+                }
+            }
+
             let keys_to_fetch: HashMap<ObjectID, DWalletNetworkEncryptionKey> =
                 network_encryption_keys
                     .into_iter()

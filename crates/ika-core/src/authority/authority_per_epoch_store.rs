@@ -285,6 +285,21 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<u64>;
 
+    /// The highest internal-presign session sequence number that has ever
+    /// filled a pool slot for `(signature_algorithm, key)` this epoch, or
+    /// `None` if no fill landed yet. This is the persisted high-water mark of
+    /// the pool's ordinal stream: a process that restarts mid-epoch must seed
+    /// its in-memory `next_internal_presign_sequence_number` from it (#1952) —
+    /// seeding from 1 re-mints ordinals the committee already completed, and
+    /// the top-up loop then trails the live ordinal window by a constant
+    /// offset for the rest of the epoch (each dead mint is "released" only by
+    /// a live peer completion, so the gap never closes).
+    fn max_filled_presign_pool_slot(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<u64>>;
+
     /// Pop a presign from the internal pool for the given algorithm and key.
     ///
     /// Concurrency safety: This method is only called from the MPC manager
@@ -607,6 +622,15 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<u64> {
         let tables = self.tables()?;
         tables.presign_pool_size(signature_algorithm, dwallet_network_encryption_key_id)
+    }
+
+    fn max_filled_presign_pool_slot(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<u64>> {
+        let tables = self.tables()?;
+        tables.max_filled_presign_pool_slot(signature_algorithm, dwallet_network_encryption_key_id)
     }
 
     fn pop_presign(
@@ -1899,6 +1923,35 @@ impl AuthorityEpochTables {
         batch.write()?;
 
         Ok(())
+    }
+
+    /// Highest `session_sequence_number` ever recorded in
+    /// `filled_presign_pool_slots` for `(signature_algorithm, key)`, or `None`
+    /// when the pool has no fill yet this epoch. One reverse seek over the
+    /// pool's slot-key range — the slot markers are written on every fill (and
+    /// re-confirmed by the post-restart consensus replay), so this is the
+    /// durable high-water mark of the pool's ordinal stream (#1952).
+    pub fn max_filled_presign_pool_slot(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<u64>> {
+        let lower = (
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+            u64::MIN,
+        );
+        let upper = (
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+            u64::MAX,
+        );
+        Ok(self
+            .filled_presign_pool_slots
+            .reversed_safe_iter_with_bounds(Some(lower), Some(upper))?
+            .next()
+            .transpose()?
+            .map(|((_, _, session_sequence_number), ())| session_sequence_number))
     }
 
     /// Returns the total number of presigns in the pool for the given signature algorithm
