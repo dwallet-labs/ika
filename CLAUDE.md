@@ -278,10 +278,13 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   in ika (see the upstream reference above)
 - **Protocol v5–v6 (`MIN_PROTOCOL_VERSION = 5`, `MAX_PROTOCOL_VERSION = 6`)**:
   the binary supports nothing older than v5 — protocol v3/v4 support, the
-  v3→v4 migration scaffolding (issue #1751), the backward-compatible
-  (class-groups-only) network DKG/reconfiguration parties, and
-  pre-aggregation (V3-tagged) output PRODUCTION are all removed.
-  Everything formerly v4/v5-gated (off-chain validator metadata, the
+  v3→v4 migration scaffolding (issue #1751), and pre-aggregation
+  (V3-tagged) output PRODUCTION are removed. (The strict-only inkrypto
+  rev that also removes the backward-compatible parties + the relaxed
+  discrete-log bound is a SEPARATE, still-open change — it may only land
+  once v6 is live; see the draft PR. This build still uses the
+  flag-selectable inkrypto, so both bounds and the V2/V3 decode paths
+  remain.) Everything formerly v4/v5-gated (off-chain validator metadata, the
   cross-epoch handoff, deferred epoch close, aggregated network-key
   outputs) is unconditionally on. **v6 gates two coordinated flips that
   activate together**: (a) `consensus_key_authority_names` —
@@ -302,18 +305,12 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   disagree at the single activation boundary) is why the first flip
   attempt wedged: `dev-docs/specs/committee-consensus-keys.md`. v7 is
   planned for `noa_checkpoints`. What REMAINS constrained: the networks
-  persist pre-v5 state, so old `Versioned*` enum variants must stay (BCS
-  variant indices are wire format). V1-tagged chain DKG anchors must
-  remain DECODABLE (they are never rewritten on chain; they decode via
-  the still-current `class_groups::dkg::PublicOutput`), and V2-tagged
-  outputs still decode as `PublicOutputCore` where only the core is
-  needed. V3-tagged (pre-aggregation) outputs and the bwd-compat party
-  outputs are NO LONGER decodable anywhere — inkrypto removed their
-  types — so any key whose live state is still V3-tagged must have
-  migrated to V4 before running this binary, and decode arms for them are
-  hard errors; and MPC outputs must reach byte-identical quorum across a
-  mixed-binary committee, so serialization changes to active paths need a
-  new protocol version gate, never a binary-driven flip.
+  persist pre-v5 state (V1-tagged chain DKG anchors, V2/V3-tagged
+  outputs), so old `Versioned*` enum variants must stay (BCS variant
+  indices are wire format) and their DECODE paths must keep working; and
+  MPC outputs must reach byte-identical quorum across a mixed-binary
+  committee, so serialization changes to active paths need a new protocol
+  version gate, never a binary-driven flip.
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward
