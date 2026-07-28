@@ -20,13 +20,12 @@
 //! spectators for the rest of the epoch: `active: 0`, completions only via
 //! `reconstructed_from_consensus`, readiness never evaluated.
 //!
-//! The gate: after the restart, validator 0 must log
-//!   1. the ordinal-stream seed from the persisted pool-slot high-water, and
-//!   2. the one-shot "resumed live instantiation" marker,
-//! and the run must stay free of the #1952 silence-proofing invariant
-//! markers. The user workload must also still complete (event-driven
-//! activation was never the broken path — asserting it alone is exactly how
-//! the wedge stayed invisible).
+//! The gate: after the restart, validator 0 must log (1) the ordinal-stream
+//! seed from the persisted pool-slot high-water and (2) the one-shot
+//! "resumed live instantiation" marker, and the run must stay free of the
+//! #1952 silence-proofing invariant markers. The user workload must also
+//! still complete (event-driven activation was never the broken path —
+//! asserting it alone is exactly how the wedge stayed invisible).
 //!
 //! Fault-validation (test-testing playbook): revert the seed+fast-forward in
 //! `instantiate_internal_presign_session` (restore the bare `.or_insert(1)`)
