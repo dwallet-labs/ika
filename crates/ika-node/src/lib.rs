@@ -47,9 +47,7 @@ use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
 };
-use ika_core::authority::epoch_start_configuration::{
-    EpochStartConfigTrait, EpochStartConfiguration,
-};
+use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
@@ -79,10 +77,8 @@ use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{AuthorityCapabilitiesV1, ConsensusTransaction};
 use ika_types::sui::SystemInnerTrait;
+use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
-use ika_types::sui::epoch_start_system::{
-    EpochStartSystem, EpochStartValidatorInfo, validator_authority_name,
-};
 use sui_types::crypto::KeypairTraits;
 
 use ika_core::consensus_adapter::SubmitToConsensus;
@@ -722,13 +718,8 @@ impl IkaNode {
 
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
 
-        // The node's committee identity for THIS epoch — basis recorded on
-        // the epoch's own EpochStartSystem record at build time.
-        let consensus_key_identity = epoch_start_configuration
-            .epoch_start_state()
-            .consensus_key_identity();
         let epoch_store = AuthorityPerEpochStore::new(
-            config.authority_name(consensus_key_identity),
+            config.authority_name(),
             committee_arc.clone(),
             &config.db_path().join("store"),
             Some(epoch_options.options),
@@ -874,16 +865,13 @@ impl IkaNode {
             p2p
         } else {
             // state_sync's pull mode ("notifier") is committee membership
-            // under THIS epoch's name basis — `epoch_store.name`, the
-            // consensus key from protocol v6. The BLS protocol key is absent
-            // from a consensus-basis committee, so deriving this from it
-            // would make a validator restarting after the v6 flip boot
-            // state-sync as a pull-mode non-committee node.
+            // under `epoch_store.name`, the consensus key. The BLS protocol
+            // key is absent from the committee, so deriving this from it
+            // would boot state-sync as a pull-mode non-committee node.
             let is_state_sync_notifier =
                 !epoch_store.committee().authority_exists(&epoch_store.name);
             info!(
                 name = ?epoch_store.name.concise(),
-                consensus_key_identity,
                 is_state_sync_notifier,
                 "state-sync boot identity"
             );
@@ -2236,8 +2224,7 @@ impl IkaNode {
             Box::new(SubmitDWalletCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config
-                    .authority_name(epoch_store.epoch_start_state().consensus_key_identity()),
+                authority: config.authority_name(),
                 metrics: checkpoint_metrics.clone(),
             });
 
@@ -2293,8 +2280,7 @@ impl IkaNode {
             Box::new(SubmitSystemCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config
-                    .authority_name(epoch_store.epoch_start_state().consensus_key_identity()),
+                authority: config.authority_name(),
                 metrics: system_checkpoint_metrics.clone(),
             });
 
@@ -2528,7 +2514,7 @@ impl IkaNode {
                     .ok()
                     .flatten()
                 {
-                    Some(committee) => Some(vec![committee]),
+                    Some(committee) => Some(committee),
                     // A true joiner that never observed/persisted the prior
                     // epoch has no local committee for it, so the cross-epoch
                     // trust anchor (and the network-key blob install it gates)
@@ -2539,16 +2525,13 @@ impl IkaNode {
                     // bootstrap already chain-reads consensus pubkeys from) so
                     // bootstrap can still run.
                     None => match fetch_previous_committee(&sui_client, prior_epoch).await {
-                        Ok(candidates) => {
+                        Ok(committee) => {
                             info!(
                                 prior_epoch,
-                                candidates = candidates.len(),
                                 "prior committee absent locally; chain-read it for joiner \
-                                 bootstrap from validator_set.previous_committee (one \
-                                 candidate per authority-name basis — the prior epoch's \
-                                 basis is not on chain)"
+                                 bootstrap from validator_set.previous_committee"
                             );
-                            Some(candidates.into_iter().map(Arc::new).collect())
+                            Some(Arc::new(committee))
                         }
                         Err(error) => {
                             warn!(
@@ -2577,28 +2560,8 @@ impl IkaNode {
                     .is_some();
                 match prior_committee {
                     Some(prior_committee) => {
-                        // Absent from the prior committee under EITHER name
-                        // basis. `self_name` is this epoch's basis, which at
-                        // the protocol-v6 identity flip differs from the one
-                        // the prior committee was named under — comparing only
-                        // that name labels every continuing validator a joiner
-                        // at the boundary.
-                        let self_name_other_basis = self.config.authority_name(
-                            !cur_epoch_store.epoch_start_state().consensus_key_identity(),
-                        );
-                        let is_joiner = !prior_committee.iter().any(|committee| {
-                            committee.authority_exists(&self_name)
-                                || committee.authority_exists(&self_name_other_basis)
-                        });
+                        let is_joiner = !prior_committee.authority_exists(&self_name);
                         let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
-                        // The same membership expressed under the OTHER
-                        // authority-name basis. The outgoing epoch hashed
-                        // the next committee under ITS basis; at the
-                        // protocol-v6 identity flip that differs from this
-                        // epoch's, and a strict comparison would fail-closed
-                        // halt every node at the boundary.
-                        let expected_next_other_basis =
-                            authority_names_under_other_basis(cur_epoch_store.epoch_start_state());
                         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
                             .epoch_start_state()
                             .get_authority_names_to_peer_ids()
@@ -2635,51 +2598,14 @@ impl IkaNode {
                             // (chain-read by object id when the committee was
                             // built) — so it serves as the cert verifier's
                             // consensus-pubkey provider directly.
-                            // One candidate per authority-name basis when the
-                            // prior committee was chain-read (its basis is not
-                            // recoverable from chain); exactly one local record
-                            // otherwise. A signer set names members under ONE
-                            // basis, and a committee built under the other makes
-                            // every signer weight-0 — a hard rejection, not a
-                            // quorum shortfall — so try each and take the one
-                            // that verifies.
                             let verify: CertVerifier = Arc::new(move |cert| {
-                                // Report EVERY candidate's failure, not just the
-                                // last. The wrong-basis candidate always fails
-                                // with "signer is not a member", which says
-                                // nothing about why the cert is bad, and it
-                                // would mask the real reason from the candidate
-                                // whose basis matched — a below-quorum cert
-                                // surfaced as a membership error in a
-                                // fault-injection run, sending the reader after
-                                // the wrong thing entirely.
-                                let mut errors = Vec::new();
-                                for committee in &prior_committee {
-                                    match verify_joiner_bootstrap_cert(
-                                        cert,
-                                        prior_epoch,
-                                        committee,
-                                        committee.as_ref(),
-                                        expected_next.iter().copied(),
-                                        Some(expected_next_other_basis.clone()),
-                                    ) {
-                                        Ok(()) => return Ok(()),
-                                        Err(error) => errors.push(error.to_string()),
-                                    }
-                                }
-                                Err(ika_types::error::IkaError::Unknown(if errors.is_empty() {
-                                    "no prior-committee candidate to verify the handoff cert \
-                                     against"
-                                        .to_string()
-                                } else {
-                                    format!(
-                                        "handoff cert verified against none of the {} \
-                                         prior-committee candidates (one per authority-name \
-                                         basis); failures: [{}]",
-                                        errors.len(),
-                                        errors.join("; ")
-                                    )
-                                }))
+                                verify_joiner_bootstrap_cert(
+                                    cert,
+                                    prior_epoch,
+                                    &prior_committee,
+                                    prior_committee.as_ref(),
+                                    expected_next.iter().copied(),
+                                )
                             });
                             // Defense in depth — same policy as
                             // `prepare_handoff_anchor`: a persisted cert is
@@ -3284,11 +3210,6 @@ impl IkaNode {
         // The cert pins the hash of the committee being handed into —
         // the epoch we are entering, whose committee is `new_epoch_store`'s.
         let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
-        // See the epoch-start anchoring path: the signing epoch and the
-        // epoch being entered name the same members differently across the
-        // protocol-v6 identity flip.
-        let expected_next_other_basis =
-            authority_names_under_other_basis(new_epoch_store.epoch_start_state());
         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
             .epoch_start_state()
             .get_authority_names_to_peer_ids()
@@ -3304,7 +3225,6 @@ impl IkaNode {
                 &signing_committee,
                 &signing_committee,
                 expected_next.iter().copied(),
-                Some(expected_next_other_basis.clone()),
             )
         });
 
@@ -3799,30 +3719,6 @@ async fn install_joiner_network_key_outputs(
     missing_key_ids
 }
 
-/// The epoch's committee membership named under the OPPOSITE identity basis
-/// to the one the epoch itself uses — the BLS protocol keys when the epoch
-/// names members by consensus key, and vice versa.
-///
-/// `AuthorityName`'s basis is a property of the epoch (BLS below protocol
-/// v6, consensus key from v6), so an artifact produced by one epoch and
-/// consumed by the next straddles a basis change exactly once, at
-/// activation. Both name sets describe the SAME members — the validator
-/// records carry both keys — so offering the alternate resolves an encoding
-/// ambiguity rather than widening what is accepted.
-fn authority_names_under_other_basis(
-    epoch_start_state: &EpochStartSystem,
-) -> Vec<ika_types::crypto::AuthorityName> {
-    let other_basis = !epoch_start_state.consensus_key_identity();
-    epoch_start_state
-        .get_ika_validators()
-        .iter()
-        .map(|validator| {
-            let EpochStartValidatorInfo::V1(validator) = validator;
-            validator_authority_name(validator, other_basis)
-        })
-        .collect()
-}
-
 /// Notify state-sync that a new list of trusted peers are now available.
 fn send_trusted_peer_change(
     config: &NodeConfig,
@@ -3831,9 +3727,7 @@ fn send_trusted_peer_change(
 ) -> Result<(), watch::error::SendError<TrustedPeerChangeEvent>> {
     sender
         .send(TrustedPeerChangeEvent {
-            new_peers: epoch_state_state.get_validator_as_p2p_peers(
-                config.authority_name(epoch_state_state.consensus_key_identity()),
-            ),
+            new_peers: epoch_state_state.get_validator_as_p2p_peers(config.authority_name()),
         })
         .tap_err(|err| {
             warn!(

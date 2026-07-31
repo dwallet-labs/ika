@@ -7,12 +7,12 @@
 //! invariant the upgrade harness depends on — sessions started in an epoch
 //! actually complete.
 //!
-//! Genesis is `ProtocolVersion::MIN` (= MAX = 5): the network DKG runs the
+//! Genesis is `ProtocolVersion::MIN` (= MAX = 6): the network DKG runs the
 //! main (PVSS) party from genesis via the current-epoch off-chain key
-//! assembly. (The genesis-v3 → vote-into-v4 flavor of this scenario was
-//! retired when protocol v3/v4 support was removed — no supported version
-//! boundary remains to cross; resurrect the vote steps from git history when
-//! a v6 exists.)
+//! assembly. (The genesis-at-one-version → vote-into-the-next flavor of this
+//! scenario was retired when the versions it crossed dropped below the
+//! supported range — no supported version boundary remains to cross;
+//! resurrect the vote steps from git history when a v7 exists.)
 //!
 //! Opt-in via `RUN_WORKLOAD_TEST=1` (set `HOLD_CLUSTER=1` to hold the cluster
 //! up at the workload step for manual `ika dwallet` driving instead):
@@ -83,7 +83,7 @@ async fn workload_dkg_presign_sign() {
         .with_ika_cli(ika_cli)
         .start_all(validator)
         .wait_for_epoch(2)
-        .expect_protocol_version_at_least(5)
+        .expect_protocol_version_at_least(6)
         .run_workload("dkg-presign-sign")
         .run()
         .await

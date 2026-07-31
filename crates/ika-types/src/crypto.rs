@@ -163,14 +163,22 @@ pub struct AuthorityPublicKeyBytes(
 
 /// Length-lenient deserializer for [`AuthorityPublicKeyBytes`].
 ///
-/// `AuthorityName` is migrating from the 48-byte BLS12-381 protocol key
-/// to the 32-byte Ed25519 consensus key, which is zero-padded up to 48
-/// bytes so the wire encoding stays unchanged. This deserializer accepts
-/// both encodings — the 48-byte form as-is, and the unpadded 32-byte
-/// form by zero-padding it on read — while the serializer keeps emitting
-/// 48 bytes. Once every deployed validator runs a binary that reads both
-/// encodings, a protocol-version-gated change can switch the serializer
-/// to emit the unpadded 32-byte form.
+/// `AuthorityName` is the 32-byte Ed25519 consensus key at every supported
+/// protocol version, zero-padded up to the 48-byte container the BLS12-381
+/// protocol key occupied through v5, so the wire encoding is unchanged.
+/// This deserializer accepts both encodings — the 48-byte form as-is, and
+/// the unpadded 32-byte form by zero-padding it on read — while the
+/// serializer keeps emitting 48 bytes.
+///
+/// Narrowing the SERIALIZER to the unpadded 32-byte form is NOT planned. If
+/// it is ever done, it must ride a protocol version boundary rather than a
+/// binary flip: `AuthorityName` is a field of `AuthorityCapabilitiesV1` and
+/// every consensus transaction's author, is the handoff signature signer,
+/// and is BCS-encoded into `hash_next_committee_pubkey_set`, so a committee
+/// whose members disagree on the emitted length produces divergent message
+/// bytes and cert digests. Its prerequisite is now met — the read-both
+/// tolerance shipped in v1.2.7, which every validator on a v6 network runs,
+/// so no deployed binary would reject the short form.
 ///
 /// Mirrors the `Readable<Base64, Bytes>` serializer in both serde modes:
 /// a Base64 string in human-readable formats (JSON/YAML), raw bytes in

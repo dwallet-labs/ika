@@ -130,21 +130,10 @@ pub struct JoinerHandle {
 }
 
 impl JoinerHandle {
-    /// BLS authority name (committee identity) for this joiner.
-    /// The joiner's `AuthorityName` under the given identity basis: the
-    /// zero-padded consensus Ed25519 key when `consensus_key_identity`
-    /// (protocol v6+), the BLS protocol key before it. Callers read the
-    /// basis from the epoch they are inspecting — a name minted under the
-    /// wrong one is simply absent from that epoch's committee, which reads
-    /// as "the joiner never landed" rather than as a naming mistake.
-    pub fn authority_name(&self, consensus_key_identity: bool) -> AuthorityPublicKeyBytes {
-        if consensus_key_identity {
-            AuthorityPublicKeyBytes::from_consensus_key(
-                self.init_config.consensus_key_pair.public(),
-            )
-        } else {
-            self.init_config.key_pair.public().into()
-        }
+    /// The joiner's `AuthorityName` (committee identity): its consensus
+    /// Ed25519 key, zero-padded into the 48-byte container.
+    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
+        AuthorityPublicKeyBytes::from_consensus_key(self.init_config.consensus_key_pair.public())
     }
 }
 
@@ -1629,7 +1618,7 @@ impl IkaTestClusterBuilder {
             .collect();
         let validator_consensus_names: Vec<_> = validator_configs
             .iter()
-            .map(|c| c.authority_name(/* consensus_key_identity */ true))
+            .map(|c| c.authority_name())
             .collect();
         // The ika epoch only advances when a Notifier node submits the
         // `process_mid_epoch` / `request_advance_epoch` transactions to Sui (the

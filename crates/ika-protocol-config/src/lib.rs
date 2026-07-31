@@ -15,7 +15,7 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 5;
+const MIN_PROTOCOL_VERSION: u64 = 6;
 const MAX_PROTOCOL_VERSION: u64 = 6;
 
 // Record history of protocol version allocations here:
@@ -33,23 +33,19 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            reconfiguration public outputs switch to the aggregated wire
 //            format (V4-tagged); V3-tagged pre-aggregation outputs remain
 //            readable forever (testnet persisted them at v4).
-// Version 6: two coordinated flips activate together at the v6 boundary.
+// Version 6: two coordinated flips activated together at the v6 boundary.
 //   (a) consensus_key_authority_names — `AuthorityName` (validator identity)
-//            becomes the Ed25519 consensus key, zero-padded to the 48-byte
+//            became the Ed25519 consensus key, zero-padded to the 48-byte
 //            container so the wire encoding is unchanged. The BLS protocol key
 //            stays on chain and carried on `Committee` for BLS
-//            aggregate-certificate (checkpoint) verification. ADVERTISED: every
-//            validator on this binary offers 6, so the capability vote carries a
-//            network to v6 once a quorum upgrades. The identity flip is
-//            therefore live on rollout, not on a separate decision. See the flag
-//            definition for the activation-boundary caveat, and
+//            aggregate-certificate (checkpoint) verification. See
 //            dev-docs/specs/committee-consensus-keys.md.
 //   (b) strict_network_key_coefficient_bound — network-key DKG/reconfiguration
-//            migrates the equality-of-coefficients discrete-log bound from the
+//            migrated the equality-of-coefficients discrete-log bound from the
 //            `-10` relaxed bound (transcribed since mainnet-v1.1.8) to the strict
 //            bound. The bound is transcribed into the Fiat–Shamir challenge, so a
 //            mismatch splits the reconfiguration quorum; the whole committee
-//            switches at the v6 boundary, never per-binary.
+//            switched at the v6 boundary, never per-binary.
 // Version 7 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -231,28 +227,46 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     aggregated_network_key_public_outputs: bool,
 
-    // When on, a validator's `AuthorityName` (its canonical committee
-    // identity) is its Ed25519 consensus key (zero-padded to the 48-byte
-    // container) instead of its BLS protocol key. The BLS key remains on
-    // chain and carried on `Committee` for BLS aggregate-certificate
-    // (checkpoint) verification. KNOWN BOUNDARY LIMITATION: the next-epoch
+    // Switched a validator's `AuthorityName` (its canonical committee
+    // identity) from its BLS protocol key to its Ed25519 consensus key
+    // (zero-padded to the 48-byte container). The BLS key remains on chain
+    // and carried on `Committee` for BLS aggregate-certificate (checkpoint)
+    // verification. Set at version 6 and therefore true at every supported
+    // version, so nothing reads it anymore — the consensus key is the only
+    // identity basis a supported epoch uses. Committees persisted under
+    // BLS-basis names stay READABLE through `Committee`'s alias translation
+    // (`expanded_keys`), which is structural, not gated on this flag.
+    //
+    // Kept for the same reason as `off_chain_validator_metadata` above: the
+    // flag set is part of the BCS-serialized `ProtocolConfig` whose digest
+    // rides `AuthorityCapabilitiesV1` through consensus, so dropping a field
+    // changes every supported version's config digest relative to the
+    // binaries already deployed.
+    //
+    // The original reason this was a version flag rather than a binary switch
+    // still governs any FUTURE change to the identity basis: the next-epoch
     // committee is assembled mid-epoch under the CURRENT epoch's version
-    // while the next epoch consumes it under its OWN — at the single
-    // activation boundary the two disagree (this asymmetry is what wedged
-    // and reverted the first flip attempt; see
-    // dev-docs/plans/authority-name-consensus-key.md). Validated by the
-    // gradual-upgrade cluster suite; genesis-at-v6 networks have no
-    // boundary and are unaffected.
+    // while the next epoch consumes it under its OWN, so at the activation
+    // boundary the producing and consuming sides disagree about the basis of
+    // one and the same committee. That asymmetry wedged and reverted the
+    // first flip attempt; see dev-docs/specs/committee-consensus-keys.md.
     #[serde(skip_serializing_if = "is_false")]
     consensus_key_authority_names: bool,
 
-    // Network-key DKG/reconfiguration equality-of-coefficients discrete-log
-    // bound. Off through v5 (the `-10` relaxed bound the network has transcribed
-    // since mainnet-v1.1.8); on at v6, selecting the strict bound. The bound is
-    // transcribed whole into the Fiat–Shamir challenge, so a mismatch makes
-    // peers reject the reconfiguration proof and flag the dealer malicious —
-    // hence a protocol-gated flip the whole committee makes at the v6 boundary,
-    // never a per-binary switch.
+    // Migrated the network-key DKG/reconfiguration equality-of-coefficients
+    // discrete-log bound from the `-10` relaxed bound (transcribed since
+    // mainnet-v1.1.8) to the strict bound. Set at version 6 and therefore
+    // true at every supported version, so nothing reads it anymore — the
+    // strict bound is the only one passed to the crypto public-input
+    // constructors.
+    //
+    // Kept for the same config-digest reason as the flags above.
+    //
+    // The original reason this was a version flag rather than a binary switch
+    // still governs any FUTURE change to the bound: it is transcribed whole
+    // into the Fiat–Shamir challenge, so a mixed-bound committee splits its
+    // reconfiguration quorum and flags the odd validator malicious. Such a
+    // flip must ride a protocol version boundary, never a per-binary switch.
     #[serde(skip_serializing_if = "is_false")]
     strict_network_key_coefficient_bound: bool,
 }
@@ -491,13 +505,6 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
-    }
-
-    /// Whether `AuthorityName` is the Ed25519 consensus key (zero-padded)
-    /// instead of the BLS protocol key. See the flag definition for the
-    /// activation-boundary caveat.
-    pub fn consensus_key_authority_names(&self) -> bool {
-        self.feature_flags.consensus_key_authority_names
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -792,7 +799,7 @@ impl ProtocolConfig {
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
         cfg.feature_flags.bls_checkpoints = true;
 
-        // Versions below MIN (= 5) are unreachable via `get_for_version` (it
+        // Versions below MIN (= 6) are unreachable via `get_for_version` (it
         // asserts `version >= MIN`), but their arms are kept as the readable
         // history of how each version changed the config — every supported
         // version's config is still built by replaying them from the start.

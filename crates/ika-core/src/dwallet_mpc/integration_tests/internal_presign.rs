@@ -1502,7 +1502,7 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
     // (the real should-never-happen), while an identical unresolvable key
     // that was never adopted is the post-restart replay shape — the one that
     // used to raise a false `should_never_happen=true` alarm on every
-    // binary-swap restart (a burst of them in the v1.2.5 upgrade scenario).
+    // binary-swap restart (a burst of them in the v1.2.7 upgrade scenario).
     let never_adopted_id = ObjectID::random();
     for (service_index, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         let manager = service.dwallet_mpc_manager();

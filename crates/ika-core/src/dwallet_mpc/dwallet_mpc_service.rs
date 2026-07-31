@@ -2959,11 +2959,11 @@ impl DWalletMPCService {
         epoch_start_system: &EpochStartSystem,
         config: &NodeConfig,
     ) -> DwalletMPCResult<()> {
-        // Self-lookup in the raw validator records, which are keyed by the
-        // BLS protocol key on both sides regardless of the epoch's committee
-        // identity basis — so the BLS-basis name is correct here even past
-        // the authority-name flip epoch.
-        let authority_name = config.authority_name(false);
+        // Self-lookup in the raw validator records, whose
+        // `EpochStartValidatorInfoTrait::authority_name` is the BLS protocol
+        // key — a different name space from the committee identity, which is
+        // the consensus key.
+        let authority_name = config.protocol_public_key();
         let Some(onchain_validator) = epoch_start_system
             .get_ika_validators()
             .into_iter()

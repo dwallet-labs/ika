@@ -1484,7 +1484,7 @@ impl ClusterOfProcesses {
                 );
                 // Each observer is a validator under test (the upgraded
                 // binary); its own authority is the candidate whose
-                // byte-equality with the v1.2.5 quorum this boundary tries
+                // byte-equality with the v1.2.7 quorum this boundary tries
                 // to witness.
                 let candidate_authority: BTreeSet<String> = self
                     .validator_authorities
@@ -2412,7 +2412,7 @@ mod tests {
 
     #[test]
     fn candidate_straggler_without_late_evidence_converges_but_is_flagged() {
-        // The exact release-gate flake ordering: three v1.2.5 authorities
+        // The exact release-gate flake ordering: three v1.2.7 authorities
         // finalize with identical outputs, the quorum closes the session, and
         // the upgraded validator's own computation has produced nothing
         // comparable yet. The quorum itself converged (this must NOT fail),

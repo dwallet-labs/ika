@@ -685,21 +685,8 @@ impl AuthorityState {
             new_committee.epoch
         );
         fail_point!("before-open-new-epoch-store");
-        // Re-derive our own committee identity for the NEW epoch's basis
-        // rather than carrying the outgoing epoch's name forward.
-        // `AuthorityName` is the BLS protocol key below protocol v6 and the
-        // consensus key from v6, so at the activation boundary a name minted
-        // for the previous epoch is simply absent from the new committee —
-        // the node would conclude it is "no longer a validator" and silently
-        // drop out of its own committee (observed in the v1.2.5 -> v6
-        // upgrade rehearsal).
-        let name = self.config.authority_name(
-            epoch_start_configuration
-                .epoch_start_state()
-                .consensus_key_identity(),
-        );
         let new_epoch_store = cur_epoch_store.new_at_next_epoch(
-            name,
+            self.config.authority_name(),
             new_committee,
             epoch_start_configuration,
             cur_epoch_store.get_chain_identifier(),
