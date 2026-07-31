@@ -1,17 +1,17 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Strict-bound v6 rolling-upgrade rehearsal — the chained compatibility gate
-//! for adopting the strict-only inkrypto rev.
+//! Strict-bound v6 rolling-upgrade rehearsal for adopting the strict-only
+//! inkrypto revision.
 //!
 //! Protocol v6 migrates the network-key equality-of-coefficients discrete-log
 //! bound from the `-10` relaxed bound (transcribed since mainnet-v1.1.8) to the
 //! strict bound. Two binaries agree on the strict bound at v6:
 //!
-//! - **OLD** = the v6-capable "step 1" binary (current inkrypto, both bounds
-//!   selectable; produces the strict bound at v6 via the
+//! - **OLD** = the v1.2.7 binary (current inkrypto, both bounds selectable;
+//!   produces the strict bound at v6 via the
 //!   `strict_network_key_coefficient_bound` protocol flag).
-//! - **NEW** = the "step 2" binary (strict-only inkrypto rev — the
+//! - **NEW** = the candidate binary (strict-only inkrypto revision — the
 //!   `backward_compatible` machinery removed — so it produces the strict bound
 //!   unconditionally).
 //!
@@ -27,9 +27,9 @@
 //! Opt-in (real binaries + long-running), via `RUN_V6_ROLLOUT=1`:
 //!
 //! ```bash
-//! # OLD_BIN: the step-1 (v6-capable) ika-validator; NEW_BIN: the step-2 (inkrypto-bump) ika-validator
+//! # OLD_BIN: the v1.2.7 ika-validator; NEW_BIN: the strict-only candidate
 //! RUN_V6_ROLLOUT=1 \
-//!   OLD_BIN=/path/to/ika-validator-step1 \
+//!   OLD_BIN=/path/to/ika-validator-v1.2.7 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
@@ -65,7 +65,7 @@ async fn v6_rollout_converges_across_binary_swap_at_v6() {
 
     let old = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/mnt/nvme0n1p1/step1-bins/ika-validator",
+        "/mnt/nvme0n1p1/v127-bins/ika-validator",
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
@@ -94,7 +94,7 @@ async fn v6_rollout_converges_across_binary_swap_at_v6() {
 
     // Validator 0 is the sole NEW-binary validator through the mixed phase; it
     // records every authority's consensus-submitted reconfiguration output
-    // (including the three OLD/step-1 validators) via canonical BCS digests.
+    // (including the three OLD validators) via canonical BCS digests.
     let current_observer = [0];
 
     Scenario::new(4, repo, sui, notifier)
@@ -181,12 +181,12 @@ async fn v6_rollout_converges_across_binary_swap_at_v6() {
         .run()
         .await
         .expect(
-            "step1/step2 committee must converge across the mixed phase and the full binary \
+            "v1.2.7/candidate committee must converge across the mixed phase and the full binary \
              swap at protocol v6 (strict bound)",
         );
 
     tracing::info!(
-        "v6 rollout PASSED: mixed step1/step2 committee converged across two strict-bound \
+        "v6 rollout PASSED: mixed v1.2.7/candidate committee converged across two strict-bound \
          reshares at v6, and the fully-upgraded committee converged and kept serving a full \
          user lifecycle at each stage"
     );

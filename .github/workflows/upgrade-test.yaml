@@ -11,8 +11,8 @@ name: Upgrade Test
 # Manual dispatch can run any scenario. Relevant pull requests run only
 # `v6_rollout`, avoiding the full expensive matrix on unrelated changes.
 # (The v3/v4-era rehearsals — cross_binary, v118_*, v121_rollout — were
-# retired when protocol v3/v4 support was removed; v125_rollout is their
-# successor against the CURRENTLY deployed release.) Pick the scenario with
+# retired when protocol v3/v4 support was removed; v6_rollout is their
+# successor against the current v1.2.7 release.) Pick the scenario with
 # the `test` input:
 #
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
@@ -148,6 +148,7 @@ on:
         required: false
         default: false
       test_testing_fault:
+        description: "TEST ONLY: build a deliberately divergent candidate for v125_rollout or v6_rollout"
         type: boolean
         required: false
         default: false
@@ -202,7 +203,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v125_rollout; the zero-malicious/convergence gate must fail."
+        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v125_rollout or v6_rollout; the zero-malicious/convergence gate must fail."
         type: boolean
         required: false
         default: false
@@ -410,8 +411,8 @@ jobs:
             echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
             exit 1
           fi
-          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v125_rollout" ]; then
-            echo "test_testing_fault is only supported by v125_rollout" >&2
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v125_rollout" ] && [ "$TEST_NAME" != "v6_rollout" ]; then
+            echo "test_testing_fault is only supported by v125_rollout and v6_rollout" >&2
             exit 1
           fi
           if [ "$TEST_TESTING_FAULT" = "true" ]; then
