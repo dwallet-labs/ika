@@ -507,6 +507,39 @@ pub fn verify_certified_handoff_attestation(
     committee: &Committee,
     provider: &dyn ConsensusPubkeyProvider,
 ) -> IkaResult<()> {
+    // This cert was signed at the END of epoch N and is verified in N+1, so it
+    // is the one payload that straddles the v7 `AuthorityName` width flip: the
+    // signatures below are checked against bytes we RE-SERIALIZE locally, at
+    // the entering epoch's width, while the signers used the outgoing epoch's.
+    // Retry once at the other width before rejecting.
+    //
+    // This does not widen what is accepted: both widths encode the SAME
+    // attestation value (a name decodes identically from either), so the retry
+    // resolves an encoding ambiguity rather than admitting a second message.
+    // It is scoped to this thread, so concurrent serialization is untouched.
+    match verify_certified_handoff_attestation_at_current_width(cert, committee, provider) {
+        Err(first @ IkaError::InvalidSignature { .. }) => {
+            let other_width = !ika_types::crypto::authority_name_short_encoding();
+            ika_types::crypto::with_authority_name_short_encoding(other_width, || {
+                verify_certified_handoff_attestation_at_current_width(cert, committee, provider)
+            })
+            .map_err(|_| {
+                // Report the FIRST failure: the retry's error is always
+                // "wrong width" noise when the cert is genuinely bad, and it
+                // would send the reader after an encoding problem that isn't
+                // there.
+                first
+            })
+        }
+        result => result,
+    }
+}
+
+fn verify_certified_handoff_attestation_at_current_width(
+    cert: &CertifiedHandoffAttestation,
+    committee: &Committee,
+    provider: &dyn ConsensusPubkeyProvider,
+) -> IkaResult<()> {
     let intent_msg = IntentMessage::new(
         Intent::ika_app(IntentScope::HandoffAttestation),
         cert.attestation.clone(),

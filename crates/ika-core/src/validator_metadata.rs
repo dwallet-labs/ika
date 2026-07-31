@@ -3002,6 +3002,119 @@ mod tests {
         );
     }
 
+    /// A handoff cert is signed at the END of epoch N and verified in N+1, so
+    /// it straddles the v7 `AuthorityName` width flip: signatures are checked
+    /// against bytes the VERIFIER re-serializes, at its own epoch's width.
+    /// Both crossing directions must verify, or the activation boundary wedges
+    /// the cross-epoch trust anchor for the whole fleet.
+    #[test]
+    fn handoff_cert_verifies_across_the_authority_name_width_flip() {
+        use ika_types::crypto::with_authority_name_short_encoding;
+
+        // Consensus-basis names (Ed25519 key + zero tail) are the ONLY ones
+        // the short encoding shortens — a BLS-basis name has a non-zero tail
+        // and is emitted full-length either way, which would make this test
+        // vacuous. So name the committee off the consensus keys here.
+        let consensus_kps = make_consensus_keys(4);
+        let names: Vec<AuthorityName> = consensus_kps
+            .iter()
+            .map(|kp| AuthorityName::from_consensus_key(kp.public()))
+            .collect();
+        let consensus_keys: std::collections::HashMap<AuthorityName, Ed25519PublicKey> = names
+            .iter()
+            .copied()
+            .zip(consensus_kps.iter().map(|kp| kp.public().clone()))
+            .collect();
+        let committee = Arc::new(Committee::new(
+            5,
+            names.iter().map(|n| (*n, 1u64)).collect(),
+            std::collections::HashMap::new(),
+            consensus_keys.clone(),
+            3,
+            2,
+        ));
+        let provider = StaticConsensusPubkeyProvider::from_iter(consensus_keys);
+
+        // The attestation MUST carry a name in its signed bytes, or the width
+        // cannot affect it. `ValidatorMpcData` is the item key that does.
+        let att = build_handoff_attestation(
+            7,
+            [0xAA; 32],
+            vec![(
+                HandoffItemKey::ValidatorMpcData {
+                    validator: names[0],
+                },
+                [0x33; 32],
+            )],
+        )
+        .expect("build");
+
+        // Vacuity guard: if the two widths encoded identically, everything
+        // below would pass while testing nothing.
+        let short_bytes = with_authority_name_short_encoding(true, || bcs::to_bytes(&att).unwrap());
+        let padded_bytes =
+            with_authority_name_short_encoding(false, || bcs::to_bytes(&att).unwrap());
+        assert_ne!(
+            short_bytes, padded_bytes,
+            "the attestation must encode differently at the two widths, else this test is vacuous"
+        );
+
+        for (signing_short, verifying_short) in [(false, true), (true, false)] {
+            let cert = with_authority_name_short_encoding(signing_short, || {
+                let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+                for i in 0..3 {
+                    let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+                    agg.insert_verified(names[i], msg.signature);
+                }
+                agg.certified().expect("certified").clone()
+            });
+
+            with_authority_name_short_encoding(verifying_short, || {
+                verify_certified_handoff_attestation(&cert, &committee, &provider).unwrap_or_else(
+                    |e| {
+                        panic!(
+                            "cert signed at short={signing_short} must verify at \
+                             short={verifying_short} (the v7 activation boundary): {e:?}"
+                        )
+                    },
+                );
+            });
+        }
+    }
+
+    /// The dual-width retry must not turn a genuinely bad signature into an
+    /// accept — it resolves an encoding ambiguity, it does not weaken
+    /// verification.
+    #[test]
+    fn width_retry_does_not_rescue_a_bad_handoff_signature() {
+        use ika_types::crypto::with_authority_name_short_encoding;
+
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(7, [0xAA; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let mut cert = agg.certified().expect("certified").clone();
+        // Corrupt one signature: no width makes it verify.
+        let other = sign_handoff_attestation(
+            build_handoff_attestation(9, [0xBB; 32], vec![]).expect("build"),
+            names[0],
+            &consensus_kps[0],
+        );
+        cert.signatures[0].1 = other.signature;
+
+        for width in [false, true] {
+            with_authority_name_short_encoding(width, || {
+                assert!(
+                    verify_certified_handoff_attestation(&cert, &committee, &provider).is_err(),
+                    "a forged signature must be rejected at width short={width}"
+                );
+            });
+        }
+    }
+
     #[test]
     fn verify_certified_handoff_skips_unresolvable_signer_then_checks_quorum() {
         // size=4 → quorum_threshold q=3, equal stake 1 each. A real cert

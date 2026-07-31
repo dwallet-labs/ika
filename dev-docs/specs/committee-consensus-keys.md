@@ -120,6 +120,40 @@ RAW validator records (`EpochStartValidatorInfoTrait::authority_name`,
 used by `verify_validator_keys`), which are a different name space from
 the committee identity.
 
+**Encoding width (protocol v7).** The identity is the consensus key at every
+supported version; what v7 changes is only how it is WRITTEN.
+`short_authority_names` switches `AuthorityName` from the 32 key bytes
+zero-padded into the 48-byte container to the raw 32 bytes.
+
+Decoding has accepted both widths since v1.2.7 (`LenientAuthorityKeyBytes`),
+so no deployed binary rejects the short form. That tolerance is necessary but
+NOT sufficient, and the reason is the crux of this flip: signature and digest
+bytes are reconstructed by RE-SERIALIZING locally — `verify_handoff_signature`
+rebuilds the signed payload from its own decoded copy, and
+`hash_next_committee_pubkey_set` BCS-encodes a `Vec<AuthorityName>` before
+hashing. Two validators emitting different widths therefore compute different
+digests for the same committee and reject each other's signatures, even though
+each parses the other's messages perfectly. What the version gate buys is not
+readability but **simultaneous emission**.
+
+Two consequences worth knowing before touching this:
+
+1. **The width is process-wide state** (`AUTHORITY_NAME_SHORT_ENCODING`), set
+   from the protocol config when an epoch store is built. It is the only
+   protocol flag in ika consumed outside its call site, because serde has no
+   access to the config. A thread-scoped override exists for one purpose only
+   (below); do not reach for it to paper over a width mismatch elsewhere.
+2. **The handoff cert straddles the boundary.** It is signed at the end of
+   epoch N under the old width and verified in N+1 under the new one, so
+   `verify_certified_handoff_attestation` retries once at the other width
+   before rejecting. This does not widen what is accepted — both widths encode
+   the same attestation value. Anything new that verifies a re-serialized
+   cross-epoch payload must do the same.
+
+A BLS-basis name is never shortened: the short encoding applies only to values
+whose trailing 16 bytes are zero, which is what keeps historical BLS-basis
+committee records round-tripping unchanged.
+
 **Why the 48-byte container is not ambiguous across bases.** A
 consensus-basis name is the 32-byte Ed25519 key followed by 16 zero bytes;
 a BLS-basis name is a valid BLS12-381 G1 point. For the two to collide an

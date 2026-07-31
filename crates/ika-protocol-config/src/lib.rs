@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 6;
-const MAX_PROTOCOL_VERSION: u64 = 6;
+const MAX_PROTOCOL_VERSION: u64 = 7;
 
 // Record history of protocol version allocations here:
 //
@@ -46,7 +46,21 @@ const MAX_PROTOCOL_VERSION: u64 = 6;
 //            bound. The bound is transcribed into the Fiat–Shamir challenge, so a
 //            mismatch splits the reconfiguration quorum; the whole committee
 //            switched at the v6 boundary, never per-binary.
-// Version 7 (planned): noa_checkpoints on.
+// Version 7: short_authority_names — `AuthorityName` is serialized as the raw
+//            32-byte Ed25519 consensus key instead of that key zero-padded
+//            into the 48-byte container the BLS protocol key occupied through
+//            v5. Decoding has accepted both widths since v1.2.7, so no
+//            deployed binary rejects the short form; what the version gate
+//            buys is that every validator starts EMITTING it at the same epoch
+//            boundary. It has to: `AuthorityName` is a field of
+//            `AuthorityCapabilitiesV1`, of ten MPC consensus messages, and of
+//            `HandoffItemKey`, and both `verify_handoff_signature` and
+//            `hash_next_committee_pubkey_set` reconstruct signed/hashed bytes
+//            by re-serializing locally — so two validators emitting different
+//            widths compute different digests and reject each other's
+//            signatures. See `AUTHORITY_NAME_SHORT_ENCODING` for how the width
+//            reaches serde, and the boundary caveat it documents.
+// Version 8 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -269,6 +283,20 @@ struct FeatureFlags {
     // flip must ride a protocol version boundary, never a per-binary switch.
     #[serde(skip_serializing_if = "is_false")]
     strict_network_key_coefficient_bound: bool,
+
+    // When on, `AuthorityName` serializes as the raw 32-byte Ed25519 consensus
+    // key instead of that key zero-padded into the 48-byte container. Readers
+    // have accepted both widths since v1.2.7, so this gate is about when
+    // validators start EMITTING the short form — they must do so together, at
+    // one epoch boundary, because signature and digest bytes are reconstructed
+    // by re-serializing locally (see the version-history note above).
+    //
+    // Unlike every other flag here, this one cannot be consumed at its call
+    // sites: serde has no access to the protocol config. It is mirrored into
+    // the `AUTHORITY_NAME_SHORT_ENCODING` global when the epoch store is
+    // built, and the serializer reads that.
+    #[serde(skip_serializing_if = "is_false")]
+    short_authority_names: bool,
 }
 
 #[allow(unused)]
@@ -505,6 +533,14 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
+    }
+
+    /// Whether `AuthorityName` is emitted as the raw 32-byte consensus key
+    /// (v7+) rather than zero-padded into the 48-byte container. Read once
+    /// per epoch to set `AUTHORITY_NAME_SHORT_ENCODING`; nothing else should
+    /// consume it, since the encoding must be uniform across the process.
+    pub fn short_authority_names(&self) -> bool {
+        self.feature_flags.short_authority_names
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -843,7 +879,13 @@ impl ProtocolConfig {
                     // bound (see the field comment and the flip in `input.rs`).
                     cfg.feature_flags.strict_network_key_coefficient_bound = true;
                 }
-                // 7 => {
+                7 => {
+                    // Emit `AuthorityName` as the raw 32-byte consensus key.
+                    // Mirrored into `AUTHORITY_NAME_SHORT_ENCODING` at epoch
+                    // store construction — serde cannot read the config.
+                    cfg.feature_flags.short_authority_names = true;
+                }
+                // 8 => {
                 //     cfg.feature_flags.noa_checkpoints = true;
                 // }
                 // Use this template when making changes:

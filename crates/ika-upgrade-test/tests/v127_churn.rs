@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use ika_upgrade_test::binary::BinarySpec;
 use ika_upgrade_test::scenario::Scenario;
 
@@ -96,6 +97,13 @@ async fn v127_full_swap_then_committee_churn() {
     let current_observer = [0];
 
     Scenario::new(4, repo, sui, notifier)
+        // Pinned to v6: this scenario is a BINARY swap, not a protocol
+        // transition. `MAX_PROTOCOL_VERSION` is 7, so without this pin the
+        // fully-swapped committee would vote itself to v7 partway through and
+        // silently start exercising the AuthorityName width flip — conflating
+        // deployed-release compatibility with a protocol upgrade. Crossing v7
+        // is `v127_v7_upgrade`'s job.
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
         .with_base_dir(base)
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))

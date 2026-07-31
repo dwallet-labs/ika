@@ -29,6 +29,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use ika_upgrade_test::binary::BinarySpec;
 use ika_upgrade_test::scenario::Scenario;
 
@@ -77,6 +78,12 @@ async fn workload_dkg_presign_sign() {
     // Epochs are 3 minutes so the lifecycle fits inside an epoch before its
     // own reconfiguration window.
     Scenario::new(4, repo, sui, notifier)
+        // Pinned to v6: this scenario gates the session lifecycle at a FIXED
+        // protocol version. `MAX_PROTOCOL_VERSION` is 7, so without this pin
+        // the all-current committee would vote itself to v7 partway through
+        // and the lifecycle would straddle a protocol boundary it is not
+        // meant to test. Crossing v7 is `v127_v7_upgrade`'s job.
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
         .with_base_dir(base)
         .with_epoch_duration_ms(180_000)
         .with_epoch_timeout(Duration::from_secs(900))

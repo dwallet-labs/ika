@@ -23,6 +23,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail, ensure};
 use ika_protocol_config::ProtocolVersion;
 use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use tokio::time::sleep;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
@@ -276,6 +277,11 @@ pub struct Scenario {
     /// mainnet-v1.1.8 state) plus a [`Step::SetGlobalPresignConfig`] after
     /// the upgrade.
     pub genesis_global_presign_config: GenesisGlobalPresignConfig,
+    /// Pins every validator's advertised protocol-version range. Set it in any
+    /// scenario that must stay at ONE protocol version: with
+    /// `MAX_PROTOCOL_VERSION` ahead of the version under test, a fully-swapped
+    /// committee otherwise votes itself across the next boundary mid-run.
+    pub supported_protocol_versions: Option<SupportedProtocolVersions>,
     /// Indices of validators kept on the DIRECT gRPC path (serving the
     /// `SuiStateMirror` relay). At a `stop_and_swap`, every OTHER swapped
     /// validator is flipped to peer-only `SuiStateMirrored` reading through
@@ -314,6 +320,7 @@ impl Scenario {
             min_validator_count: None,
             ika_cli: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
+            supported_protocol_versions: None,
             direct_validators: Vec::new(),
             legacy_sui_config: false,
             genesis_protocol_version: None,
@@ -334,6 +341,13 @@ impl Scenario {
     }
 
     /// Path to the `ika` CLI binary; required by `run_workload` steps.
+    /// Pin every validator's advertised protocol-version range. See
+    /// [`Scenario::supported_protocol_versions`].
+    pub fn with_supported_protocol_versions(mut self, v: SupportedProtocolVersions) -> Self {
+        self.supported_protocol_versions = Some(v);
+        self
+    }
+
     pub fn with_ika_cli(mut self, path: PathBuf) -> Self {
         self.ika_cli = Some(path);
         self
@@ -666,6 +680,9 @@ impl Scenario {
                             .unwrap_or(ProtocolVersion::MIN),
                     )
                     .with_genesis_global_presign_config(self.genesis_global_presign_config);
+                    if let Some(versions) = self.supported_protocol_versions {
+                        builder = builder.with_supported_protocol_versions(versions);
+                    }
                     if self.legacy_sui_config {
                         builder = builder.with_legacy_sui_config();
                     }

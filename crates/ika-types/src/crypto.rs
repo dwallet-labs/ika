@@ -30,17 +30,17 @@ use rand::rngs::StdRng;
 use roaring::RoaringBitmap;
 use schemars::JsonSchema;
 use serde::de::Error as _;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_with::{Bytes, DeserializeAs, serde_as};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::{Bytes, DeserializeAs, SerializeAs, serde_as};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use sui_types::base_types::{ConciseableName, SuiAddress};
 use sui_types::crypto::SignatureScheme;
-use sui_types::sui_serde::Readable;
 use tracing::{instrument, warn};
 
 // Authority Objects
@@ -155,11 +155,127 @@ fn ika_public_key_into_sui_address<T: IkaPublicKey>(pk: &T) -> SuiAddress {
 pub struct AuthorityPublicKeyBytes(
     #[schemars(with = "Base64")]
     #[serde_as(
-        serialize_as = "Readable<Base64, Bytes>",
+        serialize_as = "AuthorityKeyBytesEncoding",
         deserialize_as = "LenientAuthorityKeyBytes"
     )]
     pub [u8; AuthorityPublicKey::LENGTH],
 );
+
+/// Whether `AuthorityName` is serialized as the raw 32-byte Ed25519 consensus
+/// key rather than that key zero-padded into the 48-byte container. Mirrors
+/// the `short_authority_names` protocol flag (v7+).
+///
+/// This is ambient process state — the one flag in ika consumed outside its
+/// protocol config — because serde has no context: `Serialize` is called deep
+/// inside `bcs::to_bytes` with nothing but the value. Every alternative was
+/// worse: a thread-local would have to be set on every rayon and tokio worker
+/// that ever serializes a name, and versioning the message types instead means
+/// a V2 of twelve quorum-critical structs.
+///
+/// **The encoding must be uniform across the whole committee**, not merely
+/// within a process: `verify_handoff_signature` and
+/// `hash_next_committee_pubkey_set` reconstruct signed and hashed bytes by
+/// re-serializing locally, so two validators emitting different widths compute
+/// different digests and reject each other's signatures. That is what the
+/// protocol version buys — every validator flips at the same epoch boundary.
+///
+/// **Boundary caveat.** The flip is applied when an epoch store is built, so it
+/// tracks the epoch a node is ENTERING. An artifact produced under the previous
+/// epoch's width but verified under the new one straddles it; the handoff cert
+/// does exactly that — signed at the end of epoch N, verified in N+1 — which is
+/// why `verify_certified_handoff_attestation` retries at the other width
+/// instead of trusting the ambient value. (Its same-epoch sibling
+/// `verify_handoff_signature` needs no retry: signer and verifier are both
+/// inside epoch N, so they always agree.)
+static AUTHORITY_NAME_SHORT_ENCODING: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    /// Per-thread override of the process-wide width, for the one operation
+    /// that legitimately needs the OTHER epoch's encoding: re-serializing a
+    /// cross-epoch payload to check a signature made under the previous
+    /// epoch's width. It must be thread-scoped — mutating the global for that
+    /// would corrupt every name any other thread serializes meanwhile.
+    static SHORT_ENCODING_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Sets the process-wide `AuthorityName` encoding width. Called once per epoch
+/// from the epoch store, with the epoch's `short_authority_names`. `Relaxed` is
+/// sufficient: the flag guards no other memory, and correctness depends on
+/// committee-wide agreement on the protocol version, not on intra-process
+/// ordering against any particular write.
+pub fn set_authority_name_short_encoding(enabled: bool) {
+    AUTHORITY_NAME_SHORT_ENCODING.store(enabled, Ordering::Relaxed);
+}
+
+/// The `AuthorityName` encoding width in effect on this thread: the
+/// thread-local override if one is active, otherwise the process-wide value.
+pub fn authority_name_short_encoding() -> bool {
+    SHORT_ENCODING_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or_else(|| AUTHORITY_NAME_SHORT_ENCODING.load(Ordering::Relaxed))
+}
+
+/// Runs `f` with the encoding width forced on THIS THREAD only, restoring the
+/// previous state afterwards (including on panic). Concurrent threads are
+/// unaffected.
+///
+/// The only production caller is cross-epoch handoff-cert verification, which
+/// must reconstruct bytes signed under the previous epoch's width. Do not
+/// reach for this to "fix" a width mismatch anywhere a payload does not
+/// genuinely cross an epoch boundary — that would paper over a real
+/// disagreement about the protocol version.
+pub fn with_authority_name_short_encoding<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SHORT_ENCODING_OVERRIDE.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = Restore(SHORT_ENCODING_OVERRIDE.with(|slot| slot.replace(Some(enabled))));
+    f()
+}
+
+/// True iff `name` is a consensus-basis name — an Ed25519 key in the leading
+/// 32 bytes with a zero tail — and can therefore be emitted short without loss.
+///
+/// A BLS-basis name is a G1 point whose tail is overwhelmingly not zero, so
+/// this also keeps historical BLS-basis committee records round-tripping
+/// unchanged even once the short encoding is on. The predicate is a pure
+/// function of the value, so two validators always agree on the width for a
+/// given name.
+fn is_zero_padded_consensus_name(name: &[u8; AuthorityPublicKey::LENGTH]) -> bool {
+    name[Ed25519PublicKey::LENGTH..].iter().all(|b| *b == 0)
+}
+
+/// Width-aware serializer for [`AuthorityPublicKeyBytes`], the counterpart of
+/// [`LenientAuthorityKeyBytes`]. Emits 32 bytes when the short encoding is on
+/// AND the value is a zero-padded consensus name; 48 bytes otherwise. Mirrors
+/// the deserializer in both serde modes: Base64 in human-readable formats,
+/// raw bytes in binary ones.
+struct AuthorityKeyBytesEncoding;
+
+impl SerializeAs<[u8; AuthorityPublicKey::LENGTH]> for AuthorityKeyBytesEncoding {
+    fn serialize_as<S>(
+        source: &[u8; AuthorityPublicKey::LENGTH],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes: &[u8] =
+            if authority_name_short_encoding() && is_zero_padded_consensus_name(source) {
+                &source[..Ed25519PublicKey::LENGTH]
+            } else {
+                source.as_slice()
+            };
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&Base64::encode(bytes))
+        } else {
+            serializer.serialize_bytes(bytes)
+        }
+    }
+}
 
 /// Length-lenient deserializer for [`AuthorityPublicKeyBytes`].
 ///
@@ -1041,6 +1157,79 @@ mod tests {
         wire
     }
 
+    /// v7: a consensus-basis name is emitted as the raw 32 bytes, and the
+    /// lenient reader decodes it back to the identical padded value — so the
+    /// in-memory representation is unchanged by the flip.
+    ///
+    /// These tests drive the width through the THREAD-scoped override rather
+    /// than the process global, so they need no mutual exclusion even though
+    /// cargo runs the suite across many threads.
+    #[test]
+    fn short_encoding_emits_unpadded_consensus_name() {
+        with_authority_name_short_encoding(true, || {
+            let consensus_key = consensus_key_bytes();
+            let name = zero_padded(&consensus_key);
+
+            let serialized = bcs::to_bytes(&name).unwrap();
+            assert_eq!(serialized, bcs_byte_string(&consensus_key));
+            let round_tripped: AuthorityPublicKeyBytes = bcs::from_bytes(&serialized).unwrap();
+            assert_eq!(round_tripped, name);
+
+            let json = serde_json::to_string(&name).unwrap();
+            assert_eq!(json, format!("\"{}\"", Base64::encode(&consensus_key)));
+        });
+    }
+
+    /// A BLS-basis name has a non-zero tail, so the short encoding must NOT
+    /// truncate it — that is what keeps historical BLS-basis committee records
+    /// round-tripping after the flip.
+    #[test]
+    fn short_encoding_leaves_bls_basis_name_full_length() {
+        with_authority_name_short_encoding(true, || {
+            let name = full_length_name();
+
+            let serialized = bcs::to_bytes(&name).unwrap();
+            assert_eq!(serialized, bcs_byte_string(name.as_ref()));
+            let round_tripped: AuthorityPublicKeyBytes = bcs::from_bytes(&serialized).unwrap();
+            assert_eq!(round_tripped, name);
+        });
+    }
+
+    /// The width is a pure function of (flag, value), so every validator with
+    /// the same protocol version produces identical bytes — the property the
+    /// version gate exists to guarantee. A width DISAGREEMENT must produce
+    /// different bytes, which is the failure this gate prevents.
+    #[test]
+    fn width_disagreement_changes_the_encoded_bytes() {
+        let name = zero_padded(&consensus_key_bytes());
+        let short = with_authority_name_short_encoding(true, || bcs::to_bytes(&name).unwrap());
+        let padded = with_authority_name_short_encoding(false, || bcs::to_bytes(&name).unwrap());
+        assert_ne!(
+            short, padded,
+            "the two widths must encode differently — otherwise the v7 gate is pointless"
+        );
+        // Both decode to the same value: only the emitted bytes differ.
+        let from_short: AuthorityPublicKeyBytes = bcs::from_bytes(&short).unwrap();
+        let from_padded: AuthorityPublicKeyBytes = bcs::from_bytes(&padded).unwrap();
+        assert_eq!(from_short, from_padded);
+    }
+
+    /// The override is thread-scoped: it must not leak to another thread.
+    #[test]
+    fn width_override_does_not_leak_across_threads() {
+        with_authority_name_short_encoding(true, || {
+            assert!(authority_name_short_encoding());
+            let observed = std::thread::spawn(authority_name_short_encoding)
+                .join()
+                .unwrap();
+            assert!(
+                !observed,
+                "the override must stay on the thread that set it — a leak would corrupt \
+                 concurrent serialization"
+            );
+        });
+    }
+
     #[test]
     fn bcs_full_length_wire_format_unchanged_and_round_trips() {
         let name = full_length_name();
@@ -1058,8 +1247,9 @@ mod tests {
         assert_eq!(deserialized, zero_padded(&consensus_key));
     }
 
-    /// Until the serializer flip, a name read from the unpadded encoding
-    /// re-serializes in the padded 48-byte form.
+    /// Below v7 (short encoding off), a name read from the unpadded encoding
+    /// re-serializes in the padded 48-byte form — decoding is lenient in both
+    /// directions, but emission follows the protocol version alone.
     #[test]
     fn bcs_reserializes_unpadded_input_in_padded_form() {
         let consensus_key = consensus_key_bytes();

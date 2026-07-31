@@ -32,20 +32,20 @@ name: Upgrade Test
 #                  to the candidate, converge two mixed strict-bound reshares,
 #                  then swap the rest. Defaults to
 #                  old_ref=release/mainnet-v1.2.7, old_bin_name=ika-validator.
-#   — the PROTOCOL-upgrade gate (v6_rollout's version-
-#                  transition counterpart): boot the literal v1.2.5 release
-#                  at protocol v5, swap the whole committee to the current
-#                  build, and cross v5 -> v6 — the boundary where every
-#                  validator's AuthorityName flips from the BLS protocol key
-#                  to the Ed25519 consensus key. Asserts the upgrade actually
-#                  activates (a silent stay-at-v5 would make it vacuous), the
-#                  boundary reshare converges byte-identically with no
-#                  malicious reports, the committee keeps all 4 members, and
-#                  users are served across the flip. Same OLD defaults as
-#                  v6_rollout.
+#   v127_v7_upgrade — the PROTOCOL-upgrade gate (v6_rollout's version-
+#                  transition counterpart): boot the literal v1.2.7 release
+#                  at protocol v6, swap the whole committee to the current
+#                  build, and cross v6 -> v7 — the boundary where
+#                  AuthorityName stops being emitted zero-padded to 48 bytes
+#                  and starts being emitted as the raw 32-byte consensus key.
+#                  Asserts the upgrade actually activates (a silent stay-at-v6
+#                  would make it vacuous), the boundary reshare converges, the
+#                  committee keeps all 4 members, and the cross-epoch handoff
+#                  cert (signed padded, verified short) still verifies. Same
+#                  OLD defaults as v6_rollout.
 #   v127_churn   — v6_rollout's churn counterpart: full sequential swap
-#                  over the literal v1.2.5 committee, then a mirrored OCS
-#                  joiner folds into the reshared v1.2.5-origin key (4→5)
+#                  over the literal v1.2.7 committee, then a mirrored OCS
+#                  joiner folds into the reshared v1.2.7-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
 #                  defaults as v127_rollout.
 #   malicious_v127 — test-testing counterpart: honest literal-v1.2.7
@@ -148,7 +148,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build a deliberately divergent candidate for v6_rollout or v6_rollout"
+        description: "TEST ONLY: build a deliberately divergent candidate for v6_rollout"
         type: boolean
         required: false
         default: false
@@ -203,7 +203,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v6_rollout or v6_rollout; the zero-malicious/convergence gate must fail."
+        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v6_rollout; the zero-malicious/convergence gate must fail."
         type: boolean
         required: false
         default: false
@@ -245,7 +245,7 @@ jobs:
           TEST: ${{ inputs.test || 'v6_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v6_rollout v127_churn malicious_v127 legacy_config restart_spectator"
+          ALL="smoke workload v6_rollout v127_v7_upgrade v127_churn malicious_v127 legacy_config restart_spectator"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -358,7 +358,7 @@ jobs:
           case "$TEST" in
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
-            v127_rollout) RUN_FLAG=RUN_V127_ROLLOUT ;;
+            v127_v7_upgrade) RUN_FLAG=RUN_V127_V7_UPGRADE ;;
             v127_churn)   RUN_FLAG=RUN_V127_CHURN ;;
             malicious_v127) RUN_FLAG=RUN_MALICIOUS_V127 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
@@ -371,7 +371,7 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v127_churn | malicious_v127)
+            v127_v7_upgrade | v127_churn | malicious_v127)
               : "${OLD_REF:=release/mainnet-v1.2.7}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -448,7 +448,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v6_rollout' || matrix.test == 'v127_churn' || matrix.test == 'malicious_v127' || matrix.test == 'v6_rollout' }}
+        if: ${{ matrix.test == 'v6_rollout' || matrix.test == 'v127_v7_upgrade' || matrix.test == 'v127_churn' || matrix.test == 'malicious_v127' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
