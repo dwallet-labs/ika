@@ -3091,6 +3091,76 @@ mod tests {
         }
     }
 
+    /// FAULT VALIDATION for the v7 width gate.
+    ///
+    /// Every validator in the upgrade scenarios flips width together, so those
+    /// gates prove only that a COORDINATED flip works. This proves the other
+    /// half: that an UNCOORDINATED one — a straggler emitting the wrong width
+    /// while its peers have moved on — is detected and excluded, rather than
+    /// silently absorbed into the quorum.
+    ///
+    /// The mechanism is `hash_next_committee_pubkey_set`, which each validator
+    /// computes by BCS-encoding the committee LOCALLY. Two widths, two digests
+    /// for the same membership, so the straggler's attestation differs from
+    /// everyone else's and its signature is rejected as `AttestationMismatch`.
+    #[test]
+    fn a_width_straggler_is_detected_and_excluded_from_the_handoff_quorum() {
+        use ika_types::crypto::with_authority_name_short_encoding;
+
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let next_committee: Vec<AuthorityName> = names.clone();
+
+        // The committee's digest as each width computes it.
+        let hash_padded = with_authority_name_short_encoding(false, || {
+            hash_next_committee_pubkey_set(next_committee.iter().copied())
+        });
+        let hash_short = with_authority_name_short_encoding(true, || {
+            hash_next_committee_pubkey_set(next_committee.iter().copied())
+        });
+        assert_ne!(
+            hash_padded, hash_short,
+            "if the widths hashed identically the gate would be pointless — and this \
+             test would be vacuous"
+        );
+
+        // The honest majority is on the new width; the straggler is not.
+        let honest_attestation = build_handoff_attestation(7, hash_short, vec![]).expect("build");
+        let straggler_attestation =
+            build_handoff_attestation(7, hash_padded, vec![]).expect("build");
+
+        // The straggler signs its own (differing) attestation and offers it.
+        let straggler_msg =
+            sign_handoff_attestation(straggler_attestation, names[0], &consensus_kps[0]);
+        assert_eq!(
+            verify_handoff_signature(&straggler_msg, &honest_attestation, &provider),
+            HandoffSignatureVerdict::AttestationMismatch,
+            "a width straggler must be REJECTED from the handoff quorum, not counted"
+        );
+
+        // Control: a peer on the same width is accepted, so the rejection above
+        // is attributable to the width and nothing else.
+        let honest_msg =
+            sign_handoff_attestation(honest_attestation.clone(), names[1], &consensus_kps[1]);
+        assert_eq!(
+            verify_handoff_signature(&honest_msg, &honest_attestation, &provider),
+            HandoffSignatureVerdict::Accept,
+        );
+
+        // And the straggler cannot reach quorum on its own view: its stake
+        // alone is below threshold, so the epoch's handoff cert is built by the
+        // honest majority without it.
+        let mut agg = HandoffAggregator::new(committee.clone(), honest_attestation.clone());
+        for i in 1..4 {
+            let msg =
+                sign_handoff_attestation(honest_attestation.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        assert!(
+            agg.certified().is_some(),
+            "the honest majority must still certify the handoff without the straggler"
+        );
+    }
+
     /// The dual-width retry must not turn a genuinely bad signature into an
     /// accept — it resolves an encoding ambiguity, it does not weaken
     /// verification.

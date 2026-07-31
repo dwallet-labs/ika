@@ -150,6 +150,23 @@ Two consequences worth knowing before touching this:
    the same attestation value. Anything new that verifies a re-serialized
    cross-epoch payload must do the same.
 
+**Fault-validating the width gate.** The upgrade scenarios flip every
+validator together, so on their own they prove a COORDINATED flip works and
+nothing about an uncoordinated one. Two things close that gap:
+
+- `a_width_straggler_is_detected_and_excluded_from_the_handoff_quorum`
+  (`validator_metadata.rs`) shows a validator on the wrong width computes a
+  different `next_committee_pubkey_set_hash`, so its signature is rejected as
+  `AttestationMismatch` and the honest majority certifies without it. It carries
+  a vacuity guard: making the digest width-insensitive fails the test on the
+  guard, not on a downstream assertion.
+- `FAULT_INVERT_AUTHORITY_NAME_WIDTH` (a `test-testing`-gated env var read at
+  epoch-store construction) makes one real validator emit the opposite width,
+  so the out-of-process `v127_v7_upgrade` scenario can be run against a genuine
+  straggler. Build the faulty binary with
+  `--features test-testing` and set the variable on one validator; the run must
+  fail on the zero-malicious or output-convergence assertion.
+
 A BLS-basis name is never shortened: the short encoding applies only to values
 whose trailing 16 bytes are zero, which is what keeps historical BLS-basis
 committee records round-tripping unchanged.

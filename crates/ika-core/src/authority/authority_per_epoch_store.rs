@@ -2415,9 +2415,29 @@ impl AuthorityPerEpochStore {
         // case and handles it explicitly (`verify_certified_handoff_attestation`
         // retries at the other width); anything new that verifies a
         // re-serialized cross-epoch payload must do the same.
-        ika_types::crypto::set_authority_name_short_encoding(
-            protocol_config.short_authority_names(),
-        );
+        let short_authority_names = protocol_config.short_authority_names();
+        // Test-only fault injection for the width-disagreement harness: emit
+        // the OPPOSITE `AuthorityName` width to the rest of the committee, so
+        // honest peers must detect and exclude this validator. Gated behind the
+        // general `test-testing` cargo feature — compiled out of every normal
+        // build, so the only way to produce a faulty binary is an explicit
+        // `--features test-testing`, never a source edit.
+        //
+        // This is what makes the v7 gate falsifiable: every validator in a
+        // scenario otherwise flips together, so without an injected straggler
+        // the gates prove only that a COORDINATED flip works, never that an
+        // uncoordinated one is caught.
+        #[cfg(feature = "test-testing")]
+        let short_authority_names = if std::env::var("FAULT_INVERT_AUTHORITY_NAME_WIDTH").is_ok() {
+            tracing::warn!(
+                inverted_to = !short_authority_names,
+                "TEST-TESTING FAULT: emitting the opposite AuthorityName width"
+            );
+            !short_authority_names
+        } else {
+            short_authority_names
+        };
+        ika_types::crypto::set_authority_name_short_encoding(short_authority_names);
         // Freeze-progress gauges. `-1` is the "not reached / not available"
         // sentinel throughout — epoch 0 and round 0 are valid values, so a
         // zero default would read as a plausible-but-wrong anchor. Round
