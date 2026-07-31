@@ -31,7 +31,7 @@ use prometheus::{
 };
 use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
@@ -71,6 +71,9 @@ pub struct ProofProviderMetrics {
     pub proof_tree_cache_hits_total: IntCounter,
     /// Cache miss → had to fetch the full checkpoint and build the tree.
     pub proof_tree_cache_misses_total: IntCounter,
+    /// Proofs reused from the durable verified-state snapshot cache after the
+    /// current object's last-modifying checkpoint was pruned upstream.
+    pub proof_snapshot_cache_hits_total: IntCounter,
 
     // -- SuiMirrorProofProvider (sui-state-mirrored) --
     /// Relay calls initiated by a sui-state-mirrored provider, by op label.
@@ -150,6 +153,12 @@ impl ProofProviderMetrics {
             proof_tree_cache_misses_total: register_int_counter_with_registry!(
                 "ika_ocs_proof_tree_cache_misses_total",
                 "Per-checkpoint ModifiedObjectTree not in cache; refetched and rebuilt",
+                registry,
+            )
+            .unwrap(),
+            proof_snapshot_cache_hits_total: register_int_counter_with_registry!(
+                "ika_ocs_proof_snapshot_cache_hits_total",
+                "OCS proofs reused from the durable verified-state snapshot cache after upstream pruning",
                 registry,
             )
             .unwrap(),
@@ -361,6 +370,44 @@ pub trait ProofProvider: Send + Sync {
     ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError>;
 }
 
+/// Read-only bridge to the durable, already-verified object snapshots owned by
+/// the connector. The producer consults it only after fetching the current Sui
+/// object and requiring an exact object-reference match, so a stale snapshot
+/// can never be served as current.
+pub trait ProofSnapshotCache: Send + Sync {
+    fn get_proof_snapshot(
+        &self,
+        id: ObjectID,
+    ) -> Option<(VerifiedObjectEntry, CertifiedCheckpointSummary)>;
+}
+
+type ProofBuildResult = Result<
+    (
+        CheckpointSequenceNumber,
+        VerifiedObjectEntry,
+        CertifiedCheckpointSummary,
+    ),
+    TransportError,
+>;
+
+fn recover_pruned_proof(
+    result: ProofBuildResult,
+    proof_snapshot_cache: Option<&dyn ProofSnapshotCache>,
+    current_object_ref: ObjectRef,
+) -> (ProofBuildResult, bool) {
+    let Err(TransportError::NotFound(reason)) = result else {
+        return (result, false);
+    };
+    let recovered = proof_snapshot_cache
+        .and_then(|cache| cache.get_proof_snapshot(current_object_ref.0))
+        .filter(|(entry, _)| entry.object.compute_object_reference() == current_object_ref)
+        .map(|(entry, summary)| (entry.checkpoint_seq, entry, summary));
+    match recovered {
+        Some(recovered) => (Ok(recovered), true),
+        None => (Err(TransportError::NotFound(reason)), false),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProofCacheConfig {
     /// Entry-count capacity for the per-checkpoint tree cache. Sized by
@@ -427,6 +474,7 @@ pub struct LocalProofProvider {
     /// sui-state-direct node over its own fullnode, so the concrete type fits.
     raw: Arc<SuiGrpcClient>,
     cache: ProofCache,
+    proof_snapshot_cache: Option<Arc<dyn ProofSnapshotCache>>,
     metrics: Arc<ProofProviderMetrics>,
 }
 
@@ -439,8 +487,14 @@ impl LocalProofProvider {
         Self {
             raw,
             cache: ProofCache::new(cfg),
+            proof_snapshot_cache: None,
             metrics,
         }
+    }
+
+    pub fn with_proof_snapshot_cache(mut self, cache: Arc<dyn ProofSnapshotCache>) -> Self {
+        self.proof_snapshot_cache = Some(cache);
+        self
     }
 
     async fn cached_checkpoint(
@@ -476,25 +530,35 @@ impl LocalProofProvider {
         ),
         TransportError,
     > {
-        let cp_seq = self.tx_checkpoint(object.previous_transaction).await?;
-        let cached = self.cached_checkpoint(cp_seq).await?;
         let object_ref = object.compute_object_reference();
-        let proof = cached.tree.get_inclusion_proof(object_ref).map_err(|e| {
-            TransportError::NotFound(format!("inclusion proof for {object_ref:?}: {e}"))
-        })?;
-        Ok((
-            cp_seq,
-            VerifiedObjectEntry {
-                object,
-                checkpoint_seq: cp_seq,
-                proof,
-                // Populated by the dynamic-fields-page walk (which has the field key);
-                // empty for direct/batch object reads.
-                dynamic_field_name_type: String::new(),
-                dynamic_field_name_bcs: Vec::new(),
-            },
-            cached.summary.clone(),
-        ))
+        let result = async {
+            let cp_seq = self.tx_checkpoint(object.previous_transaction).await?;
+            let cached = self.cached_checkpoint(cp_seq).await?;
+            let proof = cached.tree.get_inclusion_proof(object_ref).map_err(|e| {
+                TransportError::NotFound(format!("inclusion proof for {object_ref:?}: {e}"))
+            })?;
+            Ok((
+                cp_seq,
+                VerifiedObjectEntry {
+                    object,
+                    checkpoint_seq: cp_seq,
+                    proof,
+                    // Populated by the dynamic-fields-page walk (which has the field key);
+                    // empty for direct/batch object reads.
+                    dynamic_field_name_type: String::new(),
+                    dynamic_field_name_bcs: Vec::new(),
+                },
+                cached.summary.clone(),
+            ))
+        }
+        .await;
+
+        let (result, recovered) =
+            recover_pruned_proof(result, self.proof_snapshot_cache.as_deref(), object_ref);
+        if recovered {
+            self.metrics.proof_snapshot_cache_hits_total.inc();
+        }
+        result
     }
 
     /// `tx_digest → checkpoint_seq`, memoized. The mapping is immutable once
@@ -709,5 +773,116 @@ impl ProofProvider for LocalProofProvider {
             claimed_latest_checkpoint_seq: head,
             skipped_entry_ids,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sui_light_client::proof::ocs::ModifiedObjectTree;
+    use sui_types::base_types::SequenceNumber;
+    use sui_types::committee::Committee as SuiCommittee;
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
+    };
+    use sui_types::object::Owner;
+
+    struct StaticSnapshotCache {
+        entry: VerifiedObjectEntry,
+        summary: CertifiedCheckpointSummary,
+    }
+
+    impl ProofSnapshotCache for StaticSnapshotCache {
+        fn get_proof_snapshot(
+            &self,
+            id: ObjectID,
+        ) -> Option<(VerifiedObjectEntry, CertifiedCheckpointSummary)> {
+            (id == self.entry.object.id()).then(|| {
+                let entry = bcs::from_bytes(
+                    &bcs::to_bytes(&self.entry).expect("verified entry must serialize"),
+                )
+                .expect("verified entry must deserialize");
+                (entry, self.summary.clone())
+            })
+        }
+    }
+
+    fn snapshot_cache(
+        committee: &SuiCommittee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        object: &Object,
+    ) -> StaticSnapshotCache {
+        let (id, version, digest) = object.compute_object_reference();
+        let artifacts =
+            CheckpointArtifacts::from_object_states(BTreeMap::from([(id, (version, digest))]));
+        let artifacts_digest = artifacts.digest().expect("artifacts digest");
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts_digest)],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let summary =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee);
+        let proof = ModifiedObjectTree::new(&artifacts)
+            .expect("modified object tree")
+            .get_inclusion_proof(object.compute_object_reference())
+            .expect("inclusion proof");
+        StaticSnapshotCache {
+            entry: VerifiedObjectEntry {
+                object: object.clone(),
+                checkpoint_seq: seq,
+                proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
+            },
+            summary,
+        }
+    }
+
+    #[test]
+    fn pruned_proof_reuses_only_an_exact_current_snapshot() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0xA1);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xB2).into());
+        let cached_object = Object::with_id_owner_version_for_testing(
+            id,
+            SequenceNumber::from(7u64),
+            owner.clone(),
+        );
+        let cache = snapshot_cache(&committee, &keys, 42, &cached_object);
+
+        let (recovered, cache_hit) = recover_pruned_proof(
+            Err(TransportError::NotFound("checkpoint pruned".into())),
+            Some(&cache),
+            cached_object.compute_object_reference(),
+        );
+        assert!(cache_hit);
+        let (_, entry, _) = recovered.expect("exact-current snapshot must recover the proof");
+        assert_eq!(
+            entry.object.compute_object_reference(),
+            cached_object.compute_object_reference()
+        );
+
+        let newer_object =
+            Object::with_id_owner_version_for_testing(id, SequenceNumber::from(8u64), owner);
+        let (rejected, cache_hit) = recover_pruned_proof(
+            Err(TransportError::NotFound("checkpoint pruned".into())),
+            Some(&cache),
+            newer_object.compute_object_reference(),
+        );
+        assert!(!cache_hit);
+        assert!(matches!(rejected, Err(TransportError::NotFound(_))));
     }
 }

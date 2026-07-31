@@ -83,6 +83,16 @@ fields, never label values. The counter vector does not create a series until a
 site fires, so an absent series means zero violations. CI rejects bare
 `should_never_happen = true` markers outside the macro.
 
+An invariant counter records an **occurrence**, not an ongoing state. A
+condition inside a retry or service loop that can persist across ticks must fire
+the macro only on transition into the condition, log recovery once, and expose
+a paired `*_condition_active` gauge for the current state. Repeating the macro
+on every retry destroys incident boundaries and makes `increase(...) > 0`
+indistinguishable from a previously-known condition. Bounded reminder logs are
+allowed when operators need them, but reminders do not increment the invariant
+counter. The network-key registry sites are guarded structurally by
+`scripts/check-invariant-violation-markers.sh`.
+
 Per-authority output observations are collected protocol-generically but
 **exported only for an allow-listed set of protocols** (currently network-key
 reconfiguration; see `OUTPUT_OBSERVATION_EXPORT_PROTOCOLS` in `mpc_manager.rs`).
@@ -321,6 +331,7 @@ ika_mpc_blob_store_evictions_total
 ika_mpc_blob_store_size_bytes
 ika_mpc_data_announcement_blob_bytes
 ika_network_key_overlay_incomplete
+ika_network_key_registry_read_empty_condition_active
 ika_num_peers_with_external_address
 ika_ocs_anchor_info
 ika_ocs_bag_omission_suspected_total
@@ -336,6 +347,7 @@ ika_ocs_last_successful_relay_timestamp_seconds
 ika_ocs_proof_build_failures_total
 ika_ocs_proof_build_latency_seconds
 ika_ocs_proof_built_total
+ika_ocs_proof_snapshot_cache_hits_total
 ika_ocs_proof_tree_cache_hits_total
 ika_ocs_proof_tree_cache_misses_total
 ika_ocs_proof_verify_failures_total
@@ -383,6 +395,7 @@ ika_skipped_consensus_txns
 ika_skipped_consensus_txns_cache_hit
 ika_split_brain_dwallet_checkpoint_forks
 ika_split_brain_system_checkpoint_forks
+ika_stranded_network_key_missing_from_registry_read_condition_active
 ika_sui_client_chain_blob_reads
 ika_sui_client_sui_rpc_errors
 ika_sui_connector_chain_active_system_sessions_count

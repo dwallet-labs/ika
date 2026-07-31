@@ -51,6 +51,14 @@ pub struct SuiConnectorMetrics {
     /// committee validator stuck non-zero.
     pub(crate) network_key_overlay_incomplete: IntGauge,
 
+    /// 1 while a successful network-key registry read is empty even though the
+    /// coordinator reports existing entries; 0 after an observed recovery.
+    pub(crate) network_key_registry_read_empty_condition_active: IntGauge,
+
+    /// 1 while at least one key awaiting chain-sourced recovery is absent from
+    /// a successful registry read; 0 after an observed recovery.
+    pub(crate) stranded_network_key_missing_from_registry_read_condition_active: IntGauge,
+
     /// Total sync ticks on which the off-chain next-committee
     /// validator-mpc_data assembly was incomplete (benign retry while
     /// announcements/blobs converge; a stall shows as sustained growth).
@@ -224,6 +232,20 @@ impl SuiConnectorMetrics {
                 registry,
             )
             .unwrap(),
+            network_key_registry_read_empty_condition_active:
+                register_int_gauge_with_registry!(
+                    "ika_network_key_registry_read_empty_condition_active",
+                    "1 while a successful network-key registry read is empty despite a non-empty on-chain registry; 0 after recovery",
+                    registry,
+                )
+                .unwrap(),
+            stranded_network_key_missing_from_registry_read_condition_active:
+                register_int_gauge_with_registry!(
+                    "ika_stranded_network_key_missing_from_registry_read_condition_active",
+                    "1 while a stranded network key is absent from a successful registry read; 0 after recovery",
+                    registry,
+                )
+                .unwrap(),
             off_chain_assembly_incomplete_ticks_total: register_int_counter_with_registry!(
                 "ika_off_chain_assembly_incomplete_ticks_total",
                 "Total sync ticks on which the off-chain validator-mpc_data assembly was incomplete",
@@ -362,6 +384,18 @@ mod tests {
         let _mpc_metrics = DWalletMPCMetrics::new(&registry);
 
         assert_eq!(metrics.off_chain_assembly_incomplete.get(), 0);
+        assert_eq!(
+            metrics
+                .network_key_registry_read_empty_condition_active
+                .get(),
+            0
+        );
+        assert_eq!(
+            metrics
+                .stranded_network_key_missing_from_registry_read_condition_active
+                .get(),
+            0
+        );
         assert_eq!(
             metrics
                 .off_chain_assembly_consecutive_incomplete_ticks

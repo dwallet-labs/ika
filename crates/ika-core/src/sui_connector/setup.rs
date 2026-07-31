@@ -195,6 +195,15 @@ pub async fn build_sui_connector_stack(
     metrics: Arc<OcsMetrics>,
     provider_metrics: Arc<ProofProviderMetrics>,
 ) -> Result<SuiConnectorStack, SetupError> {
+    // Durable cache: rehydrates from the perpetual `verified_object_cache`
+    // column on boot and writes through every absorb. The direct proof
+    // provider also reuses a snapshot when Sui still returns the exact same
+    // object but has pruned the checkpoint needed to rebuild its proof.
+    let state_cache: SharedVerifiedStateCache = Arc::new(
+        VerifiedStateCache::open(perpetual.clone())?
+            .with_retain_window(Some(cfg.verified_cache_retention_checkpoints())),
+    );
+
     // 1. Build the *raw* transport used by the committee ratchet (and,
     //    on sui-state-direct nodes, by the LocalProofProvider
     //    underneath). Direct-gRPC for sui-state-direct;
@@ -215,11 +224,14 @@ pub async fn build_sui_connector_stack(
             );
             // Same provider instance used by the local reader and (via
             // the mirror server) by remote sui-state-mirrored peers.
-            let provider: Arc<dyn ProofProvider> = Arc::new(LocalProofProvider::new(
-                grpc.clone(),
-                &proof_cache_cfg,
-                provider_metrics.clone(),
-            ));
+            let provider: Arc<dyn ProofProvider> = Arc::new(
+                LocalProofProvider::new(
+                    grpc.clone(),
+                    &proof_cache_cfg,
+                    provider_metrics.clone(),
+                )
+                .with_proof_snapshot_cache(state_cache.clone()),
+            );
             provider_metrics
                 .role_info
                 .with_label_values(&["sui_state_direct"])
@@ -414,15 +426,6 @@ pub async fn build_sui_connector_stack(
         }
         _ => None,
     };
-
-    // Durable cache: rehydrates from the perpetual `verified_object_cache`
-    // column on boot and writes through every absorb, so a restart resumes
-    // serving from DB instead of re-fetching from the (possibly pruned) Sui
-    // fullnode.
-    let state_cache: SharedVerifiedStateCache = Arc::new(
-        VerifiedStateCache::open(perpetual.clone())?
-            .with_retain_window(Some(cfg.verified_cache_retention_checkpoints())),
-    );
 
     // 4. Verified-read surface for consumers. Freshness defense is
     //    version-monotonicity (per-object high-water mark in the

@@ -19,6 +19,23 @@ so an absent series means that site has recorded zero violations. **Operator
 action**: inspect the matching `should_never_happen = true` log on the affected
 host and correlate it with subsystem metrics around the event timestamp.
 
+Invariant sites report incidents on **entry**, not on every retry tick. For a
+persistent condition, alert its paired state gauge separately; the counter says
+"a new episode began" while the gauge says "the episode is still active." The
+network-key registry conditions use:
+
+```promql
+ika_network_key_registry_read_empty_condition_active == 1
+or
+ika_stranded_network_key_missing_from_registry_read_condition_active == 1
+# for: 1m (filters a single read/convergence tick without delaying a real stall)
+```
+
+Both gauges clear on the first successful registry read that demonstrates
+recovery. Transport errors preserve the last observed state and are counted by
+the Sui RPC/OCS transport metrics; an error is not evidence that an active
+condition recovered.
+
 ## Alert 2: prepare-then-start barrier blocked
 
 ```promql

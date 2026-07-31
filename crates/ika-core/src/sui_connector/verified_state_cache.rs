@@ -18,8 +18,9 @@
 //! Bounded by a retain window ([`VerifiedStateCache::with_retain_window`]):
 //! object snapshots more than `window` checkpoints behind the head are pruned
 //! from both the in-memory maps and the persisted column. The window prunes
-//! freely — this is the direct node's *own* cache-first read path, not the
-//! mirrored-serving surface, so a pruned snapshot just re-fetches from gRPC. The
+//! freely. The direct proof provider can also reuse an exact-current snapshot
+//! when the source checkpoint has been pruned; if the snapshot has aged out,
+//! that fallback is unavailable and the provider retries its normal source. The
 //! *served* end-of-epoch checkpoint summaries are retained deeper — back to the
 //! oldest committee-verifiable anchor — because a mirrored peer's committee
 //! ratchet can't re-derive a pruned one. Tombstone eviction on on-chain
@@ -30,7 +31,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ika_network::proof_provider::VerifiedObjectEntry;
+use ika_network::proof_provider::{ProofSnapshotCache, VerifiedObjectEntry};
 use ika_types::error::IkaResult;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -283,11 +284,11 @@ impl VerifiedStateCache {
     /// source checkpoint is older than this are dropped. `None` when pruning is
     /// disabled.
     ///
-    /// Deliberately **not** clamped to the bootstrap anchor. This cache is the
-    /// *direct node's own* cache-first read path — mirrored peers are served
-    /// fresh proofs by `LocalProofProvider`, which never reads it — so a pruned
-    /// snapshot is a pure cache miss that re-fetches + re-verifies from gRPC,
-    /// which is harmless. Clamping the floor down to the (slow-moving) anchor
+    /// Deliberately **not** clamped to the bootstrap anchor. This cache backs
+    /// both the direct node's cache-first reads and the proof provider's
+    /// exact-current fallback after upstream pruning. A snapshot older than the
+    /// window intentionally loses that fallback and returns to the normal
+    /// gRPC proof path. Clamping the floor down to the (slow-moving) anchor
     /// would pin it below `head - window` forever, so the window would never
     /// prune and the cache would leak one entry per distinct object id. The
     /// anchor clamp belongs only on [`Self::eop_retention_floor`], whose
@@ -500,6 +501,24 @@ impl VerifiedStateCache {
 impl Default for VerifiedStateCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ProofSnapshotCache for VerifiedStateCache {
+    fn get_proof_snapshot(
+        &self,
+        id: ObjectID,
+    ) -> Option<(VerifiedObjectEntry, CertifiedCheckpointSummary)> {
+        self.get(id).map(|snapshot| {
+            let entry = VerifiedObjectEntry {
+                object: snapshot.object,
+                checkpoint_seq: snapshot.source_checkpoint_seq,
+                proof: snapshot.proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
+            };
+            (entry, snapshot.summary)
+        })
     }
 }
 

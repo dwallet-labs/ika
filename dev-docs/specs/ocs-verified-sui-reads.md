@@ -465,24 +465,39 @@ dropping entries are layered:
   *persistent* suspicion is actionable. It is count-only (cannot tell
   *which* entries are missing) and is disabled on direct nodes (where the
   bag is trusted-local but `Bag.size` lags cache-first).
-- **Pruned-defining-checkpoint resolution (direct nodes only)**: the
+- **Pruned-defining-checkpoint resolution**: the
   page builder needs each entry's defining checkpoint to construct its
   inclusion proof, and once the fullnode prunes that checkpoint the
   proof can never be built again — a skip there is permanent, not
   transient (this silently hid `session_events` entries of sessions
-  re-pulled across epoch boundaries and pinned epoch closes). The
-  provider therefore reports the ids it listed but could not prove
-  (`skipped_entry_ids`), and the reader resolves each through
-  `verified_object` — its own proof verification, currency check, and
-  committee-verified cache fallback included. Being live-listed proves
-  the entry still exists on-chain, so resolution cannot resurrect a
-  completed session's entry. Trusted listings only: on a mirrored node
-  a relay's skipped ids carry no membership binding (no proof), so they
-  stay omitted and the count-based policing covers them. Residual: if
-  the local cache also lacks the entry (e.g. the node was down when it
-  was folded and the upstream has pruned it), the reader warns per walk
-  until the session completes network-wide and the entry leaves the
-  bag.
+  re-pulled across epoch boundaries and pinned epoch closes). The direct
+  proof provider shares the durable verified-state snapshot cache populated
+  by the checkpoint pusher. If rebuilding a proof returns `NotFound`, it may
+  reuse a cached `(object, proof, summary)` only after fetching the current
+  object from Sui and requiring its complete object reference (id, version,
+  digest) to equal the cached object reference. That makes a stale snapshot
+  unusable while allowing both the local direct reader and remote mirrored
+  readers to receive a proof after the source checkpoint is pruned. Hits are
+  counted by `ika_ocs_proof_snapshot_cache_hits_total`.
+
+  A malicious or lagging Sui source can replay an older, once-current object
+  reference and thereby make an exact cached snapshot appear current. This
+  grants no capability beyond withholding: control of that source already lets
+  it freeze the validator on an old view by withholding newer state. The cached
+  object remains bound to a committee-certified inclusion proof, so the source
+  cannot fabricate state, and the consumer's version high-water still rejects
+  a rollback below any version the process has already accepted.
+
+  If no exact cached snapshot exists, the provider reports the ids it listed
+  but could not prove (`skipped_entry_ids`). A direct reader can still resolve
+  each through its trusted listing plus `verified_object` cache fallback.
+  Being live-listed by its own Sui source proves the entry still exists, so
+  resolution cannot resurrect a completed session's entry. On a mirrored node
+  a relay's remaining skipped ids carry no membership binding (no proof), so
+  they stay omitted and the count-based policing covers them. Residual: if the
+  direct cache lacks the current version (for example, the node was down when
+  it was folded and the upstream pruned it), the entry remains unavailable
+  until a source capable of proving that version is used.
 - **Downstream session-id dedup**: the MPC engine keys sessions by
   `SessionIdentifier`, skips already-completed sessions via the
   perpetual store, and treats re-delivery of an in-flight session as a
