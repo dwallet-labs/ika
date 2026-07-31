@@ -146,6 +146,36 @@ impl AssemblyHealthState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConditionTransition {
+    Unchanged,
+    Entered,
+    Recovered,
+}
+
+#[derive(Default)]
+struct PersistentConditionState {
+    active: bool,
+}
+
+impl PersistentConditionState {
+    fn observe(&mut self, active: bool) -> ConditionTransition {
+        let transition = match (self.active, active) {
+            (false, true) => ConditionTransition::Entered,
+            (true, false) => ConditionTransition::Recovered,
+            _ => ConditionTransition::Unchanged,
+        };
+        self.active = active;
+        transition
+    }
+}
+
+#[derive(Default)]
+struct NetworkKeyRegistryHealthState {
+    registry_read_empty: PersistentConditionState,
+    stranded_key_missing: PersistentConditionState,
+}
+
 fn set_assembly_missing_metrics(
     metrics: &SuiConnectorMetrics,
     current: Option<(OffChainAssemblyMissingReason, usize)>,
@@ -1175,6 +1205,7 @@ where
         // validator stuck incomplete escalates to warn every 60th
         // consecutive tick (~5 min).
         let mut consecutive_overlay_incomplete_ticks: HashMap<ObjectID, u64> = HashMap::new();
+        let mut registry_health = NetworkKeyRegistryHealthState::default();
         loop {
             time::sleep(Duration::from_secs(5)).await;
 
@@ -1206,13 +1237,19 @@ where
             };
             let current_epoch = system_inner.epoch();
 
-            let network_encryption_keys = sui_client
+            let network_encryption_keys = match sui_client
                 .get_dwallet_mpc_network_keys(&dwallet_coordinator_inner)
                 .await
-                .unwrap_or_else(|e| {
-                    warn!("failed to fetch dwallet MPC network keys: {e}");
-                    HashMap::new()
-                });
+            {
+                Ok(network_encryption_keys) => network_encryption_keys,
+                Err(error) => {
+                    // A transport failure is not proof that the registry is
+                    // empty and must not start or recover an invariant episode.
+                    // Preserve the last observed condition state and retry.
+                    warn!(?error, "failed to fetch dwallet MPC network keys");
+                    continue;
+                }
+            };
 
             // Silence-proofing (#1952): an empty registry read while the
             // coordinator itself reports existing keys is indistinguishable
@@ -1224,14 +1261,32 @@ where
                 let DWalletCoordinatorInner::V1(coordinator_inner_v1) = &dwallet_coordinator_inner;
                 let on_chain_registry_size =
                     coordinator_inner_v1.dwallet_network_encryption_keys.size;
-                if network_encryption_keys.is_empty() && on_chain_registry_size > 0 {
-                    ika_types::report_invariant_violation!(
-                        "network_key_registry_read_empty",
-                        on_chain_registry_size,
-                        current_epoch,
-                        "network-key registry read returned an empty map while the \
-                         coordinator reports existing keys — retrying next tick",
-                    );
+                let condition_active =
+                    network_encryption_keys.is_empty() && on_chain_registry_size > 0;
+                metrics
+                    .network_key_registry_read_empty_condition_active
+                    .set(i64::from(condition_active));
+                match registry_health
+                    .registry_read_empty
+                    .observe(condition_active)
+                {
+                    ConditionTransition::Entered => {
+                        ika_types::report_invariant_violation!(
+                            "network_key_registry_read_empty",
+                            on_chain_registry_size,
+                            current_epoch,
+                            "network-key registry read returned an empty map while the \
+                             coordinator reports existing keys — retrying next tick",
+                        );
+                    }
+                    ConditionTransition::Recovered => {
+                        info!(
+                            on_chain_registry_size,
+                            current_epoch,
+                            "network-key registry read recovered after returning an empty map"
+                        );
+                    }
+                    ConditionTransition::Unchanged => {}
                 }
             }
 
@@ -1243,16 +1298,37 @@ where
             // "No new network keys to fetch" line.
             {
                 let stranded_snapshot = stranded_network_keys.load();
-                for stranded_id in stranded_snapshot.iter() {
-                    if !network_encryption_keys.contains_key(stranded_id) {
+                let mut missing_stranded_keys: Vec<ObjectID> = stranded_snapshot
+                    .iter()
+                    .filter(|stranded_id| !network_encryption_keys.contains_key(stranded_id))
+                    .copied()
+                    .collect();
+                missing_stranded_keys.sort_unstable();
+                let condition_active = !missing_stranded_keys.is_empty();
+                metrics
+                    .stranded_network_key_missing_from_registry_read_condition_active
+                    .set(i64::from(condition_active));
+                match registry_health
+                    .stranded_key_missing
+                    .observe(condition_active)
+                {
+                    ConditionTransition::Entered => {
                         ika_types::report_invariant_violation!(
                             "stranded_network_key_missing_from_registry_read",
-                            key_id = ?stranded_id,
+                            missing_key_ids = ?missing_stranded_keys,
+                            missing_key_count = missing_stranded_keys.len(),
                             current_epoch,
-                            "a network key flagged for chain-sourced recovery is absent \
+                            "network keys flagged for chain-sourced recovery are absent \
                              from the registry read — recovery cannot run this tick",
                         );
                     }
+                    ConditionTransition::Recovered => {
+                        info!(
+                            current_epoch,
+                            "all stranded network keys are present in the registry read again"
+                        );
+                    }
+                    ConditionTransition::Unchanged => {}
                 }
             }
 
@@ -1903,6 +1979,18 @@ fn overlay_network_key_data(
 mod tests {
     use super::*;
     use crate::validator_metadata::StaticNetworkKeyBlobSource;
+
+    #[test]
+    fn persistent_condition_reports_once_per_episode_and_recovers_once() {
+        let mut state = PersistentConditionState::default();
+        assert_eq!(state.observe(false), ConditionTransition::Unchanged);
+        assert_eq!(state.observe(true), ConditionTransition::Entered);
+        assert_eq!(state.observe(true), ConditionTransition::Unchanged);
+        assert_eq!(state.observe(true), ConditionTransition::Unchanged);
+        assert_eq!(state.observe(false), ConditionTransition::Recovered);
+        assert_eq!(state.observe(false), ConditionTransition::Unchanged);
+        assert_eq!(state.observe(true), ConditionTransition::Entered);
+    }
 
     #[test]
     fn assembly_health_warns_on_sustained_incompleteness_and_recovers_once() {
