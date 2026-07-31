@@ -480,6 +480,14 @@ dropping entries are layered:
   readers to receive a proof after the source checkpoint is pruned. Hits are
   counted by `ika_ocs_proof_snapshot_cache_hits_total`.
 
+  A malicious or lagging Sui source can replay an older, once-current object
+  reference and thereby make an exact cached snapshot appear current. This
+  grants no capability beyond withholding: control of that source already lets
+  it freeze the validator on an old view by withholding newer state. The cached
+  object remains bound to a committee-certified inclusion proof, so the source
+  cannot fabricate state, and the consumer's version high-water still rejects
+  a rollback below any version the process has already accepted.
+
   If no exact cached snapshot exists, the provider reports the ids it listed
   but could not prove (`skipped_entry_ids`). A direct reader can still resolve
   each through its trusted listing plus `verified_object` cache fallback.
