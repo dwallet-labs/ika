@@ -2967,7 +2967,7 @@ impl DWalletMPCService {
         let Some(onchain_validator) = epoch_start_system
             .get_ika_validators()
             .into_iter()
-            .find(|v| v.authority_name() == authority_name)
+            .find(|v| v.protocol_pubkey_bytes() == authority_name)
         else {
             return Err(DwalletMPCError::MPCManagerError(format!(
                 "Validator {authority_name} not found in the epoch start system state"

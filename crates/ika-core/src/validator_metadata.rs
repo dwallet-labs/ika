@@ -1578,8 +1578,17 @@ mod tests {
     use ika_types::crypto::AuthorityKeyPair;
     use ika_types::crypto::random_committee_key_pairs_of_size;
 
+    /// A distinct, deterministic test identity derived from a BLS keypair.
+    ///
+    /// NOT a real consensus key: a name is now an Ed25519 consensus key, which
+    /// a BLS keypair cannot produce. These tests only need identities that are
+    /// stable and distinct per keypair — where a test also needs the matching
+    /// consensus key it registers one explicitly in a provider map.
     fn name_of(kp: &AuthorityKeyPair) -> AuthorityName {
-        kp.public().into()
+        let bls = kp.public().as_bytes();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&bls[..32]);
+        AuthorityName(bytes)
     }
 
     /// A joiner announcement signed with an Ed25519 consensus key.
@@ -3332,7 +3341,7 @@ mod tests {
     // compute who's IN the working set and who's OUT.
 
     fn auth(byte: u8) -> AuthorityName {
-        AuthorityName::new([byte; 48])
+        AuthorityName([byte; 32])
     }
 
     /// All 4 validators validate each other's blob and signal ready

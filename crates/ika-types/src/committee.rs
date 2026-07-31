@@ -89,12 +89,12 @@ pub struct Committee {
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     /// `AuthorityName -> BLS protocol pubkey`, for BLS aggregate-certificate
-    /// verification. For BLS-basis names (committees of epochs below
-    /// protocol version 6) the name IS the BLS key, so this
-    /// is decoded from it (a cache). For consensus-basis names the BLS key
-    /// cannot be recovered from the name — such committees must be built
-    /// with [`Committee::new_with_protocol_keys`], which carries the map
-    /// from the on-chain read.
+    /// verification. The BLS key CANNOT be recovered from a name — a name is
+    /// the Ed25519 consensus key — so this is always carried explicitly from
+    /// the on-chain read via [`Committee::new_with_protocol_keys`].
+    /// A committee built through [`Committee::new`] has this EMPTY and fails
+    /// closed at `public_key()`; that is a type-level guarantee now, where it
+    /// used to be a lossy per-name decode that could half-populate the map.
     // TODO(consensus-key-certs): once BLS aggregate certs are replaced by
     // consensus-key-signed certs, drop `expanded_keys` / `public_key()` and
     // the validators' BLS key entirely.
@@ -303,17 +303,17 @@ impl Committee {
         HashMap<AuthorityName, AuthorityPublicKey>,
         HashMap<AuthorityName, usize>,
     ) {
-        let expanded_keys: HashMap<AuthorityName, AuthorityPublicKey> = voting_rights
-            .iter()
-            .filter_map(|(addr, _)| Some((*addr, (*addr).try_into().ok()?)))
-            .collect();
-
+        // `expanded_keys` is EMPTY here, and cannot be otherwise: an
+        // `AuthorityName` is a 32-byte Ed25519 consensus key, which no BLS
+        // key can be derived from. Committees that verify BLS aggregate
+        // certificates must be built with `new_with_protocol_keys`, which
+        // carries the map from chain.
         let index_map: HashMap<AuthorityName, usize> = voting_rights
             .iter()
             .enumerate()
             .map(|(index, (addr, _))| (*addr, index))
             .collect();
-        (expanded_keys, index_map)
+        (HashMap::new(), index_map)
     }
 
     pub fn authority_index(&self, author: &AuthorityName) -> Option<u32> {
@@ -343,73 +343,6 @@ impl Committee {
                 self.voting_rights.len()
             ))),
         }
-    }
-
-    /// Voting members with no entry in `expanded_keys` — their BLS-basis
-    /// alias is unrecoverable, so [`Committee::name_translation`] cannot map
-    /// prior-epoch items named under the BLS basis back to them. Empty for
-    /// every correctly built committee: BLS-basis names decode into
-    /// `expanded_keys` in [`Committee::load_inner`], and consensus-basis
-    /// committees carry the chain-read map via
-    /// [`Committee::new_with_protocol_keys`]. Non-empty means a
-    /// consensus-basis committee was mis-built through [`Committee::new`].
-    fn members_without_bls_protocol_key(&self) -> Vec<AuthorityName> {
-        self.voting_rights
-            .iter()
-            .filter(|(name, _)| !self.expanded_keys.contains_key(name))
-            .map(|(name, _)| *name)
-            .collect()
-    }
-
-    /// Maps each member's name under EITHER identity basis to the name this
-    /// committee actually uses.
-    ///
-    /// `AuthorityName` is the BLS protocol key below protocol v6 and the
-    /// consensus key from v6, so anything one epoch names and a later epoch
-    /// reads back — prior-epoch handoff-cert items, carried-forward mpc_data —
-    /// arrives keyed in the producing epoch's name space. Away from the
-    /// activation boundary both spaces agree and every entry maps a name to
-    /// itself; at the boundary this is what stops those lookups from silently
-    /// missing every member. Derived from the committee's own key maps, so it
-    /// needs no chain read.
-    ///
-    /// Logs a should-never-happen error when a member's BLS alias is
-    /// unrecoverable (no `expanded_keys` entry): every caller falls back to
-    /// identity on a missing entry, so without the log a consensus-basis
-    /// committee mis-built through [`Committee::new`] would silently
-    /// reinstate the boundary misses this map exists to prevent.
-    pub fn name_translation(&self) -> HashMap<AuthorityName, AuthorityName> {
-        let missing_bls = self.members_without_bls_protocol_key();
-        if !missing_bls.is_empty() {
-            crate::report_invariant_violation!(
-                "committee_bls_aliases_missing",
-                epoch = self.epoch,
-                members = self.voting_rights.len(),
-                missing = missing_bls.len(),
-                missing_members = ?missing_bls.iter().map(|name| name.concise()).collect::<Vec<_>>(),
-                "committee carries no BLS protocol key for some voting members, so their \
-                 BLS-basis aliases are unrecoverable and translation for them degrades to \
-                 identity — prior-epoch handoff-cert lookups (mpc_data carry-forward, \
-                 prior-cert key ingest, blob repair) will silently miss them at the \
-                 protocol-v6 identity-basis boundary. A committee with consensus-basis \
-                 names must be built with Committee::new_with_protocol_keys (chain-carried \
-                 BLS keys), never Committee::new"
-            );
-        }
-        self.voting_rights
-            .iter()
-            .flat_map(|(name, _)| {
-                let bls = self.expanded_keys.get(name).map(AuthorityName::from);
-                let consensus = self
-                    .consensus_keys
-                    .get(name)
-                    .map(AuthorityName::from_consensus_key);
-                [bls, consensus]
-                    .into_iter()
-                    .flatten()
-                    .map(move |alias| (alias, *name))
-            })
-            .collect()
     }
 
     /// The signer's consensus Ed25519 pubkey, if this committee carries it.
@@ -534,18 +467,52 @@ impl Committee {
 
     // ===== Testing-only methods =====
     //
+    /// A test committee named by CONSENSUS keys (as every real committee is)
+    /// while still signing with BLS keypairs, which is what
+    /// `AuthoritySignInfo` needs. The BLS keys are carried explicitly: they
+    /// cannot be recovered from a name, so a committee built through
+    /// `Committee::new` would have an empty `expanded_keys` and fail every
+    /// signature lookup.
+    ///
+    /// The consensus keys are derived from a fixed seed so the committee is
+    /// reproducible across runs.
     pub fn new_simple_test_committee_of_size(size: usize) -> (Self, Vec<AuthorityKeyPair>) {
         let key_pairs: Vec<_> = random_committee_key_pairs_of_size(size)
             .into_iter()
             .collect();
-        let committee = Self::new_for_testing_with_normalized_voting_power(
+        let consensus_key_pairs: Vec<crate::crypto::NetworkKeyPair> = (0..size)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                crate::crypto::NetworkKeyPair::generate(&mut StdRng::from_seed(seed))
+            })
+            .collect();
+        let names: Vec<AuthorityName> = consensus_key_pairs
+            .iter()
+            .map(|kp| AuthorityName::from_consensus_key(kp.public()))
+            .collect();
+        let voting_rights: Vec<(AuthorityName, StakeUnit)> =
+            names.iter().map(|name| (*name, 1)).collect();
+        let consensus_keys: HashMap<AuthorityName, NetworkPublicKey> = names
+            .iter()
+            .zip(consensus_key_pairs.iter())
+            .map(|(name, kp)| (*name, kp.public().clone()))
+            .collect();
+        let protocol_keys: HashMap<AuthorityName, AuthorityPublicKey> = names
+            .iter()
+            .zip(key_pairs.iter())
+            .map(|(name, kp)| (*name, kp.public().clone()))
+            .collect();
+        let quorum = 2 * (size as u64) / 3 + 1;
+        let validity = (size as u64) / 3 + 1;
+        let committee = Self::new_with_protocol_keys(
             0,
-            key_pairs
-                .iter()
-                .map(|key| {
-                    (AuthorityName::from(key.public()), /* voting right */ 1)
-                })
-                .collect(),
+            voting_rights,
+            HashMap::new(),
+            consensus_keys,
+            protocol_keys,
+            quorum,
+            validity,
         );
         (committee, key_pairs)
     }
@@ -930,24 +897,12 @@ mod tests {
             .collect()
     }
 
-    /// A BLS-basis committee decodes every member's BLS key from its name,
-    /// so translation aliases every member under both carried bases and the
-    /// missing-BLS-alias detector stays empty.
+    /// A committee built through `new_with_protocol_keys` carries the BLS
+    /// keys from chain, so `public_key()` resolves for every member — the
+    /// only way BLS aggregate-certificate verification can work now that a
+    /// name is a consensus key and carries no BLS material.
     #[test]
-    fn bls_basis_committee_translates_every_member_to_itself() {
-        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
-        assert!(committee.members_without_bls_protocol_key().is_empty());
-        let translation = committee.name_translation();
-        for name in committee.names() {
-            assert_eq!(translation.get(name), Some(name));
-        }
-    }
-
-    /// A consensus-basis committee built the required way
-    /// (`new_with_protocol_keys`) aliases each member's BLS-basis name to
-    /// its consensus-basis name — the protocol-v6 boundary translation.
-    #[test]
-    fn consensus_basis_committee_with_protocol_keys_translates_bls_aliases() {
+    fn committee_with_protocol_keys_resolves_every_bls_key() {
         let members = consensus_basis_members(4);
         let committee = Committee::new_with_protocol_keys(
             5,
@@ -958,21 +913,18 @@ mod tests {
             3,
             2,
         );
-        assert!(committee.members_without_bls_protocol_key().is_empty());
-        let translation = committee.name_translation();
         for (name, _, bls) in &members {
-            assert_eq!(translation.get(&AuthorityName::from(bls)), Some(name));
-            assert_eq!(translation.get(name), Some(name));
+            assert_eq!(committee.public_key(name).unwrap(), bls);
         }
     }
 
-    /// The same membership mis-built through `Committee::new`: consensus-basis
-    /// names decode as no BLS key, so every member's BLS alias is
-    /// unrecoverable — the silently-degraded state `name_translation` now
-    /// reports via its should-never-happen error log, whose predicate is
-    /// asserted here.
+    /// The same membership built through `Committee::new` carries NO BLS keys
+    /// and fails closed on every lookup. This used to be a lossy per-name
+    /// decode that could half-populate the map; a name is now a consensus key,
+    /// from which no BLS key can be derived, so the absence is total and
+    /// type-enforced rather than data-dependent.
     #[test]
-    fn consensus_basis_committee_via_new_has_no_recoverable_bls_aliases() {
+    fn committee_via_new_has_no_bls_keys_and_fails_closed() {
         let members = consensus_basis_members(4);
         let committee = Committee::new(
             5,
@@ -982,15 +934,11 @@ mod tests {
             3,
             2,
         );
-        assert_eq!(
-            committee.members_without_bls_protocol_key(),
-            members.iter().map(|(name, _, _)| *name).collect::<Vec<_>>()
-        );
-        let translation = committee.name_translation();
-        for (_, _, bls) in &members {
+        for (name, _, _) in &members {
             assert!(
-                !translation.contains_key(&AuthorityName::from(bls)),
-                "a mis-built committee cannot know the BLS alias"
+                committee.public_key(name).is_err(),
+                "a committee built without chain-carried BLS keys must fail closed, \
+                 not return a wrong or partial key"
             );
         }
     }

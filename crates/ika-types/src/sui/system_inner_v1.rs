@@ -3,7 +3,7 @@
 
 use super::{Element, ExtendedField, SystemInnerTrait};
 use crate::committee::StakeUnit;
-use crate::crypto::{AuthorityName, AuthorityPublicKey};
+use crate::crypto::{AuthorityPublicKey, AuthorityPublicKeyBytes};
 use fastcrypto::traits::ToFromBytes;
 use serde::{Deserialize, Serialize};
 use sui_types::balance::Balance;
@@ -260,7 +260,7 @@ impl SystemInnerTrait for SystemInnerV1 {
     fn read_bls_committee(
         &self,
         bls_committee: &BlsCommittee,
-    ) -> Vec<(ObjectID, (AuthorityName, StakeUnit))> {
+    ) -> Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))> {
         bls_committee
             .members
             .iter()
@@ -268,8 +268,11 @@ impl SystemInnerTrait for SystemInnerV1 {
                 (
                     v.validator_id,
                     (
-                        // AuthorityName is derived from the protocol public key;
-                        // therefore, it is safe to unwrap.
+                        // The on-chain committee carries BLS protocol keys, not
+                        // committee identities: an `AuthorityName` is the Ed25519
+                        // consensus key, which is NOT on `BlsCommittee`. Callers
+                        // re-key by validator id (`rekey_committee_to_consensus_names`).
+                        // Registration validates these bytes, so the parse is safe.
                         (&AuthorityPublicKey::from_bytes(v.protocol_pubkey.clone().bytes.as_ref())
                             .unwrap())
                             .into(),
@@ -283,7 +286,7 @@ impl SystemInnerTrait for SystemInnerV1 {
     fn read_bls_committee_lossy(
         &self,
         bls_committee: &BlsCommittee,
-    ) -> Vec<(ObjectID, (AuthorityName, StakeUnit))> {
+    ) -> Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))> {
         bls_committee
             .members
             .iter()

@@ -47,7 +47,6 @@ use hex;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
-use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::handoff::HandoffItemKey;
@@ -314,7 +313,7 @@ pub(crate) struct DWalletMPCManager {
     /// for every DKG/reconfiguration session on the 20ms service loop) to a single
     /// atomic load after convergence.
     local_mpc_data_ready_latched: AtomicBool,
-    validator_name: AuthorityPublicKeyBytes,
+    validator_name: AuthorityName,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
@@ -655,7 +654,7 @@ pub(crate) struct OutputsToFinalize {
 
 impl DWalletMPCManager {
     pub(crate) fn new(
-        validator_name: AuthorityPublicKeyBytes,
+        validator_name: AuthorityName,
         committee: Arc<Committee>,
         epoch_id: EpochId,
         root_seed: RootSeed,
@@ -694,7 +693,7 @@ impl DWalletMPCManager {
     }
 
     pub fn try_new(
-        validator_name: AuthorityPublicKeyBytes,
+        validator_name: AuthorityName,
         committee: Arc<Committee>,
         epoch_id: EpochId,
         root_seed: RootSeed,
@@ -1418,20 +1417,12 @@ impl DWalletMPCManager {
                 return Ok(PriorCertKeysOutcome::RetryLater);
             }
         };
-        // The cert names its items in the PRIOR epoch's identity basis, which
-        // differs from this committee's at the protocol-v6 activation
-        // boundary; without translating, the intersection below is empty and
-        // a node that restarted mid-epoch — for which the cert is the only
-        // key source — stays MPC-dead for the whole epoch.
-        let translation = self.committee.name_translation();
         let prior_cert_digests: HashMap<AuthorityName, [u8; 32]> = cert
             .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
-                HandoffItemKey::ValidatorMpcData { validator } => {
-                    Some((*translation.get(validator).unwrap_or(validator), *digest))
-                }
+                HandoffItemKey::ValidatorMpcData { validator } => Some((*validator, *digest)),
                 _ => None,
             })
             .collect();

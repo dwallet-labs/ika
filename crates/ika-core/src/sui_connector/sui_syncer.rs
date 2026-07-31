@@ -14,7 +14,7 @@ use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
-use ika_types::crypto::{AuthorityName, NetworkPublicKey};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, NetworkPublicKey};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
@@ -863,7 +863,7 @@ where
     /// whose members are already known can never be starved by RPC flake.
     async fn rekey_committee_to_consensus_names(
         sui_client: &Arc<SuiClient<C>>,
-        members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
+        members: Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))>,
         consensus_key_cache: &mut HashMap<ObjectID, NetworkPublicKey>,
     ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
         let unknown_ids: Vec<ObjectID> = members

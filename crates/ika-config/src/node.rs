@@ -20,9 +20,9 @@ use std::time::Duration;
 use sui_types::base_types::{ObjectID, SuiAddress};
 
 use dwallet_rng::RootSeed;
-use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::KeypairTraits;
 use ika_types::crypto::NetworkKeyPair;
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 pub use sui_config::node::KeyPairWithPath;
@@ -1047,8 +1047,8 @@ impl NodeConfig {
     /// Ed25519 key, zero-padded into the 48-byte container. The BLS protocol
     /// key was the identity basis through protocol version 5, below this
     /// binary's minimum.
-    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
-        AuthorityPublicKeyBytes::from_consensus_key(self.consensus_key_pair().public())
+    pub fn authority_name(&self) -> AuthorityName {
+        AuthorityName::from_consensus_key(self.consensus_key_pair().public())
     }
 
     pub fn db_path(&self) -> PathBuf {

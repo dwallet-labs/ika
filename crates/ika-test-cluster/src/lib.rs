@@ -40,7 +40,7 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
-use ika_types::crypto::AuthorityPublicKeyBytes;
+use ika_types::crypto::AuthorityName;
 use ika_types::handoff::HandoffItemKey;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
@@ -102,7 +102,6 @@ pub struct IkaTestCluster {
     /// order. `AuthorityName` is the BLS protocol key below protocol v6 and
     /// the consensus key from v6, so a test comparing identities against a
     /// v6 epoch's committee or handoff cert must use these instead.
-    pub validator_consensus_names: Vec<ika_types::crypto::AuthorityName>,
     /// Base port of this process's ika-node port block. Joiners added after
     /// build draw deterministic ports from here so they don't race a
     /// concurrently-running test process (see
@@ -132,8 +131,8 @@ pub struct JoinerHandle {
 impl JoinerHandle {
     /// The joiner's `AuthorityName` (committee identity): its consensus
     /// Ed25519 key, zero-padded into the 48-byte container.
-    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
-        AuthorityPublicKeyBytes::from_consensus_key(self.init_config.consensus_key_pair.public())
+    pub fn authority_name(&self) -> AuthorityName {
+        AuthorityName::from_consensus_key(self.init_config.consensus_key_pair.public())
     }
 }
 
@@ -1614,10 +1613,6 @@ impl IkaTestClusterBuilder {
         // can address a specific validator by index.
         let validator_names: Vec<_> = validator_configs
             .iter()
-            .map(|c| c.protocol_public_key())
-            .collect();
-        let validator_consensus_names: Vec<_> = validator_configs
-            .iter()
             .map(|c| c.authority_name())
             .collect();
         // The ika epoch only advances when a Notifier node submits the
@@ -1695,7 +1690,6 @@ impl IkaTestClusterBuilder {
             sui_rpc_url,
             publisher_address,
             validator_names,
-            validator_consensus_names,
             ika_node_port_base,
             // Initial validators consumed indices [0, num_validators); joiners
             // claim the next deterministic slots.

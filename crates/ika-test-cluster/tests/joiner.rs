@@ -295,7 +295,7 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     // outright and must never fall into the joiner-tolerance path
     // below.
     // Under the same identity basis the cert items use.
-    for original in &cluster.validator_consensus_names {
+    for original in &cluster.validator_names {
         assert!(
             epoch_1_cert_validators.contains(original),
             "original validator {original:?} missing from the epoch-1 handoff cert's \

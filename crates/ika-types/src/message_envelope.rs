@@ -193,14 +193,26 @@ where
         keypairs: &[AuthorityKeyPair],
         committee: &Committee,
     ) -> Self {
+        // A signer's NAME is its consensus key, which a BLS keypair cannot
+        // produce — resolve each keypair to the committee member carrying that
+        // BLS protocol key instead.
         let signatures = keypairs
             .iter()
             .map(|keypair| {
+                let name = *committee
+                    .names()
+                    .find(|name| {
+                        committee
+                            .public_key(name)
+                            .map(|bls| bls == keypair.public())
+                            == Ok(true)
+                    })
+                    .expect("test keypair is not a member of the test committee");
                 AuthoritySignInfo::new(
                     committee.epoch(),
                     &data,
                     Intent::ika_app(T::SCOPE),
-                    keypair.public().into(),
+                    name,
                     keypair,
                 )
             })

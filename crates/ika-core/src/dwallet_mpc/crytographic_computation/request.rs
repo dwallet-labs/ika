@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use dwallet_rng::RootSeed;
 use group::PartyID;
-use ika_types::crypto::AuthorityPublicKeyBytes;
+use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use tracing::debug;
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,
     pub(crate) protocol_data: DWalletSessionRequestMetricData,
-    pub(crate) validator_name: AuthorityPublicKeyBytes,
+    pub(crate) validator_name: AuthorityName,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     pub(crate) protocol_cryptographic_data: ProtocolCryptographicData,
 }

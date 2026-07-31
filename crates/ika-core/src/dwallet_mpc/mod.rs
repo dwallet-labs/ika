@@ -249,37 +249,21 @@ pub(crate) fn party_ids_to_authority_names(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fastcrypto::traits::KeyPair;
-    use ika_types::crypto::AuthorityPublicKeyBytes;
 
     #[test]
     fn test_party_id_to_authority_name() {
-        let (committee, keypairs) = Committee::new_simple_test_committee();
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
 
-        assert_eq!(
-            party_id_to_authority_name(1, &committee),
-            Some(AuthorityPublicKeyBytes::new(
-                keypairs[0].public().pubkey.to_bytes()
-            ))
-        );
-        assert_eq!(
-            party_id_to_authority_name(2, &committee),
-            Some(AuthorityPublicKeyBytes::new(
-                keypairs[1].public().pubkey.to_bytes()
-            ))
-        );
-        assert_eq!(
-            party_id_to_authority_name(3, &committee),
-            Some(AuthorityPublicKeyBytes::new(
-                keypairs[2].public().pubkey.to_bytes()
-            ))
-        );
-        assert_eq!(
-            party_id_to_authority_name(4, &committee),
-            Some(AuthorityPublicKeyBytes::new(
-                keypairs[3].public().pubkey.to_bytes()
-            ))
-        );
+        // Party ids are 1-based positions in the committee's own
+        // `voting_rights` order. The expectation comes from the committee, not
+        // from the BLS keypairs: a name is a consensus key and cannot be
+        // derived from the BLS keypair used for signing.
+        for (index, (expected_name, _)) in committee.voting_rights.iter().enumerate() {
+            assert_eq!(
+                party_id_to_authority_name(index as PartyID + 1, &committee),
+                Some(*expected_name),
+            );
+        }
     }
 
     #[test]
@@ -298,27 +282,27 @@ mod tests {
 
     #[test]
     fn test_party_ids_to_authority_names() {
-        let (committee, keypairs) = Committee::new_simple_test_committee();
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
         assert_eq!(
             party_ids_to_authority_names(&[1, 2, 3, 4], &committee),
             vec![
-                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
-                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
-                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
-                AuthorityPublicKeyBytes::new(keypairs[3].public().pubkey.to_bytes()),
+                committee.voting_rights[0].0,
+                committee.voting_rights[1].0,
+                committee.voting_rights[2].0,
+                committee.voting_rights[3].0,
             ]
         );
     }
 
     #[test]
     fn test_party_ids_to_authority_names_some_absent_authorities() {
-        let (committee, keypairs) = Committee::new_simple_test_committee();
+        let (committee, _keypairs) = Committee::new_simple_test_committee();
         assert_eq!(
             party_ids_to_authority_names(&[1, 2, 3, 40], &committee),
             vec![
-                AuthorityPublicKeyBytes::new(keypairs[0].public().pubkey.to_bytes()),
-                AuthorityPublicKeyBytes::new(keypairs[1].public().pubkey.to_bytes()),
-                AuthorityPublicKeyBytes::new(keypairs[2].public().pubkey.to_bytes()),
+                committee.voting_rights[0].0,
+                committee.voting_rights[1].0,
+                committee.voting_rights[2].0,
             ]
         );
     }

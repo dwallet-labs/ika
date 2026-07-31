@@ -289,19 +289,19 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
             .map(|config| {
                 info!(
                     "SwarmBuilder configuring validator with name {}",
-                    config.protocol_public_key()
+                    config.authority_name()
                 );
-                (config.protocol_public_key(), Node::new(config.to_owned()))
+                (config.authority_name(), Node::new(config.to_owned()))
             })
             .collect();
 
         for fullnode_config in &network_config.fullnode_configs {
             info!(
                 "SwarmBuilder configuring fullnode with name {}",
-                fullnode_config.protocol_public_key()
+                fullnode_config.authority_name()
             );
             nodes.insert(
-                fullnode_config.protocol_public_key(),
+                fullnode_config.authority_name(),
                 Node::new(fullnode_config.to_owned()),
             );
         }
@@ -411,7 +411,7 @@ impl Swarm {
     }
 
     pub async fn spawn_new_node(&mut self, config: NodeConfig) -> IkaNodeHandle {
-        let name = config.protocol_public_key();
+        let name = config.authority_name();
         let node = Node::new(config);
         node.start().await.unwrap();
         let handle = node.get_node_handle().unwrap();

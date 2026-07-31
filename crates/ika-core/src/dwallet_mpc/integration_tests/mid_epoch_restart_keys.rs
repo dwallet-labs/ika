@@ -475,7 +475,6 @@ async fn missing_prior_cert_blob_is_refetched_from_peers_and_ingested() {
         &blob_cache,
         &local_network,
         &authority_names_to_peer_ids,
-        &HashMap::new(),
         &fetch_outcomes,
     )
     .await;
@@ -654,7 +653,6 @@ async fn mpc_dead_owner_not_found_falls_through_to_live_holder() {
         &blob_cache,
         &local_network,
         &authority_names_to_peer_ids,
-        &HashMap::new(),
         &fetch_outcomes,
     )
     .await;

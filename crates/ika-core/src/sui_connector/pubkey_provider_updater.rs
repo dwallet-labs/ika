@@ -26,7 +26,7 @@ use crate::validator_metadata::StaticJoinerPubkeyProvider;
 use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -155,7 +155,7 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
 /// and consensus keys with the same signer name.
 fn build_prior_committee(
     expected_prior_epoch: EpochId,
-    bls_members: &[(ObjectID, (AuthorityName, StakeUnit))],
+    bls_members: &[(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))],
     staking_pools: &[ika_types::sui::staking::StakingPool],
     quorum_threshold: StakeUnit,
     validity_threshold: StakeUnit,

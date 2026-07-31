@@ -1362,7 +1362,12 @@ impl IkaNode {
             ika_core::sui_connector::trusted_peer_updater::refresh_trusted_peers_loop(
                 trusted_peer_sui_client,
                 trusted_peer_node.trusted_peer_change_tx.clone(),
-                trusted_peer_node.config.protocol_public_key(),
+                // Self-exclusion compares against committee identities, which
+                // are consensus keys — passing the BLS protocol key here made
+                // the node never recognise itself and add itself as a trusted
+                // peer. It compiled only while `AuthorityName` was an alias
+                // for the BLS container.
+                trusted_peer_node.config.authority_name(),
             )
             .await;
         });

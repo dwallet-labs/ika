@@ -8,7 +8,7 @@ use crate::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeWithNetworkMetadata, NetworkMetadata,
     StakeUnit,
 };
-use crate::crypto::{AuthorityName, AuthorityPublicKey, NetworkPublicKey};
+use crate::crypto::{AuthorityName, AuthorityPublicKey, AuthorityPublicKeyBytes, NetworkPublicKey};
 use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
@@ -538,7 +538,11 @@ impl EpochStartSystemTrait for EpochStartSystemV2 {
 
 #[enum_dispatch]
 pub trait EpochStartValidatorInfoTrait {
-    fn authority_name(&self) -> AuthorityName;
+    /// The validator's BLS protocol key. This is NOT the committee identity —
+    /// that is [`AuthorityName`], the Ed25519 consensus key. The raw validator
+    /// records are a separate name space, keyed by the BLS key, and conflating
+    /// the two is how a lookup silently finds nobody.
+    fn protocol_pubkey_bytes(&self) -> AuthorityPublicKeyBytes;
     fn get_name(&self) -> String;
     fn get_network_pubkey(&self) -> NetworkPublicKey;
     fn get_consensus_pubkey(&self) -> NetworkPublicKey;
@@ -566,7 +570,7 @@ pub struct EpochStartValidatorInfoV1 {
 }
 
 impl EpochStartValidatorInfoTrait for EpochStartValidatorInfoV1 {
-    fn authority_name(&self) -> AuthorityName {
+    fn protocol_pubkey_bytes(&self) -> AuthorityPublicKeyBytes {
         (&self.protocol_pubkey).into()
     }
 
