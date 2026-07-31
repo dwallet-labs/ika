@@ -303,6 +303,17 @@ rule, not the instance.
   non-default features, so a dep used only there compiles clean after a
   wrong removal. Verify those paths (`cargo simtest`, the wasm build,
   `--features <f>`) or leave the dep.
+- **"Unread but written per-version" config is not automatically dead.** A
+  `backward_compatible` flag and its `is_*_version_v3` predicates looked like
+  leftover scaffolding and were reported as removable; they were
+  load-bearing — they select the deployed network's `-10` relaxed
+  discrete-log bound, and dropping them switched the reconfiguration proof
+  to the strict bound, changing the Fiat–Shamir transcript and forking
+  consensus with live v5 validators. → Rule: before deleting or relabeling
+  code as dead, trace every reader to a concrete live effect. A
+  protocol-config flag that is set per-version with no obvious reader may
+  still feed a crypto/consensus parameter downstream; relabeling live
+  consensus code as "vestigial" is a correctness risk, not a cleanup.
 
 ## Repo guard hooks
 
@@ -333,6 +344,33 @@ rule, not the instance.
   with a tool's verdict, first prove the tool actually RAN in the gate's
   environment (re-run the gate's exact command with output visible)
   before debugging the verdict itself.
+
+## Library bumps & compatibility claims
+
+- **A wire/consensus/crypto compatibility claim is unproven until the test
+  that exercises THAT property is green.** "This bump is wire-compatible"
+  was asserted from a determinism unit test that only pinned the network-key
+  anchor *reconstruction*, never the live reshare's equality-of-coefficients
+  proof; the cross-binary upgrade test later flagged the upgraded node
+  malicious. → Rule: don't say "compatible / safe / a no-op" from a test
+  that doesn't exercise the exact property. Run the cross-binary / upgrade
+  test EARLY; report what's verified vs not, and give a
+  recommendation-with-uncertainty, not a verdict.
+- **Bumping a crypto/consensus library: read the WHOLE upstream diff, not
+  just the change you wanted.** An inkrypto rev intended only to remove
+  pre-aggregation types ALSO deleted the relaxed discrete-log-bound
+  machinery, silently switching the reconfiguration wire format. → Rule: for
+  any crypto/consensus dependency bump, audit the full upstream diff for
+  consensus-affecting changes — bounds, limb widths, serialization, anything
+  transcribed into a Fiat–Shamir challenge — before implementing. A
+  "remove X" changelog can carry a second, unadvertised format change.
+- **A PR that must not merge until a prerequisite lands must be a DRAFT.** A
+  chained step-2 PR (wire-safe only after step-1's protocol upgrade deploys)
+  was opened as a normal PR; a teammate merged it into the step-1 branch and
+  it rode into main prematurely, forcing a revert. → Rule: only the base of
+  a chain is a normal PR. Every deploy-after-X / protocol-gated follow-up is
+  `gh pr create --draft`, with the gating condition ("merge once v6 is
+  live") stated in the body.
 
 ## Process & forensics
 

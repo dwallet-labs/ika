@@ -110,31 +110,32 @@ pub struct NetworkEncryptionKeyPublicData {
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
 
-    /// Full-shape aggregated (V4) network DKG output, reconstructed in memory
-    /// from [`Self::network_dkg_output`] and the latest reconfiguration
-    /// output.
+    /// Full-shape (V3) network DKG output, reconstructed in memory from
+    /// [`Self::network_dkg_output`] and the latest reconfiguration output.
     ///
-    /// The deployed network keys' anchors (V1: the raw class-groups DKG
-    /// output; V2: a `PublicOutputCore`) lack the trailing
-    /// `threshold_encryption_to_sharing_output` that the full
-    /// `decentralized_party::dkg::PublicOutput` carries. That field is
-    /// produced only by the threshold-encryption-to-sharing sub-protocol,
-    /// which those anchors predate. An aggregated (V4) reconfiguration output
-    /// supplies it, and the full V4 DKG output is reconstructed by combining
-    /// the anchor's reconfiguration-invariant class-group DKG output with the
+    /// The deployed (mainnet-v1.1.8-origin) network key's DKG output is a V2
+    /// (backward-compatible) `PublicOutputCore`, which lacks the trailing
+    /// `threshold_encryption_to_sharing_output` that the full V3
+    /// `decentralized_party::dkg::PublicOutput` carries. That field is produced
+    /// only by the threshold-encryption-to-sharing sub-protocol, which the
+    /// backward-compatible reconfiguration predates. Once a v4 reconfiguration
+    /// produces a full V3 reconfiguration output, the field becomes available
+    /// and the full V3 DKG output is reconstructed by combining the V2 output's
+    /// reconfiguration-invariant class-group DKG output with the V3
     /// reconfiguration output.
     ///
-    /// `Some` only at a migration epoch — a V1/V2 anchor with an aggregated
-    /// (V4) reconfiguration output; `None` otherwise (a V4 anchor is the end
-    /// state, and a V2-only reconfiguration output lacks the trailing field).
-    /// Pre-aggregation (V3) state is a hard error at instantiation — its
-    /// inkrypto types were removed.
+    /// `Some` only at a migration epoch — when the reconfiguration output's
+    /// format is ahead of the anchor's: a V1/V2 anchor with a full (V3/V4)
+    /// reconfiguration output, or a V3 anchor with an aggregated (V4)
+    /// reconfiguration output (the migration off the pre-aggregation
+    /// encoding); `None` otherwise (a V4 anchor is the end state, and a
+    /// V2-only reconfiguration output lacks the trailing field).
     ///
-    /// This `Some` value DRIVES the one-time canonical anchor migration: the
+    /// This `Some` value DRIVES the one-time canonical V2->V3 migration: the
     /// instantiation-completion path mirrors it via `cache_network_dkg_output`,
-    /// which flips the perpetual digest mirror and persists the V4 blob, after
+    /// which flips the perpetual digest mirror and persists the V3 blob, after
     /// which the off-chain overlay (and hence [`Self::network_dkg_output`]
-    /// itself) resolves V4 and this becomes `None`. Session identifiers are
+    /// itself) resolves V3 and this becomes `None`. Session identifiers are
     /// keyed on the migration-invariant `NetworkKeyId`, not these bytes, so the
     /// flip does not perturb them.
     pub reconstructed_full_network_dkg_output: Option<VersionedNetworkDkgOutput>,
@@ -480,29 +481,35 @@ pub enum VersionedSignOutput {
 ///   separate field), so this variant is still READ on every reconfiguration.
 ///   The variant order is also load-bearing for BCS: it keeps the `V2`/`V3`
 ///   variant indices stable for already-stored outputs.
-/// - `V2` — bytes with the shape of
-///   `twopc_mpc::decentralized_party::dkg::PublicOutputCore` (the historical
-///   backward-compatible DKG party's output). No longer produced; where a
-///   consumer needs only the core (e.g. the reconfiguration public-input
-///   generator), the bytes still decode as `PublicOutputCore`; everywhere
-///   else decode is an error.
-/// - `V3` — the pre-aggregation full shape: the `PublicOutputCore` prefix
-///   plus the trailing `threshold_encryption_to_sharing_output` field with
-///   every dealer's full PVSS dealing. Its inkrypto type
-///   (`NonAggregatedPublicOutput`) was REMOVED — V3 bytes can no longer be
-///   decoded, and every decode arm errors. The variant remains only for BCS
-///   variant-index stability. Persisted V3 anchors must have migrated to V4
-///   (via the anchor migration, on a binary that still carried the type)
-///   before this binary runs.
+/// - `V2` — bytes from
+///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`,
+///   which after the upstream `PublicOutputCore` extraction is a re-export of
+///   `twopc_mpc::decentralized_party::dkg::PublicOutputCore`. No longer
+///   PRODUCED (the backward-compatible DKG party was removed with protocol-v3
+///   support), but still READ from persisted pre-v4 state.
+/// - `V3` — bytes from
+///   `twopc_mpc::decentralized_party::dkg::NonAggregatedPublicOutput`. The full
+///   output wraps `PublicOutputCore` with the trailing
+///   `threshold_encryption_to_sharing_output` field — so V3 BCS bytes are the
+///   V2 BCS bytes plus the trailing field (in the pre-aggregation shape:
+///   every dealer's full PVSS dealing). No longer PRODUCED by the DKG
+///   (superseded by V4), but still READ: testnet validators persist
+///   V3-tagged reconstructed anchors (the V1/V2→V3 anchor migration follows
+///   the reconfiguration output's version, which stays V3 below the
+///   aggregated-outputs gate), so this variant stays decodable forever.
 /// - `V4` — bytes from
 ///   `twopc_mpc::decentralized_party::dkg::PublicOutput`: the same
 ///   `PublicOutputCore` prefix, with the trailing sharing output in the
 ///   aggregated shape (one summed randomizer-share ciphertext per receiver
 ///   instead of every dealer's full PVSS dealing — O(n) instead of O(n²)).
-///   The protocol aggregates at output formation, so the DKG Party's output
-///   IS this shape and `advance_network_dkg_v2` tags it V4 as-is. A V4-tagged
-///   anchor also arises from the anchor migration once the reconfiguration
-///   output is V4.
+///   Written UNCONDITIONALLY by `advance_network_dkg_v2` (the producer
+///   upgrades the protocol's pre-aggregation output via
+///   `PublicOutput::upgrade()`): unlike reconfiguration outputs, fresh DKG
+///   outputs need no protocol gate — no deployed network ever persisted a
+///   pre-aggregation fresh DKG output, and no DKG session runs during a
+///   mixed-binary rollout window, so there is no byte-identical-quorum
+///   constraint on this producer. A V4-tagged anchor also arises from the
+///   anchor migration once the reconfiguration output is V4 (protocol v5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
@@ -533,27 +540,24 @@ impl VersionedNetworkDkgOutput {
 ///
 /// - `V1` — previously-deployed shape; never produced anymore. Retained for
 ///   BCS variant-index stability of `V2`/`V3`.
-/// - `V2` — bytes with the shape of
-///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore` (the
-///   historical backward-compatible reconfiguration party's output). No
-///   longer produced; where a consumer needs only the core (e.g. as the prior
-///   output for the main reconfiguration constructors), the bytes still
-///   decode as `PublicOutputCore`; everywhere else decode is an error.
-/// - `V3` — the pre-aggregation full shape: the `PublicOutputCore` prefix
-///   plus the trailing `threshold_encryption_to_sharing_output` field
-///   (every dealer's full PVSS dealing). Its inkrypto type
-///   (`NonAggregatedPublicOutput`) was REMOVED — V3 bytes can no longer be
-///   decoded, and every decode arm errors. The variant remains only for BCS
-///   variant-index stability. A key whose LATEST reconfiguration output is
-///   V3-tagged must reconfigure to V4 (on a binary that still carried the
-///   type) before this binary runs.
+/// - `V2` — bytes from
+///   `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party::PublicOutput`,
+///   which is a re-export of
+///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore`.
+/// - `V3` — bytes from
+///   `twopc_mpc::decentralized_party::reconfiguration::NonAggregatedPublicOutput`
+///   (still the reconfiguration `Party::PublicOutput` — the deployed wire
+///   format): the `PublicOutputCore` plus the trailing
+///   `threshold_encryption_to_sharing_output` field (pre-aggregation shape).
+///   Testnet persists V3 outputs, so this variant stays readable forever.
 /// - `V4` — bytes from
 ///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutput`:
 ///   the same `PublicOutputCore` prefix with the trailing sharing output in
 ///   the aggregated shape (one summed randomizer-share ciphertext per
-///   receiver). The ONLY format produced: the protocol aggregates at output
-///   formation, so the reconfiguration Party's output IS this shape and the
-///   finalize path tags it V4 as-is.
+///   receiver). The ONLY format produced since `MIN_PROTOCOL_VERSION = 5`
+///   (the flag that gated the V3→V4 flip is true at every supported version
+///   and no longer read); the producer upgrades the protocol's
+///   pre-aggregation output via `PublicOutput::upgrade()`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
@@ -647,9 +651,8 @@ impl NetworkEncryptionKeyPublicData {
         &self.network_dkg_output
     }
 
-    /// The forward-looking full-shape aggregated (V4) network DKG output
-    /// reconstructed in memory, or `None` when no reconstruction was possible
-    /// this epoch. See
+    /// The forward-looking full-shape (V3) network DKG output reconstructed in
+    /// memory, or `None` when no reconstruction was possible this epoch. See
     /// [`Self::reconstructed_full_network_dkg_output`] — this is NOT the
     /// consensus anchor; use [`Self::network_dkg_output`] for session
     /// identifiers and handoff digests.

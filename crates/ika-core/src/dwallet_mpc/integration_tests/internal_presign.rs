@@ -7,17 +7,26 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_POOL_MINIMUM_SIZE, apply_test_presign_pool_overrides, build_test_state,
     create_test_protocol_config_guard,
 };
-use crate::dwallet_mpc::mpc_manager::{InternalPresignCompletionKey, ParkedInternalPresignRequest};
-use crate::dwallet_mpc::mpc_session::SessionStatus;
+use crate::dwallet_mpc::mpc_diagnostics::SessionOrigin;
+use crate::dwallet_mpc::mpc_manager::{
+    DWalletMPCManager, InternalPresignCompletionKey, ParkedInternalPresignRequest,
+};
+use crate::dwallet_mpc::mpc_session::{SessionComputationType, SessionStatus};
 use crate::dwallet_mpc::{NetworkOwnedAddressSignRequest, ValidatorMpcKeysByPartyId};
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
+use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::validator_metadata::OffChainCommitteeBundles;
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkKeyId,
+};
+use dwallet_rng::RootSeed;
 use ika_protocol_config::ProtocolConfig;
+use ika_types::crypto::AuthorityName;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, SessionIdentifier,
     SessionType,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tracing::info;
@@ -1531,5 +1540,517 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
         "Test completed: multi-key install lag parks internal presign batches with sequence \
          numbers consumed, and an unresolvable adopted key is skipped uniformly, keeping \
          identifier derivation committee-uniform"
+    );
+}
+
+/// The deterministic identifier every committee member derives for one
+/// internal-presign ordinal of a (key, curve, algorithm) pool.
+fn internal_presign_identifier_at(
+    epoch_id: u64,
+    ordinal: u64,
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+    network_key_object_id: ObjectID,
+    counter_network_key_id: NetworkKeyId,
+) -> SessionIdentifier {
+    DWalletSessionRequest::new_internal_presign(
+        epoch_id,
+        ordinal,
+        curve,
+        algorithm,
+        network_key_object_id,
+        &counter_network_key_id.0,
+    )
+    .session_identifier
+}
+
+/// Ordinals of one pool this manager MINTED itself (activated a local
+/// request — `SessionOrigin::LocalRequest`), as opposed to entries
+/// reconstructed from replayed consensus artifacts. Pool membership is proven
+/// by re-deriving the identifier from the bound ordinal: a session whose
+/// identifier matches is this pool's ordinal by construction.
+fn locally_minted_pool_ordinals(
+    manager: &DWalletMPCManager,
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+    network_key_object_id: ObjectID,
+    counter_network_key_id: NetworkKeyId,
+) -> BTreeSet<u64> {
+    manager
+        .sessions
+        .iter()
+        .filter(|(_, session)| session.origin == SessionOrigin::LocalRequest)
+        .filter_map(|(session_identifier, session)| {
+            let ordinal = session.session_sequence_number?;
+            (internal_presign_identifier_at(
+                manager.epoch_id,
+                ordinal,
+                curve,
+                algorithm,
+                network_key_object_id,
+                counter_network_key_id,
+            ) == *session_identifier)
+                .then_some(ordinal)
+        })
+        .collect()
+}
+
+/// Replaces validator 0's service with a fresh one over its EXISTING epoch
+/// store — the in-process mid-epoch restart. Every channel end is replaced (a
+/// fresh process re-creates them); the epoch store is the only survivor.
+/// `last_session_to_complete_in_current_epoch` is restored directly, exactly
+/// as the tests around network-key creation set it.
+fn restart_validator_zero(
+    test_state: &mut IntegrationTestState,
+    seeds: &HashMap<AuthorityName, RootSeed>,
+    bundles: &OffChainCommitteeBundles,
+) {
+    let authority = test_state.dwallet_mpc_services[0].name;
+    let (service, senders, collector, notify, sign_request_sender, sign_output_receiver) =
+        utils::create_dwallet_mpc_service_over_epoch_store(
+            &authority,
+            test_state.committee.clone(),
+            seeds[&authority].clone(),
+            bundles.clone(),
+            test_state.epoch_stores[0].clone(),
+        );
+    test_state.dwallet_mpc_services[0] = service;
+    test_state.sui_data_senders[0] = senders;
+    test_state.sent_consensus_messages_collectors[0] = collector;
+    test_state.notify_services[0] = notify;
+    test_state.network_owned_address_sign_request_senders[0] = sign_request_sender;
+    test_state.network_owned_address_sign_output_receivers[0] = sign_output_receiver;
+    test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager_mut()
+        .last_session_to_complete_in_current_epoch = 400;
+}
+
+/// Regression test for issue #1952: `next_internal_presign_sequence_number`
+/// is in-memory, so a mid-epoch restart used to restart a pool's ordinal
+/// stream at 1 — every post-restart mint re-minted an ordinal the committee
+/// had already completed, each dead mint was "released" only by a live peer
+/// completion, and the validator trailed the live ordinal window (sitting out
+/// registry-driven instantiation) for the rest of the epoch. The fix lazily
+/// seeds a pool's counter on first touch from the persisted
+/// `filled_presign_pool_slots` high-water (+1), and the mint path
+/// fast-forwards across ordinals whose replayed sessions are already
+/// terminal.
+///
+/// Flow:
+/// 1. Live committee fills the EdDSA pool; capture the persisted high-water H
+///    and pin the live counter at H+1 (the rejoin target).
+/// 2. Restart validator 0 over its surviving epoch store. Its EdDSA pool is
+///    stuffed to max FIRST so the replay provably cannot mint for that pool
+///    under either top-up condition — proving the seed is LAZY (first-mint),
+///    not replay-driven.
+/// 3. Replay the persisted history; assert the counter is still unseeded and
+///    nothing was locally minted (history is reconstructed, never re-minted).
+/// 4. Drain every validator's EdDSA pool and drive live rounds: the restarted
+///    validator's first mint must land at EXACTLY H+1 (never 1), the pool's
+///    counter must read identically committee-wide after every round, every
+///    minted ordinal must bind to the same identifier on every peer, and the
+///    new ordinals' fills must advance the persisted high-water past H.
+/// 5. Coda (fast-forward): restart validator 0 once more with terminal
+///    sessions planted at the two ordinals PAST the persisted high-water (the
+///    shape where the seed read lags the replay frontier) and drive one
+///    top-up directly: the mint must skip the terminal ordinals without
+///    counting them against the batch guard, and park the live batch just
+///    past them.
+#[tokio::test]
+#[cfg(test)]
+async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high_water() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    // Seeds are kept to rebuild validator 0 with the same identity (the same
+    // class-groups decryption shares) after the simulated restarts.
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+        bundles.clone(),
+    );
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // EdDSA: single-round presign, so its pool provably fills (and its
+    // batches quorum-complete) within a few delivered rounds.
+    let (curve, algorithm) = (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+    let epoch_id = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .epoch_id;
+    let counter_network_key_id = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .internal_presign_network_key_id(&network_key_id)
+        .expect("the DKG'd key must have a resolvable NetworkKeyId");
+    let counter_key = (counter_network_key_id, curve, algorithm);
+
+    // === Phase 1: live fills establish the persisted high-water ===
+    // Run until the pool has persisted fills AND the batch guard is closed:
+    // with every minted ordinal quorum-completed and deposited, the persisted
+    // high-water IS the last live ordinal.
+    let mut high_water = None;
+    for _ in 0..60 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
+        high_water = test_state.epoch_stores[0]
+            .max_filled_presign_pool_slot(algorithm, network_key_id)
+            .expect("max_filled_presign_pool_slot");
+        if high_water.is_some() && instantiated > 0 && instantiated == completed {
+            break;
+        }
+    }
+    let high_water = high_water.expect("EdDSA fills should land within the phase 1 budget");
+
+    // Precondition tying the persisted high-water to the live counter: the
+    // restarted validator must rejoin exactly here.
+    let live_next = *test_state.dwallet_mpc_services[1]
+        .dwallet_mpc_manager()
+        .next_internal_presign_sequence_number
+        .get(&counter_key)
+        .expect("peers must have minted EdDSA ordinals in phase 1");
+    assert_eq!(
+        live_next,
+        high_water + 1,
+        "precondition: with the guard closed, the persisted high-water is one behind the live counter"
+    );
+
+    // What the production syncer re-fetches for a fresh process: the network
+    // key overlay (taken from a live peer's adopted view).
+    let network_key_data = test_state.dwallet_mpc_services[1]
+        .dwallet_mpc_manager()
+        .adopted_network_key_data
+        .get(&network_key_id)
+        .expect("peers must have adopted the network key")
+        .clone();
+
+    // === Phase 2: restart validator 0 over its surviving epoch store ===
+    // Stuff the restarting validator's EdDSA pool to max first: with the pool
+    // at/above both thresholds, neither top-up condition can fire during the
+    // replay, so an unseeded counter after the full replay proves the seed is
+    // lazy. Slot 1 keeps the persisted high-water untouched.
+    let stuffing: Vec<Vec<u8>> = (0..TEST_PRESIGN_POOL_MAXIMUM_SIZE)
+        .map(|index| vec![index as u8; 8])
+        .collect();
+    test_state.epoch_stores[0]
+        .insert_presigns(
+            algorithm,
+            network_key_id,
+            1,
+            SessionIdentifier::new(SessionType::InternalPresign, [77u8; 32]),
+            stuffing,
+        )
+        .expect("insert_presigns");
+
+    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    assert!(
+        test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .next_internal_presign_sequence_number
+            .is_empty(),
+        "a fresh process must start with no in-memory ordinal state"
+    );
+    let _ = test_state.sui_data_senders[0]
+        .network_keys_sender
+        .send(Arc::new(HashMap::from([(
+            network_key_id,
+            network_key_data.clone(),
+        )])));
+
+    // Replay: the first iteration processes every persisted consensus round;
+    // the key install completes asynchronously on later ticks.
+    test_state.dwallet_mpc_services[0]
+        .run_service_loop_iteration()
+        .await;
+    utils::run_service_loops_until_network_key_installed(
+        &mut test_state.dwallet_mpc_services[0..1],
+        network_key_id,
+    )
+    .await;
+    assert_eq!(
+        test_state.dwallet_mpc_services[0].last_read_consensus_round(),
+        test_state.dwallet_mpc_services[1].last_read_consensus_round(),
+        "the replay must catch the restarted validator up to its peers"
+    );
+
+    {
+        let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+        assert!(
+            !manager
+                .next_internal_presign_sequence_number
+                .contains_key(&counter_key),
+            "the ordinal stream must be seeded on first MINT, not by the replay"
+        );
+        assert!(
+            locally_minted_pool_ordinals(
+                manager,
+                curve,
+                algorithm,
+                network_key_id,
+                counter_network_key_id
+            )
+            .is_empty(),
+            "the replay must reconstruct history, never mint"
+        );
+    }
+
+    // === Phase 3: the restarted validator rejoins the live ordinal window ===
+    // Drain every validator's EdDSA pool so the next delay-aligned round
+    // provably fires the same top-up committee-wide.
+    for epoch_store in &test_state.epoch_stores {
+        while epoch_store
+            .pop_presign(algorithm, network_key_id)
+            .expect("pop_presign")
+            .is_some()
+        {}
+    }
+
+    let mut resumed = false;
+    for _ in 0..40 {
+        run_one_round_delivering_messages(&mut test_state).await;
+
+        // Whenever the restarted validator's counter exists it must read
+        // identically on every live peer — a pre-fix restart reads ~1 here
+        // while the peers read H+1+k.
+        let restarted_next = test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .next_internal_presign_sequence_number
+            .get(&counter_key)
+            .copied();
+        if let Some(restarted_next) = restarted_next {
+            assert!(
+                restarted_next > high_water,
+                "the restarted validator's ordinal counter must resume past the persisted \
+                 high-water {high_water}, got {restarted_next}"
+            );
+            for peer_index in 1..test_state.dwallet_mpc_services.len() {
+                assert_eq!(
+                    test_state.dwallet_mpc_services[peer_index]
+                        .dwallet_mpc_manager()
+                        .next_internal_presign_sequence_number
+                        .get(&counter_key)
+                        .copied(),
+                    Some(restarted_next),
+                    "validator {peer_index}: the pool's ordinal counter diverged from the \
+                     restarted validator's"
+                );
+            }
+        }
+
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
+        let refilled_high_water = test_state.epoch_stores[0]
+            .max_filled_presign_pool_slot(algorithm, network_key_id)
+            .expect("max_filled_presign_pool_slot")
+            .unwrap_or(0);
+        if instantiated > 0 && instantiated == completed && refilled_high_water > high_water {
+            resumed = true;
+            break;
+        }
+    }
+    assert!(
+        resumed,
+        "the restarted validator must mint, complete, and persist fills at post-high-water ordinals"
+    );
+
+    let minted = locally_minted_pool_ordinals(
+        test_state.dwallet_mpc_services[0].dwallet_mpc_manager(),
+        curve,
+        algorithm,
+        network_key_id,
+        counter_network_key_id,
+    );
+    assert_eq!(
+        minted.first(),
+        Some(&(high_water + 1)),
+        "the first post-restart mint must land exactly one past the persisted high-water"
+    );
+    assert!(
+        minted.iter().all(|&ordinal| ordinal > high_water),
+        "post-restart mints re-used already-completed ordinals: {minted:?} (high-water {high_water})"
+    );
+    // Identifier uniformity: every ordinal the restarted validator minted is
+    // bound to the SAME identifier on every live peer — the committee-wide
+    // invariant a from-1 restart breaks.
+    for peer_index in 1..test_state.dwallet_mpc_services.len() {
+        let peer_manager = test_state.dwallet_mpc_services[peer_index].dwallet_mpc_manager();
+        for &ordinal in &minted {
+            let session_identifier = internal_presign_identifier_at(
+                epoch_id,
+                ordinal,
+                curve,
+                algorithm,
+                network_key_id,
+                counter_network_key_id,
+            );
+            assert_eq!(
+                peer_manager
+                    .sessions
+                    .get(&session_identifier)
+                    .and_then(|session| session.session_sequence_number),
+                Some(ordinal),
+                "validator {peer_index}: ordinal {ordinal} is not bound to the same session \
+                 identifier as on the restarted validator"
+            );
+        }
+    }
+
+    // === Coda: fast-forward across terminal ordinals past the seed ===
+    // The high-water is read ONCE, at the pool's first touch; fills whose
+    // replay lands after that read leave terminal sessions at ordinals PAST
+    // the seed. The mint path must skip them (they can never produce a
+    // completion again) without counting them against the batch guard.
+    let coda_high_water = test_state.epoch_stores[0]
+        .max_filled_presign_pool_slot(algorithm, network_key_id)
+        .expect("max_filled_presign_pool_slot")
+        .expect("phase 3 refilled the pool");
+    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    while test_state.epoch_stores[0]
+        .pop_presign(algorithm, network_key_id)
+        .expect("pop_presign")
+        .is_some()
+    {}
+
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager_mut();
+    // Adopt directly — the coda drives the top-up loop below without service
+    // iterations, so no install ever completes: the live batch must PARK with
+    // its ordinals consumed (the install-lag shape covered above).
+    manager
+        .adopted_network_key_data
+        .insert(network_key_id, network_key_data.clone());
+    let terminal_ordinals = [coda_high_water + 1, coda_high_water + 2];
+    for &ordinal in &terminal_ordinals {
+        let session_identifier = internal_presign_identifier_at(
+            epoch_id,
+            ordinal,
+            curve,
+            algorithm,
+            network_key_id,
+            counter_network_key_id,
+        );
+        manager.new_session(
+            &session_identifier,
+            SessionStatus::Completed,
+            None,
+            SessionComputationType::MPC {
+                messages_by_consensus_round: HashMap::new(),
+            },
+        );
+    }
+
+    let batch_size = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE;
+    let coda_round = test_state.consensus_round as u64;
+    manager.instantiate_internal_presign_sessions(
+        coda_round,
+        TEST_PRESIGN_CONSENSUS_ROUND_DELAY * 100,
+        false,
+    );
+
+    assert_eq!(
+        manager
+            .next_internal_presign_sequence_number
+            .get(&counter_key)
+            .copied(),
+        Some(coda_high_water + 2 + batch_size + 1),
+        "the mint must seed at high-water+1, skip the two terminal ordinals, and mint the \
+         batch just past them"
+    );
+    assert_eq!(
+        manager
+            .instantiated_internal_presign_sessions
+            .get(&counter_key)
+            .copied()
+            .unwrap_or(0),
+        batch_size,
+        "only live mints may count against the batch guard — a fast-forwarded ordinal never \
+         produces a completion"
+    );
+    for &ordinal in &terminal_ordinals {
+        let session_identifier = internal_presign_identifier_at(
+            epoch_id,
+            ordinal,
+            curve,
+            algorithm,
+            network_key_id,
+            counter_network_key_id,
+        );
+        assert!(
+            matches!(
+                manager
+                    .sessions
+                    .get(&session_identifier)
+                    .map(|session| &session.status),
+                Some(SessionStatus::Completed)
+            ),
+            "ordinal {ordinal}: a terminal session must be skipped, not re-activated"
+        );
+    }
+    let parked_pool_ordinals: BTreeSet<u64> = manager
+        .internal_presign_requests_pending_for_network_key_data
+        .iter()
+        .filter_map(|ParkedInternalPresignRequest(request)| {
+            let ordinal = request.session_sequence_number?;
+            (internal_presign_identifier_at(
+                epoch_id,
+                ordinal,
+                curve,
+                algorithm,
+                network_key_id,
+                counter_network_key_id,
+            ) == request.session_identifier)
+                .then_some(ordinal)
+        })
+        .collect();
+    let expected_live_ordinals: BTreeSet<u64> =
+        (coda_high_water + 3..=coda_high_water + 2 + batch_size).collect();
+    assert_eq!(
+        parked_pool_ordinals, expected_live_ordinals,
+        "the live batch must park (no install on the fresh manager) at exactly the ordinals \
+         past the terminal run"
+    );
+
+    // The batch guard must see the parked live mints as in-flight: a second
+    // delay-aligned pass may not mint again until they complete.
+    manager.instantiate_internal_presign_sessions(
+        coda_round + TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        TEST_PRESIGN_CONSENSUS_ROUND_DELAY * 101,
+        false,
+    );
+    assert_eq!(
+        manager
+            .next_internal_presign_sequence_number
+            .get(&counter_key)
+            .copied(),
+        Some(coda_high_water + 2 + batch_size + 1),
+        "the guard must hold while the parked live batch is outstanding"
+    );
+
+    info!(
+        "Test completed: a mid-epoch restart resumes the internal-presign ordinal stream from \
+         the persisted pool-slot high-water, and the mint path fast-forwards terminal ordinals \
+         without wedging the batch guard"
     );
 }

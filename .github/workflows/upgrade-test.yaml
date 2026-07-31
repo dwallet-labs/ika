@@ -54,6 +54,14 @@ name: Upgrade Test
 #                  sui-data-source — for all validators AND the notifier
 #                  (the legacy JSON-RPC transport nothing else covers). Full
 #                  lifecycle. Current build only.
+#   restart_spectator — the #1952 mid-epoch-restart gate: one validator is
+#                  restarted (same binary) far from an epoch boundary, in an
+#                  epoch with an established network key and ongoing
+#                  internal-presign volume, and must resume LIVE
+#                  registry-driven top-up instantiation within the epoch —
+#                  not merely stay consensus-healthy while peers absorb the
+#                  sessions. Current build only; production presign-pool
+#                  sizing (the sustained-volume ingredient).
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -226,15 +234,10 @@ jobs:
     steps:
       - id: pick
         env:
-          # PRs into main default to v125_rollout (deployed-release gate).
-          # A chained PR whose base is NOT main (the strict-only step-2
-          # branch, based on the v6 step-1 / revert branch) instead defaults
-          # to v6_rollout — step2 is strict-only and cannot run v5, so
-          # v125_rollout (a v5 mixed committee) would diverge by design.
-          TEST: ${{ inputs.test || (github.event.pull_request.base.ref == 'main' && 'v125_rollout' || (github.event_name == 'pull_request' && 'v6_rollout' || 'v125_rollout')) }}
+          TEST: ${{ inputs.test || 'v125_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config v6_rollout"
+          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config restart_spectator"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -352,7 +355,7 @@ jobs:
             v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
             malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
-            v6_rollout)   RUN_FLAG=RUN_V6_ROLLOUT ;;
+            restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -362,15 +365,6 @@ jobs:
           case "$TEST" in
             v125_rollout | v125_v6_upgrade | v125_churn | malicious_v125)
               : "${OLD_REF:=release/mainnet-v1.2.5}"
-              : "${OLD_BIN_NAME:=ika-validator}"
-              ;;
-            v6_rollout)
-              # v6_rollout is the CHAINED cross-test: OLD is the v6-capable
-              # "step 1" binary (current inkrypto, both bounds selectable),
-              # NEW is the candidate (this branch's strict-only inkrypto). On a
-              # PR the step-1 binary is the base branch (the chain base); a
-              # manual dispatch must pass old_ref explicitly.
-              : "${OLD_REF:=${{ github.event.pull_request.base.ref }}}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
           esac
@@ -440,7 +434,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' || matrix.test == 'v6_rollout' }}
+        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -523,10 +517,13 @@ jobs:
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
-          # Keep production pool sizing/timing for the rollout gate. The
-          # reduced-pool override remains a resource concession for the
-          # lighter scenarios, not compatibility evidence.
-          if [ "$TEST_NAME" = "v125_rollout" ]; then
+          # Keep production pool sizing/timing for the rollout gate and the
+          # restart-spectator gate (whose sustained internal-presign volume IS
+          # the ingredient under test — small pools fill and quiesce, and a
+          # quiet top-up loop can't prove resumption). The reduced-pool
+          # override remains a resource concession for the lighter scenarios,
+          # not compatibility evidence.
+          if [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
             unset IKA_ENABLE_SMALL_PRESIGN_POOLS
           fi
           mkdir -p "$UPGRADE_TEST_DIR"
