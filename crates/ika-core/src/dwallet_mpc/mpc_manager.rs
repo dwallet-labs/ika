@@ -4256,12 +4256,26 @@ impl DWalletMPCManager {
                 self.recognized_self_as_malicious = true;
                 self.recognized_self_as_malicious_session = Some(*session_identifier);
 
+                let reason = outputs_to_finalize
+                    .vote_diagnostics
+                    .local_authority_malicious_reason;
+                // Fleet-visible, not just local: this validator has concluded
+                // it diverged from its peers, and without a metric that fact
+                // reaches nobody but this operator. Labels are the two fixed
+                // enums only — a session id or authority here would be
+                // unbounded AND would identify the operator to every scraper.
+                self.dwallet_mpc_metrics
+                    .self_malicious_total
+                    .with_label_values(&[
+                        reason.map_or("unspecified", LocalAuthorityMaliciousReason::metric_label),
+                        session_type_label(session_identifier.session_type()),
+                    ])
+                    .inc();
+
                 error!(
                     ?session_identifier,
                     authority=?self.validator_name,
-                    local_authority_malicious_reason = ?outputs_to_finalize
-                        .vote_diagnostics
-                        .local_authority_malicious_reason,
+                    local_authority_malicious_reason = ?reason,
                     "node recognized itself as malicious"
                 );
             }

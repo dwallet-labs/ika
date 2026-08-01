@@ -36,7 +36,41 @@ recovery. Transport errors preserve the last observed state and are counted by
 the Sui RPC/OCS transport metrics; an error is not evidence that an active
 condition recovered.
 
-## Alert 2: prepare-then-start barrier blocked
+## Alert 2: a validator recognized ITSELF as malicious
+
+```promql
+sum by (host, reason, session_type) (
+  increase(ika_dwallet_mpc_self_malicious_total[10m])
+) > 0
+# no for-duration: fire immediately
+```
+
+The validator concluded its own MPC output diverged from the peers' quorum, or
+the majority output named it. It has effectively dropped itself out of that
+session, and it will keep doing so for as long as the cause persists. There is
+no benign threshold: a correct, agreeing validator never increments this.
+
+Unlike Alert 1 this is NOT a broken invariant — a correct binary can reach it.
+The two causes that matter operationally:
+
+- **A genuine divergence** on this host (bad state, corrupted inputs, a real
+  fault). Confined to that validator; quorum absorbs it.
+- **A wire-format disagreement across a protocol upgrade** — the fleet-wide
+  case. During a rollout that changes serialization, validators emitting
+  different bytes compute different digests and reject each other while parsing
+  each other's messages perfectly. **This alert firing on multiple hosts at once
+  during an upgrade window is the signal that the rollout itself is splitting
+  the network**, not that those operators are individually broken.
+
+**Operator action**: check whether one host or many are firing, and whether the
+window coincides with a binary rollout or protocol-version activation. One host
+— investigate that node. Several, mid-upgrade — treat as a rollout-wide
+serialization split and stop the rollout before it crosses quorum. Correlate
+with `ika_dwallet_mpc_malicious_actors_count` on the *peers* (who they blame)
+and with the `node recognized itself as malicious` log on the affected host,
+which carries the session id the labels deliberately omit.
+
+## Alert 3: prepare-then-start barrier blocked
 
 ```promql
 ika_handoff_prepare_waiting == 1
@@ -52,7 +86,7 @@ missing input; `ika_handoff_prepare_retries_total` and the duration
 histogram quantify the wait. See `../specs/handoff.md`
 ("Prepare-then-start barrier").
 
-## Alert 3: off-chain assembly permanently wedged
+## Alert 4: off-chain assembly permanently wedged
 
 ```promql
 ika_off_chain_assembly_wedged != 0
@@ -68,7 +102,7 @@ announcement/ready-signal logs for why attestation coverage collapsed
 (propagation outage, mass restart inside the announcement window);
 recovery requires operator intervention, not waiting.
 
-## Alert 4 (log-based): joiner bootstrap fail-closed halt
+## Alert 5 (log-based): joiner bootstrap fail-closed halt
 
 There is no gauge for this one — the node **halts** when every
 current-committee peer served a handoff certificate and none verified

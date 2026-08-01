@@ -75,6 +75,23 @@ cross-binary malicious-detection test asserts exclusion programmatically
 instead of matching a log line. Log-level discipline itself lives in
 [`logging.md`](logging.md).
 
+`ika_dwallet_mpc_self_malicious_total{reason,session_type}` counts sessions for
+which a validator concluded that IT ITSELF is malicious — its output diverged
+from the peers' quorum, or the majority output named it. Before this counter the
+conclusion existed only as an `error!` in that one operator's logs, so a
+validator dropping itself out of MPC was invisible to the other ~93 on
+testnet+mainnet. It is deliberately NOT an invariant violation: a correct binary
+can reach this state (a genuine divergence, or a wire-format disagreement during
+a protocol upgrade), so it must not be routed through
+`report_invariant_violation!`, which means "should never happen" and would both
+mislabel the condition and pollute that counter during a rollout.
+
+Its labels are the whole reason it can be exported: `reason` is the fixed
+`LocalAuthorityMaliciousReason` set (plus `unspecified`) and `session_type` is
+the fixed session kind — at most a handful of series. Session ids, authority
+names and output digests are excluded on purpose. They are unbounded, and on a
+public metrics endpoint they identify which operator diverged and on what.
+
 `ika_invariant_violations_total{site}` shadows every structured
 `should_never_happen = true` error across the node. Call sites use
 `report_invariant_violation!` with a stable literal `site`; the macro emits the
@@ -263,6 +280,7 @@ ika_dwallet_mpc_received_requests_start_count
 ika_dwallet_mpc_requests_pending_for_frozen_mpc_data
 ika_dwallet_mpc_requests_pending_for_network_key
 ika_dwallet_mpc_requests_pending_for_next_active_committee
+ika_dwallet_mpc_self_malicious_total
 ika_dwallet_mpc_self_output_to_quorum_consensus_rounds
 ika_dwallet_mpc_service_end_of_publish_local
 ika_dwallet_mpc_session_late_output_info
