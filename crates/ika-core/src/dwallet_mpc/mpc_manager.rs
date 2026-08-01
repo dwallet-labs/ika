@@ -2765,6 +2765,16 @@ impl DWalletMPCManager {
         let resumed_at_sequence_number = frontier + 1;
         *next = resumed_at_sequence_number;
 
+        // Only the ordinal counter moves. The in-flight batch guard is left
+        // alone deliberately, even though a jump implies this validator's own
+        // outstanding mints (all below the frontier) may be dead: `completed`
+        // is pool-aggregated and saturating, so each peer completion advances
+        // it and the guard reopens on its own within one batch. Forcing
+        // `completed = instantiated` here would release it sooner, but
+        // batches complete out of sequence order — some of those mints can
+        // still be live below the frontier — and releasing early overlaps
+        // batches, which is the pool overshoot the guard exists to prevent.
+
         let key_role = self.internal_presign_key_role(dwallet_network_encryption_key_id);
         self.dwallet_mpc_metrics
             .internal_presign_ordinals_fast_forwarded_total
