@@ -112,6 +112,18 @@ so both silently stopped covering the PR-default gate. A name that stays
 superficially correct while the thing it tests changes underneath is
 worse than one that visibly goes stale.
 
+**Which gates must refuse mocks.** Every gate whose evidence is
+cross-binary agreement: `v127_rollout`, `v127_churn`, `malicious_v127`
+and `v127_v7_upgrade`. Mocked cryptography is deterministic, so two
+binaries agree under it for reasons that say nothing about whether they
+agree in production — a green run on mocks is not weaker evidence of the
+same claim, it is evidence of a different one. Retarget this list with
+the family: when the `v128_*` set lands, so do its guard entries. Add a
+gate here the moment it starts standing behind a rollout or a protocol
+flip. `v127_v7_upgrade` was omitted when it was added and was, for that
+window, the one run backing a version flip on a live network while still
+accepting mocks.
+
 ```bash
 # `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
 # own matrix job on its own runner, in parallel (fail-fast off). Pass a

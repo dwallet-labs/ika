@@ -62,7 +62,7 @@ use ika_types::{
 use rand::Rng;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -96,23 +96,69 @@ pub struct OnChainCheckpointCursors {
 
 /// The committees pull-mode sync verifies peer-supplied certificates against.
 ///
-/// Carries the previous epoch's committee alongside the current one: a
-/// certificate signed just before an epoch boundary is still legitimate once
-/// this node has already entered the new epoch, and dropping it would stall
-/// sync across every boundary.
+/// A WINDOW of recent committees, not just the current one, because the
+/// epoch a certificate was signed in is set by where sync starts — and sync
+/// starts at the on-chain processed cursor, i.e. at whatever the notifier has
+/// last landed on Sui. Every epoch that cursor trails by is an epoch whose
+/// committee must still be held:
+///
+/// - Current only would stall sync across every boundary.
+/// - Current plus previous still strands a node that BOOTS while the cursor
+///   trails a boundary: the outgoing committee is only ever installed by
+///   `reconfigure`, so a fresh process holds nothing to verify the tail of
+///   the epoch it just missed, and sync cannot move until the next boundary
+///   happens to repopulate the window — a full epoch of stall on a node whose
+///   sync is the point of running it.
+///
+/// The window is therefore seeded from the committees the node already has on
+/// disk, and advanced (not replaced) at each boundary.
 #[derive(Clone, Debug)]
 pub struct SyncCommittees {
-    pub current: Arc<Committee>,
-    pub previous: Option<Arc<Committee>>,
+    by_epoch: BTreeMap<EpochId, Arc<Committee>>,
 }
 
 impl SyncCommittees {
+    /// How many recent committees the window keeps.
+    ///
+    /// Sized well past the case it exists for: at 24h epochs this tolerates a
+    /// week of cursor lag, and a `Committee` is a validator list, so the whole
+    /// window is negligible beside what sync already buffers per peer. Beyond
+    /// it, verification fails closed and sync defers rather than trusting an
+    /// unverifiable certificate.
+    pub const WINDOW: usize = 8;
+
+    /// Builds a window from `committees`, keeping the most recent [`Self::WINDOW`].
+    pub fn new(committees: impl IntoIterator<Item = Arc<Committee>>) -> Self {
+        let mut by_epoch: BTreeMap<EpochId, Arc<Committee>> = committees
+            .into_iter()
+            .map(|committee| (committee.epoch(), committee))
+            .collect();
+        while by_epoch.len() > Self::WINDOW {
+            by_epoch.pop_first();
+        }
+        Self { by_epoch }
+    }
+
+    /// The window advanced to a new epoch, RETAINING the outgoing committees —
+    /// certificates signed just before the boundary stay verifiable.
+    pub fn advanced_to(&self, current: Arc<Committee>) -> Self {
+        Self::new(
+            self.by_epoch
+                .values()
+                .cloned()
+                .chain(std::iter::once(current)),
+        )
+    }
+
     /// The committee that signed at `epoch`, if this node holds it.
     pub fn for_epoch(&self, epoch: EpochId) -> Option<&Committee> {
-        std::iter::once(&self.current)
-            .chain(self.previous.iter())
-            .map(Arc::as_ref)
-            .find(|committee| committee.epoch() == epoch)
+        self.by_epoch.get(&epoch).map(Arc::as_ref)
+    }
+
+    /// Epochs currently verifiable, oldest first — for diagnostics when a
+    /// certificate falls outside the window.
+    pub fn epochs(&self) -> impl Iterator<Item = EpochId> + '_ {
+        self.by_epoch.keys().copied()
     }
 }
 
@@ -1407,9 +1453,13 @@ fn verify_certified_dwallet_checkpoint(
         ));
     };
     let Some(committee) = committees.for_epoch(signature_epoch) else {
+        // Naming the window matters: this is the one verification failure the
+        // peer is not at fault for, and it says sync cannot advance until the
+        // node holds that epoch's committee.
         return Err(anyhow::anyhow!(
             "no committee for epoch {signature_epoch} available to verify checkpoint \
-             {sequence_number}"
+             {sequence_number}; verifiable epochs are {:?}",
+            committees.epochs().collect::<Vec<_>>()
         ));
     };
     let digest = *certified.digest();
@@ -1443,7 +1493,8 @@ fn verify_certified_system_checkpoint(
     let Some(committee) = committees.for_epoch(signature_epoch) else {
         return Err(anyhow::anyhow!(
             "no committee for epoch {signature_epoch} available to verify system_checkpoint \
-             {sequence_number}"
+             {sequence_number}; verifiable epochs are {:?}",
+            committees.epochs().collect::<Vec<_>>()
         ));
     };
     let digest = *certified.digest();
@@ -2149,6 +2200,91 @@ mod tests {
         assert_eq!(
             tracker.observe(Some(100), Some(90), at(start, 245)),
             (120, true)
+        );
+    }
+
+    /// A committee at `epoch`, membership irrelevant — these tests are about
+    /// which epochs the window answers for, not signature checking.
+    fn committee_at(epoch: EpochId) -> Arc<Committee> {
+        let (base, _keys) = Committee::new_simple_test_committee_of_size(4);
+        Arc::new(Committee::new(
+            epoch,
+            base.voting_rights.clone(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            base.quorum_threshold,
+            base.validity_threshold,
+        ))
+    }
+
+    /// The boot case: a node restarting while the on-chain cursor still trails
+    /// an epoch boundary must be able to verify certificates signed BEFORE the
+    /// boundary, from committees it already holds on disk.
+    ///
+    /// Seeding the window with the current committee alone (the pre-fix
+    /// behaviour, and what `previous: None` amounted to at boot) leaves those
+    /// certificates unverifiable until the NEXT boundary repopulates the
+    /// window — a full epoch of stalled sync.
+    #[test]
+    fn committee_window_verifies_epochs_the_cursor_still_trails() {
+        let booted_at = 10;
+        let seeded = SyncCommittees::new((5..=booted_at).map(committee_at));
+
+        assert!(
+            seeded.for_epoch(booted_at).is_some(),
+            "the current epoch must verify"
+        );
+        for trailing in 5..booted_at {
+            assert!(
+                seeded.for_epoch(trailing).is_some(),
+                "epoch {trailing} is inside the window and must verify: a cursor that trails \
+                 the boundary makes its certificates the ones sync actually walks"
+            );
+        }
+        assert!(
+            seeded.for_epoch(booted_at + 1).is_none(),
+            "a future epoch must NOT verify"
+        );
+        assert!(
+            SyncCommittees::new([committee_at(booted_at)])
+                .for_epoch(booted_at - 1)
+                .is_none(),
+            "control: with only the current committee the trailing epoch is unverifiable — \
+             the stall this window exists to prevent"
+        );
+    }
+
+    /// Crossing a boundary must ADVANCE the window, not replace it: the epoch
+    /// just left stays verifiable, and the window stays bounded.
+    #[test]
+    fn committee_window_advances_without_dropping_the_outgoing_epoch() {
+        let mut committees = SyncCommittees::new([committee_at(1)]);
+        for epoch in 2..=(SyncCommittees::WINDOW as u64 + 3) {
+            committees = committees.advanced_to(committee_at(epoch));
+            assert!(
+                committees.for_epoch(epoch).is_some(),
+                "the new current epoch must verify"
+            );
+            assert!(
+                committees.for_epoch(epoch - 1).is_some(),
+                "the epoch just left must stay verifiable across the boundary"
+            );
+        }
+
+        let held: Vec<_> = committees.epochs().collect();
+        assert_eq!(
+            held.len(),
+            SyncCommittees::WINDOW,
+            "the window must stay bounded as epochs advance"
+        );
+        assert_eq!(
+            *held.last().unwrap(),
+            SyncCommittees::WINDOW as u64 + 3,
+            "the newest committee is retained"
+        );
+        assert!(
+            committees.for_epoch(1).is_none(),
+            "committees older than the window are evicted"
         );
     }
 }

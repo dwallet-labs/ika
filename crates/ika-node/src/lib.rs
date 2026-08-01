@@ -706,10 +706,36 @@ impl IkaNode {
         let committee_arc = Arc::new(committee.clone());
         // Unblocks state-sync verification (no-op for a peer-only node, whose
         // p2p stack was already built above and is watching this channel).
-        let _ = state_sync_committee_tx.send(Some(ika_network::state_sync::SyncCommittees {
-            current: committee_arc.clone(),
-            previous: None,
-        }));
+        //
+        // Seeded with the recent committees this node already has on disk, not
+        // the current one alone. Pull-mode sync starts at the on-chain
+        // processed cursor, so a node restarting while that cursor still
+        // trails an epoch boundary has to verify certificates signed BEFORE
+        // the boundary. The outgoing committee is otherwise only ever
+        // installed by `reconfigure`, so a fresh process would hold nothing
+        // for those epochs and sync would stay stuck until the next boundary
+        // — a full epoch, on a node whose sync is the reason it is running.
+        // A never-seen epoch simply is not in the store; sync then defers on
+        // it rather than trusting it.
+        let sync_committees = {
+            let current_epoch = committee_arc.epoch();
+            let window = ika_network::state_sync::SyncCommittees::WINDOW as u64;
+            let mut recent = vec![committee_arc.clone()];
+            for epoch in current_epoch.saturating_sub(window - 1)..current_epoch {
+                match committee_store.get_committee(&epoch) {
+                    Ok(Some(committee)) => recent.push(committee),
+                    Ok(None) => {}
+                    Err(e) => warn!(
+                        epoch,
+                        error = ?e,
+                        "failed to read a past committee while seeding state-sync verification; \
+                         certificates signed in that epoch will defer until it is available",
+                    ),
+                }
+            }
+            ika_network::state_sync::SyncCommittees::new(recent)
+        };
+        let _ = state_sync_committee_tx.send(Some(sync_committees));
 
         let secret = Arc::pin(config.protocol_key_pair().copy());
 
@@ -3163,19 +3189,16 @@ impl IkaNode {
         info!(next_epoch, "Node State has been reconfigured");
         assert_eq!(next_epoch, new_epoch_store.epoch());
 
-        // Keep the outgoing committee as `previous`: a checkpoint certified in
-        // the epoch we just left is still legitimate and must stay verifiable.
-        let previous = self
-            .state_sync_committee_tx
-            .borrow()
-            .as_ref()
-            .map(|committees| committees.current.clone());
-        let _ = self
-            .state_sync_committee_tx
-            .send(Some(ika_network::state_sync::SyncCommittees {
-                current: new_epoch_store.committee().clone(),
-                previous,
-            }));
+        // Advance the verification window rather than replacing it: a
+        // checkpoint certified in the epoch we just left — or in any epoch the
+        // on-chain cursor still trails — is legitimate and must stay
+        // verifiable.
+        let current = new_epoch_store.committee().clone();
+        let advanced = match self.state_sync_committee_tx.borrow().as_ref() {
+            Some(committees) => committees.advanced_to(current),
+            None => ika_network::state_sync::SyncCommittees::new([current]),
+        };
+        let _ = self.state_sync_committee_tx.send(Some(advanced));
 
         new_epoch_store
     }
