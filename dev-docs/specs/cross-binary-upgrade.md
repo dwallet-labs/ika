@@ -178,7 +178,7 @@ v1.1.8→v4 and v1.2.1→v5 rehearsals (`v118_upgrade`, `v118_churn`,
 `v125_rollout`, `v125_churn` and `malicious_v125` — including the historical
 v5 gate, which cannot boot once genesis is MIN = 6. Every one of those
 rollouts completed on the deployed networks. The current deployed-release
-gate is `tests/v6_rollout.rs`: the same one-upgraded-validator mixed topology
+gate is `tests/v127_rollout.rs`: the same one-upgraded-validator mixed topology
 against the literal **v1.2.7** release at protocol v6, where the boundary
 under test is a pure binary swap (v1.2.7 can select either coefficient bound
 and produces the strict one at v6; the candidate is strict-only, so the two
@@ -195,7 +195,7 @@ drives them across epochs. The surviving scenarios (current build only):
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a full user
   DKG → Presign → Sign completing on-chain at genesis protocol v6.
-- `tests/v6_rollout.rs` — the current deployed-release compatibility gate:
+- `tests/v127_rollout.rs` — the current deployed-release compatibility gate:
   boot the literal v1.2.7 release at genesis protocol v6, upgrade exactly one
   of four validators to the strict-only candidate, require two mixed
   network-key reshares to converge byte-identically with zero malicious
@@ -203,7 +203,7 @@ drives them across epochs. The surviving scenarios (current build only):
   validators and converge again. The upgrade workflow runs this scenario by
   default for relevant pull requests and release candidates.
 - `tests/v127_v7_upgrade.rs` — the PROTOCOL-upgrade gate, and the only
-  scenario that crosses a protocol version boundary (`v6_rollout` and the
+  scenario that crosses a protocol version boundary (`v127_rollout` and the
   churn/malicious scenarios are pure binary swaps that stay at v6). Boot the
   literal v1.2.7 release at genesis protocol v6, run a user lifecycle while
   names are still emitted zero-padded, swap the whole committee to the
@@ -243,7 +243,7 @@ drives them across epochs. The surviving scenarios (current build only):
   convict it and reshare without it, asserted via the malicious-actors
   gauge. Green = the compatibility gates above are not vacuous. The
   workflow's `test_testing_fault` input runs the same fault through
-  `v6_rollout` itself (that run must fail closed); `malicious_v127` is
+  `v127_rollout` itself (that run must fail closed); `malicious_v127` is
   also directly dispatchable (the workflow builds the faulty binary).
 - `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
   JSON-RPC-only) YAML configs for every role, through a full lifecycle.
