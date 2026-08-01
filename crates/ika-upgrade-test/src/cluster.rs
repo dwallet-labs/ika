@@ -34,11 +34,12 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
-use ika_types::crypto::{AuthorityPublicKeyBytes, KeypairTraits};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, KeypairTraits};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
 };
 use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
@@ -122,10 +123,16 @@ pub struct ValidatorSlot {
 /// validator — not parallel per-basis lists — so no write path can register
 /// a validator under one naming and miss the other.
 struct AuthorityNamings {
-    /// BLS protocol-key naming (`AuthorityName` below protocol v6).
+    /// BLS protocol-key naming (`AuthorityName` below protocol v6). Rendered
+    /// as 48 hex-encoded bytes.
     protocol: AuthorityPublicKeyBytes,
-    /// Consensus-key naming (`AuthorityName` from protocol v6).
-    consensus: AuthorityPublicKeyBytes,
+    /// Consensus-key naming — `AuthorityName` from protocol v6 on. Rendered as
+    /// 32 hex-encoded bytes: a name IS the consensus key and carries no
+    /// padding, so this must NOT be built as an `AuthorityPublicKeyBytes`.
+    /// Doing so renders the padded 48-byte form, which no longer matches the
+    /// `authority` metric label a node emits, and every set-membership check
+    /// against scraped labels silently fails.
+    consensus: AuthorityName,
 }
 
 impl AuthorityNamings {
@@ -134,14 +141,15 @@ impl AuthorityNamings {
     fn of(init: &ValidatorInitializationConfig) -> Self {
         Self {
             protocol: init.key_pair.public().into(),
-            consensus: AuthorityPublicKeyBytes::from_consensus_key(
-                init.consensus_key_pair.public(),
-            ),
+            consensus: AuthorityName::from_consensus_key(init.consensus_key_pair.public()),
         }
     }
 
-    fn both(&self) -> [&AuthorityPublicKeyBytes; 2] {
-        [&self.protocol, &self.consensus]
+    /// Both namings as the strings a node's metric labels carry. Returned as
+    /// rendered strings rather than a common type, because the two namings are
+    /// now genuinely different types with different widths.
+    fn both(&self) -> [String; 2] {
+        [self.protocol.to_string(), self.consensus.to_string()]
     }
 }
 
@@ -185,6 +193,17 @@ pub struct ClusterBuilder {
     /// the deprecated JSON-RPC transport every mainnet node runs on rollout
     /// day. Rehearses the legacy path end-to-end on the new binary.
     legacy_sui_config: bool,
+    /// Pins every validator's ADVERTISED `supported_protocol_versions` instead
+    /// of letting each binary advertise its own `MIN..=MAX`. Scenarios that
+    /// must stay at one protocol version need this: once `MAX_PROTOCOL_VERSION`
+    /// moves ahead of the version under test, a fully-swapped committee would
+    /// otherwise vote ITSELF across the next boundary mid-run, silently turning
+    /// a binary-swap rehearsal into a protocol-transition one.
+    ///
+    /// The pin is written into the generated `node-config.yaml`, and
+    /// `swap_binary` restarts against that same file, so it survives every
+    /// binary swap in the scenario.
+    supported_protocol_versions: Option<SupportedProtocolVersions>,
 }
 
 impl ClusterBuilder {
@@ -194,6 +213,7 @@ impl ClusterBuilder {
             epoch_duration_ms: DEFAULT_EPOCH_DURATION_MS,
             genesis_protocol_version: None,
             min_validator_count: None,
+            supported_protocol_versions: None,
             validator_binary,
             notifier_binary,
             sui_binary,
@@ -226,6 +246,13 @@ impl ClusterBuilder {
     /// Genesis protocol version. Default `ProtocolVersion::MIN` — the lowest
     /// version this binary supports; when MIN < MAX a capability vote can
     /// advance to a newer version supported by the binary's `SYSTEM_DEFAULT`.
+    /// Pin every validator's advertised protocol-version range. See
+    /// [`ClusterBuilder::supported_protocol_versions`].
+    pub fn with_supported_protocol_versions(mut self, v: SupportedProtocolVersions) -> Self {
+        self.supported_protocol_versions = Some(v);
+        self
+    }
+
     pub fn with_genesis_protocol_version(mut self, v: ProtocolVersion) -> Self {
         self.genesis_protocol_version = Some(v);
         self
@@ -403,7 +430,7 @@ impl ClusterBuilder {
             if let Some(cores) = max_mpc_computation_cores {
                 builder = builder.with_max_mpc_computation_cores(cores);
             }
-            let node_config = builder.build(
+            let mut node_config = builder.build(
                 init,
                 rpc_url.clone(),
                 ika_package_id,
@@ -413,6 +440,13 @@ impl ClusterBuilder {
                 ika_system_object_id,
                 ika_dwallet_coordinator_object_id,
             );
+            // Written into the YAML the child loads, and `swap_binary`
+            // restarts against that same file — so the pin holds for every
+            // binary this validator runs during the scenario. Unset leaves
+            // the node's own `MIN..=MAX` default.
+            if let Some(versions) = self.supported_protocol_versions {
+                node_config.supported_protocol_versions = Some(versions);
+            }
             let proc = spawn_node(
                 i,
                 self.validator_binary.clone(),
@@ -1412,7 +1446,6 @@ impl ClusterOfProcesses {
             .validator_authorities
             .iter()
             .flat_map(AuthorityNamings::both)
-            .map(ToString::to_string)
             .collect();
         // Byzantine quorum of the committee. These scenarios run an
         // equal-weight committee, so a plain member count matches the
@@ -1484,14 +1517,13 @@ impl ClusterOfProcesses {
                 );
                 // Each observer is a validator under test (the upgraded
                 // binary); its own authority is the candidate whose
-                // byte-equality with the v1.2.5 quorum this boundary tries
+                // byte-equality with the v1.2.7 quorum this boundary tries
                 // to witness.
                 let candidate_authority: BTreeSet<String> = self
                     .validator_authorities
                     .get(*index)
                     .with_context(|| format!("validator index {index} out of range"))?
                     .both()
-                    .map(ToString::to_string)
                     .into();
                 let (observer_canonical, observer_missing) = match canonical_network_key_outputs(
                     body,
@@ -2412,7 +2444,7 @@ mod tests {
 
     #[test]
     fn candidate_straggler_without_late_evidence_converges_but_is_flagged() {
-        // The exact release-gate flake ordering: three v1.2.5 authorities
+        // The exact release-gate flake ordering: three v1.2.7 authorities
         // finalize with identical outputs, the quorum closes the session, and
         // the upgraded validator's own computation has produced nothing
         // comparable yet. The quorum itself converged (this must NOT fail),

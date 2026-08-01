@@ -38,10 +38,21 @@ pub struct CommitteeStoreTables {
 }
 
 /// `committee_map` value-schema generations: the mainnet-v1.1.8 layout
-/// (pre-`consensus_keys`) is generation 1; the current layout is 2. Only
-/// the current value is ever written; the constant exists so the marker
-/// is self-describing when inspected.
-const COMMITTEE_SCHEMA_VERSION_CURRENT: u64 = 2;
+/// (pre-`consensus_keys`) is generation 1; the 48-byte-`AuthorityName` layout
+/// is 2; generation 3 narrows `AuthorityName` to the raw 32-byte consensus
+/// key. Only the current value is ever written; the constant exists so the
+/// marker is self-describing when inspected.
+///
+/// **Records from epochs below protocol v6 do not survive generation 3 and are
+/// not meant to.** Their `voting_rights` are keyed by 48-byte BLS-basis names,
+/// which have no consensus-key representation — the deserializer rejects them
+/// rather than truncating to a wrong identity. Nothing live reads them: the
+/// only consumers of `get_committee` are the insert-time dedup (current epoch),
+/// joiner bootstrap (`prior_epoch = current - 1`, always v6+ since
+/// `MIN_PROTOCOL_VERSION = 6`), and a `ReadStore` impl whose callers are
+/// blanket forwarding impls. `ReadStore::get_committee` already propagates
+/// decode errors instead of panicking, precisely for old-layout records.
+const COMMITTEE_SCHEMA_VERSION_CURRENT: u64 = 3;
 
 // These functions are used to initialize the DB tables
 fn committee_table_default_config() -> DBOptions {

@@ -14,13 +14,12 @@ use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
-use ika_types::crypto::{AuthorityName, NetworkPublicKey};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, NetworkPublicKey};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
-use ika_types::sui::epoch_start_system::consensus_key_identity_for_version;
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
@@ -564,15 +563,6 @@ where
                 consensus_key_cache.clear();
                 consensus_key_cache_epoch = Some(system_inner.epoch());
             }
-            // Identity basis, version-gated (`consensus_key_authority_names`,
-            // on from protocol version 6). Evaluated on the CURRENT epoch's
-            // version — the only one knowable when the next-epoch committee
-            // is assembled mid-epoch. At the single activation boundary this
-            // disagrees with the next epoch's own view (documented
-            // limitation; see the protocol-config flag definition).
-            let consensus_key_identity =
-                consensus_key_identity_for_version(system_inner.protocol_version());
-
             // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
             // VSS HPKE) to the MPC manager. The within-epoch network DKG needs
             // them, and at genesis they were never assembled as a prior epoch's
@@ -603,10 +593,9 @@ where
                 && let Some(source) = off_chain_mpc_data_source.load_full()
                 && source.is_frozen()
             {
-                let current_committee = match Self::committee_names_for_basis(
+                let current_committee = match Self::rekey_committee_to_consensus_names(
                     &sui_client,
                     system_inner.read_bls_committee(&system_inner.get_ika_active_committee()),
-                    consensus_key_identity,
                     &mut consensus_key_cache,
                 )
                 .await
@@ -645,10 +634,9 @@ where
                 continue;
             };
 
-            let new_next_committee = match Self::committee_names_for_basis(
+            let new_next_committee = match Self::rekey_committee_to_consensus_names(
                 &sui_client,
                 system_inner.read_bls_committee(&new_next_bls_committee),
-                consensus_key_identity,
                 &mut consensus_key_cache,
             )
             .await
@@ -854,11 +842,11 @@ where
     }
 
     /// Re-key a chain-read committee (BLS-basis names, as
-    /// `read_bls_committee` mints them) to consensus-basis names when the
-    /// identity basis is the consensus key. The consensus keys are not in
-    /// the on-chain `BlsCommittee` (it carries `validator_id` + BLS
-    /// `protocol_pubkey` only), so a member's validator record must be
-    /// fetched by id. No-op — no fetch — under the BLS basis.
+    /// `read_bls_committee` mints them) to consensus-basis names — the
+    /// committee identity at every supported protocol version. The consensus
+    /// keys are not in the on-chain `BlsCommittee` (it carries `validator_id`
+    /// and BLS `protocol_pubkey` only), so a member's validator record must
+    /// be fetched by id.
     ///
     /// Only ids not already cached for THIS epoch are fetched. The cache is
     /// per-epoch rather than permanent because a consensus key can be
@@ -873,15 +861,11 @@ where
     /// `dev-docs/plans/authority-name-consensus-key.md`). With the cache,
     /// steady-state ticks perform no chain read at all, so a committee
     /// whose members are already known can never be starved by RPC flake.
-    async fn committee_names_for_basis(
+    async fn rekey_committee_to_consensus_names(
         sui_client: &Arc<SuiClient<C>>,
-        members: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
-        consensus_key_identity: bool,
+        members: Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))>,
         consensus_key_cache: &mut HashMap<ObjectID, NetworkPublicKey>,
     ) -> IkaResult<Vec<(ObjectID, (AuthorityName, StakeUnit))>> {
-        if !consensus_key_identity {
-            return Ok(members);
-        }
         let unknown_ids: Vec<ObjectID> = members
             .iter()
             .map(|(id, _)| *id)

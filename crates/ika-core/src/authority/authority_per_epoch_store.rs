@@ -2399,6 +2399,45 @@ impl AuthorityPerEpochStore {
             .protocol_version();
         let protocol_config =
             ProtocolConfig::get_for_version(protocol_version, chain_identifier.chain());
+        // Mirror the epoch's `AuthorityName` encoding width into the process
+        // global the serializer reads. This is the ONE protocol flag consumed
+        // outside a call site, because serde has no access to the config; see
+        // `AUTHORITY_NAME_SHORT_ENCODING`.
+        //
+        // Applied here, at epoch-store construction, so the width always
+        // tracks the epoch the node is ENTERING — the same epoch whose
+        // committee, capabilities and MPC messages are about to be produced.
+        // It is deliberately NOT set anywhere else: a second writer would make
+        // the width depend on call order rather than on the epoch.
+        //
+        // Artifacts that are produced under one epoch's width and verified
+        // under the next straddle this flip. The handoff cert is the known
+        // case and handles it explicitly (`verify_certified_handoff_attestation`
+        // retries at the other width); anything new that verifies a
+        // re-serialized cross-epoch payload must do the same.
+        let short_authority_names = protocol_config.short_authority_names();
+        // Test-only fault injection for the width-disagreement harness: emit
+        // the OPPOSITE `AuthorityName` width to the rest of the committee, so
+        // honest peers must detect and exclude this validator. Gated behind the
+        // general `test-testing` cargo feature — compiled out of every normal
+        // build, so the only way to produce a faulty binary is an explicit
+        // `--features test-testing`, never a source edit.
+        //
+        // This is what makes the v7 gate falsifiable: every validator in a
+        // scenario otherwise flips together, so without an injected straggler
+        // the gates prove only that a COORDINATED flip works, never that an
+        // uncoordinated one is caught.
+        #[cfg(feature = "test-testing")]
+        let short_authority_names = if std::env::var("FAULT_INVERT_AUTHORITY_NAME_WIDTH").is_ok() {
+            tracing::warn!(
+                inverted_to = !short_authority_names,
+                "TEST-TESTING FAULT: emitting the opposite AuthorityName width"
+            );
+            !short_authority_names
+        } else {
+            short_authority_names
+        };
+        ika_types::crypto::set_authority_name_short_encoding(short_authority_names);
         // Freeze-progress gauges. `-1` is the "not reached / not available"
         // sentinel throughout — epoch 0 and round 0 are valid values, so a
         // zero default would read as a plausible-but-wrong anchor. Round
@@ -4212,14 +4251,13 @@ impl AuthorityPerEpochStore {
         // exists to provide. Translate into this epoch's basis at the source
         // so every consumer of these digests is keyed consistently; away from
         // the boundary the map is empty of surprises and this is a no-op.
-        let translation = self.committee().name_translation();
         Ok(cert
             .attestation
             .items
             .iter()
             .filter_map(|(key, digest)| match key {
                 ika_types::handoff::HandoffItemKey::ValidatorMpcData { validator } => {
-                    Some((*translation.get(validator).unwrap_or(validator), *digest))
+                    Some((*validator, *digest))
                 }
                 _ => None,
             })

@@ -405,7 +405,15 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
                         }
                         ProtocolVersionsConfig::Global(v) => *v,
                         ProtocolVersionsConfig::PerValidator(func) => {
-                            func(idx, Some(validator.key_pair.public().into()))
+                            // The per-validator callback is keyed by committee
+                            // identity, which is the CONSENSUS key — not the BLS
+                            // protocol key this config also carries.
+                            func(
+                                idx,
+                                Some(AuthorityName::from_consensus_key(
+                                    validator.consensus_key_pair.public(),
+                                )),
+                            )
                         }
                     };
                     builder = builder.with_supported_protocol_versions(supported_versions);

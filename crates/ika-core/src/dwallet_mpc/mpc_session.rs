@@ -5,7 +5,7 @@ mod input;
 
 use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
-use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
+use ika_types::crypto::AuthorityName;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
@@ -98,7 +98,7 @@ pub(crate) struct SessionOutputObservation {
 #[derive(Clone)]
 pub(crate) struct DWalletSession {
     pub(super) session_identifier: SessionIdentifier,
-    validator_name: AuthorityPublicKeyBytes,
+    validator_name: AuthorityName,
     pub(crate) party_id: PartyID,
 
     /// Which counterparty chain this session belongs to. `None` for internal sessions or
@@ -291,7 +291,7 @@ pub enum ComputationResultData {
 
 impl DWalletSession {
     pub(crate) fn new(
-        validator_name: AuthorityPublicKeyBytes,
+        validator_name: AuthorityName,
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,

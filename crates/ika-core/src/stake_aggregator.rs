@@ -427,13 +427,21 @@ mod quorum_after_bad_sig_eviction_tests {
         // normalized test helper would flatten 7:3 to 1:1 (equal weight), which
         // can't express "one validator's stake alone clears the threshold".
         let keys = random_committee_key_pairs_of_size(2);
-        let auth_high = AuthorityName::from(keys[0].public());
-        let auth_low = AuthorityName::from(keys[1].public());
-        let committee = Arc::new(Committee::new(
+        // A name is a consensus key and cannot be derived from the BLS
+        // keypairs used for signing, so the identities are chosen freely and
+        // the BLS keys are CARRIED: signature verification resolves them by
+        // name, and `Committee::new` supplies none.
+        let auth_high = AuthorityName([1; 32]);
+        let auth_low = AuthorityName([2; 32]);
+        let committee = Arc::new(Committee::new_with_protocol_keys(
             0,
             vec![(auth_high, 7), (auth_low, 3)],
             HashMap::new(),
             /* consensus_keys */ HashMap::new(),
+            HashMap::from([
+                (auth_high, keys[0].public().clone()),
+                (auth_low, keys[1].public().clone()),
+            ]),
             /* quorum_threshold */ 7,
             /* validity_threshold */ 3,
         ));

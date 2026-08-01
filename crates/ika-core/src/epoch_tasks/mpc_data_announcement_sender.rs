@@ -884,7 +884,7 @@ mod tests {
         MpcDataAnnouncementSender::new(
             Weak::new(),
             5,
-            AuthorityName::new([9; 48]),
+            AuthorityName([9; 32]),
             Arc::new(NoopAdapter),
             blob_cache,
             RootSeed::new([4; 32]),
@@ -897,7 +897,7 @@ mod tests {
     /// re-submissions produce a stable consensus key and dedup
     /// instead of stacking duplicate table entries.
     fn name(n: u8) -> AuthorityName {
-        AuthorityName::new([n; 48])
+        AuthorityName([n; 32])
     }
 
     #[test]

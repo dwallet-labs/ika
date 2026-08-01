@@ -106,7 +106,7 @@ mod tests {
         // BLS12381 min_pk public keys are 48 bytes. The fake bytes
         // never need to verify a real signature in the type-level
         // roundtrip tests below.
-        AuthorityName::new([byte; 48])
+        AuthorityName([byte; 32])
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn handoff_item_key_bcs_variant_tags_are_frozen() {
         let key_id = NetworkKeyId([0x11; 32]);
-        let validator = AuthorityName::new([0x22; 48]);
+        let validator = AuthorityName([0x22; 32]);
 
         let dkg_bytes =
             bcs::to_bytes(&HandoffItemKey::NetworkDkgOutput { key_id }).expect("encode");

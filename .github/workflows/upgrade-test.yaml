@@ -18,42 +18,42 @@ name: Upgrade Test
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
 #                  Needs only the current build. Fastest.
 #   workload     — full user DKG -> Presign -> Sign on-chain at genesis
-#                  protocol v5. Current build only.
-#   v125_rollout — the deployed-release compatibility gate: boot the literal
-#                  v1.2.5 release (deployed on mainnet AND testnet, protocol
-#                  v5), upgrade exactly one validator to the current build,
+#                  protocol v6. Current build only.
+#   v127_rollout — the deployed-release compatibility gate: boot the literal
+#                  v1.2.7 release (deployed on mainnet AND testnet, protocol
+#                  v6), upgrade exactly one validator to the current build,
 #                  converge two mixed aggregated reshares with zero malicious
 #                  reports and per-authority output byte-equality, then swap
 #                  the rest and converge again — a pure binary swap, no
 #                  protocol transition. Defaults to
-#                  old_ref=release/mainnet-v1.2.5, old_bin_name=ika-validator.
+#                  old_ref=release/mainnet-v1.2.7, old_bin_name=ika-validator.
 #   v6_rollout   — the strict-only dependency compatibility gate: boot the
 #                  literal v1.2.7 release at protocol v6, upgrade one validator
 #                  to the candidate, converge two mixed strict-bound reshares,
 #                  then swap the rest. Defaults to
 #                  old_ref=release/mainnet-v1.2.7, old_bin_name=ika-validator.
-#   v125_v6_upgrade — the PROTOCOL-upgrade gate (v125_rollout's version-
-#                  transition counterpart): boot the literal v1.2.5 release
-#                  at protocol v5, swap the whole committee to the current
-#                  build, and cross v5 -> v6 — the boundary where every
-#                  validator's AuthorityName flips from the BLS protocol key
-#                  to the Ed25519 consensus key. Asserts the upgrade actually
-#                  activates (a silent stay-at-v5 would make it vacuous), the
-#                  boundary reshare converges byte-identically with no
-#                  malicious reports, the committee keeps all 4 members, and
-#                  users are served across the flip. Same OLD defaults as
-#                  v125_rollout.
-#   v125_churn   — v125_rollout's churn counterpart: full sequential swap
-#                  over the literal v1.2.5 committee, then a mirrored OCS
-#                  joiner folds into the reshared v1.2.5-origin key (4→5)
+#   v127_v7_upgrade — the PROTOCOL-upgrade gate (v6_rollout's version-
+#                  transition counterpart): boot the literal v1.2.7 release
+#                  at protocol v6, swap the whole committee to the current
+#                  build, and cross v6 -> v7 — the boundary where
+#                  AuthorityName stops being emitted zero-padded to 48 bytes
+#                  and starts being emitted as the raw 32-byte consensus key.
+#                  Asserts the upgrade actually activates (a silent stay-at-v6
+#                  would make it vacuous), the boundary reshare converges, the
+#                  committee keeps all 4 members, and the cross-epoch handoff
+#                  cert (signed padded, verified short) still verifies. Same
+#                  OLD defaults as v6_rollout.
+#   v127_churn   — v6_rollout's churn counterpart: full sequential swap
+#                  over the literal v1.2.7 committee, then a mirrored OCS
+#                  joiner folds into the reshared v1.2.7-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
-#                  defaults as v125_rollout.
-#   malicious_v125 — test-testing counterpart: honest literal-v1.2.5
+#                  defaults as v127_rollout.
+#   malicious_v127 — test-testing counterpart: honest literal-v1.2.7
 #                  committee + ONE current validator built with the
 #                  test-testing reconfiguration-message fault; honest
 #                  validators must convict it and reshare without it
-#                  (committee dips to 3). Green = the v125 gates are not
-#                  vacuous. Same OLD defaults as v125_rollout.
+#                  (committee dips to 3). Green = the v127 gates are not
+#                  vacuous. Same OLD defaults as v127_rollout.
 #   legacy_config — config-compat rehearsal: the current build on old-style
 #                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
 #                  sui-data-source — for all validators AND the notifier
@@ -72,12 +72,12 @@ name: Upgrade Test
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
 # `--test` target.
 #
-# The OLD binary for v125_rollout is built from `old_ref` in an isolated
+# The OLD binary for v127_rollout is built from `old_ref` in an isolated
 # `git worktree`, at that ref's OWN pinned toolchain (rustup honors the
 # worktree's rust-toolchain.toml). All binaries build with default features —
 # enforcement (enforce-minimum-cpu) is runtime-gated to validators on the ika
 # testnet/mainnet networks, so it is inert on the CI localnet (its ika
-# system object maps to Chain::Unknown), and v1.2.5 already carries the
+# system object maps to Chain::Unknown), and v1.2.7 already carries the
 # runtime gate.
 
 on:
@@ -91,7 +91,7 @@ on:
       # per-epoch store — epoch-close timing, EndOfPublish accounting,
       # reconfiguration state. Both are exactly what the mixed-binary
       # scenarios assert, and were previously missing from this filter:
-      # the #1917 close-timing fix would have merged without v125_rollout
+      # the #1917 close-timing fix would have merged without v127_rollout
       # ever running had it not been dispatched by hand.
       - "crates/ika-core/src/authority.rs"
       - "crates/ika-core/src/authority/**"
@@ -148,7 +148,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build a deliberately divergent candidate for v125_rollout or v6_rollout"
+        description: "TEST ONLY: build a deliberately divergent candidate for v6_rollout"
         type: boolean
         required: false
         default: false
@@ -178,7 +178,7 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (v125_rollout requires >=480000; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (v127_rollout requires >=480000; empty = scenario default)"
         type: string
         required: false
         default: ""
@@ -203,7 +203,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v125_rollout or v6_rollout; the zero-malicious/convergence gate must fail."
+        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v6_rollout; the zero-malicious/convergence gate must fail."
         type: boolean
         required: false
         default: false
@@ -241,11 +241,11 @@ jobs:
       - id: pick
         env:
           # The candidate is strict-only and cannot run v5, so the v5
-          # v125_rollout mixed committee would diverge by design.
+          # v6_rollout mixed committee would diverge by design.
           TEST: ${{ inputs.test || 'v6_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v125_rollout v125_v6_upgrade v125_churn malicious_v125 legacy_config restart_spectator v6_rollout"
+          ALL="smoke workload v6_rollout v127_v7_upgrade v127_churn malicious_v127 legacy_config restart_spectator"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -281,7 +281,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           # Full history + tags: the OLD binary is built from an arbitrary
-          # ref (e.g. the release/mainnet-v1.2.5 tag) via `git worktree add`.
+          # ref (e.g. the release/mainnet-v1.2.7 tag) via `git worktree add`.
           fetch-depth: 0
           # Resolve once at trigger time; never rebuild a moving branch head.
           ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
@@ -358,10 +358,9 @@ jobs:
           case "$TEST" in
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
-            v125_rollout) RUN_FLAG=RUN_V125_ROLLOUT ;;
-            v125_v6_upgrade) RUN_FLAG=RUN_V125_V6_UPGRADE ;;
-            v125_churn)   RUN_FLAG=RUN_V125_CHURN ;;
-            malicious_v125) RUN_FLAG=RUN_MALICIOUS_V125 ;;
+            v127_v7_upgrade) RUN_FLAG=RUN_V127_V7_UPGRADE ;;
+            v127_churn)   RUN_FLAG=RUN_V127_CHURN ;;
+            malicious_v127) RUN_FLAG=RUN_MALICIOUS_V127 ;;
             legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
             v6_rollout)   RUN_FLAG=RUN_V6_ROLLOUT ;;
@@ -372,8 +371,8 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v125_rollout | v125_v6_upgrade | v125_churn | malicious_v125)
-              : "${OLD_REF:=release/mainnet-v1.2.5}"
+            v127_v7_upgrade | v127_churn | malicious_v127)
+              : "${OLD_REF:=release/mainnet-v1.2.7}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
             v6_rollout)
@@ -407,12 +406,12 @@ jobs:
           TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if { [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "v125_churn" ] || [ "$TEST_NAME" = "malicious_v125" ]; } && [ "$USE_MOCKS" = "true" ]; then
+          if { [ "$TEST_NAME" = "v127_rollout" ] || [ "$TEST_NAME" = "v127_churn" ] || [ "$TEST_NAME" = "malicious_v127" ]; } && [ "$USE_MOCKS" = "true" ]; then
             echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
             exit 1
           fi
-          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v125_rollout" ] && [ "$TEST_NAME" != "v6_rollout" ]; then
-            echo "test_testing_fault is only supported by v125_rollout and v6_rollout" >&2
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v6_rollout" ] && [ "$TEST_NAME" != "v6_rollout" ]; then
+            echo "test_testing_fault is only supported by v6_rollout and v6_rollout" >&2
             exit 1
           fi
           if [ "$TEST_TESTING_FAULT" = "true" ]; then
@@ -436,11 +435,11 @@ jobs:
           # testnet/mainnet networks, so it never fires on this localnet.
           cargo build --release $NODE_FEATURES $NODE_FAULT_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika $IKA_FEATURES
-          if [ "$TEST_NAME" = "malicious_v125" ]; then
+          if [ "$TEST_NAME" = "malicious_v127" ]; then
             # The deliberately-faulty validator: current source with the
             # feature-gated reconfiguration-message fault compiled IN. Built
             # after the normal binaries and copied aside (the feature build
-            # overwrites target/release/ika-validator; malicious_v125 never
+            # overwrites target/release/ika-validator; malicious_v127 never
             # reads the honest current validator, so the overwrite is inert).
             cargo build --release --features test-testing -p ika-node --bin ika-validator
             cp target/release/ika-validator "$GITHUB_WORKSPACE/ika-validator-faulty"
@@ -449,7 +448,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v125_rollout' || matrix.test == 'v125_v6_upgrade' || matrix.test == 'v125_churn' || matrix.test == 'malicious_v125' || matrix.test == 'v6_rollout' }}
+        if: ${{ matrix.test == 'v6_rollout' || matrix.test == 'v127_v7_upgrade' || matrix.test == 'v127_churn' || matrix.test == 'malicious_v127' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -471,7 +470,7 @@ jobs:
           echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
           git worktree add --force --detach "$WT" "$OLD_COMMIT"
           # Build at the OLD ref's own toolchain (rustup reads the worktree's
-          # rust-toolchain.toml). Default features: v1.2.5's
+          # rust-toolchain.toml). Default features: v1.2.7's
           # enforce-minimum-cpu is runtime-gated (inert on the CI localnet),
           # matching its production build.
           ( cd "$WT" && cargo build --release -p ika-node --bin "$OLD_BIN_NAME" )
@@ -483,7 +482,7 @@ jobs:
       - name: Run ${{ matrix.test }}
         env:
           # smoke/workload/legacy_config read IKA_VALIDATOR_BIN/
-          # IKA_NOTIFIER_BIN/IKA_BIN; v125_rollout reads NEW_BIN/NOTIFIER_BIN/
+          # IKA_NOTIFIER_BIN/IKA_BIN; v127_rollout reads NEW_BIN/NOTIFIER_BIN/
           # OLD_BIN/IKA_BIN (OLD_BIN comes from the build step via
           # $GITHUB_ENV; unset for the others, which ignore it). Setting both
           # naming sets is harmless — each test reads only its own.
@@ -538,7 +537,7 @@ jobs:
           # quiet top-up loop can't prove resumption). The reduced-pool
           # override remains a resource concession for the lighter scenarios,
           # not compatibility evidence.
-          if [ "$TEST_NAME" = "v125_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
+          if [ "$TEST_NAME" = "v127_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
             unset IKA_ENABLE_SMALL_PRESIGN_POOLS
           fi
           mkdir -p "$UPGRADE_TEST_DIR"

@@ -118,7 +118,7 @@ mod tests {
     use super::*;
 
     fn make_authority(byte: u8) -> AuthorityName {
-        AuthorityName::new([byte; 48])
+        AuthorityName([byte; 32])
     }
 
     #[test]

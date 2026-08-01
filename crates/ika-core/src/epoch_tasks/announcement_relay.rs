@@ -275,7 +275,7 @@ mod tests {
         .unwrap();
         std::mem::forget(dir); // keep the DB path alive for the test
 
-        let joiner = AuthorityName::new([7; 48]);
+        let joiner = AuthorityName([7; 32]);
         let joiner_keypair =
             Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&[3u8; 32]).unwrap());
         epoch_store.install_joiner_pubkey_provider(Box::new(

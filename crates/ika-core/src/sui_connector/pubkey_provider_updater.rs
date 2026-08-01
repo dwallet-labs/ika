@@ -26,8 +26,7 @@ use crate::validator_metadata::StaticJoinerPubkeyProvider;
 use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
-use ika_types::crypto::AuthorityName;
-use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -70,21 +69,10 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
 /// so an advanced on-chain view can't hand back a wrong-epoch committee —
 /// which would make a valid handoff cert fail to verify and (via
 /// `BootstrapOutcome::Rejected`) fail-closed-halt the node.
-/// Returns ONE CANDIDATE PER IDENTITY BASIS, because the prior epoch's
-/// basis cannot be read off the chain. `AuthorityName` is the BLS protocol
-/// key below protocol v6 and the consensus key from v6, but only the
-/// CURRENT epoch's protocol version is on chain — at the activation
-/// boundary the prior epoch ran the other basis. Building this committee
-/// under the wrong basis makes every cert signer a non-member
-/// (`weight == 0`), which `verify_certified_handoff_attestation` rejects
-/// OUTRIGHT rather than degrading through quorum, fail-closing the node.
-/// Away from the boundary the two candidates simply describe the same
-/// members under two encodings, so the caller tries each and uses whichever
-/// the cert verifies against.
 pub async fn fetch_previous_committee<C: SuiClientInner>(
     sui_client: &SuiClient<C>,
     expected_prior_epoch: EpochId,
-) -> anyhow::Result<Vec<Committee>> {
+) -> anyhow::Result<Committee> {
     let (_, system_inner) = sui_client
         .get_system_inner()
         .await
@@ -153,63 +141,45 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
              means a corrupt prior-committee record, not wrong peers"
         );
     }
-    let candidates = [false, true]
-        .into_iter()
-        .map(|consensus_key_identity| {
-            build_prior_committee_candidate(
-                expected_prior_epoch,
-                consensus_key_identity,
-                &bls_members,
-                &staking_pools,
-                bls_committee.quorum_threshold,
-                bls_committee.validity_threshold,
-            )
-        })
-        .collect();
-    Ok(candidates)
+    Ok(build_prior_committee(
+        expected_prior_epoch,
+        &bls_members,
+        &staking_pools,
+        bls_committee.quorum_threshold,
+        bls_committee.validity_threshold,
+    ))
 }
 
-/// One `fetch_previous_committee` candidate: the prior committee named under
-/// `consensus_key_identity`. Both name-keyed maps use that one basis, since
-/// `verify_certified_handoff_attestation` looks up membership and consensus
-/// keys with the same signer name.
-fn build_prior_committee_candidate(
+/// The prior committee named by consensus key. Both name-keyed maps use that
+/// one basis, since `verify_certified_handoff_attestation` looks up membership
+/// and consensus keys with the same signer name.
+fn build_prior_committee(
     expected_prior_epoch: EpochId,
-    consensus_key_identity: bool,
-    bls_members: &[(ObjectID, (AuthorityName, StakeUnit))],
+    bls_members: &[(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))],
     staking_pools: &[ika_types::sui::staking::StakingPool],
     quorum_threshold: StakeUnit,
     validity_threshold: StakeUnit,
 ) -> Committee {
-    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = if consensus_key_identity {
-        // Consensus-basis prior epoch: the snapshot name derives from the
-        // consensus key, read at its CURRENT on-chain value. That equals the
-        // prior epoch's value for every member that did not rotate — and a
-        // consensus key CAN be rotated
-        // (`set_next_epoch_consensus_pubkey_bytes`, effectuated at epoch
-        // advance), in which case this names the member under its new key
-        // while the cert names it under the old one, and the signer resolves
-        // to weight 0. Rotation under a consensus-key identity is unfinished
-        // business tracked with the v6 rollout; see
-        // dev-docs/specs/committee-consensus-keys.md. A member whose
-        // validator_info fails verify has no resolvable name and drops out
-        // (the verify-failure warn below attributes it).
-        staking_pools
-            .iter()
-            .filter_map(|pool| {
-                let verified = pool.validator_info.verify().ok()?;
-                Some((
-                    pool.id,
-                    AuthorityName::from_consensus_key(&verified.consensus_pubkey),
-                ))
-            })
-            .collect()
-    } else {
-        bls_members
-            .iter()
-            .map(|(id, (name, _))| (*id, *name))
-            .collect()
-    };
+    // The snapshot name derives from the consensus key, read at its CURRENT
+    // on-chain value. That equals the prior epoch's value for every member
+    // that did not rotate — and a consensus key CAN be rotated
+    // (`set_next_epoch_consensus_pubkey_bytes`, effectuated at epoch
+    // advance), in which case this names the member under its new key while
+    // the cert names it under the old one, and the signer resolves to weight
+    // 0. Rotation under a consensus-key identity is unfinished business; see
+    // dev-docs/specs/committee-consensus-keys.md. A member whose
+    // validator_info fails verify has no resolvable name and drops out (the
+    // verify-failure warn below attributes it).
+    let snapshot_name_by_id: HashMap<ObjectID, AuthorityName> = staking_pools
+        .iter()
+        .filter_map(|pool| {
+            let verified = pool.validator_info.verify().ok()?;
+            Some((
+                pool.id,
+                AuthorityName::from_consensus_key(&verified.consensus_pubkey),
+            ))
+        })
+        .collect();
     // Tolerate a member whose validator_info fails to decode: `verify()`
     // rejects on ANY malformed metadata field (addresses, next-epoch keys),
     // not just the consensus key needed here, and the member may have
@@ -402,7 +372,6 @@ where
         // committees read here belong to a later epoch; installing them
         // onto this epoch's store would clobber it with the wrong keys.
         // Skip; the next epoch's own updater installs its committees.
-        let consensus_key_identity = epoch_store.epoch_start_state().consensus_key_identity();
         if system_inner.epoch != self.epoch_id {
             return Ok(());
         }
@@ -441,14 +410,9 @@ where
                 }
             };
             // Key by the name space announcements use in THIS epoch's store:
-            // an announcer names itself under its epoch's identity basis, so
-            // the provider must key the same way (consensus-basis past the
-            // authority-name flip epoch, BLS before it).
-            let name = if consensus_key_identity {
-                AuthorityName::from_consensus_key(&verified.consensus_pubkey)
-            } else {
-                (&verified.protocol_pubkey).into()
-            };
+            // an announcer names itself by its consensus key, so the provider
+            // must key the same way.
+            let name = AuthorityName::from_consensus_key(&verified.consensus_pubkey);
             consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
         }
 

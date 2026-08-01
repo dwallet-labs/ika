@@ -7,12 +7,12 @@
 //! invariant the upgrade harness depends on — sessions started in an epoch
 //! actually complete.
 //!
-//! Genesis is `ProtocolVersion::MIN` (= MAX = 5): the network DKG runs the
+//! Genesis is `ProtocolVersion::MIN` (= MAX = 6): the network DKG runs the
 //! main (PVSS) party from genesis via the current-epoch off-chain key
-//! assembly. (The genesis-v3 → vote-into-v4 flavor of this scenario was
-//! retired when protocol v3/v4 support was removed — no supported version
-//! boundary remains to cross; resurrect the vote steps from git history when
-//! a v6 exists.)
+//! assembly. (The genesis-at-one-version → vote-into-the-next flavor of this
+//! scenario was retired when the versions it crossed dropped below the
+//! supported range — no supported version boundary remains to cross;
+//! resurrect the vote steps from git history when a v7 exists.)
 //!
 //! Opt-in via `RUN_WORKLOAD_TEST=1` (set `HOLD_CLUSTER=1` to hold the cluster
 //! up at the workload step for manual `ika dwallet` driving instead):
@@ -29,6 +29,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use ika_upgrade_test::binary::BinarySpec;
 use ika_upgrade_test::scenario::Scenario;
 
@@ -77,13 +78,19 @@ async fn workload_dkg_presign_sign() {
     // Epochs are 3 minutes so the lifecycle fits inside an epoch before its
     // own reconfiguration window.
     Scenario::new(4, repo, sui, notifier)
+        // Pinned to v6: this scenario gates the session lifecycle at a FIXED
+        // protocol version. `MAX_PROTOCOL_VERSION` is 7, so without this pin
+        // the all-current committee would vote itself to v7 partway through
+        // and the lifecycle would straddle a protocol boundary it is not
+        // meant to test. Crossing v7 is `v127_v7_upgrade`'s job.
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
         .with_base_dir(base)
         .with_epoch_duration_ms(180_000)
         .with_epoch_timeout(Duration::from_secs(900))
         .with_ika_cli(ika_cli)
         .start_all(validator)
         .wait_for_epoch(2)
-        .expect_protocol_version_at_least(5)
+        .expect_protocol_version_at_least(6)
         .run_workload("dkg-presign-sign")
         .run()
         .await

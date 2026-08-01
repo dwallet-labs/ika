@@ -20,9 +20,9 @@ use std::time::Duration;
 use sui_types::base_types::{ObjectID, SuiAddress};
 
 use dwallet_rng::RootSeed;
-use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::KeypairTraits;
 use ika_types::crypto::NetworkKeyPair;
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 pub use sui_config::node::KeyPairWithPath;
@@ -1043,19 +1043,12 @@ impl NodeConfig {
         self.protocol_key_pair().public().into()
     }
 
-    /// The node's own `AuthorityName` (committee identity) under the given
-    /// identity basis: the zero-padded consensus Ed25519 key when
-    /// `consensus_key_authority_names` is on (protocol version 6+), the BLS
-    /// protocol key before it. Callers decide the basis from the epoch the
-    /// name is FOR (usually `epoch_start_state.consensus_key_identity()`) —
-    /// a node crossing the activation boundary legitimately has different
-    /// names in consecutive epochs.
-    pub fn authority_name(&self, consensus_key_identity: bool) -> AuthorityPublicKeyBytes {
-        if consensus_key_identity {
-            AuthorityPublicKeyBytes::from_consensus_key(self.consensus_key_pair().public())
-        } else {
-            self.protocol_public_key()
-        }
+    /// The node's own `AuthorityName` (committee identity): its consensus
+    /// Ed25519 key, zero-padded into the 48-byte container. The BLS protocol
+    /// key was the identity basis through protocol version 5, below this
+    /// binary's minimum.
+    pub fn authority_name(&self) -> AuthorityName {
+        AuthorityName::from_consensus_key(self.consensus_key_pair().public())
     }
 
     pub fn db_path(&self) -> PathBuf {

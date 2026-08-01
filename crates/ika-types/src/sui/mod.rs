@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::committee::StakeUnit;
-use crate::crypto::AuthorityName;
+use crate::crypto::AuthorityPublicKeyBytes;
 use enum_dispatch::enum_dispatch;
 use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::TypeTag;
@@ -224,7 +224,7 @@ pub trait SystemInnerTrait {
     fn read_bls_committee(
         &self,
         committee: &BlsCommittee,
-    ) -> Vec<(ObjectID, (AuthorityName, StakeUnit))>;
+    ) -> Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))>;
     /// Like [`read_bls_committee`], but skips (rather than panics on) a member
     /// whose `protocol_pubkey` bytes don't parse into an `AuthorityName`.
     /// For the PRIOR-committee bootstrap anchor only, where a departed member
@@ -241,7 +241,7 @@ pub trait SystemInnerTrait {
     fn read_bls_committee_lossy(
         &self,
         committee: &BlsCommittee,
-    ) -> Vec<(ObjectID, (AuthorityName, StakeUnit))>;
+    ) -> Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))>;
     fn validator_set(&self) -> &ValidatorSetV1;
 }
 

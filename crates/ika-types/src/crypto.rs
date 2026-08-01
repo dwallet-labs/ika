@@ -30,14 +30,15 @@ use rand::rngs::StdRng;
 use roaring::RoaringBitmap;
 use schemars::JsonSchema;
 use serde::de::Error as _;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_with::{Bytes, DeserializeAs, serde_as};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::{Bytes, DeserializeAs, SerializeAs, serde_as};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use sui_types::base_types::{ConciseableName, SuiAddress};
 use sui_types::crypto::SignatureScheme;
 use sui_types::sui_serde::Readable;
@@ -64,7 +65,143 @@ pub type DefaultHash = Blake2b256;
 
 pub const DEFAULT_EPOCH_ID: EpochId = 0;
 
-pub type AuthorityName = AuthorityPublicKeyBytes;
+/// A validator's committee identity: its Ed25519 consensus public key, held
+/// as the raw 32 bytes with no padding.
+///
+/// Distinct from [`AuthorityPublicKeyBytes`], which is the 48-byte BLS
+/// protocol-key container. The two were the same type through protocol v5,
+/// when the BLS key WAS the identity; they are different things now and
+/// conflating them is how a name derived from the wrong key silently drops a
+/// validator out of its own committee.
+///
+/// The wire encoding is width-gated, not fixed by this type: below protocol v7
+/// the name is emitted zero-padded into the 48-byte container it historically
+/// occupied, and from v7 as the raw 32 bytes. See
+/// `AUTHORITY_NAME_SHORT_ENCODING`.
+#[serde_as]
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    AsRef,
+)]
+#[as_ref(forward)]
+pub struct AuthorityName(
+    #[schemars(with = "Base64")]
+    #[serde_as(
+        serialize_as = "AuthorityNameEncoding",
+        deserialize_as = "LenientAuthorityName"
+    )]
+    pub [u8; Ed25519PublicKey::LENGTH],
+);
+
+impl AuthorityName {
+    pub const ZERO: Self = Self([0u8; Ed25519PublicKey::LENGTH]);
+
+    /// The canonical name of a validator identified by its consensus key.
+    pub fn from_consensus_key(key: &NetworkPublicKey) -> Self {
+        let mut bytes = [0u8; Ed25519PublicKey::LENGTH];
+        bytes.copy_from_slice(key.as_bytes());
+        Self(bytes)
+    }
+
+    /// The consensus key this name IS.
+    pub fn to_consensus_key(self) -> Result<NetworkPublicKey, FastCryptoError> {
+        Ed25519PublicKey::from_bytes(&self.0)
+    }
+}
+
+impl ToFromBytes for AuthorityName {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, FastCryptoError> {
+        let bytes: [u8; Ed25519PublicKey::LENGTH] = bytes
+            .try_into()
+            .map_err(|_| FastCryptoError::InvalidInput)?;
+        Ok(Self(bytes))
+    }
+}
+
+impl From<&NetworkPublicKey> for AuthorityName {
+    fn from(key: &NetworkPublicKey) -> Self {
+        Self::from_consensus_key(key)
+    }
+}
+
+impl FromStr for AuthorityName {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = Hex::decode(s).map_err(|e| anyhow!(e))?;
+        Self::from_bytes(&value[..]).map_err(|e| anyhow!(e))
+    }
+}
+
+/// A `Debug`/`Display` wrapper printing a short prefix, mirroring
+/// [`ConciseAuthorityPublicKeyBytesRef`] for the BLS container.
+pub struct ConciseAuthorityNameRef<'a>(&'a AuthorityName);
+
+impl Debug for ConciseAuthorityNameRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "k#{}..", Hex::encode(&self.0.0[..4]))
+    }
+}
+
+impl Display for ConciseAuthorityNameRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        Debug::fmt(self, f)
+    }
+}
+
+pub struct ConciseAuthorityName(AuthorityName);
+
+impl Debug for ConciseAuthorityName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "k#{}..", Hex::encode(&self.0.0[..4]))
+    }
+}
+
+impl Display for ConciseAuthorityName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        Debug::fmt(self, f)
+    }
+}
+
+impl<'a> ConciseableName<'a> for AuthorityName {
+    type ConciseTypeRef = ConciseAuthorityNameRef<'a>;
+    type ConciseType = ConciseAuthorityName;
+
+    fn concise(&'a self) -> ConciseAuthorityNameRef<'a> {
+        ConciseAuthorityNameRef(self)
+    }
+
+    fn concise_owned(&self) -> ConciseAuthorityName {
+        ConciseAuthorityName(*self)
+    }
+}
+
+impl Default for AuthorityName {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl Debug for AuthorityName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "k#{}", Hex::encode(self.0))
+    }
+}
+
+impl Display for AuthorityName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        Debug::fmt(self, f)
+    }
+}
 
 /// Creates a proof of that the authority account address is owned by the
 /// holder of authority protocol key, and also ensures that the authority
@@ -154,31 +291,124 @@ fn ika_public_key_into_sui_address<T: IkaPublicKey>(pk: &T) -> SuiAddress {
 #[as_ref(forward)]
 pub struct AuthorityPublicKeyBytes(
     #[schemars(with = "Base64")]
-    #[serde_as(
-        serialize_as = "Readable<Base64, Bytes>",
-        deserialize_as = "LenientAuthorityKeyBytes"
-    )]
+    #[serde_as(as = "Readable<Base64, Bytes>")]
     pub [u8; AuthorityPublicKey::LENGTH],
 );
 
-/// Length-lenient deserializer for [`AuthorityPublicKeyBytes`].
+/// Whether `AuthorityName` is serialized as the raw 32-byte Ed25519 consensus
+/// key rather than that key zero-padded into the 48-byte container. Mirrors
+/// the `short_authority_names` protocol flag (v7+).
 ///
-/// `AuthorityName` is migrating from the 48-byte BLS12-381 protocol key
-/// to the 32-byte Ed25519 consensus key, which is zero-padded up to 48
-/// bytes so the wire encoding stays unchanged. This deserializer accepts
-/// both encodings — the 48-byte form as-is, and the unpadded 32-byte
-/// form by zero-padding it on read — while the serializer keeps emitting
-/// 48 bytes. Once every deployed validator runs a binary that reads both
-/// encodings, a protocol-version-gated change can switch the serializer
-/// to emit the unpadded 32-byte form.
+/// This is ambient process state — the one flag in ika consumed outside its
+/// protocol config — because serde has no context: `Serialize` is called deep
+/// inside `bcs::to_bytes` with nothing but the value. Every alternative was
+/// worse: a thread-local would have to be set on every rayon and tokio worker
+/// that ever serializes a name, and versioning the message types instead means
+/// a V2 of twelve quorum-critical structs.
 ///
-/// Mirrors the `Readable<Base64, Bytes>` serializer in both serde modes:
-/// a Base64 string in human-readable formats (JSON/YAML), raw bytes in
-/// binary formats (BCS).
-struct LenientAuthorityKeyBytes;
+/// **The encoding must be uniform across the whole committee**, not merely
+/// within a process: `verify_handoff_signature` and
+/// `hash_next_committee_pubkey_set` reconstruct signed and hashed bytes by
+/// re-serializing locally, so two validators emitting different widths compute
+/// different digests and reject each other's signatures. That is what the
+/// protocol version buys — every validator flips at the same epoch boundary.
+///
+/// **Boundary caveat.** The flip is applied when an epoch store is built, so it
+/// tracks the epoch a node is ENTERING. An artifact produced under the previous
+/// epoch's width but verified under the new one straddles it; the handoff cert
+/// does exactly that — signed at the end of epoch N, verified in N+1 — which is
+/// why `verify_certified_handoff_attestation` retries at the other width
+/// instead of trusting the ambient value. (Its same-epoch sibling
+/// `verify_handoff_signature` needs no retry: signer and verifier are both
+/// inside epoch N, so they always agree.)
+static AUTHORITY_NAME_SHORT_ENCODING: AtomicBool = AtomicBool::new(false);
 
-impl<'de> DeserializeAs<'de, [u8; AuthorityPublicKey::LENGTH]> for LenientAuthorityKeyBytes {
-    fn deserialize_as<D>(deserializer: D) -> Result<[u8; AuthorityPublicKey::LENGTH], D::Error>
+thread_local! {
+    /// Per-thread override of the process-wide width, for the one operation
+    /// that legitimately needs the OTHER epoch's encoding: re-serializing a
+    /// cross-epoch payload to check a signature made under the previous
+    /// epoch's width. It must be thread-scoped — mutating the global for that
+    /// would corrupt every name any other thread serializes meanwhile.
+    static SHORT_ENCODING_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Sets the process-wide `AuthorityName` encoding width. Called once per epoch
+/// from the epoch store, with the epoch's `short_authority_names`. `Relaxed` is
+/// sufficient: the flag guards no other memory, and correctness depends on
+/// committee-wide agreement on the protocol version, not on intra-process
+/// ordering against any particular write.
+pub fn set_authority_name_short_encoding(enabled: bool) {
+    AUTHORITY_NAME_SHORT_ENCODING.store(enabled, Ordering::Relaxed);
+}
+
+/// The `AuthorityName` encoding width in effect on this thread: the
+/// thread-local override if one is active, otherwise the process-wide value.
+pub fn authority_name_short_encoding() -> bool {
+    SHORT_ENCODING_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or_else(|| AUTHORITY_NAME_SHORT_ENCODING.load(Ordering::Relaxed))
+}
+
+/// Runs `f` with the encoding width forced on THIS THREAD only, restoring the
+/// previous state afterwards (including on panic). Concurrent threads are
+/// unaffected.
+///
+/// The only production caller is cross-epoch handoff-cert verification, which
+/// must reconstruct bytes signed under the previous epoch's width. Do not
+/// reach for this to "fix" a width mismatch anywhere a payload does not
+/// genuinely cross an epoch boundary — that would paper over a real
+/// disagreement about the protocol version.
+pub fn with_authority_name_short_encoding<T>(enabled: bool, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SHORT_ENCODING_OVERRIDE.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = Restore(SHORT_ENCODING_OVERRIDE.with(|slot| slot.replace(Some(enabled))));
+    f()
+}
+
+/// Width-aware serializer for [`AuthorityName`]: 32 raw bytes at protocol v7+,
+/// otherwise those bytes zero-padded into the 48-byte container the BLS
+/// protocol key occupied through v5. See `AUTHORITY_NAME_SHORT_ENCODING`.
+struct AuthorityNameEncoding;
+
+impl SerializeAs<[u8; Ed25519PublicKey::LENGTH]> for AuthorityNameEncoding {
+    fn serialize_as<S>(
+        source: &[u8; Ed25519PublicKey::LENGTH],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut padded = [0u8; AuthorityPublicKey::LENGTH];
+        padded[..Ed25519PublicKey::LENGTH].copy_from_slice(source);
+        let bytes: &[u8] = if authority_name_short_encoding() {
+            source.as_slice()
+        } else {
+            padded.as_slice()
+        };
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&Base64::encode(bytes))
+        } else {
+            serializer.serialize_bytes(bytes)
+        }
+    }
+}
+
+/// Length-lenient deserializer for [`AuthorityName`]: accepts the raw 32 bytes
+/// and the 48-byte padded form, so a node reads both widths regardless of which
+/// one it emits. A 48-byte value whose tail is NOT zero is a BLS-basis name
+/// from a pre-v6 epoch; it cannot be represented as a consensus key, so it is
+/// rejected rather than silently truncated. Nothing live decodes such a record
+/// (see `CommitteeStore`), and failing loudly is what keeps a truncated,
+/// wrong-identity name from ever entering a committee.
+struct LenientAuthorityName;
+
+impl<'de> DeserializeAs<'de, [u8; Ed25519PublicKey::LENGTH]> for LenientAuthorityName {
+    fn deserialize_as<D>(deserializer: D) -> Result<[u8; Ed25519PublicKey::LENGTH], D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -189,28 +419,26 @@ impl<'de> DeserializeAs<'de, [u8; AuthorityPublicKey::LENGTH]> for LenientAuthor
             Bytes::deserialize_as(deserializer)?
         };
         match bytes.len() {
-            len if len == AuthorityPublicKey::LENGTH => {
+            len if len == Ed25519PublicKey::LENGTH => {
                 bytes.as_slice().try_into().map_err(D::Error::custom)
             }
-            len if len == Ed25519PublicKey::LENGTH => {
-                let mut padded = [0u8; AuthorityPublicKey::LENGTH];
-                padded[..Ed25519PublicKey::LENGTH].copy_from_slice(&bytes);
-                Ok(padded)
+            len if len == AuthorityPublicKey::LENGTH => {
+                if bytes[Ed25519PublicKey::LENGTH..].iter().any(|b| *b != 0) {
+                    return Err(D::Error::custom(
+                        "48-byte AuthorityName with a non-zero tail is a pre-v6 BLS-basis name \
+                         and has no consensus-key representation",
+                    ));
+                }
+                bytes[..Ed25519PublicKey::LENGTH]
+                    .try_into()
+                    .map_err(D::Error::custom)
             }
             len => Err(D::Error::custom(format!(
-                "invalid AuthorityPublicKeyBytes length {len}: expected {} or {}",
-                AuthorityPublicKey::LENGTH,
+                "invalid AuthorityName length {len}: expected {} or {}",
                 Ed25519PublicKey::LENGTH,
+                AuthorityPublicKey::LENGTH,
             ))),
         }
-    }
-}
-
-impl AuthorityPublicKeyBytes {
-    fn fmt_impl(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let s = Hex::encode(self.0);
-        write!(f, "k#{s}")?;
-        Ok(())
     }
 }
 
@@ -275,6 +503,14 @@ impl TryFrom<AuthorityPublicKeyBytes> for AuthorityPublicKey {
 impl From<&AuthorityPublicKey> for AuthorityPublicKeyBytes {
     fn from(pk: &AuthorityPublicKey) -> AuthorityPublicKeyBytes {
         AuthorityPublicKeyBytes::from_bytes(pk.as_ref()).unwrap()
+    }
+}
+
+impl AuthorityPublicKeyBytes {
+    fn fmt_impl(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let s = Hex::encode(self.0);
+        write!(f, "k#{s}")?;
+        Ok(())
     }
 }
 
@@ -1008,21 +1244,22 @@ impl<'a> VerificationObligation<'a> {
 mod tests {
     use super::*;
 
-    fn full_length_name() -> AuthorityPublicKeyBytes {
-        let bytes: Vec<u8> = (0..AuthorityPublicKey::LENGTH as u8).collect();
-        AuthorityPublicKeyBytes(bytes.as_slice().try_into().unwrap())
+    fn consensus_key_bytes() -> [u8; Ed25519PublicKey::LENGTH] {
+        let mut bytes = [0u8; Ed25519PublicKey::LENGTH];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = i as u8 + 100;
+        }
+        bytes
     }
 
-    fn consensus_key_bytes() -> Vec<u8> {
-        (0..Ed25519PublicKey::LENGTH as u8)
-            .map(|i| i + 100)
-            .collect()
+    fn name() -> AuthorityName {
+        AuthorityName(consensus_key_bytes())
     }
 
-    fn zero_padded(consensus_key: &[u8]) -> AuthorityPublicKeyBytes {
-        let mut padded = [0u8; AuthorityPublicKey::LENGTH];
-        padded[..consensus_key.len()].copy_from_slice(consensus_key);
-        AuthorityPublicKeyBytes(padded)
+    fn padded(key: &[u8]) -> Vec<u8> {
+        let mut v = vec![0u8; AuthorityPublicKey::LENGTH];
+        v[..key.len()].copy_from_slice(key);
+        v
     }
 
     /// BCS encoding of a byte string: ULEB128 length prefix followed by
@@ -1033,91 +1270,138 @@ mod tests {
         wire
     }
 
+    /// Below v7 an `AuthorityName` goes on the wire zero-padded into the
+    /// 48-byte container, so the encoding is byte-identical to what every
+    /// deployed binary produces.
     #[test]
-    fn bcs_full_length_wire_format_unchanged_and_round_trips() {
-        let name = full_length_name();
-        let serialized = bcs::to_bytes(&name).unwrap();
-        assert_eq!(serialized, bcs_byte_string(name.as_ref()));
-        let deserialized: AuthorityPublicKeyBytes = bcs::from_bytes(&serialized).unwrap();
-        assert_eq!(deserialized, name);
+    fn padded_encoding_is_the_pre_v7_wire_format() {
+        with_authority_name_short_encoding(false, || {
+            let serialized = bcs::to_bytes(&name()).unwrap();
+            assert_eq!(serialized, bcs_byte_string(&padded(&consensus_key_bytes())));
+            let round_tripped: AuthorityName = bcs::from_bytes(&serialized).unwrap();
+            assert_eq!(round_tripped, name());
+
+            let json = serde_json::to_string(&name()).unwrap();
+            assert_eq!(
+                json,
+                format!("\"{}\"", Base64::encode(padded(&consensus_key_bytes())))
+            );
+        });
+    }
+
+    /// From v7 the same value goes out as the raw 32 bytes, and decodes back
+    /// to an identical name — the in-memory representation never changes.
+    #[test]
+    fn short_encoding_emits_the_raw_consensus_key() {
+        with_authority_name_short_encoding(true, || {
+            let serialized = bcs::to_bytes(&name()).unwrap();
+            assert_eq!(serialized, bcs_byte_string(&consensus_key_bytes()));
+            let round_tripped: AuthorityName = bcs::from_bytes(&serialized).unwrap();
+            assert_eq!(round_tripped, name());
+
+            let json = serde_json::to_string(&name()).unwrap();
+            assert_eq!(
+                json,
+                format!("\"{}\"", Base64::encode(consensus_key_bytes()))
+            );
+        });
+    }
+
+    /// Both widths decode, whichever one this binary emits — the tolerance
+    /// that lets a v7 emitter and a v6 emitter read each other.
+    #[test]
+    fn both_widths_decode_to_the_same_name() {
+        for short in [false, true] {
+            with_authority_name_short_encoding(short, || {
+                let from_short: AuthorityName =
+                    bcs::from_bytes(&bcs_byte_string(&consensus_key_bytes())).unwrap();
+                let from_padded: AuthorityName =
+                    bcs::from_bytes(&bcs_byte_string(&padded(&consensus_key_bytes()))).unwrap();
+                assert_eq!(from_short, name());
+                assert_eq!(from_padded, name());
+            });
+        }
+    }
+
+    /// A 48-byte value with a NON-zero tail is a pre-v6 BLS-basis name. It has
+    /// no consensus-key representation, so it must be rejected rather than
+    /// truncated into a different validator's identity.
+    #[test]
+    fn a_bls_basis_name_is_rejected_not_truncated() {
+        let mut bls = padded(&consensus_key_bytes());
+        bls[AuthorityPublicKey::LENGTH - 1] = 0xAA;
+        assert!(bcs::from_bytes::<AuthorityName>(&bcs_byte_string(&bls)).is_err());
     }
 
     #[test]
-    fn bcs_accepts_unpadded_consensus_key_and_zero_pads_it() {
-        let consensus_key = consensus_key_bytes();
-        let deserialized: AuthorityPublicKeyBytes =
-            bcs::from_bytes(&bcs_byte_string(&consensus_key)).unwrap();
-        assert_eq!(deserialized, zero_padded(&consensus_key));
-    }
-
-    /// Until the serializer flip, a name read from the unpadded encoding
-    /// re-serializes in the padded 48-byte form.
-    #[test]
-    fn bcs_reserializes_unpadded_input_in_padded_form() {
-        let consensus_key = consensus_key_bytes();
-        let deserialized: AuthorityPublicKeyBytes =
-            bcs::from_bytes(&bcs_byte_string(&consensus_key)).unwrap();
-        let reserialized = bcs::to_bytes(&deserialized).unwrap();
-        assert_eq!(
-            reserialized,
-            bcs_byte_string(zero_padded(&consensus_key).as_ref())
-        );
-    }
-
-    #[test]
-    fn bcs_rejects_lengths_other_than_full_and_consensus() {
+    fn rejects_lengths_other_than_consensus_and_container() {
         for len in [0usize, 31, 33, 47, 49] {
-            let wire = bcs_byte_string(&vec![0x11; len]);
             assert!(
-                bcs::from_bytes::<AuthorityPublicKeyBytes>(&wire).is_err(),
+                bcs::from_bytes::<AuthorityName>(&bcs_byte_string(&vec![0x11; len])).is_err(),
                 "length {len} must be rejected"
             );
         }
     }
 
+    /// The width is a pure function of (flag, value), so validators on the
+    /// same protocol version produce identical bytes — and validators that
+    /// DISAGREE produce different ones, which is the whole point of the gate.
     #[test]
-    fn json_full_length_wire_format_unchanged_and_round_trips() {
-        let name = full_length_name();
-        let json = serde_json::to_string(&name).unwrap();
-        assert_eq!(json, format!("\"{}\"", Base64::encode(name.as_ref())));
-        let deserialized: AuthorityPublicKeyBytes = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, name);
+    fn width_disagreement_changes_the_encoded_bytes() {
+        let short = with_authority_name_short_encoding(true, || bcs::to_bytes(&name()).unwrap());
+        let long = with_authority_name_short_encoding(false, || bcs::to_bytes(&name()).unwrap());
+        assert_ne!(
+            short, long,
+            "the two widths must encode differently — otherwise the v7 gate is pointless"
+        );
+        let a: AuthorityName = bcs::from_bytes(&short).unwrap();
+        let b: AuthorityName = bcs::from_bytes(&long).unwrap();
+        assert_eq!(a, b, "only the emitted bytes differ, never the value");
     }
 
+    /// The override is thread-scoped: it must not leak to another thread.
     #[test]
-    fn json_accepts_unpadded_consensus_key_and_zero_pads_it() {
-        let consensus_key = consensus_key_bytes();
-        let json = format!("\"{}\"", Base64::encode(&consensus_key));
-        let deserialized: AuthorityPublicKeyBytes = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, zero_padded(&consensus_key));
+    fn width_override_does_not_leak_across_threads() {
+        with_authority_name_short_encoding(true, || {
+            assert!(authority_name_short_encoding());
+            let observed = std::thread::spawn(authority_name_short_encoding)
+                .join()
+                .unwrap();
+            assert!(
+                !observed,
+                "the override must stay on the thread that set it — a leak would corrupt \
+                 concurrent serialization"
+            );
+        });
     }
 
-    /// `from_consensus_key` must agree with the lenient deserializer: the
-    /// name built from a consensus key equals the name deserialized from
-    /// that key's unpadded 32-byte wire encoding.
+    /// `from_consensus_key` agrees with the decoder, and the key is
+    /// recoverable — a name IS the consensus key.
     #[test]
-    fn from_consensus_key_matches_unpadded_wire_decoding() {
+    fn from_consensus_key_round_trips_through_the_wire() {
         let keypair = Ed25519KeyPair::generate(&mut StdRng::from_seed([7; 32]));
-        let name = AuthorityPublicKeyBytes::from_consensus_key(keypair.public());
-        let deserialized: AuthorityPublicKeyBytes =
+        let built = AuthorityName::from_consensus_key(keypair.public());
+        let decoded: AuthorityName =
             bcs::from_bytes(&bcs_byte_string(keypair.public().as_bytes())).unwrap();
-        assert_eq!(name, deserialized);
-        let padded: &[u8] = name.as_ref();
-        assert_eq!(
-            &padded[..Ed25519PublicKey::LENGTH],
-            keypair.public().as_bytes()
-        );
-        assert!(padded[Ed25519PublicKey::LENGTH..].iter().all(|b| *b == 0));
+        assert_eq!(built, decoded);
+        assert_eq!(&built.0[..], keypair.public().as_bytes());
+        assert_eq!(built.to_consensus_key().unwrap(), *keypair.public());
     }
 
+    /// The BLS container is a fixed 48-byte key with no width games: it is a
+    /// different type from `AuthorityName` now, and must stay plainly encoded.
     #[test]
-    fn json_rejects_lengths_other_than_full_and_consensus() {
-        for len in [0usize, 31, 33, 47, 49] {
-            let json = format!("\"{}\"", Base64::encode(vec![0x11; len]));
-            assert!(
-                serde_json::from_str::<AuthorityPublicKeyBytes>(&json).is_err(),
-                "length {len} must be rejected"
-            );
-        }
+    fn bls_container_is_plain_fixed_width() {
+        let bytes: Vec<u8> = (0..AuthorityPublicKey::LENGTH as u8).collect();
+        let key = AuthorityPublicKeyBytes(bytes.as_slice().try_into().unwrap());
+        let serialized = bcs::to_bytes(&key).unwrap();
+        assert_eq!(serialized, bcs_byte_string(&bytes));
+        let round_tripped: AuthorityPublicKeyBytes = bcs::from_bytes(&serialized).unwrap();
+        assert_eq!(round_tripped, key);
+        // And it does NOT accept the short form: it is not a name.
+        assert!(
+            bcs::from_bytes::<AuthorityPublicKeyBytes>(&bcs_byte_string(&consensus_key_bytes()))
+                .is_err()
+        );
     }
 }

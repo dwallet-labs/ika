@@ -276,46 +276,58 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   the commit/round semantics ika's freeze and epoch-close logic rely on
   (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
   in ika (see the upstream reference above)
-- **Protocol v5–v6 (`MIN_PROTOCOL_VERSION = 5`, `MAX_PROTOCOL_VERSION = 6`)**:
-  the binary supports nothing older than v5 — protocol v3/v4 support, the
-  v3→v4 migration scaffolding (issue #1751), the backward-compatible
-  (class-groups-only) network DKG/reconfiguration parties, and
-  pre-aggregation (V3-tagged) output production are removed. The inkrypto
-  revision is strict-only: the relaxed discrete-log bound and the
-  `backward_compatible` selector no longer exist, so this binary is not
-  wire-compatible with a protocol-v5 committee even though the historical
-  minimum remains v5. Everything formerly v4/v5-gated (off-chain validator
-  metadata, the cross-epoch handoff, deferred epoch close, aggregated
-  network-key outputs) is unconditionally on. **v6 activated two
-  coordinated flips**: (a) `consensus_key_authority_names` —
-  `AuthorityName` becomes the Ed25519 consensus key (zero-padded into the
-  same 48-byte container, so the wire encoding is unchanged) instead of
-  the BLS protocol key, which stays on chain and on `Committee` for BLS
-  checkpoint-certificate verification; and (b) the network-key
-  DKG/reconfiguration equality-of-coefficients proof drops the relaxed
-  `-10` discrete-log bound it has transcribed since ika v1.1.8. The
-  bound is transcribed whole into the Fiat–Shamir challenge, so it is
-  consensus-critical: a mixed-bound committee splits its reconfiguration
-  quorum and flags the odd validator malicious. The identity flip's
-  known boundary limitation (the next-epoch committee is assembled under
-  the current epoch's version but consumed under its own, so the two
-  disagree at the single activation boundary) is why the first flip
-  attempt wedged: `dev-docs/specs/committee-consensus-keys.md`. v7 is
-  planned for `noa_checkpoints`. What REMAINS constrained: the networks
-  persist pre-v5 state, so old
-  `Versioned*` enum variants must stay (BCS variant indices are wire
-  format). V1-tagged chain DKG anchors must remain DECODABLE (they are
-  never rewritten on chain; they decode via the still-current
-  `class_groups::dkg::PublicOutput`), and V2-tagged outputs still decode
-  as `PublicOutputCore` where only the core is needed. V3-tagged
-  (pre-aggregation) outputs and the bwd-compat party outputs are NO
-  LONGER decodable anywhere — inkrypto removed their types — so any key
-  whose live state is still V3-tagged must have migrated to V4 before
-  running this binary, and decode arms for them are hard errors; and MPC
-  outputs must reach
-  byte-identical quorum across a mixed-binary committee, so
-  serialization changes to active paths need a new protocol version
-  gate, never a binary-driven flip.
+- **Protocol v6–v7 (`MIN_PROTOCOL_VERSION = 6`, `MAX_PROTOCOL_VERSION = 7`)**:
+  **v6 is LIVE on both mainnet and testnet**; v7 is advertised and not yet
+  activated. The binary supports nothing older than v6, so every formerly
+  v4/v5/v6-gated behavior is unconditional. That includes off-chain validator metadata,
+  the cross-epoch handoff, deferred epoch close, aggregated (V4-tagged)
+  network-key outputs, and both of what v6 itself flipped:
+  (a) `AuthorityName` IS the Ed25519 consensus key (zero-padded into the
+  same 48-byte container, so the wire encoding is unchanged); the BLS
+  protocol key stays on chain and on `Committee` for BLS
+  checkpoint-certificate verification, and BLS-basis committees stay
+  READABLE through `Committee`'s `expanded_keys` alias translation, which
+  is structural rather than version-gated; and (b) the network-key
+  DKG/reconfiguration equality-of-coefficients proof uses the STRICT
+  discrete-log bound.
+  **The inkrypto revision is strict-only**: the relaxed `-10` bound and
+  the `backward_compatible` selector no longer EXIST, along with the
+  backward-compatible (class-groups-only) DKG/reconfiguration parties and
+  pre-aggregation (V3-tagged) output production. So this binary is not
+  wire-compatible with a protocol-v5 committee even where v5 state
+  survives.
+  The `FeatureFlags` fields and the per-version arms in `get_for_version`
+  stay for versions below MIN — the flag set is BCS-serialized into the
+  `ProtocolConfig` digest that rides `AuthorityCapabilitiesV1` through
+  consensus, so dropping a field would move every supported version's
+  digest relative to deployed binaries.
+  **v7 gates `short_authority_names`**: `AuthorityName` is emitted as the raw
+  32-byte consensus key instead of that key zero-padded into the 48-byte
+  container. Readers have accepted both widths since v1.2.7, so the gate is
+  about when validators start EMITTING the short form — they must do so
+  together, because signature and digest bytes are reconstructed by
+  RE-SERIALIZING locally (`verify_handoff_signature`,
+  `hash_next_committee_pubkey_set`), so mixed widths split the quorum. This
+  is the ONE protocol flag consumed outside its call site: serde has no
+  access to the config, so the width lives in the
+  `AUTHORITY_NAME_SHORT_ENCODING` process global, set from the epoch store.
+  Its consequence — a handoff cert signed in epoch N and verified in N+1
+  straddles the flip — is handled by a dual-width retry in
+  `verify_certified_handoff_attestation`. **Anything new that verifies a
+  re-serialized cross-epoch payload must do the same.** `noa_checkpoints`
+  moves to v8. What REMAINS constrained: the networks persist pre-v6
+  state, so old `Versioned*` enum variants must stay (BCS variant indices
+  are wire format). V1-tagged chain DKG anchors must remain DECODABLE
+  (never rewritten on chain; they decode via the still-current
+  `class_groups::dkg::PublicOutput`), and V2-tagged outputs still decode as
+  `PublicOutputCore` where only the core is needed. **V3-tagged
+  (pre-aggregation) outputs and the bwd-compat party outputs are NO LONGER
+  decodable anywhere** — inkrypto removed their types — so any key whose
+  live state is still V3-tagged must have migrated to V4 before running
+  this binary, and their decode arms are hard errors. And MPC outputs must
+  reach byte-identical quorum across a mixed-binary committee, so
+  serialization changes to active paths need a new protocol version gate,
+  never a binary-driven flip. A node whose persisted epoch-start record
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward

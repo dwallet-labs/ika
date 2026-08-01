@@ -163,7 +163,6 @@ impl PeerBlobFetcher {
             &self.blob_cache,
             &self.p2p_network,
             &self.authority_names_to_peer_ids,
-            &epoch_store.committee().name_translation(),
             &self.fetch_outcomes,
         )
         .await;
@@ -409,11 +408,6 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
     blob_cache: &BlobCache,
     p2p_network: &Network,
     authority_names_to_peer_ids: &HashMap<AuthorityName, PeerId>,
-    // Prior-epoch cert item names -> this epoch's names. Identity away from
-    // the protocol-v6 activation boundary; there, it is what keeps the
-    // committee-membership filter below from discarding every item and
-    // silently reporting nothing to repair.
-    name_translation: &HashMap<AuthorityName, AuthorityName>,
     fetch_outcomes: &IntCounterVec,
 ) -> usize {
     let missing: Vec<(AuthorityName, [u8; 32])> = cert
@@ -421,10 +415,7 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
         .items
         .iter()
         .filter_map(|(key, digest)| match key {
-            HandoffItemKey::ValidatorMpcData { validator } => Some((
-                *name_translation.get(validator).unwrap_or(validator),
-                *digest,
-            )),
+            HandoffItemKey::ValidatorMpcData { validator } => Some((*validator, *digest)),
             _ => None,
         })
         // Only current committee members feed the manager's key bundle; a

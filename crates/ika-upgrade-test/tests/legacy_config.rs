@@ -23,9 +23,10 @@
 //! - a full DKG → Presign → Sign lifecycle completes on the legacy
 //!   transport.
 //!
-//! (The v3→v4-straddling flavor of this scenario — proving the capability
-//! vote fires on legacy configs — was retired with protocol v3/v4 support;
-//! genesis is `ProtocolVersion::MIN` = 5 now.)
+//! (The version-straddling flavor of this scenario — proving the capability
+//! vote fires on legacy configs — was retired when the versions it crossed
+//! dropped below the supported range; genesis is `ProtocolVersion::MIN` = 6
+//! now, and `MIN == MAX`, so no boundary remains to cross.)
 //!
 //! Opt-in via `RUN_LEGACY_CONFIG=1`:
 //!

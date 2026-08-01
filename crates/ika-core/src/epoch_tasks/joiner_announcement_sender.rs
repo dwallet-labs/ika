@@ -260,7 +260,7 @@ mod tests {
         use fastcrypto::traits::ToFromBytes;
         SignedValidatorMpcDataAnnouncement {
             announcement: ValidatorMpcDataAnnouncement {
-                validator: AuthorityName::new([1; 48]),
+                validator: AuthorityName([1; 32]),
                 epoch: 5,
                 timestamp_ms: 42,
                 blob_hash: [0x11; 32],
@@ -300,7 +300,7 @@ mod tests {
             calls: Mutex::new(0),
         });
         let sender = JoinerAnnouncementSender {
-            authority: AuthorityName::new([1; 48]),
+            authority: AuthorityName([1; 32]),
             next_epoch: 5,
             // The loop is driven directly here, bypassing
             // build_signed_announcement, so the blob is never read.

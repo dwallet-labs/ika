@@ -42,9 +42,10 @@ impl Node {
         }
     }
 
-    /// Return the `name` of this Node
+    /// Return the `name` of this Node — its committee identity, i.e. the
+    /// consensus key, NOT the BLS protocol key.
     pub fn name(&self) -> AuthorityName {
-        self.config().protocol_public_key()
+        self.config().authority_name()
     }
 
     pub fn config(&self) -> MutexGuard<'_, NodeConfig> {
