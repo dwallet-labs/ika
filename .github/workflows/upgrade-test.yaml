@@ -406,10 +406,22 @@ jobs:
           TEST_TESTING_FAULT: ${{ inputs.test_testing_fault }}
         run: |
           set -euo pipefail
-          if { [ "$TEST_NAME" = "v127_rollout" ] || [ "$TEST_NAME" = "v127_churn" ] || [ "$TEST_NAME" = "malicious_v127" ]; } && [ "$USE_MOCKS" = "true" ]; then
-            echo "$TEST_NAME is a rollout gate and must use real cryptography" >&2
-            exit 1
-          fi
+          # Every gate whose evidence is cross-binary agreement. Mocked
+          # cryptography is deterministic, so two binaries agree under it for
+          # reasons that say nothing about whether they agree in production —
+          # a green run on mocks is not merely weaker evidence, it is evidence
+          # of a different claim. v127_v7_upgrade belongs here for the same
+          # reason as the rollout gates and was missing: it is the PROTOCOL
+          # transition gate, so it is the one run standing behind a version
+          # flip on a live network.
+          case "$TEST_NAME" in
+            v127_rollout|v127_churn|malicious_v127|v127_v7_upgrade)
+              if [ "$USE_MOCKS" = "true" ]; then
+                echo "$TEST_NAME is a cross-binary gate and must use real cryptography" >&2
+                exit 1
+              fi
+              ;;
+          esac
           # ONE scenario, deliberately. The two rollout gates this condition
           # was originally written for are now a single one, and
           # malicious_v127 is NOT a third: it builds its own faulty validator
