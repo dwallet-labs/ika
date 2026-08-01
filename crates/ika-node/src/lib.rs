@@ -200,6 +200,12 @@ pub struct IkaNode {
     /// Broadcast channel to notify state-sync for new validator peers.
     trusted_peer_change_tx: watch::Sender<TrustedPeerChangeEvent>,
 
+    /// Committees state sync verifies peer-supplied checkpoint certificates
+    /// against. Refreshed on every reconfiguration, carrying the outgoing
+    /// committee forward so a certificate signed just before the boundary
+    /// still verifies.
+    state_sync_committee_tx: watch::Sender<Option<ika_network::state_sync::SyncCommittees>>,
+
     #[cfg(msim)]
     sim_state: SimState,
 
@@ -426,6 +432,13 @@ impl IkaNode {
         let archive_readers =
             ArchiveReaderBalancer::new(config.archive_reader_config(), &prometheus_registry)?;
         let (trusted_peer_change_tx, trusted_peer_change_rx) = watch::channel(Default::default());
+        // Committees pull-mode state sync verifies peer-supplied checkpoint
+        // certificates against. Seeded `None`: a peer-only node builds the p2p
+        // stack in order to READ the committee over the OCS relay, so there is
+        // a bootstrap window with nothing to verify against. Sync defers during
+        // that window; bootstrap itself runs over the relay, not state sync.
+        let (state_sync_committee_tx, state_sync_committee_rx) =
+            watch::channel::<Option<ika_network::state_sync::SyncCommittees>>(None);
         // On-chain processed checkpoint cursors: written by the Sui connector
         // service (built later), read by p2p state sync as its pull-mode sync
         // floor (`None` until the first successful chain read) — a notifier on
@@ -561,6 +574,7 @@ impl IkaNode {
                 &prometheus_registry,
                 mode.is_notifier(),
                 on_chain_checkpoint_cursors.clone(),
+                state_sync_committee_rx.clone(),
                 perpetual_tables.clone(),
                 None,
             )?;
@@ -690,6 +704,12 @@ impl IkaNode {
 
         let committee = epoch_start_system_state.get_ika_committee();
         let committee_arc = Arc::new(committee.clone());
+        // Unblocks state-sync verification (no-op for a peer-only node, whose
+        // p2p stack was already built above and is watching this channel).
+        let _ = state_sync_committee_tx.send(Some(ika_network::state_sync::SyncCommittees {
+            current: committee_arc.clone(),
+            previous: None,
+        }));
 
         let secret = Arc::pin(config.protocol_key_pair().copy());
 
@@ -884,6 +904,7 @@ impl IkaNode {
                 &prometheus_registry,
                 is_state_sync_notifier,
                 on_chain_checkpoint_cursors.clone(),
+                state_sync_committee_rx.clone(),
                 perpetual_tables.clone(),
                 sui_state_mirror_server,
             )?
@@ -1293,6 +1314,7 @@ impl IkaNode {
             end_of_epoch_channel,
             connection_monitor_status,
             trusted_peer_change_tx,
+            state_sync_committee_tx,
 
             #[cfg(msim)]
             sim_state: Default::default(),
@@ -1679,6 +1701,7 @@ impl IkaNode {
         prometheus_registry: &Registry,
         is_notifier: bool,
         on_chain_checkpoint_cursors: ika_network::state_sync::OnChainCheckpointCursors,
+        committees: ika_network::state_sync::CommitteeSource,
         perpetual_tables: Arc<AuthorityPerpetualTables>,
         sui_state_mirror_server: Option<
             ika_network::sui_state_mirror::SuiStateMirrorServer<
@@ -1692,6 +1715,7 @@ impl IkaNode {
             .archive_readers(archive_readers)
             .with_metrics(prometheus_registry)
             .with_on_chain_cursors(on_chain_checkpoint_cursors)
+            .with_committees(committees)
             .build();
 
         let (discovery, discovery_server) = discovery::Builder::new(trusted_peer_change_rx)
@@ -3138,6 +3162,20 @@ impl IkaNode {
             .expect("Reconfigure authority state cannot fail");
         info!(next_epoch, "Node State has been reconfigured");
         assert_eq!(next_epoch, new_epoch_store.epoch());
+
+        // Keep the outgoing committee as `previous`: a checkpoint certified in
+        // the epoch we just left is still legitimate and must stay verifiable.
+        let previous = self
+            .state_sync_committee_tx
+            .borrow()
+            .as_ref()
+            .map(|committees| committees.current.clone());
+        let _ = self
+            .state_sync_committee_tx
+            .send(Some(ika_network::state_sync::SyncCommittees {
+                current: new_epoch_store.committee().clone(),
+                previous,
+            }));
 
         new_epoch_store
     }

@@ -897,10 +897,23 @@ where
     ) -> Vec<u8> {
         let committee_size = active_committee.members.len();
         let mut signers_bitmap = vec![0u8; committee_size.div_ceil(8)];
-        for singer in signers_map.iter() {
+        for signer in signers_map.iter() {
+            // The buffer is sized from the on-chain committee while
+            // `signers_map` is deserialized from the certificate, so the two
+            // are bounded independently. Drop anything outside the committee
+            // rather than indexing on it; the submission then fails the
+            // on-chain quorum check, which is the correct outcome.
+            if signer as usize >= committee_size {
+                warn!(
+                    signer,
+                    committee_size,
+                    "checkpoint certificate names a signer outside the committee; dropping the bit"
+                );
+                continue;
+            }
             // Set the i-th bit to 1,
-            let byte_index = (singer / 8) as usize;
-            let bit_index = singer % 8;
+            let byte_index = (signer / 8) as usize;
+            let bit_index = signer % 8;
             signers_bitmap[byte_index] |= 1u8 << bit_index;
         }
         signers_bitmap

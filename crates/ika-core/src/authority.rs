@@ -537,12 +537,12 @@ impl AuthorityState {
     pub fn tally_protocol_upgrade_votes(
         proposed_protocol_version: ProtocolVersion,
         committee: &Committee,
-        capabilities: Vec<AuthorityCapabilitiesV1>,
+        capabilities: &[AuthorityCapabilitiesV1],
     ) -> Option<Vec<ProtocolUpgradeVoteGroup>> {
         // For each validator, gather the protocol version and system packages that it would like
         // to upgrade to in the next epoch.
         let mut desired_upgrades: Vec<_> = capabilities
-            .into_iter()
+            .iter()
             .filter_map(|cap| {
                 debug!(
                     "validator {:?} supports {:?} with move packages: {:?}",
@@ -556,7 +556,7 @@ impl AuthorityState {
                 // bump.
                 cap.supported_protocol_versions
                     .get_version_digest(proposed_protocol_version)
-                    .map(|digest| (digest, cap.move_contracts_to_upgrade, cap.authority))
+                    .map(|digest| (digest, cap.move_contracts_to_upgrade.clone(), cap.authority))
             })
             .collect();
 
@@ -591,44 +591,42 @@ impl AuthorityState {
         )
     }
 
+    /// `None` when no same-(digest, contracts) vote group for
+    /// `proposed_protocol_version` reaches the effective threshold — including
+    /// the case where nobody votes for the version at all.
     fn is_protocol_version_supported_v1(
         proposed_protocol_version: ProtocolVersion,
         committee: &Committee,
-        capabilities: Vec<AuthorityCapabilitiesV1>,
+        capabilities: &[AuthorityCapabilitiesV1],
         buffer_stake_bps: u64,
-    ) -> (Option<AuthorityCapabilitiesVotingResults>, bool) {
+    ) -> Option<AuthorityCapabilitiesVotingResults> {
         let effective_threshold =
             Self::protocol_upgrade_effective_threshold(committee, buffer_stake_bps);
 
-        let Some(vote_groups) =
-            Self::tally_protocol_upgrade_votes(proposed_protocol_version, committee, capabilities)
-        else {
-            return (None, true);
-        };
+        let vote_groups =
+            Self::tally_protocol_upgrade_votes(proposed_protocol_version, committee, capabilities)?;
 
-        let res =
-            vote_groups
-                .into_iter()
-                .find_map(|(digest, move_contracts_to_upgrade, total_votes)| {
-                    let has_support = total_votes >= effective_threshold;
+        vote_groups
+            .into_iter()
+            .find_map(|(digest, move_contracts_to_upgrade, total_votes)| {
+                let has_support = total_votes >= effective_threshold;
 
-                    info!(
-                        protocol_config_digest = ?digest,
-                        ?total_votes,
-                        ?buffer_stake_bps,
-                        ?effective_threshold,
-                        ?proposed_protocol_version,
-                        ?move_contracts_to_upgrade,
-                        has_support,
-                        "checking support for upgrade"
-                    );
+                info!(
+                    protocol_config_digest = ?digest,
+                    ?total_votes,
+                    ?buffer_stake_bps,
+                    ?effective_threshold,
+                    ?proposed_protocol_version,
+                    ?move_contracts_to_upgrade,
+                    has_support,
+                    "checking support for upgrade"
+                );
 
-                    has_support.then_some(AuthorityCapabilitiesVotingResults {
-                        protocol_version: proposed_protocol_version,
-                        move_contracts_to_upgrade,
-                    })
-                });
-        (res, false)
+                has_support.then_some(AuthorityCapabilitiesVotingResults {
+                    protocol_version: proposed_protocol_version,
+                    move_contracts_to_upgrade,
+                })
+            })
     }
 
     pub(crate) fn choose_highest_protocol_version_and_move_contracts_upgrades_v1(
@@ -637,33 +635,29 @@ impl AuthorityState {
         capabilities: Vec<AuthorityCapabilitiesV1>,
         buffer_stake_bps: u64,
     ) -> AuthorityCapabilitiesVotingResults {
+        // Walk upward from the current version and stop at the first version
+        // that fails the effective threshold, mirroring upstream. Capability
+        // messages describe a contiguous version range, so a version cannot
+        // regain quorum after a gap and the chosen version is unchanged, while
+        // the number of iterations now follows the committee's votes rather
+        // than the length of any one member's advertised list.
         let mut next_protocol_version = current_protocol_version;
-        let mut versions = vec![];
-        let mut completed = false;
+        let mut last_supported = None;
 
-        while !completed {
-            let (version, current_completed) = Self::is_protocol_version_supported_v1(
-                next_protocol_version,
-                committee,
-                capabilities.clone(),
-                buffer_stake_bps,
-            );
-            completed = current_completed;
-            versions.push(version);
+        while let Some(supported) = Self::is_protocol_version_supported_v1(
+            next_protocol_version,
+            committee,
+            &capabilities,
+            buffer_stake_bps,
+        ) {
+            last_supported = Some(supported);
             next_protocol_version = next_protocol_version + 1;
         }
 
-        let versions = versions.into_iter().flatten().collect_vec();
-        let last_version = versions.into_iter().last();
-
-        if let Some(version) = last_version {
-            version
-        } else {
-            AuthorityCapabilitiesVotingResults {
-                protocol_version: current_protocol_version,
-                move_contracts_to_upgrade: vec![],
-            }
-        }
+        last_supported.unwrap_or(AuthorityCapabilitiesVotingResults {
+            protocol_version: current_protocol_version,
+            move_contracts_to_upgrade: vec![],
+        })
     }
 
     pub fn unixtime_now_ms() -> u64 {

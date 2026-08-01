@@ -398,9 +398,12 @@ pub(crate) struct DWalletMPCManager {
     /// to determine the network's idle status.
     pub(crate) idle_status_by_party: HashMap<PartyID, bool>,
 
-    /// Tracks which parties have seen each presign request, keyed by sequence number.
-    /// When a presign request reaches majority, it's moved to `completed_presign_sequence_numbers`.
-    presign_request_votes: HashMap<u64, HashSet<PartyID>>,
+    /// Tracks which parties have announced each presign request, keyed by the
+    /// full request body: the body is what gets served and checkpointed, so it
+    /// is what has to reach quorum. When a body reaches majority its sequence
+    /// number moves to `completed_presign_sequence_numbers` and any other body
+    /// recorded for that sequence number is dropped.
+    presign_request_votes: HashMap<GlobalPresignRequest, HashSet<PartyID>>,
 
     /// Sequence numbers of presign requests that have reached majority vote.
     /// Once completed, we don't record new votes for these requests.
@@ -1246,17 +1249,23 @@ impl DWalletMPCManager {
                 continue;
             }
 
-            // Add this party's vote for this presign request.
-            let parties = self
-                .presign_request_votes
-                .entry(sequence_number)
-                .or_default();
+            // Agreement is content-addressed: a party votes for a specific
+            // request body, not merely for its sequence number. Honest
+            // validators derive the body from the same Sui event, so they
+            // announce byte-identical requests and the agreed body is
+            // unchanged.
+            let parties = self.presign_request_votes.entry(request).or_default();
             parties.insert(sender_party_id);
 
-            // Check if the parties that voted form an authorized subset.
+            // Check if the parties that voted for THIS body form an authorized subset.
             if self.access_structure.is_authorized_subset(parties).is_ok() {
                 self.completed_presign_sequence_numbers
                     .insert(sequence_number);
+                // Any other body recorded for this sequence number can no
+                // longer be agreed, so drop its tally rather than holding it
+                // until the epoch ends.
+                self.presign_request_votes
+                    .retain(|voted, _| voted.session_sequence_number != sequence_number);
                 agreed_presign_requests.push(request);
                 debug!(
                     sequence_number,

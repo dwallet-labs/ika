@@ -51,6 +51,7 @@ use anemo::{PeerId, Request, Response, Result, types::PeerEvent};
 use futures::{FutureExt, StreamExt};
 use ika_config::p2p::StateSyncConfig;
 use ika_types::{
+    committee::{Committee, EpochId},
     digests::DWalletCheckpointMessageDigest,
     messages_dwallet_checkpoint::{
         CertifiedDWalletCheckpointMessage, DWalletCheckpointSequenceNumber,
@@ -92,6 +93,38 @@ pub struct OnChainCheckpointCursors {
     pub dwallet: watch::Receiver<Option<DWalletCheckpointSequenceNumber>>,
     pub system: watch::Receiver<Option<SystemCheckpointSequenceNumber>>,
 }
+
+/// The committees pull-mode sync verifies peer-supplied certificates against.
+///
+/// Carries the previous epoch's committee alongside the current one: a
+/// certificate signed just before an epoch boundary is still legitimate once
+/// this node has already entered the new epoch, and dropping it would stall
+/// sync across every boundary.
+#[derive(Clone, Debug)]
+pub struct SyncCommittees {
+    pub current: Arc<Committee>,
+    pub previous: Option<Arc<Committee>>,
+}
+
+impl SyncCommittees {
+    /// The committee that signed at `epoch`, if this node holds it.
+    pub fn for_epoch(&self, epoch: EpochId) -> Option<&Committee> {
+        std::iter::once(&self.current)
+            .chain(self.previous.iter())
+            .map(Arc::as_ref)
+            .find(|committee| committee.epoch() == epoch)
+    }
+}
+
+/// Live feed of [`SyncCommittees`], fed by the node on boot and on every
+/// reconfiguration.
+///
+/// `None` until the node has read its first committee. That window is real
+/// rather than theoretical: a peer-only node builds the p2p stack *in order
+/// to* read the committee over the OCS relay, so it necessarily starts with
+/// nothing to check against. Sync defers while the feed is `None`; bootstrap
+/// itself does not depend on pull-mode sync, so deferring costs nothing.
+pub type CommitteeSource = watch::Receiver<Option<SyncCommittees>>;
 
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.StateSync.rs"));
@@ -537,6 +570,7 @@ struct StateSyncEventLoop<S> {
     system_checkpoint_download_limit_layer: Option<SystemCheckpointDownloadLimitLayer>,
     sync_system_checkpoint_from_archive_task: Option<AbortHandle>,
     on_chain_cursors: Option<OnChainCheckpointCursors>,
+    committees: CommitteeSource,
 }
 
 impl<S> StateSyncEventLoop<S>
@@ -902,6 +936,7 @@ where
                 self.config.dwallet_checkpoint_header_download_concurrency(),
                 self.config.timeout(),
                 on_chain_cursor,
+                self.committees.clone(),
                 // The if condition should ensure that this is Some
                 highest_known_checkpoint.unwrap(),
             )
@@ -968,6 +1003,7 @@ where
                 self.config.system_checkpoint_header_download_concurrency(),
                 self.config.timeout(),
                 on_chain_cursor,
+                self.committees.clone(),
                 // The if condition should ensure that this is Some
                 highest_known_system_checkpoint.unwrap(),
             )
@@ -1197,6 +1233,7 @@ async fn sync_to_checkpoint<S>(
     checkpoint_header_download_concurrency: usize,
     timeout: Duration,
     on_chain_processed_cursor: DWalletCheckpointSequenceNumber,
+    committees: CommitteeSource,
     checkpoint: CertifiedDWalletCheckpointMessage,
 ) -> Result<()>
 where
@@ -1313,14 +1350,25 @@ where
         .pipe(futures::stream::iter)
         .buffered(checkpoint_header_download_concurrency);
 
-    while let Some((maybe_checkpoint, next, _maybe_peer_id)) = request_stream.next().await {
+    while let Some((maybe_checkpoint, next, maybe_peer_id)) = request_stream.next().await {
         assert_eq!(expected_sequence_number, next);
         expected_sequence_number = next.checked_add(1).expect("exhausted u64");
 
-        // We can't verify the checkpoint
-        let checkpoint = maybe_checkpoint
-            .map(VerifiedDWalletCheckpointMessage::new_unchecked)
+        let certified = maybe_checkpoint
             .ok_or_else(|| anyhow::anyhow!("no peers were able to help sync checkpoint {next}"))?;
+
+        // Check the committee signature before the certificate reaches the
+        // store. Everything downstream treats a stored certificate as
+        // authoritative: it is persisted, it moves the highest-verified
+        // watermark, and those rows are read back to build on-chain
+        // submissions.
+        let checkpoint = verify_certified_dwallet_checkpoint(
+            certified,
+            &committees,
+            &peer_heights,
+            maybe_peer_id,
+            next,
+        )?;
 
         debug!(checkpoint_seq = ?checkpoint.sequence_number(), "verified checkpoint summary");
 
@@ -1337,6 +1385,78 @@ where
         .cleanup_old_checkpoints(*checkpoint.sequence_number());
 
     Ok(())
+}
+
+/// Verifies a peer-supplied dWallet checkpoint certificate against the
+/// committee that actually signed it.
+///
+/// On failure the row is dropped from `peer_heights` and the serving peer is
+/// marked as not on our chain, so the retry reaches for a different one — the
+/// same handling upstream Sui applies to a failed summary.
+fn verify_certified_dwallet_checkpoint(
+    certified: CertifiedDWalletCheckpointMessage,
+    committees: &CommitteeSource,
+    peer_heights: &Arc<RwLock<PeerHeights>>,
+    maybe_peer_id: Option<PeerId>,
+    sequence_number: DWalletCheckpointSequenceNumber,
+) -> Result<VerifiedDWalletCheckpointMessage> {
+    let signature_epoch = certified.auth_sig().epoch;
+    let Some(committees) = committees.borrow().clone() else {
+        return Err(anyhow::anyhow!(
+            "no committee known yet; deferring verification of checkpoint {sequence_number}"
+        ));
+    };
+    let Some(committee) = committees.for_epoch(signature_epoch) else {
+        return Err(anyhow::anyhow!(
+            "no committee for epoch {signature_epoch} available to verify checkpoint \
+             {sequence_number}"
+        ));
+    };
+    let digest = *certified.digest();
+    certified.try_into_verified(committee).map_err(|e| {
+        let mut peer_heights = peer_heights.write().unwrap();
+        peer_heights.remove_checkpoint(&digest);
+        if let Some(peer_id) = maybe_peer_id {
+            peer_heights.mark_peer_as_not_on_same_chain(peer_id);
+        }
+        anyhow::anyhow!(
+            "peer-supplied checkpoint {sequence_number} failed committee verification: {e}"
+        )
+    })
+}
+
+/// System-checkpoint twin of [`verify_certified_dwallet_checkpoint`].
+fn verify_certified_system_checkpoint(
+    certified: CertifiedSystemCheckpointMessage,
+    committees: &CommitteeSource,
+    peer_heights: &Arc<RwLock<PeerHeights>>,
+    maybe_peer_id: Option<PeerId>,
+    sequence_number: SystemCheckpointSequenceNumber,
+) -> Result<VerifiedSystemCheckpointMessage> {
+    let signature_epoch = certified.auth_sig().epoch;
+    let Some(committees) = committees.borrow().clone() else {
+        return Err(anyhow::anyhow!(
+            "no committee known yet; deferring verification of system_checkpoint \
+             {sequence_number}"
+        ));
+    };
+    let Some(committee) = committees.for_epoch(signature_epoch) else {
+        return Err(anyhow::anyhow!(
+            "no committee for epoch {signature_epoch} available to verify system_checkpoint \
+             {sequence_number}"
+        ));
+    };
+    let digest = *certified.digest();
+    certified.try_into_verified(committee).map_err(|e| {
+        let mut peer_heights = peer_heights.write().unwrap();
+        peer_heights.remove_system_checkpoint(&digest);
+        if let Some(peer_id) = maybe_peer_id {
+            peer_heights.mark_peer_as_not_on_same_chain(peer_id);
+        }
+        anyhow::anyhow!(
+            "peer-supplied system_checkpoint {sequence_number} failed committee verification: {e}"
+        )
+    })
 }
 
 async fn sync_checkpoint_messages_from_archive<S>(archive_readers: ArchiveReaderBalancer, store: S)
@@ -1670,6 +1790,7 @@ async fn sync_to_system_checkpoint<S>(
     system_checkpoint_header_download_concurrency: usize,
     timeout: Duration,
     on_chain_processed_cursor: SystemCheckpointSequenceNumber,
+    committees: CommitteeSource,
     system_checkpoint: CertifiedSystemCheckpointMessage,
 ) -> Result<()>
 where
@@ -1781,16 +1902,24 @@ where
         .pipe(futures::stream::iter)
         .buffered(system_checkpoint_header_download_concurrency);
 
-    while let Some((maybe_system_checkpoint, next, _maybe_peer_id)) = request_stream.next().await {
+    while let Some((maybe_system_checkpoint, next, maybe_peer_id)) = request_stream.next().await {
         assert_eq!(expected_sequence_number, next);
         expected_sequence_number = next.checked_add(1).expect("exhausted u64");
 
-        // We can't verify the system_checkpoint
-        let system_checkpoint = maybe_system_checkpoint
-            .map(VerifiedSystemCheckpointMessage::new_unchecked)
-            .ok_or_else(|| {
-                anyhow::anyhow!("no peers were able to help sync system_checkpoint {next}")
-            })?;
+        let certified = maybe_system_checkpoint.ok_or_else(|| {
+            anyhow::anyhow!("no peers were able to help sync system_checkpoint {next}")
+        })?;
+
+        // Same trust boundary as the dWallet path: check the committee
+        // signature before the certificate is persisted and allowed to move
+        // the highest-verified watermark.
+        let system_checkpoint = verify_certified_system_checkpoint(
+            certified,
+            &committees,
+            &peer_heights,
+            maybe_peer_id,
+            next,
+        )?;
 
         debug!(system_checkpoint_seq = ?system_checkpoint.sequence_number(), "verified system_checkpoint summary");
 

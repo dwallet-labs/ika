@@ -530,7 +530,19 @@ where
                                     m.validator_id
                                 ))
                             })?;
-                        let info = validator.verified_validator_info();
+                        // The stored key bytes are only length-checked on
+                        // chain, so parsing them can fail. Fail the read and
+                        // let it be retried.
+                        let info = validator.verified_validator_info().map_err(|code| {
+                            self.sui_client_metrics
+                                .sui_rpc_errors
+                                .with_label_values(&["epoch_start_invalid_validator_info"])
+                                .inc();
+                            IkaError::InvalidCommittee(format!(
+                                "validator {} has unparsable on-chain metadata (Move error code {code})",
+                                validator.id
+                            ))
+                        })?;
                         // An active member's mpc_data record is written at candidate
                         // registration and never emptied on chain, so a gap here is
                         // always a read defect (fullnode lag, table-walk race, or a
@@ -559,10 +571,31 @@ where
                                 info.name, validator.id
                             )));
                         };
+                        // Take the BLS protocol key from the FROZEN committee
+                        // member rather than from the validator record. The
+                        // committee is snapshotted mid-epoch from the key that
+                        // was current then, while `rotate_next_epoch_info`
+                        // installs a staged rotation into the record at the
+                        // epoch boundary — so for a validator that rotated, the
+                        // record holds a different key than the committee this
+                        // epoch is actually verified against, and the node's
+                        // per-signature check would disagree with the on-chain
+                        // aggregate check for a full epoch.
+                        let protocol_pubkey = m.parsed_protocol_pubkey().map_err(|e| {
+                            self.sui_client_metrics
+                                .sui_rpc_errors
+                                .with_label_values(&["epoch_start_invalid_committee_pubkey"])
+                                .inc();
+                            IkaError::InvalidCommittee(format!(
+                                "active committee member {} has an unparsable BLS protocol \
+                                 public key: {e}",
+                                m.validator_id
+                            ))
+                        })?;
                         Ok(EpochStartValidatorInfoV1 {
                             name: info.name.clone(),
                             validator_id: validator.id,
-                            protocol_pubkey: info.protocol_pubkey.clone(),
+                            protocol_pubkey,
                             network_pubkey: info.network_pubkey.clone(),
                             consensus_pubkey: info.consensus_pubkey.clone(),
                             mpc_data: Some(mpc_data.clone()),
@@ -1294,7 +1327,12 @@ impl SuiClientInner for SuiSdkClient {
     ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
         let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
-            let info = validator.verified_validator_info();
+            let info = validator.verified_validator_info().map_err(|code| {
+                Error::DataError(format!(
+                    "validator {} has unparsable on-chain metadata (Move error code {code})",
+                    validator.id
+                ))
+            })?;
             let mpc_data_id = if read_next_mpc_data
                 && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
                 && info.previous_mpc_data_bytes.is_none()

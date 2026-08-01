@@ -2778,7 +2778,7 @@ impl AuthorityPerEpochStore {
         let supporting = crate::authority::AuthorityState::tally_protocol_upgrade_votes(
             self.protocol_version() + 1,
             committee,
-            capabilities,
+            &capabilities,
         )
         .map(|groups| {
             groups
@@ -4474,7 +4474,7 @@ impl AuthorityPerEpochStore {
     /// Important: This function can potentially be called in parallel and you can not rely on order of transactions to perform verification
     /// If this function return an error, transaction is skipped and is not passed to handle_consensus_transaction
     /// This function returns unit error and is responsible for emitting log messages for internal errors
-    fn verify_consensus_transaction(
+    pub(crate) fn verify_consensus_transaction(
         &self,
         transaction: SequencedConsensusTransaction,
         skipped_consensus_txns: &IntCounter,
@@ -4764,7 +4764,7 @@ impl AuthorityPerEpochStore {
         C: DWalletCheckpointServiceNotify,
     >(
         &self,
-        transactions: Vec<SequencedConsensusTransaction>,
+        verified_transactions: Vec<VerifiedSequencedConsensusTransaction>,
         consensus_stats: &ExecutionIndicesWithStats,
         checkpoint_service: &Option<Arc<C>>,
         system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
@@ -4774,16 +4774,6 @@ impl AuthorityPerEpochStore {
         Vec<DWalletCheckpointMessageKind>,
         Vec<SystemCheckpointMessageKind>,
     )> {
-        let verified_transactions: Vec<_> = transactions
-            .into_iter()
-            .filter_map(|transaction| {
-                self.verify_consensus_transaction(
-                    transaction,
-                    &authority_metrics.skipped_consensus_txns,
-                )
-            })
-            .collect();
-
         let mut output = ConsensusCommitOutput::new(consensus_commit_info.round);
 
         // Epoch consensus clock: advance the in-memory running max of

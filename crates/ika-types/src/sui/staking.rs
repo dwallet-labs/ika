@@ -234,9 +234,13 @@ pub enum PoolState {
 }
 
 impl StakingPool {
-    pub fn verified_validator_info(&self) -> &VerifiedValidatorInfo {
-        // Todo (#1298): Remove unwrap.
+    /// Parses and caches this pool's validator metadata.
+    ///
+    /// Fallible on purpose: the stored key bytes are only length-checked on
+    /// chain, so parsing them can fail. Returning the Move error code lets the
+    /// caller fail the chain read and retry.
+    pub fn verified_validator_info(&self) -> Result<&VerifiedValidatorInfo, u64> {
         self.verified_validator_info
-            .get_or_init(|| self.validator_info.verify().unwrap()) // Why unwrap? this could fail
+            .get_or_try_init(|| self.validator_info.verify())
     }
 }
