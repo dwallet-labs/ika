@@ -65,7 +65,7 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 child processes against an external `sui` localnet. Manual dispatch remains
 available. Pull requests that touch MPC, crypto dependencies, serialization,
 protocol configuration, the upgrade harness, or `Cargo.lock` automatically
-run the `v6_rollout` deployed-release gate rather than the entire matrix.
+run the `v127_rollout` deployed-release gate rather than the entire matrix.
 The protocol-version *transition* gate is `v127_v7_upgrade`: dispatch it by
 hand for any change that gates behavior on a protocol version, and before
 voting v7 onto a live network.
@@ -74,7 +74,7 @@ voting v7 onto a live network.
 > #1891).** It previously called this workflow with the candidate SHA and
 > blocked tag publication on `v118_mixed_rollout`; that job was removed, so
 > a release tag now builds, uploads and drafts **unconditionally**.
-> Validating a release candidate is a manual step: dispatch `v6_rollout`
+> Validating a release candidate is a manual step: dispatch `v127_rollout`
 > (the deployed-release compatibility gate) plus the cluster and
 > Rust-integration suites against the exact tagged SHA and record the runs
 > in the draft's Validation section (the notes scaffold prompts for it). A
@@ -92,11 +92,25 @@ v1.2.5-based `v125_rollout`, `v125_churn`, `malicious_v125`, and the two
 version-transition gates, which were retargeted rather than dropped:
 `v125_v6_upgrade` -> `v127_v7_upgrade`, and the in-process
 `protocol_version_transition` cluster test now walks v6 -> v7. Their
-successors are `v6_rollout`/`v127_churn`/`malicious_v127`
+successors are `v127_rollout`/`v127_churn`/`malicious_v127`
 (below), which play the same mixed-committee gate against the CURRENTLY
 deployed release (v1.2.7, both networks, protocol v6) — a pure binary swap
 with no protocol transition. (Historical `cross_binary` 96 GiB runner-OOM
 forensics and its infra fix: this playbook's pre-#1751 history.)
+
+**Retarget the `v12X_*` family whenever the deployed release moves.** The
+scenario names carry the OLD BINARY's release, not the protocol version,
+so that this maintenance is visible rather than silent: when v1.2.8 is
+deployed, `v127_rollout`/`v127_churn`/`malicious_v127` become
+`v128_rollout`/`v128_churn`/`malicious_v128` with
+`old_ref=release/mainnet-v1.2.8`, exactly as the `v125_*` set became the
+`v127_*` set. Naming a gate after the protocol version instead is what
+produced the incomplete rename this convention now guards against: a
+scenario briefly called `v6_rollout` left the workflow's real-crypto and
+production-pool-sizing guards pointing at a name that no longer existed,
+so both silently stopped covering the PR-default gate. A name that stays
+superficially correct while the thing it tests changes underneath is
+worse than one that visibly goes stale.
 
 ```bash
 # `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
@@ -118,7 +132,7 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 # by hand on every release tag): boot the literal v1.2.7 release, upgrade
 # one validator to current, converge two mixed aggregated reshares
 # (per-authority byte-equality, zero malicious), then swap the rest.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v6_rollout
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_rollout
 #   override the old side:  -f old_ref=release/mainnet-v1.2.7 -f old_bin_name=ika-validator
 
 # THE PROTOCOL-UPGRADE GATE: the only scenario that crosses a protocol
@@ -135,7 +149,7 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_v7_upgrade
 # Test-test the gate with the compiled-in, feature-gated one-validator
 # reconfiguration-message fault. This run is expected to fail; its logs must
 # show the exact zero-malicious or output-convergence assertion firing.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v6_rollout -f test_testing_fault=true
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_rollout -f test_testing_fault=true
 
 # The standalone test-testing counterpart (green = detection works): honest
 # v1.2.7 committee + one faulty current validator (built in-workflow with
@@ -143,7 +157,7 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v6_rollout -f test_test
 # without it (committee dips to 3).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v127
 
-# v6_rollout's churn counterpart: full swap, then a mirrored OCS joiner
+# v127_rollout's churn counterpart: full swap, then a mirrored OCS joiner
 # folds into the reshared v1.2.7-origin key (4→5) and a shrink reshare
 # removes an original validator (5→4).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_churn
@@ -169,7 +183,7 @@ notifier + a validator committee:
 |---|---|---|
 | `smoke` | current only | process harness reaches epoch 2 |
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
-| `v6_rollout` | **one current + three literal v1.2.7**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
+| `v127_rollout` | **one current + three literal v1.2.7**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `v127_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.7-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `malicious_v127` | three literal v1.2.7 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
 | `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
@@ -181,7 +195,7 @@ quota, a **96 GiB pod memory limit**, and no swap. Each idle `ika-validator`
 runs ≈7.5–8 GB RSS, so co-locating many validators approaches the pod limit —
 the deleted `cross_binary` scenario (5–6 validators) reproducibly OOM-killed
 the runner at that limit (`OOMKilled`/137; forensics in this playbook's
-pre-#1751 history). `v6_rollout` is 4-validator and fits comfortably;
+pre-#1751 history). `v127_rollout` is 4-validator and fits comfortably;
 `v127_churn` peaks at 5 validators during its joiner phase — the same peak
 as the retired `v118_churn`, which passed on these runners (the OOM death
 was specific to `cross_binary`'s heavier 5–6-validator multi-lifecycle
