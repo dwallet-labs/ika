@@ -133,7 +133,7 @@ serialization/schema change, MUST preserve all of the following.
 
 ## Genesis version
 
-Fresh networks genesis at `ProtocolVersion::MAX` (currently 5). The
+Fresh networks genesis at `ProtocolVersion::MAX` (currently 6). The
 genesis network DKG's PVSS keys are served by the current-epoch off-chain
 key assembly (`sui_syncer::sync_next_committee` assembles the CURRENT
 committee's self-announced bundles at genesis), so no upgrade-into-a-
@@ -175,12 +175,13 @@ scenarios that enforced this gate for the v1.1.8→v4 and v1.2.1→v5 rollouts
 `cross_binary`, `malicious_cross_binary`) were retired with protocol v3/v4
 support — the current binary (`MIN_PROTOCOL_VERSION = 5`) shares no protocol
 version with those old binaries, so their topologies cannot boot; both
-rollouts completed on the deployed networks. Their successor is
-`tests/v125_rollout.rs`: the same one-upgraded-validator mixed topology
-against the literal **v1.2.5** release (deployed on mainnet AND testnet,
-protocol v5), where the boundary under test is a pure binary swap. It is
-the PR-gating scenario and the one a release manager dispatches against
-every release tag.
+rollouts completed on the deployed networks. `tests/v125_rollout.rs`
+rehearses the same one-upgraded-validator topology against the literal
+**v1.2.5** release at protocol v5. The current release gate is
+`tests/v6_rollout.rs`, which runs against the literal **v1.2.7** release at
+protocol v6. v1.2.7 can select either coefficient bound; the candidate uses
+strict-only inkrypto, so the two binaries intentionally share only the v6
+strict-bound transcript.
 
 ## How this is verified
 
@@ -197,7 +198,16 @@ drives them across epochs. The surviving scenarios (current build only):
   of four validators to the current build, require two mixed network-key
   reshares to converge byte-identically per authority with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
-  validators and converge again.
+  validators and converge again. This remains a historical v5 gate; a
+  strict-only candidate cannot run it because the binaries intentionally use
+  different coefficient bounds at v5.
+- `tests/v6_rollout.rs` — the current deployed-release compatibility gate:
+  boot the literal v1.2.7 release at genesis protocol v6, upgrade exactly one
+  of four validators to the strict-only candidate, require two mixed
+  network-key reshares to converge byte-identically with zero malicious
+  reports and a served user lifecycle after each, then swap the remaining
+  validators and converge again. The upgrade workflow runs this scenario by
+  default for relevant pull requests and release candidates.
 - `tests/v125_v6_upgrade.rs` — the PROTOCOL-upgrade gate, and the only
   scenario that crosses a protocol version boundary (`v125_rollout` and
   the churn/malicious scenarios are pure binary swaps that stay at v5;

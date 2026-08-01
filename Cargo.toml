@@ -79,18 +79,18 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3"}
+mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f"}
+proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f"}
 # NOTE: the `parallel` (rayon) feature on class_groups/twopc_mpc is enabled per
 # crate under `[target.'cfg(not(msim))'.dependencies]` (see dwallet-classgroups-types
 # and ika-core), NOT here — workspace-dependency features are inherited regardless of
 # cfg, so enabling `parallel` here would leak rayon into `cargo simtest` (cfg msim),
 # whose rayon workers have no msim node context and break determinism / panic.
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "6dca4db3"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "6dca4db3"}
+class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f"}
+group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "3ed95fe74e08419b33c181910a4e163169fffc8f"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "3ed95fe74e08419b33c181910a4e163169fffc8f"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
