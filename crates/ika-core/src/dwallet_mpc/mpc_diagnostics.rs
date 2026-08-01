@@ -196,6 +196,21 @@ pub(crate) enum LocalAuthorityMaliciousReason {
     MaliciousVoterAndReportedByMajorityOutput,
 }
 
+impl LocalAuthorityMaliciousReason {
+    /// A bounded, fixed label for `ika_dwallet_mpc_self_malicious_total`. The
+    /// variants are the whole label domain — never derive this from anything
+    /// operator- or session-specific.
+    pub(crate) fn metric_label(self) -> &'static str {
+        match self {
+            Self::MaliciousVoter => "malicious_voter",
+            Self::ReportedByMajorityOutput => "reported_by_majority_output",
+            Self::MaliciousVoterAndReportedByMajorityOutput => {
+                "malicious_voter_and_reported_by_majority_output"
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub(crate) enum SessionDiagnosticEvent {

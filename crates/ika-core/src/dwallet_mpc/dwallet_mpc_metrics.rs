@@ -219,6 +219,24 @@ pub struct DWalletMPCMetrics {
     /// so these are counted here — NOT in the anomaly taxonomy — to keep
     /// `anomaly_snapshots_total` meaningful. Labels: `race` (fixed condition
     /// strings), `session_type`.
+    /// This validator concluded that IT ITSELF is malicious for a session —
+    /// its own output diverged from the peers' quorum, or the majority output
+    /// reported it. Fleet-visible by design: until this counter existed the
+    /// conclusion lived only in one operator's `error!` log, so a validator
+    /// silently dropping out of MPC was invisible to everyone else on the
+    /// network.
+    ///
+    /// Not an invariant violation — this is a REAL condition a correct binary
+    /// can reach (a genuine divergence, a wire-format disagreement across an
+    /// upgrade), so it is deliberately kept out of
+    /// `ika_invariant_violations_total`, which means "should never happen".
+    ///
+    /// Labels are fixed enums: `reason` (the three
+    /// `LocalAuthorityMaliciousReason` variants, or `unspecified`) and
+    /// `session_type`. Never a session id, authority, or digest — those are
+    /// unbounded and identify operators.
+    pub(crate) self_malicious_total: IntCounterVec,
+
     pub(crate) completion_races_total: IntCounterVec,
 
     /// Consensus-delivered MPC messages ignored because the local session was
@@ -606,6 +624,13 @@ impl DWalletMPCMetrics {
                 "ika_dwallet_mpc_anomaly_triggers_total",
                 "Trigger conditions included in emitted privacy-safe MPC anomaly snapshots",
                 &["trigger", "session_type"],
+                registry,
+            )
+            .unwrap(),
+            self_malicious_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_self_malicious_total",
+                "Sessions for which this validator recognized ITSELF as malicious, by reason and session type",
+                &["reason", "session_type"],
                 registry,
             )
             .unwrap(),
