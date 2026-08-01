@@ -8,9 +8,10 @@ use crate::dwallet_mpc::crytographic_computation::{
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::{
     AGE_BUCKET_OVERFLOW, AGE_BUCKETS, ALL_SESSION_STATES, ALL_SESSION_TYPES, DWalletMPCMetrics,
-    READY_RESULT_ERR, READY_RESULT_NOT_READY, READY_RESULT_READY, SESSION_STATE_ACTIVE,
-    SESSION_STATE_COMPLETED, SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED,
-    SESSION_STATE_WAITING_FOR_REQUEST, optional_session_type_label, session_type_label,
+    KEY_ROLE_NETWORK_OWNED_ADDRESS_SIGNING, KEY_ROLE_OTHER, READY_RESULT_ERR,
+    READY_RESULT_NOT_READY, READY_RESULT_READY, SESSION_STATE_ACTIVE, SESSION_STATE_COMPLETED,
+    SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED, SESSION_STATE_WAITING_FOR_REQUEST,
+    optional_session_type_label, session_type_label,
 };
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
@@ -548,12 +549,36 @@ pub(crate) struct DWalletMPCManager {
     /// PROVIDED the start skew stays under one batch lifecycle. A validator
     /// entering a pool only after a full batch quorum-completed elsewhere
     /// (mid-epoch restart, very late install) would otherwise be permanently
-    /// ordinal-offset for that pool (#1952): the counter is in-memory, so it
-    /// is seeded on first touch from the persisted
-    /// `filled_presign_pool_slots` high-water, and the mint path
-    /// fast-forwards across ordinals whose sessions are already terminal —
-    /// see `instantiate_internal_presign_session`.
+    /// ordinal-offset for that pool (#1952, #1830): the counter is in-memory,
+    /// so it is seeded on first touch from the persisted
+    /// `filled_presign_pool_slots` high-water and the consensus completion
+    /// frontier (`highest_completed_internal_presign_ordinal`), the same
+    /// frontier fast-forwards it whenever it falls inside already-completed
+    /// history, and the mint path fast-forwards across ordinals whose
+    /// sessions are already terminal — see
+    /// `observe_completed_internal_presign_ordinal` and
+    /// `instantiate_internal_presign_session`.
     pub(crate) next_internal_presign_sequence_number:
+        HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
+
+    /// Highest internal-presign ordinal the CONSENSUS STREAM has shown
+    /// completed for a pool — the committee's live-window frontier, per
+    /// (network key, curve, signature algorithm).
+    ///
+    /// Taken from the `session_sequence_number` that every completed
+    /// internal-presign output carries, so it is consensus-anchored data every
+    /// validator holds no matter what it instantiated itself. That is what
+    /// makes it the one convergence source with no local precondition: the
+    /// persisted fill high-water needs this validator's own epoch store to
+    /// hold the epoch's fills, and the mint-path terminal skip needs its
+    /// session map to hold the epoch's reconstructed sessions. A validator
+    /// with neither — a fresh or state-synced store, an epoch entered late —
+    /// has only this (#1830).
+    ///
+    /// Read in `instantiate_internal_presign_session` (seed) and in
+    /// `observe_completed_internal_presign_ordinal` (fast-forward), and
+    /// exported as the reference of the `internal_presign_ordinal_lag` gauge.
+    pub(crate) highest_completed_internal_presign_ordinal:
         HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// Pools whose ordinal stream was seeded from a persisted fill high-water
@@ -805,6 +830,7 @@ impl DWalletMPCManager {
             untracked_anomalies: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: HashMap::new(),
+            highest_completed_internal_presign_ordinal: HashMap::new(),
             internal_presign_restart_seeded_pools: HashSet::new(),
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
@@ -2446,9 +2472,9 @@ impl DWalletMPCManager {
                 let current_pool_size =
                     self.internal_presign_pool_size(key_id, curve, signature_algorithm);
                 let key_role = if is_network_owned_address_signing_presign {
-                    "network_owned_address_signing"
+                    KEY_ROLE_NETWORK_OWNED_ADDRESS_SIGNING
                 } else {
-                    "other"
+                    KEY_ROLE_OTHER
                 };
                 let curve_label = curve.to_string();
                 let signature_algorithm_label = signature_algorithm.to_string();
@@ -2460,6 +2486,34 @@ impl DWalletMPCManager {
                         key_role,
                     ])
                     .set(current_pool_size as i64);
+
+                // How far this validator's next mint trails the committee's
+                // completed frontier — the ordinal-stream divergence that is
+                // otherwise invisible from outside the process (#1830). A pool
+                // is minted before it completes, so a participating validator
+                // sits at-or-ahead of the frontier and this reads 0; a pool
+                // this process has never minted for has no stream to be
+                // offset from and also reads 0.
+                let ordinal_lag = self
+                    .next_internal_presign_sequence_number
+                    .get(&(network_key_id, curve, signature_algorithm))
+                    .map(|next| {
+                        self.highest_completed_internal_presign_ordinal
+                            .get(&(network_key_id, curve, signature_algorithm))
+                            .copied()
+                            .unwrap_or(0)
+                            .saturating_add(1)
+                            .saturating_sub(*next)
+                    })
+                    .unwrap_or(0);
+                self.dwallet_mpc_metrics
+                    .internal_presign_ordinal_lag
+                    .with_label_values(&[
+                        curve_label.as_str(),
+                        signature_algorithm_label.as_str(),
+                        key_role,
+                    ])
+                    .set(ordinal_lag as i64);
 
                 // Skip instantiation if previous sessions for this (curve, algorithm)
                 // haven't completed yet. Each session produces a variable number of
@@ -2624,6 +2678,127 @@ impl DWalletMPCManager {
             .or_else(|| network_key_id_for(dwallet_network_encryption_key_id))
     }
 
+    /// The bounded metric label standing in for a pool's network key: the key
+    /// that serves network-owned-address signing, or any other key.
+    fn internal_presign_key_role(
+        &self,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> &'static str {
+        if self.network_owned_address_signing_network_encryption_key_id()
+            == Some(dwallet_network_encryption_key_id)
+        {
+            KEY_ROLE_NETWORK_OWNED_ADDRESS_SIGNING
+        } else {
+            KEY_ROLE_OTHER
+        }
+    }
+
+    /// Absorbs a completed internal-presign ordinal observed in the consensus
+    /// stream: records the pool's completion frontier, and fast-forwards this
+    /// validator's mint counter past it when the counter has fallen inside
+    /// already-completed history (#1830).
+    ///
+    /// Why the counter can be behind at all: it is in-memory and re-derived
+    /// per process, while the pool's ordinal stream belongs to the epoch. A
+    /// validator that joins a pool's stream late — mid-epoch restart, a very
+    /// late key install, an epoch entered late, a state-synced or otherwise
+    /// empty epoch store — starts minting ordinals the committee finished
+    /// long ago. Those mints can never produce live work (peers early-return
+    /// on an already-resolved identifier) and the offset advances in lockstep
+    /// with the live window, so without a heal the validator contributes
+    /// nothing to that pool for the rest of the epoch.
+    ///
+    /// Why THIS is the heal that always applies: the two other convergence
+    /// sources have local preconditions the wedge can remove — the seed reads
+    /// this validator's persisted `filled_presign_pool_slots`, and the mint
+    /// path's terminal skip walks this validator's session map (bounded per
+    /// mint, and only while a top-up is actually firing). The completed
+    /// ordinal here rides the sequenced output stream itself, so it is held
+    /// by every validator that processes the round, whatever its local state,
+    /// and it lands the counter in one step rather than one ordinal at a time.
+    ///
+    /// Committee-uniform by construction: the rule reads only consensus-agreed
+    /// data (`session_sequence_number` of a quorum-agreed output), and it can
+    /// only move a counter FORWARD to one past an ordinal the committee has
+    /// already completed — never past what peers have minted, and never
+    /// backwards over a validator that is already at the frontier.
+    ///
+    /// Batches complete out of sequence order, so the jump can also skip a
+    /// still-in-flight ordinal that sits below the frontier: a lagging
+    /// validator gives up joining at most that one batch late, keeping the
+    /// n-1 peers already in those sessions. That is the same trade the
+    /// persisted-high-water seed already makes (`high_water + 1` skips the
+    /// same in-flight ordinals), deliberately kept identical so a pool's
+    /// rejoin point does not depend on which source repaired the counter.
+    fn observe_completed_internal_presign_ordinal(
+        &mut self,
+        network_key_id: NetworkKeyId,
+        dwallet_network_encryption_key_id: ObjectID,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_sequence_number: u64,
+    ) {
+        let counter_key = (network_key_id, curve, signature_algorithm);
+        let frontier = self
+            .highest_completed_internal_presign_ordinal
+            .entry(counter_key)
+            .or_insert(0);
+        *frontier = (*frontier).max(session_sequence_number);
+        let frontier = *frontier;
+
+        // Only an EXISTING counter is fast-forwarded here. A pool this process
+        // has never minted for has no stream to converge yet; it is born in
+        // `instantiate_internal_presign_session`, which seeds it from this
+        // same frontier together with the persisted fill high-water (the
+        // frontier alone would miss the pre-adoption part of a restart replay,
+        // which fills slots without resolving the key).
+        let Some(next) = self
+            .next_internal_presign_sequence_number
+            .get_mut(&counter_key)
+        else {
+            return;
+        };
+        if *next > frontier {
+            return;
+        }
+        let fast_forwarded = frontier + 1 - *next;
+        let resumed_at_sequence_number = frontier + 1;
+        *next = resumed_at_sequence_number;
+
+        let key_role = self.internal_presign_key_role(dwallet_network_encryption_key_id);
+        self.dwallet_mpc_metrics
+            .internal_presign_ordinals_fast_forwarded_total
+            .with_label_values(&[
+                curve.to_string().as_str(),
+                signature_algorithm.to_string().as_str(),
+                key_role,
+            ])
+            .inc_by(fast_forwarded);
+
+        // A multi-ordinal jump is the rejoin itself — at most one per lag
+        // episode, so it is worth a line. The +1 dribble that follows on a
+        // validator not minting for the pool at all would be one line per peer
+        // completion; the counter metric carries that shape instead.
+        if fast_forwarded > 1 {
+            info!(
+                ?curve,
+                ?signature_algorithm,
+                ?dwallet_network_encryption_key_id,
+                fast_forwarded,
+                resumed_at_sequence_number,
+                "internal-presign ordinal stream fast-forwarded to the committee's completed \
+                 frontier observed in consensus"
+            );
+        } else {
+            debug!(
+                ?curve,
+                ?signature_algorithm,
+                resumed_at_sequence_number,
+                "internal-presign ordinal stream advanced to the committee's completed frontier"
+            );
+        }
+    }
+
     fn instantiate_internal_presign_session(
         &mut self,
         consensus_round: u64,
@@ -2649,34 +2824,53 @@ impl DWalletMPCManager {
             .next_internal_presign_sequence_number
             .contains_key(&counter_key)
         {
-            let seed = match self.epoch_store.max_filled_presign_pool_slot(
+            let persisted_high_water = match self.epoch_store.max_filled_presign_pool_slot(
                 signature_algorithm,
                 dwallet_network_encryption_key_id,
             ) {
-                Ok(Some(high_water)) => {
-                    info!(
-                        ?curve,
-                        ?signature_algorithm,
-                        ?dwallet_network_encryption_key_id,
-                        high_water,
-                        "seeded internal-presign ordinal stream from the persisted \
-                         pool-slot high-water (mid-epoch restart resume)",
-                    );
-                    self.internal_presign_restart_seeded_pools
-                        .insert(counter_key);
-                    high_water.saturating_add(1)
-                }
-                Ok(None) => 1,
+                Ok(high_water) => high_water,
                 Err(e) => {
                     warn!(
                         error=?e,
                         ?curve,
                         ?signature_algorithm,
                         "failed to read the persisted pool-slot high-water; seeding the \
-                         internal-presign ordinal stream from 1 (fast-forward will converge)",
+                         internal-presign ordinal stream from the consensus completion \
+                         frontier alone",
                     );
-                    1
+                    None
                 }
+            };
+            // The consensus-observed frontier covers what the persisted
+            // high-water cannot: a store that never held this epoch's fills at
+            // all (state-synced, wiped, or an epoch entered late), and fills
+            // whose slot write failed. The persisted high-water covers what
+            // the frontier cannot: a restart replay's completions processed
+            // before the key was adopted, which fill slots but resolve no
+            // `NetworkKeyId` to record a frontier under. Take whichever is
+            // further along (#1952, #1830).
+            let observed_frontier = self
+                .highest_completed_internal_presign_ordinal
+                .get(&counter_key)
+                .copied();
+            let seed = match persisted_high_water.max(observed_frontier) {
+                Some(high_water) => {
+                    info!(
+                        ?curve,
+                        ?signature_algorithm,
+                        ?dwallet_network_encryption_key_id,
+                        high_water,
+                        ?persisted_high_water,
+                        ?observed_frontier,
+                        "seeded internal-presign ordinal stream from the persisted \
+                         pool-slot high-water and the consensus completion frontier \
+                         (mid-epoch resume)",
+                    );
+                    self.internal_presign_restart_seeded_pools
+                        .insert(counter_key);
+                    high_water.saturating_add(1)
+                }
+                None => 1,
             };
             self.next_internal_presign_sequence_number
                 .insert(counter_key, seed);
@@ -4077,6 +4271,15 @@ impl DWalletMPCManager {
                 match self.classify_internal_presign_completion(&dwallet_network_encryption_key_id)
                 {
                     InternalPresignCompletionKey::Resolved(network_key_id) => {
+                        // Consensus-anchored convergence of the pool's ordinal
+                        // stream, before the batch bookkeeping below (#1830).
+                        self.observe_completed_internal_presign_ordinal(
+                            network_key_id,
+                            dwallet_network_encryption_key_id,
+                            curve,
+                            signature_algorithm,
+                            session_sequence_number,
+                        );
                         let instantiated = self
                             .instantiated_internal_presign_sessions
                             .get(&(network_key_id, curve, signature_algorithm))
