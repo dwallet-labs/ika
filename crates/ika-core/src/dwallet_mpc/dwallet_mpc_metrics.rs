@@ -131,8 +131,12 @@ pub struct DWalletMPCMetrics {
     ///
     /// Healthy is 0: a pool is minted before it completes, so the local
     /// counter normally runs AHEAD of the frontier (the difference saturates
-    /// at 0). Sustained positive means the heal is not converging the stream.
-    /// Same bounded `key_role` label reduction as `internal_presign_pool_size`.
+    /// at 0), and a pool this process has never minted for reads 0 as well.
+    /// Published by the top-up loop from the state at the top of a round, so a
+    /// round whose completions heal the stream still publishes the divergence
+    /// it started with and the gauge settles on the next round. Sustained
+    /// positive means the stream is not converging. Same bounded `key_role`
+    /// label reduction as `internal_presign_pool_size`.
     pub(crate) internal_presign_ordinal_lag: IntGaugeVec,
 
     /// Internal-presign ordinals skipped by the consensus-anchored

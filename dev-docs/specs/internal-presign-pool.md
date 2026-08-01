@@ -166,6 +166,8 @@ name it directly:
   key_role}` — ordinals between this validator's next mint and the committee's
   completed frontier. A pool is minted before it completes, so a participating
   validator reads 0; sustained positive means the stream is not converging.
+  Published by the top-up loop from the state at the top of a round, so a
+  round that heals still publishes the divergence it started with.
 - `ika_dwallet_mpc_internal_presign_ordinals_fast_forwarded_total{…}` — ordinals
   skipped to rejoin the frontier. The gauge reads 0 again once a jump lands, so
   this is what shows the condition occurred: one large jump is a validator
