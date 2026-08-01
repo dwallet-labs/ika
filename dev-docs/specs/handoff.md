@@ -130,9 +130,12 @@ next epoch inherits.
   quorum at different commits. Only the sequence-pure tally retires
   that. What it costs: rows staged into a commit whose batch is lost to
   a crash are gone (consensus does not redeliver an already-processed
-  bundle), where a direct write would have kept them — bounded by one
-  commit, and the recovery is the same barrier peer-fetch that already
-  covers a divergent validator. The certificate itself is NOT batched:
+  bundle), where a direct write would have kept them. The WINDOW is one
+  commit; the PAYLOAD is not bounded by one row — a late install drains
+  its whole buffered backlog into a single commit, so a crash there
+  loses every row that drain staged. Recovery is the same barrier
+  peer-fetch that already covers a divergent validator. The
+  certificate itself is NOT batched:
   it goes to perpetual storage the moment it is minted, so a quorum
   that formed before such a crash survives it.
 - **Deferred close**: after the EndOfPublish stake quorum is

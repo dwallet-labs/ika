@@ -3212,6 +3212,17 @@ impl AuthorityPerEpochStore {
         // commit it moves down at has to be a commit, not the wall-clock
         // instant this install happened to run. Idempotent — a crash before
         // the batch leaves the rows to be re-identified on the next install.
+        //
+        // NOT a writer this sweep can catch, and not a regression: a
+        // consensus-arm row verifying against the OUTGOING attestation can be
+        // staged after the snapshot above was cloned, so it survives into the
+        // table under the incoming one. The pre-#1927 code had the identical
+        // window (an insert landing after the sweep had iterated the table),
+        // because both versions decide what is stale from a snapshot the
+        // consensus thread can outrun. Closing it needs the gate to stop
+        // depending on which attestation a row endorses at all — the
+        // sequence-pure tally keyed by attestation digest, not a wider lock
+        // here, which would only move the race to the arm.
         if !stale_signers.is_empty() {
             self.stage_handoff_signature_rows(stale_signers.iter().map(|signer| (*signer, None)));
             info!(
@@ -3987,8 +3998,12 @@ impl AuthorityPerEpochStore {
     /// attestation deletes rows endorsing the superseded one — so the value
     /// can move down as well as up, at commits that differ across validators.
     /// What #1927 changed is that those moves are now attributable to a
-    /// commit, so crash-replay reproduces the gate's input instead of
-    /// resuming from a table that ran ahead of the last committed commit. See
+    /// commit, so crash-replay reproduces the gate's input — ONCE the expected
+    /// attestation is reinstalled — instead of resuming from a table that ran
+    /// ahead of the last committed commit. Replay that outruns the reinstall
+    /// buffers the redelivered bundles and reaches the close later, via the
+    /// drain or the backstop; that is the same off-consensus dependency this
+    /// paragraph opens with, not a separate hazard. See
     /// the call-site NOTE in `decide_deferred_epoch_close` for what holds the
     /// close safe against the residual skew, and
     /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md for the
@@ -5142,7 +5157,8 @@ impl AuthorityPerEpochStore {
                 // Every row now lands in exactly one commit's batch (#1927), so
                 // the gate can no longer be decided against a table that ran
                 // ahead of the last committed commit, and a crash-replay of this
-                // commit re-derives the same input. But WHETHER a row exists at a
+                // commit re-derives the same input once the expected attestation
+                // is reinstalled. But WHETHER a row exists at a
                 // given round still depends on off-consensus state — this
                 // validator's `expected_handoff_attestation` install and its
                 // consensus-pubkey provider (a ~5s background Sui poll); until
