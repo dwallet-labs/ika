@@ -324,19 +324,27 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
                     transaction,
                 };
 
-                let key = sequenced_transaction.key();
-                let in_set = !processed_set.insert(key);
-                let in_cache = self
-                    .processed_cache
-                    .put(sequenced_transaction.key(), ())
-                    .is_some();
+                // Verify before keying the dedup structures, matching the
+                // ordering used upstream: only an authenticated transaction
+                // should occupy a dedup key, since the key is derived from
+                // fields the submitter controls.
+                let Some(verified_transaction) = self.epoch_store.verify_consensus_transaction(
+                    sequenced_transaction,
+                    &self.metrics.skipped_consensus_txns,
+                ) else {
+                    continue;
+                };
+
+                let key = verified_transaction.0.key();
+                let in_set = !processed_set.insert(key.clone());
+                let in_cache = self.processed_cache.put(key, ()).is_some();
 
                 if in_set || in_cache {
                     self.metrics.skipped_consensus_txns_cache_hit.inc();
                     continue;
                 }
 
-                all_transactions.push(sequenced_transaction);
+                all_transactions.push(verified_transaction);
             }
         }
 

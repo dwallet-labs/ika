@@ -1279,7 +1279,10 @@ mod tests {
             ConsensusStats, ExecutionIndices, ExecutionIndicesWithStats,
         };
         use crate::authority::epoch_start_configuration::EpochStartConfiguration;
-        use crate::consensus_handler::{ConsensusCommitInfo, SequencedConsensusTransaction};
+        use crate::consensus_handler::{
+            ConsensusCommitInfo, SequencedConsensusTransaction,
+            VerifiedSequencedConsensusTransaction,
+        };
         use crate::dwallet_checkpoints::DWalletCheckpointService;
         use crate::epoch::epoch_metrics::EpochMetrics;
         use crate::system_checkpoints::SystemCheckpointService;
@@ -1334,7 +1337,7 @@ mod tests {
         };
         epoch_store
             .process_consensus_transactions_and_commit_boundary(
-                vec![stale_landing],
+                vec![VerifiedSequencedConsensusTransaction(stale_landing)],
                 &ExecutionIndicesWithStats {
                     index: ExecutionIndices {
                         last_committed_round: 1,

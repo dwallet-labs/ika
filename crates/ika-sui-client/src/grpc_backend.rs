@@ -316,7 +316,12 @@ impl SuiClientInner for GrpcSuiClient {
     ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
         let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
-            let info = validator.verified_validator_info();
+            let info = validator.verified_validator_info().map_err(|code| {
+                GrpcSuiClientError::decode(format!(
+                    "validator {} has unparsable on-chain metadata (Move error code {code})",
+                    validator.id
+                ))
+            })?;
             let mpc_data_id = if read_next_mpc_data
                 && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
                 && info.previous_mpc_data_bytes.is_none()

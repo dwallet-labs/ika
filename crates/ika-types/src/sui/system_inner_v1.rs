@@ -4,6 +4,7 @@
 use super::{Element, ExtendedField, SystemInnerTrait};
 use crate::committee::StakeUnit;
 use crate::crypto::{AuthorityPublicKey, AuthorityPublicKeyBytes};
+use fastcrypto::error::FastCryptoError;
 use fastcrypto::traits::ToFromBytes;
 use serde::{Deserialize, Serialize};
 use sui_types::balance::Balance;
@@ -15,6 +16,23 @@ use sui_types::collection_types::{Bag, Table, VecMap, VecSet};
 pub struct BlsCommitteeMember {
     pub validator_id: ObjectID,
     pub protocol_pubkey: Element,
+}
+
+impl BlsCommitteeMember {
+    /// Parses this member's BLS protocol public key as recorded in the frozen
+    /// on-chain committee.
+    ///
+    /// This — not the validator's `ValidatorInfo` record — is the key the
+    /// committee is verified against for the epoch it serves. The committee is
+    /// snapshotted mid-epoch from whatever key was current then, while
+    /// `rotate_next_epoch_info` installs a staged rotation into the validator
+    /// record at the epoch boundary, so for a validator that rotated its
+    /// protocol key the two disagree for that whole epoch. The chain's frozen
+    /// committee is the authority, so every reader must derive the verification
+    /// basis from here.
+    pub fn parsed_protocol_pubkey(&self) -> Result<AuthorityPublicKey, FastCryptoError> {
+        AuthorityPublicKey::from_bytes(self.protocol_pubkey.bytes.as_ref())
+    }
 }
 
 /// Represents the current committee in the system.

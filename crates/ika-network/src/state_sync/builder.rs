@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use super::{
-    Handle, OnChainCheckpointCursors, PeerHeights, StateSync, StateSyncEventLoop, StateSyncMessage,
-    StateSyncServer,
+    CommitteeSource, Handle, OnChainCheckpointCursors, PeerHeights, StateSync, StateSyncEventLoop,
+    StateSyncMessage, StateSyncServer,
     metrics::Metrics,
     server::{CheckpointMessageDownloadLimitLayer, Server},
 };
@@ -22,7 +22,7 @@ use std::{
 };
 use tap::Pipe;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     task::JoinSet,
 };
 
@@ -33,6 +33,7 @@ pub struct Builder<S> {
     archive_readers: Option<ArchiveReaderBalancer>,
     chain_identifier: Option<ChainIdentifier>,
     on_chain_cursors: Option<OnChainCheckpointCursors>,
+    committees: Option<CommitteeSource>,
 }
 
 impl Builder<()> {
@@ -45,6 +46,7 @@ impl Builder<()> {
             archive_readers: None,
             chain_identifier: None,
             on_chain_cursors: None,
+            committees: None,
         }
     }
 }
@@ -58,6 +60,7 @@ impl<S> Builder<S> {
             archive_readers: self.archive_readers,
             chain_identifier: self.chain_identifier,
             on_chain_cursors: self.on_chain_cursors,
+            committees: self.committees,
         }
     }
 
@@ -81,6 +84,14 @@ impl<S> Builder<S> {
     /// the cursor instead of chasing full history from sequence 1.
     pub fn with_on_chain_cursors(mut self, on_chain_cursors: OnChainCheckpointCursors) -> Self {
         self.on_chain_cursors = Some(on_chain_cursors);
+        self
+    }
+
+    /// Feed of the committees pull-mode sync verifies peer-supplied
+    /// certificates against (see [`CommitteeSource`]). Without it every sync
+    /// job defers, because there is nothing to check a certificate against.
+    pub fn with_committees(mut self, committees: CommitteeSource) -> Self {
+        self.committees = Some(committees);
         self
     }
 }
@@ -137,12 +148,16 @@ where
             archive_readers,
             chain_identifier,
             on_chain_cursors,
+            committees,
         } = self;
         let store = store.unwrap();
         let config = config.unwrap_or_default();
         let metrics = metrics.unwrap_or_else(Metrics::disabled);
         let archive_readers = archive_readers.unwrap_or_default();
         let chain_identifier = chain_identifier.unwrap_or_default();
+        // With no feed configured there is nothing to check against, so sync
+        // defers.
+        let committees = committees.unwrap_or_else(|| watch::channel(None).1);
 
         let (sender, mailbox) = mpsc::channel(config.mailbox_capacity());
         let (dwallet_checkpoint_event_sender, _receiver) =
@@ -189,6 +204,7 @@ where
                 chain_identifier,
                 system_checkpoint_download_limit_layer: None,
                 on_chain_cursors,
+                committees,
             },
             server,
         )
@@ -209,6 +225,7 @@ pub struct UnstartedStateSync<S> {
     pub(super) archive_readers: ArchiveReaderBalancer,
     pub(crate) chain_identifier: ChainIdentifier,
     pub(super) on_chain_cursors: Option<OnChainCheckpointCursors>,
+    pub(super) committees: CommitteeSource,
 }
 
 impl<S> UnstartedStateSync<S>
@@ -234,6 +251,7 @@ where
             archive_readers,
             chain_identifier,
             on_chain_cursors,
+            committees,
         } = self;
 
         (
@@ -258,6 +276,7 @@ where
                 chain_identifier,
                 sync_system_checkpoint_from_archive_task: None,
                 on_chain_cursors,
+                committees,
             },
             handle,
         )

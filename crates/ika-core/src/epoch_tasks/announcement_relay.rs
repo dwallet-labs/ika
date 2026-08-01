@@ -219,7 +219,7 @@ mod tests {
     };
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
-    use crate::consensus_handler::{ConsensusCommitInfo, SequencedConsensusTransaction};
+    use crate::consensus_handler::{ConsensusCommitInfo, VerifiedSequencedConsensusTransaction};
     use crate::dwallet_checkpoints::DWalletCheckpointService;
     use crate::epoch::epoch_metrics::EpochMetrics;
     use crate::system_checkpoints::SystemCheckpointService;
@@ -329,7 +329,7 @@ mod tests {
         let tx = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(signed, blob);
         epoch_store
             .process_consensus_transactions_and_commit_boundary(
-                vec![SequencedConsensusTransaction::new_test(tx)],
+                vec![VerifiedSequencedConsensusTransaction::new_test(tx)],
                 &ExecutionIndicesWithStats {
                     index: ExecutionIndices {
                         last_committed_round: 1,

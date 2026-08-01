@@ -877,7 +877,12 @@ where
             sui_client.get_validators_info_by_ids(unknown_ids).await?
         };
         for validator in &validators {
-            let info = validator.verified_validator_info();
+            let info = validator.verified_validator_info().map_err(|code| {
+                IkaError::InvalidCommittee(format!(
+                    "validator {} has unparsable on-chain metadata (Move error code {code})",
+                    validator.id
+                ))
+            })?;
             consensus_key_cache.insert(validator.id, info.consensus_pubkey.clone());
         }
         members
