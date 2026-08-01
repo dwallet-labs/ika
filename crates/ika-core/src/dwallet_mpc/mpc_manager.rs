@@ -581,12 +581,14 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) highest_completed_internal_presign_ordinal:
         HashMap<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
-    /// Pools whose ordinal stream was seeded from a persisted fill high-water
-    /// (i.e. this process joined a pool mid-epoch — a restart or a very late
-    /// key install). Drained on each pool's first live mint to emit the
-    /// one-shot "resumed live instantiation" marker the #1952 regression
-    /// scenario gates on.
-    internal_presign_restart_seeded_pools:
+    /// Pools whose ordinal stream was seeded mid-stream rather than at 1 —
+    /// from the persisted fill high-water, the consensus completion frontier,
+    /// or whichever was further along. However this process got there (a
+    /// restart, a very late key install, a store holding none of the epoch's
+    /// fills), it joined the pool mid-epoch. Drained on each pool's first live
+    /// mint to emit the one-shot "resumed live instantiation" marker the #1952
+    /// regression scenario gates on.
+    internal_presign_mid_epoch_seeded_pools:
         HashSet<(NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm)>,
 
     /// Monotonically increasing count of instantiated internal presign sessions
@@ -831,7 +833,7 @@ impl DWalletMPCManager {
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: HashMap::new(),
             highest_completed_internal_presign_ordinal: HashMap::new(),
-            internal_presign_restart_seeded_pools: HashSet::new(),
+            internal_presign_mid_epoch_seeded_pools: HashSet::new(),
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
             internal_presign_batch_instantiated_at_round: HashMap::new(),
@@ -2803,6 +2805,10 @@ impl DWalletMPCManager {
             debug!(
                 ?curve,
                 ?signature_algorithm,
+                // Carried here too: the `key_role` metric label collapses
+                // every non-NOA key onto one series, so the log line is the
+                // per-key drill-down.
+                ?dwallet_network_encryption_key_id,
                 resumed_at_sequence_number,
                 "internal-presign ordinal stream advanced to the committee's completed frontier"
             );
@@ -2876,7 +2882,7 @@ impl DWalletMPCManager {
                          pool-slot high-water and the consensus completion frontier \
                          (mid-epoch resume)",
                     );
-                    self.internal_presign_restart_seeded_pools
+                    self.internal_presign_mid_epoch_seeded_pools
                         .insert(counter_key);
                     high_water.saturating_add(1)
                 }
@@ -2993,7 +2999,7 @@ impl DWalletMPCManager {
             // instantiation again" marker — the #1952 regression scenario
             // gates on this line on the restarted validator.
             if self
-                .internal_presign_restart_seeded_pools
+                .internal_presign_mid_epoch_seeded_pools
                 .remove(&counter_key)
             {
                 info!(
@@ -3001,8 +3007,14 @@ impl DWalletMPCManager {
                     ?curve,
                     ?signature_algorithm,
                     live_sequence_number = session_sequence_number,
+                    // The leading clause up to "mid-epoch restart" is the
+                    // literal needle the `restart_spectator` upgrade scenario
+                    // waits for; the widening is a suffix so that gate keeps
+                    // matching. A rejoin needs no restart — a late key
+                    // install or a store without this epoch's fills seeds
+                    // mid-stream just the same.
                     "internal presign top-up resumed live instantiation after a \
-                     mid-epoch restart",
+                     mid-epoch restart or late rejoin",
                 );
             }
             return true;
