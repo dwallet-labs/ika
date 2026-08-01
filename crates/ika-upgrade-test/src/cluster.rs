@@ -34,7 +34,7 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
-use ika_types::crypto::{AuthorityPublicKeyBytes, KeypairTraits};
+use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, KeypairTraits};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
 };
@@ -123,10 +123,16 @@ pub struct ValidatorSlot {
 /// validator — not parallel per-basis lists — so no write path can register
 /// a validator under one naming and miss the other.
 struct AuthorityNamings {
-    /// BLS protocol-key naming (`AuthorityName` below protocol v6).
+    /// BLS protocol-key naming (`AuthorityName` below protocol v6). Rendered
+    /// as 48 hex-encoded bytes.
     protocol: AuthorityPublicKeyBytes,
-    /// Consensus-key naming (`AuthorityName` from protocol v6).
-    consensus: AuthorityPublicKeyBytes,
+    /// Consensus-key naming — `AuthorityName` from protocol v6 on. Rendered as
+    /// 32 hex-encoded bytes: a name IS the consensus key and carries no
+    /// padding, so this must NOT be built as an `AuthorityPublicKeyBytes`.
+    /// Doing so renders the padded 48-byte form, which no longer matches the
+    /// `authority` metric label a node emits, and every set-membership check
+    /// against scraped labels silently fails.
+    consensus: AuthorityName,
 }
 
 impl AuthorityNamings {
@@ -135,14 +141,15 @@ impl AuthorityNamings {
     fn of(init: &ValidatorInitializationConfig) -> Self {
         Self {
             protocol: init.key_pair.public().into(),
-            consensus: AuthorityPublicKeyBytes::from_consensus_key(
-                init.consensus_key_pair.public(),
-            ),
+            consensus: AuthorityName::from_consensus_key(init.consensus_key_pair.public()),
         }
     }
 
-    fn both(&self) -> [&AuthorityPublicKeyBytes; 2] {
-        [&self.protocol, &self.consensus]
+    /// Both namings as the strings a node's metric labels carry. Returned as
+    /// rendered strings rather than a common type, because the two namings are
+    /// now genuinely different types with different widths.
+    fn both(&self) -> [String; 2] {
+        [self.protocol.to_string(), self.consensus.to_string()]
     }
 }
 
@@ -1439,7 +1446,6 @@ impl ClusterOfProcesses {
             .validator_authorities
             .iter()
             .flat_map(AuthorityNamings::both)
-            .map(ToString::to_string)
             .collect();
         // Byzantine quorum of the committee. These scenarios run an
         // equal-weight committee, so a plain member count matches the
@@ -1518,7 +1524,6 @@ impl ClusterOfProcesses {
                     .get(*index)
                     .with_context(|| format!("validator index {index} out of range"))?
                     .both()
-                    .map(ToString::to_string)
                     .into();
                 let (observer_canonical, observer_missing) = match canonical_network_key_outputs(
                     body,
