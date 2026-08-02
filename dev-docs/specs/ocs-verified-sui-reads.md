@@ -1,15 +1,15 @@
 # OCS verified Sui reads (object-checkpoint-state)
 
-Status: active for nodes that opt in with the "new-style" `sui-data-source`
-config and a Sui committee trust root (a `sui_genesis` blob — the
+Status: active for nodes configured with `sui-data-source`
+and a Sui committee trust root (a `sui_genesis` blob — the
 genesis-rooted trust root that replaced the old operator-pinned end-of-epoch
 anchor). The opt-in is a NODE choice, not an ika protocol version: transport
-selection keys off config SHAPE so a protocol flag can never halt running
+selection is a node choice, so a protocol flag can never halt running
 validators en masse at an upgrade boundary. Requires the upstream Sui chain
 to run protocol **v122+** with `include_checkpoint_artifacts_digest_in_summary`
 — without the artifacts digest in the checkpoint summary there is nothing to
-prove against, and startup refuses (`probe_artifacts_digest`). Nodes without a
-trust root stay on the legacy JSON-RPC read path.
+prove against, and startup refuses (`probe_artifacts_digest`). Validators
+without a trust root are rejected at startup.
 
 ## Problem
 
@@ -210,24 +210,22 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
   peer-only role. A fresh peer-only node can't dial out to reach the relay,
   so existing validators *dial it inbound* off the on-chain `pending_active_set`
   — see [`trusted-peer-discovery.md`](trusted-peer-discovery.md).
-- **Notifier / fullnode** — on a new-style config, read gRPC at one endpoint;
+- **Notifier / fullnode** — read gRPC at one endpoint;
   notifiers are the only nodes that submit transactions and always use a
   direct uplink.
 
-**Config-shape gate** (evaluated at startup, `ika-node` boot):
+**Configuration gate** (evaluated at `ika-node` startup):
 
-| `sui-data-source` | `sui-rpc-url` | result |
-|---|---|---|
-| absent | absent | error: no Sui endpoint |
-| absent | present | old-style: legacy JSON-RPC for **every role** — the transport this exact config selected on 1.1.8. A binary upgrade must not flip a node's transport under an unchanged config (a `sui-rpc-url` endpoint need not serve Sui gRPC; a notifier failing softly on gRPC stalls epoch advance network-wide). Moving to gRPC is an explicit migration: add `sui-data-source` |
-| present | present | new-style wins; info log to drop `sui-rpc-url` |
-| present | — | new-style: gRPC + OCS; a **validator** additionally requires a Sui committee trust root |
+- `sui-data-source` is required for every role.
+- `sui-state-direct` supplies a direct Sui gRPC endpoint.
+- `sui-state-mirrored` may carry `fallback-grpc-url`; omitting the fallback is
+  valid only for a peer-only validator.
+- A validator additionally requires a Sui committee trust root.
+- A notifier requires a direct writer uplink and cannot use peer-only mode.
 
-`has_anchor` (the gRPC/OCS opt-in) is: persisted committees OR a configured
-`sui_genesis` blob. A new-style
-validator without any of these is rejected — on the gRPC path it has no MPC
-event source (no JSON-RPC `query_events`; the verified `BagEventPump` needs
-the committee chain). `SuiDataSource` must carry `rename_all_fields =
+`has_anchor` is: persisted committees OR a configured `sui_genesis` blob. A
+validator without any of these is rejected because the verified
+`BagEventPump` needs the committee chain. `SuiDataSource` must carry `rename_all_fields =
 "kebab-case"` so `fallback-grpc-url` is not silently dropped (a dropped field
 flips a mirrored validator into peer-only).
 
@@ -348,8 +346,7 @@ the ratchet first tries the resolved **Sui checkpoint archive** — an explicit
 and testnet default to the network's public checkpoint store
 (`https://checkpoints.{mainnet,testnet}.sui.io`, which retains the complete
 end-of-epoch history; no default is guessed for devnet/custom — see
-`resolve_sui_checkpoint_archive` in `ika-config`, applied only where the
-verified connector stack is built, so legacy JSON-RPC configs are untouched).
+`resolve_sui_checkpoint_archive` in `ika-config`).
 The ratchet fetches the end-of-epoch checkpoint from the
 object store (`epochs.json` + `{seq}.binpb.zst` — when the epoch record was
 pruned, the sequence comes from the archive's own enumeration) and
@@ -925,8 +922,7 @@ because the bytes came from a peer's disk rather than its fullnode.
       enumerates `{ika_dwallet_2pc_mpc_package_id, …_v2}`, and five of the
       seven v2-defined types are events — so the next dwallet upgrade that
       defines a new event type silently loses those sessions until someone
-      remembers to add a `_v3`. This filter is live on BOTH paths (the legacy
-      JSON-RPC listener and `bag_event_pump` under OCS). The durable fix is to
+      remembers to add a `_v3`. This filter is live in `bag_event_pump`. The durable fix is to
       derive the accepted set from the package's `TypeOrigin` table at runtime
       rather than enumerating constants.
 

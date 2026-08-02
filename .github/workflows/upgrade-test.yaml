@@ -53,11 +53,6 @@ name: Upgrade Test
 #                  validators must convict it and reshare without it
 #                  (committee dips to 3). Green = the v128 gates are not
 #                  vacuous. Same OLD defaults as v128_rollout.
-#   legacy_config — config-compat rehearsal: the current build on old-style
-#                  (1.1.8-shape) YAMLs — `sui-rpc-url` only, no
-#                  sui-data-source — for all validators AND the notifier
-#                  (the legacy JSON-RPC transport nothing else covers). Full
-#                  lifecycle. Current build only.
 #   restart_spectator — the #1952 mid-epoch-restart gate: one validator is
 #                  restarted (same binary) far from an epoch boundary, in an
 #                  epoch with an established network key and ongoing
@@ -244,7 +239,7 @@ jobs:
           TEST: ${{ inputs.test || 'v128_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v128_rollout v128_churn malicious_v128 legacy_config restart_spectator"
+          ALL="smoke workload v128_rollout v128_churn malicious_v128 restart_spectator"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -359,7 +354,6 @@ jobs:
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             v128_churn)   RUN_FLAG=RUN_V128_CHURN ;;
             malicious_v128) RUN_FLAG=RUN_MALICIOUS_V128 ;;
-            legacy_config) RUN_FLAG=RUN_LEGACY_CONFIG ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
             v128_rollout)   RUN_FLAG=RUN_V128_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
@@ -496,7 +490,7 @@ jobs:
 
       - name: Run ${{ matrix.test }}
         env:
-          # smoke/workload/legacy_config read IKA_VALIDATOR_BIN/
+          # smoke/workload read IKA_VALIDATOR_BIN/
           # IKA_NOTIFIER_BIN/IKA_BIN; v128_rollout reads NEW_BIN/NOTIFIER_BIN/
           # OLD_BIN/IKA_BIN (OLD_BIN comes from the build step via
           # $GITHUB_ENV; unset for the others, which ignore it). Setting both

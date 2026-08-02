@@ -45,12 +45,13 @@ use sui_keys::{
         read_network_keypair_from_file, write_authority_keypair_to_file, write_keypair_to_file,
     },
 };
-use sui_sdk::rpc_types::SuiTransactionBlockResponse;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
 use sui_types::crypto::get_authority_key_pair;
 use sui_types::crypto::{NetworkKeyPair, SignatureScheme, SuiKeyPair};
+use sui_types::effects::TransactionEffectsAPI;
 
 const DEFAULT_GAS_BUDGET: u64 = 200_000_000; // 0.2 SUI
 
@@ -358,33 +359,33 @@ pub enum IkaValidatorCommand {
 pub enum IkaValidatorCommandResponse {
     MakeValidatorInfo,
     ConfigEnv(PathBuf),
-    BecomeCandidate(SuiTransactionBlockResponse, BecomeCandidateValidatorData),
-    JoinCommittee(SuiTransactionBlockResponse),
-    StakeValidator(SuiTransactionBlockResponse),
-    LeaveCommittee(SuiTransactionBlockResponse),
-    RemoveCandidate(SuiTransactionBlockResponse),
-    SetCommission(SuiTransactionBlockResponse),
-    WithdrawStake(SuiTransactionBlockResponse),
-    RequestWithdrawStake(SuiTransactionBlockResponse),
-    ReportValidator(SuiTransactionBlockResponse),
-    UndoReportValidator(SuiTransactionBlockResponse),
-    RotateOperationCap(SuiTransactionBlockResponse),
-    RotateCommissionCap(SuiTransactionBlockResponse),
-    CollectCommission(SuiTransactionBlockResponse),
-    SetValidatorName(SuiTransactionBlockResponse),
-    GetValidatorMetadata(SuiTransactionBlockResponse),
-    SetValidatorMetadata(SuiTransactionBlockResponse),
-    SetNextEpochNetworkAddress(SuiTransactionBlockResponse),
-    SetNextEpochP2pAddress(SuiTransactionBlockResponse),
-    SetNextEpochConsensusAddress(SuiTransactionBlockResponse),
-    SetNextEpochProtocolPubkey(SuiTransactionBlockResponse),
-    SetNextEpochNetworkPubkey(SuiTransactionBlockResponse),
-    SetNextEpochConsensusPubkey(SuiTransactionBlockResponse),
+    BecomeCandidate(ExecutedTransaction, BecomeCandidateValidatorData),
+    JoinCommittee(ExecutedTransaction),
+    StakeValidator(ExecutedTransaction),
+    LeaveCommittee(ExecutedTransaction),
+    RemoveCandidate(ExecutedTransaction),
+    SetCommission(ExecutedTransaction),
+    WithdrawStake(ExecutedTransaction),
+    RequestWithdrawStake(ExecutedTransaction),
+    ReportValidator(ExecutedTransaction),
+    UndoReportValidator(ExecutedTransaction),
+    RotateOperationCap(ExecutedTransaction),
+    RotateCommissionCap(ExecutedTransaction),
+    CollectCommission(ExecutedTransaction),
+    SetValidatorName(ExecutedTransaction),
+    GetValidatorMetadata(ExecutedTransaction),
+    SetValidatorMetadata(ExecutedTransaction),
+    SetNextEpochNetworkAddress(ExecutedTransaction),
+    SetNextEpochP2pAddress(ExecutedTransaction),
+    SetNextEpochConsensusAddress(ExecutedTransaction),
+    SetNextEpochProtocolPubkey(ExecutedTransaction),
+    SetNextEpochNetworkPubkey(ExecutedTransaction),
+    SetNextEpochConsensusPubkey(ExecutedTransaction),
     SetNextEpochMPCData(PathBuf),
-    VerifyValidatorCap(SuiTransactionBlockResponse),
-    VerifyOperationCap(SuiTransactionBlockResponse),
-    VerifyCommissionCap(SuiTransactionBlockResponse),
-    SetPricingVote(SuiTransactionBlockResponse),
+    VerifyValidatorCap(ExecutedTransaction),
+    VerifyOperationCap(ExecutedTransaction),
+    VerifyCommissionCap(ExecutedTransaction),
+    SetPricingVote(ExecutedTransaction),
     FetchCurrentPricingInfo(PathBuf),
 }
 
@@ -1029,7 +1030,7 @@ impl IkaValidatorCommand {
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
-                let client = SuiClient::new(
+                let client = SuiClient::new_grpc(
                     &context.get_active_env()?.rpc,
                     SuiClientMetrics::new_for_testing(),
                     config,
@@ -1206,21 +1207,15 @@ fn generate_new_root_seed(seed_path: PathBuf) -> Result<PathBuf> {
     Ok(seed_path)
 }
 
-pub fn write_transaction_response(
-    response: &SuiTransactionBlockResponse,
-) -> Result<String, fmt::Error> {
-    let success = response.status_ok().unwrap();
+pub fn write_transaction_response(response: &ExecutedTransaction) -> Result<String, fmt::Error> {
+    let success = response.effects.status().is_ok();
     let lines = vec![
         String::from("----- Transaction Digest ----"),
-        response.digest.to_string(),
+        response.effects.transaction_digest().to_string(),
         String::from("\n----- Transaction Data ----"),
-        response
-            .transaction
-            .as_ref()
-            .map(|t| serde_json::to_string_pretty(t).unwrap())
-            .unwrap_or_default(),
+        serde_json::to_string_pretty(&response.transaction).unwrap(),
         String::from("----- Transaction Effects ----"),
-        response.effects.as_ref().unwrap().to_string(),
+        serde_json::to_string_pretty(&response.effects).unwrap(),
     ];
     let mut writer = String::new();
     for line in lines {
@@ -1231,15 +1226,14 @@ pub fn write_transaction_response(
 }
 
 pub fn write_transaction_response_without_transaction_data(
-    response: &SuiTransactionBlockResponse,
+    response: &ExecutedTransaction,
 ) -> Result<String, fmt::Error> {
-    // we requested with for full_content, so the following content should be available.
-    let success = response.status_ok().unwrap();
+    let success = response.effects.status().is_ok();
     let lines = vec![
         String::from("----- Transaction Digest ----"),
-        response.digest.to_string(),
+        response.effects.transaction_digest().to_string(),
         String::from("----- Transaction Effects ----"),
-        response.effects.as_ref().unwrap().to_string(),
+        serde_json::to_string_pretty(&response.effects).unwrap(),
     ];
     let mut writer = String::new();
     for line in lines {

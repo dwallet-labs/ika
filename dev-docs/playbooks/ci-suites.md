@@ -180,9 +180,6 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v128
 # removes an original validator (5→4).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v128_churn
 
-# Old-style (1.1.8-shape, JSON-RPC-only) YAML configs for every role.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=legacy_config
-
 # Loaded runner slack: bump epochs.
 #   -f epoch_duration_ms=600000
 
@@ -204,7 +201,6 @@ notifier + a validator committee:
 | `v128_rollout` | **one current + three literal v1.2.7**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `v128_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.7-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `malicious_v128` | three literal v1.2.7 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
-| `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
 
 ### CI runner resources
 

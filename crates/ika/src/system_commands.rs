@@ -62,9 +62,9 @@ pub enum IkaSystemCommand {
     /// Publish all IKA Move contracts to Sui.
     #[clap(name = "publish-modules")]
     PublishModules {
-        /// RPC URL for the Sui network.
+        /// gRPC URL for the Sui network.
         #[clap(long, default_value = "http://127.0.0.1:9000")]
-        sui_rpc_addr: String,
+        sui_grpc_addr: String,
         /// Faucet URL for requesting tokens.
         #[clap(long, default_value = "http://127.0.0.1:9123/gas")]
         sui_faucet_addr: String,
@@ -88,9 +88,9 @@ pub enum IkaSystemCommand {
         /// Faucet URL for requesting tokens.
         #[clap(long, default_value = "http://127.0.0.1:9123/gas")]
         sui_faucet_addr: String,
-        /// RPC URL for the Sui network.
+        /// gRPC URL for the Sui network.
         #[clap(long, default_value = "http://127.0.0.1:9000")]
-        sui_rpc_addr: String,
+        sui_grpc_addr: String,
     },
 
     /// Initialize environment (publish config, system setup, witness, upgrade caps).
@@ -102,9 +102,9 @@ pub enum IkaSystemCommand {
         /// The optional path for network configuration.
         #[clap(long, value_parser = clap::value_parser!(PathBuf))]
         sui_conf_dir: Option<PathBuf>,
-        /// RPC URL for the Sui network.
+        /// gRPC URL for the Sui network.
         #[clap(long, default_value = "http://127.0.0.1:9000")]
-        sui_rpc_addr: String,
+        sui_grpc_addr: String,
         /// Epoch duration in milliseconds.
         #[clap(long)]
         epoch_duration_ms: Option<u64>,
@@ -122,9 +122,9 @@ pub enum IkaSystemCommand {
         /// The optional path for network configuration.
         #[clap(long, value_parser = clap::value_parser!(PathBuf))]
         sui_conf_dir: Option<PathBuf>,
-        /// RPC URL for the Sui network.
+        /// gRPC URL for the Sui network.
         #[clap(long, default_value = "http://127.0.0.1:9000")]
-        sui_rpc_addr: String,
+        sui_grpc_addr: String,
     },
 }
 
@@ -132,28 +132,36 @@ impl IkaSystemCommand {
     pub async fn execute(self) -> Result<()> {
         match self {
             IkaSystemCommand::PublishModules {
-                sui_rpc_addr,
+                sui_grpc_addr,
                 sui_faucet_addr,
                 sui_conf_dir,
                 chain,
-            } => publish_modules(sui_rpc_addr, sui_faucet_addr, sui_conf_dir, chain).await,
+            } => publish_modules(sui_grpc_addr, sui_faucet_addr, sui_conf_dir, chain).await,
             IkaSystemCommand::MintTokens {
                 ika_config_path,
                 sui_conf_dir,
                 sui_faucet_addr,
-                sui_rpc_addr,
-            } => mint_tokens(ika_config_path, sui_conf_dir, sui_faucet_addr, sui_rpc_addr).await,
+                sui_grpc_addr,
+            } => {
+                mint_tokens(
+                    ika_config_path,
+                    sui_conf_dir,
+                    sui_faucet_addr,
+                    sui_grpc_addr,
+                )
+                .await
+            }
             IkaSystemCommand::InitEnv {
                 ika_config_path,
                 sui_conf_dir,
-                sui_rpc_addr,
+                sui_grpc_addr,
                 epoch_duration_ms,
                 protocol_version,
             } => {
                 init_env(
                     ika_config_path,
                     sui_conf_dir,
-                    sui_rpc_addr,
+                    sui_grpc_addr,
                     epoch_duration_ms,
                     protocol_version,
                 )
@@ -162,22 +170,27 @@ impl IkaSystemCommand {
             IkaSystemCommand::Initialize {
                 ika_config_path,
                 sui_conf_dir,
-                sui_rpc_addr,
-            } => initialize_system(ika_config_path, sui_conf_dir, sui_rpc_addr).await,
+                sui_grpc_addr,
+            } => initialize_system(ika_config_path, sui_conf_dir, sui_grpc_addr).await,
         }
     }
 }
 
 async fn publish_modules(
-    sui_rpc_addr: String,
+    sui_grpc_addr: String,
     sui_faucet_addr: String,
     sui_conf_dir: Option<PathBuf>,
     chain: Chain,
 ) -> Result<()> {
-    println!("Publishing IKA modules on network: {sui_rpc_addr}");
+    println!("Publishing IKA modules on network: {sui_grpc_addr}");
 
     let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir).await?;
-    init_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
+    init_sui_client_conf(
+        &sui_grpc_addr,
+        keystore,
+        publisher_address,
+        &sui_config_path,
+    )?;
     request_tokens_from_faucet(publisher_address, sui_faucet_addr.clone()).await?;
 
     let mut context = WalletContext::new(&sui_config_path)?;
@@ -266,13 +279,18 @@ async fn mint_tokens(
     ika_config_path: PathBuf,
     sui_conf_dir: Option<PathBuf>,
     sui_faucet_addr: String,
-    sui_rpc_addr: String,
+    sui_grpc_addr: String,
 ) -> Result<()> {
     println!("Minting IKA tokens using configuration from: {ika_config_path:?}");
 
     let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir).await?;
     println!("Using SUI configuration from: {sui_config_path:?}");
-    init_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
+    init_sui_client_conf(
+        &sui_grpc_addr,
+        keystore,
+        publisher_address,
+        &sui_config_path,
+    )?;
     println!("Using SUI faucet address: {sui_faucet_addr}");
     request_tokens_from_faucet(publisher_address, sui_faucet_addr.clone()).await?;
 
@@ -282,9 +300,7 @@ async fn mint_tokens(
     println!("Using publisher address: {publisher_address}");
 
     let context = WalletContext::new(&sui_config_path)?;
-    let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
+    let client = context.grpc_client()?;
 
     let ika_supply_id = minted_ika(
         publisher_address,
@@ -307,7 +323,7 @@ async fn mint_tokens(
 async fn init_env(
     ika_config_path: PathBuf,
     sui_conf_dir: Option<PathBuf>,
-    sui_rpc_addr: String,
+    sui_grpc_addr: String,
     epoch_duration_ms: Option<u64>,
     protocol_version: Option<u64>,
 ) -> Result<()> {
@@ -317,13 +333,16 @@ async fn init_env(
     let mut publish_config: PublishIkaConfig = serde_json::from_str(&config_content)?;
 
     let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir).await?;
-    init_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
+    init_sui_client_conf(
+        &sui_grpc_addr,
+        keystore,
+        publisher_address,
+        &sui_config_path,
+    )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
     let mut context = WalletContext::new(&sui_config_path)?;
-    let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
+    let client = context.grpc_client()?;
 
     let mut initiation_parameters = InitiationParameters::new();
     if let Some(epoch_duration_ms) = epoch_duration_ms {
@@ -424,7 +443,7 @@ async fn init_env(
 async fn initialize_system(
     ika_config_path: PathBuf,
     sui_conf_dir: Option<PathBuf>,
-    sui_rpc_addr: String,
+    sui_grpc_addr: String,
 ) -> Result<()> {
     println!("Starting IKA system initialization using configuration at {ika_config_path:?}");
 
@@ -468,13 +487,16 @@ async fn initialize_system(
         })?;
 
     let (keystore, publisher_address, sui_config_path) = init_sui_keystore(sui_conf_dir).await?;
-    init_sui_client_conf(&sui_rpc_addr, keystore, publisher_address, &sui_config_path)?;
+    init_sui_client_conf(
+        &sui_grpc_addr,
+        keystore,
+        publisher_address,
+        &sui_config_path,
+    )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
     let mut context = WalletContext::new(&sui_config_path)?;
-    let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
+    let client = context.grpc_client()?;
 
     let initiation_parameters = InitiationParameters::new();
 
@@ -523,19 +545,19 @@ async fn initialize_system(
 }
 
 fn init_sui_client_conf(
-    sui_rpc_addr: &str,
+    sui_grpc_addr: &str,
     keystore: Keystore,
     active_addr: SuiAddress,
     sui_config_path: &PathBuf,
 ) -> Result<()> {
-    let parsed_url = url::Url::parse(sui_rpc_addr)?;
+    let parsed_url = url::Url::parse(sui_grpc_addr)?;
     let rpc_host = parsed_url.host_str().unwrap_or_default();
     let mut config =
         SuiClientConfig::load(sui_config_path).unwrap_or_else(|_| SuiClientConfig::new(keystore));
     if config.get_env(&Some(rpc_host.to_string())).is_none() {
         config.add_env(SuiEnv {
             alias: rpc_host.to_string(),
-            rpc: sui_rpc_addr.to_string(),
+            rpc: sui_grpc_addr.to_string(),
             ws: None,
             basic_auth: None,
             chain_id: None,

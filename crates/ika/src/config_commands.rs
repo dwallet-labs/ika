@@ -19,8 +19,8 @@ use crate::IkaPackagesConfigFile;
 const GITHUB_RAW_BASE: &str =
     "https://raw.githubusercontent.com/dwallet-labs/ika/main/deployed_contracts";
 
-/// Known Sui RPC URLs per network.
-fn sui_rpc_url(network: &str) -> &'static str {
+/// Known Sui gRPC URLs per network.
+fn sui_grpc_url(network: &str) -> &'static str {
     match network {
         "mainnet" => "https://fullnode.mainnet.sui.io:443",
         "testnet" => "https://fullnode.testnet.sui.io:443",
@@ -69,9 +69,9 @@ pub enum IkaConfigCommand {
         /// Path to the ika_config.json file containing contract addresses.
         #[clap(long)]
         from_file: PathBuf,
-        /// Sui RPC URL for this environment.
+        /// Sui gRPC URL for this environment.
         #[clap(long)]
-        rpc: Option<String>,
+        grpc: Option<String>,
         /// Path to the Ika config file to update.
         #[clap(long)]
         config: Option<PathBuf>,
@@ -163,8 +163,8 @@ async fn fetch_network_configs(networks: &[String]) -> Result<HashMap<String, Ik
         let alias = ika_env_alias(net);
         envs.insert(alias.clone(), config);
         println!(
-            "  Configured as Sui env: {alias} (RPC: {})",
-            sui_rpc_url(net)
+            "  Configured as Sui env: {alias} (gRPC: {})",
+            sui_grpc_url(net)
         );
     }
 
@@ -183,7 +183,11 @@ fn write_ika_config(path: &PathBuf, config_file: &IkaPackagesConfigFile) -> Resu
 }
 
 /// Add Sui CLI environments for the given networks.
-fn add_sui_envs(networks: &[String], sui_config_path: &PathBuf) -> Result<()> {
+fn add_sui_envs(
+    networks: &[String],
+    sui_config_path: &PathBuf,
+    grpc_override: Option<(&str, &str)>,
+) -> Result<()> {
     let mut sui_config = SuiClientConfig::load(sui_config_path).unwrap_or_else(|_| {
         // Create a new config with a file-based keystore next to the config file.
         let keystore_path = sui_config_path
@@ -198,7 +202,10 @@ fn add_sui_envs(networks: &[String], sui_config_path: &PathBuf) -> Result<()> {
 
     for net in networks {
         let alias = ika_env_alias(net);
-        let rpc = sui_rpc_url(net).to_string();
+        let grpc = grpc_override
+            .filter(|(network, _)| *network == net)
+            .map(|(_, url)| url.to_string())
+            .unwrap_or_else(|| sui_grpc_url(net).to_string());
 
         if sui_config.get_env(&Some(alias.clone())).is_some() {
             println!("  Sui env '{alias}' already exists, skipping");
@@ -207,12 +214,12 @@ fn add_sui_envs(networks: &[String], sui_config_path: &PathBuf) -> Result<()> {
 
         sui_config.add_env(SuiEnv {
             alias: alias.clone(),
-            rpc: rpc.clone(),
+            rpc: grpc.clone(),
             ws: None,
             basic_auth: None,
             chain_id: None,
         });
-        println!("  Created Sui env: {alias} -> {rpc}");
+        println!("  Created Sui env: {alias} -> {grpc}");
     }
 
     sui_config.persisted(sui_config_path).save()?;
@@ -255,7 +262,7 @@ impl IkaConfigCommand {
                 // Create Sui CLI environments for all networks (including localnet).
                 let sui_config_path =
                     client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                add_sui_envs(&all, &sui_config_path)?;
+                add_sui_envs(&all, &sui_config_path, None)?;
 
                 println!(
                     "\nNext steps:\n\
@@ -269,7 +276,7 @@ impl IkaConfigCommand {
             IkaConfigCommand::AddEnv {
                 network,
                 from_file,
-                rpc,
+                grpc,
                 config,
             } => {
                 let config_path = config.unwrap_or_else(default_ika_config_path);
@@ -296,11 +303,15 @@ impl IkaConfigCommand {
                     config_path.display()
                 );
 
-                // Also create/update the Sui CLI env if an RPC was given or we know it.
-                let rpc_url = rpc.unwrap_or_else(|| sui_rpc_url(&network).to_string());
+                // Also create/update the Sui CLI env with its gRPC endpoint.
+                let grpc_url = grpc.unwrap_or_else(|| sui_grpc_url(&network).to_string());
                 let sui_config_path = sui_config_dir()?.join(SUI_CLIENT_CONFIG);
-                add_sui_envs(&[network], &sui_config_path)?;
-                println!("  RPC: {rpc_url}");
+                add_sui_envs(
+                    std::slice::from_ref(&network),
+                    &sui_config_path,
+                    Some((&network, &grpc_url)),
+                )?;
+                println!("  gRPC: {grpc_url}");
 
                 Ok(())
             }

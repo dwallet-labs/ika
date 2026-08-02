@@ -20,6 +20,7 @@ clap.workspace = true
 fastcrypto.workspace = true
 futures.workspace = true
 hex.workspace = true
+move-core-types.workspace = true
 rand = "0.8"
 shared-crypto.workspace = true
 reqwest.workspace = true
@@ -39,6 +40,7 @@ ika-types.workspace = true
 
 sui-config.workspace = true
 sui-keys.workspace = true
+sui-rpc-api.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
 

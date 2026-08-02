@@ -19,11 +19,14 @@ use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::ika_dwallet_transactions;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
+use move_core_types::language_storage::StructTag;
 use serde::Serialize;
-use sui_json_rpc_types::{SuiObjectDataOptions, SuiTransactionBlockEffectsAPI};
 use sui_keys::keystore::AccountKeystore;
+use sui_rpc_api::Client as SuiGrpcClient;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
+use sui_types::effects::TransactionEffectsAPI;
 
 use dwallet_mpc_types::dwallet_mpc;
 
@@ -802,26 +805,14 @@ macro_rules! resolve_config {
 }
 
 /// Extract transaction digest and status from a response.
-fn tx_digest_and_status(
-    response: &sui_json_rpc_types::SuiTransactionBlockResponse,
-) -> (String, String) {
-    let digest = response
-        .effects
-        .as_ref()
-        .map(|e| e.transaction_digest().to_string())
-        .unwrap_or_default();
-    let status = response
-        .effects
-        .as_ref()
-        .map(|e| format!("{:?}", e.status()))
-        .unwrap_or_else(|| "unknown".to_string());
+fn tx_digest_and_status(response: &ExecutedTransaction) -> (String, String) {
+    let digest = response.effects.transaction_digest().to_string();
+    let status = format!("{:?}", response.effects.status());
     (digest, status)
 }
 
 /// Build a generic Transaction response from a transaction block response.
-fn tx_response_to_output(
-    response: &sui_json_rpc_types::SuiTransactionBlockResponse,
-) -> IkaDWalletCommandResponse {
+fn tx_response_to_output(response: &ExecutedTransaction) -> IkaDWalletCommandResponse {
     let (digest, status) = tx_digest_and_status(response);
     IkaDWalletCommandResponse::Transaction { digest, status }
 }
@@ -829,14 +820,14 @@ fn tx_response_to_output(
 /// Find the first created object whose type name contains `type_substr`.
 async fn find_created_object_by_type(
     context: &mut WalletContext,
-    response: &sui_json_rpc_types::SuiTransactionBlockResponse,
+    response: &ExecutedTransaction,
     type_substr: &str,
 ) -> Option<ObjectID> {
-    let effects = response.effects.as_ref()?;
-    let created_ids: Vec<ObjectID> = effects
+    let created_ids: Vec<ObjectID> = response
+        .effects
         .created()
-        .iter()
-        .map(|o| o.reference.object_id)
+        .into_iter()
+        .map(|(reference, _)| reference.0)
         .collect();
 
     let mut grpc_client = context.grpc_client().ok()?;
@@ -862,26 +853,44 @@ async fn find_created_object_by_type(
 async fn fetch_tx_events(
     context: &WalletContext,
     digest: &str,
-) -> Option<Vec<sui_json_rpc_types::SuiEvent>> {
-    let sdk_client = create_sdk_client(context).await.ok()?;
+) -> Option<Vec<(String, serde_json::Value)>> {
+    let mut grpc_client = create_grpc_client(context).await.ok()?;
     let tx_digest: sui_types::digests::TransactionDigest = digest.parse().ok()?;
-    sdk_client.event_api().get_events(tx_digest).await.ok()
+    let transaction = grpc_client.get_transaction(&tx_digest).await.ok()?;
+    let events = transaction.events?;
+    Some(
+        events
+            .data
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                (
+                    event.type_.to_string(),
+                    transaction
+                        .event_json
+                        .get(index)
+                        .cloned()
+                        .flatten()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// Extract a string field from the first event whose type contains `event_type_substr`.
 fn extract_event_field(
-    events: &[sui_json_rpc_types::SuiEvent],
+    events: &[(String, serde_json::Value)],
     event_type_substr: &str,
     field_name: &str,
 ) -> Option<String> {
-    for event in events {
-        let type_str = event.type_.to_string();
+    for (type_str, parsed_json) in events {
         if type_str.contains(event_type_substr) {
-            if let Some(val) = event.parsed_json.get(field_name) {
+            if let Some(val) = parsed_json.get(field_name) {
                 return val.as_str().map(|s| s.to_string());
             }
             // Also check nested event_data (for DWalletSessionEvent wrappers)
-            if let Some(event_data) = event.parsed_json.get("event_data")
+            if let Some(event_data) = parsed_json.get("event_data")
                 && let Some(val) = event_data.get(field_name)
             {
                 return val.as_str().map(|s| s.to_string());
@@ -896,20 +905,16 @@ fn extract_event_field(
 /// `path` is a chain of field names. For each step, it first looks for a direct child, then
 /// checks inside a `fields` sub-object (Move enum variant serialization: `{ variant, fields }`).
 fn extract_nested_event_field(
-    events: &[sui_json_rpc_types::SuiEvent],
+    events: &[(String, serde_json::Value)],
     event_type_substr: &str,
     path: &[&str],
 ) -> Option<String> {
-    for event in events {
-        let type_str = event.type_.to_string();
+    for (type_str, parsed_json) in events {
         if !type_str.contains(event_type_substr) {
             continue;
         }
         // Start from event_data (DWalletSessionEvent wrapper) or top-level
-        let root = event
-            .parsed_json
-            .get("event_data")
-            .unwrap_or(&event.parsed_json);
+        let root = parsed_json.get("event_data").unwrap_or(parsed_json);
         let mut current = root;
         for (i, key) in path.iter().enumerate() {
             let next = current.get(key).or_else(|| {
@@ -947,7 +952,7 @@ async fn poll_sign_session(
     context: &WalletContext,
     sign_session_id: ObjectID,
 ) -> Result<SignSessionResult> {
-    let sdk_client = create_sdk_client(context).await?;
+    let grpc_client = create_grpc_client(context).await?;
     let poll_interval = std::time::Duration::from_secs(3);
     let timeout = std::time::Duration::from_secs(300);
     let start = std::time::Instant::now();
@@ -960,7 +965,7 @@ async fn poll_sign_session(
             );
         }
 
-        match fetch_object_fields(&sdk_client, sign_session_id).await {
+        match fetch_object_fields(&grpc_client, sign_session_id).await {
             Ok(fields) => {
                 if let Some(state) = fields.get("state") {
                     let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
@@ -1010,10 +1015,9 @@ async fn poll_sign_session(
 /// Poll a dWallet until its state contains `public_output` (meaning DKG succeeded and state
 /// is either `AwaitingKeyHolderSignature` or `Active`). Returns the dWallet fields JSON.
 ///
-/// The Sui JSON-RPC doesn't include enum variant names, so we detect DKG completion
-/// by checking for the presence of `public_output` in the state fields.
+/// Detect DKG completion by checking for `public_output` in the state fields.
 async fn poll_dwallet_until_dkg_complete(
-    sdk_client: &sui_sdk::SuiClient,
+    grpc_client: &SuiGrpcClient,
     dwallet_id: ObjectID,
     timeout_secs: u64,
 ) -> Result<serde_json::Value> {
@@ -1027,7 +1031,7 @@ async fn poll_dwallet_until_dkg_complete(
             anyhow::bail!("Timeout waiting for dWallet {dwallet_id} DKG to complete");
         }
 
-        if let Ok(fields) = fetch_object_fields(sdk_client, dwallet_id).await
+        if let Ok(fields) = fetch_object_fields(grpc_client, dwallet_id).await
             && let Some(state) = fields.get("state")
         {
             // Check for public_output — present in AwaitingKeyHolderSignature and Active
@@ -1286,13 +1290,11 @@ fn resolve_seed(
     Ok(seed)
 }
 
-/// Create a sui_sdk::SuiClient for direct RPC queries (read_api, coin_read_api).
-async fn create_sdk_client(context: &WalletContext) -> Result<sui_sdk::SuiClient> {
-    let rpc_url = context.get_active_env()?.rpc.clone();
-    sui_sdk::SuiClientBuilder::default()
-        .build(rpc_url)
-        .await
-        .context("Failed to create Sui SDK client")
+/// Get the active Sui gRPC client.
+async fn create_grpc_client(context: &WalletContext) -> Result<SuiGrpcClient> {
+    context
+        .grpc_client()
+        .context("Failed to create Sui gRPC client")
 }
 
 /// Create a SuiConnectorClient for read-only queries (coordinator, network keys, pricing).
@@ -1301,7 +1303,7 @@ async fn create_sui_client(
     config_path: &PathBuf,
 ) -> Result<SuiConnectorClient> {
     let config = read_ika_sui_config_yaml(context, config_path)?;
-    SuiConnectorClient::new(
+    SuiConnectorClient::new_grpc(
         &context.get_active_env()?.rpc,
         SuiClientMetrics::new_for_testing(),
         config,
@@ -1388,21 +1390,21 @@ async fn get_network_key_info_for(
 
 /// Auto-find an IKA coin owned by the active address.
 async fn find_ika_coin(
-    sdk_client: &sui_sdk::SuiClient,
+    grpc_client: &SuiGrpcClient,
     owner: SuiAddress,
     config: &IkaNetworkConfig,
 ) -> Result<ObjectID> {
     let coin_type = format!("{}::ika::IKA", config.packages.ika_package_id);
-    let coins = sdk_client
-        .coin_read_api()
-        .get_coins(owner, Some(coin_type.clone()), None, Some(1))
+    let coin_type: StructTag = coin_type.parse().context("Invalid IKA coin type")?;
+    let coins = grpc_client
+        .get_owned_objects(owner, Some(coin_type.clone()), Some(1), None)
         .await
         .context("Failed to query IKA coins")?;
     let coin =
-        coins.data.into_iter().next().ok_or_else(|| {
+        coins.items.into_iter().next().ok_or_else(|| {
             anyhow::anyhow!("No IKA coins found for {owner}. Coin type: {coin_type}")
         })?;
-    Ok(coin.coin_object_id)
+    Ok(coin.id())
 }
 
 /// Resolve payment coins from CLI args.
@@ -1420,8 +1422,8 @@ async fn resolve_payment_coins(
         Some(id) => id,
         None => {
             let owner = context.active_address()?;
-            let sdk_client = create_sdk_client(context).await?;
-            match find_ika_coin(&sdk_client, owner, config).await {
+            let grpc_client = create_grpc_client(context).await?;
+            match find_ika_coin(&grpc_client, owner, config).await {
                 Ok(id) => id,
                 Err(_) => {
                     // No IKA coins found. Create a zero-value IKA coin (needed even for
@@ -1460,17 +1462,14 @@ async fn is_presign_cap_verified(
     context: &WalletContext,
     presign_cap_id: ObjectID,
 ) -> Result<bool> {
-    let sdk_client = create_sdk_client(context).await?;
-    let response = sdk_client
-        .read_api()
-        .get_object_with_options(presign_cap_id, SuiObjectDataOptions::new().with_type())
-        .await?;
-    let data = response
+    let grpc_client = create_grpc_client(context).await?;
+    let mut grpc_client = grpc_client;
+    let object = grpc_client.get_object(presign_cap_id).await?;
+    let type_str = object
         .data
-        .ok_or_else(|| anyhow::anyhow!("Presign cap not found: {presign_cap_id}"))?;
-    let type_str = data
-        .type_
-        .ok_or_else(|| anyhow::anyhow!("No type info for presign cap: {presign_cap_id}"))?
+        .try_as_move()
+        .ok_or_else(|| anyhow::anyhow!("Presign cap is not a Move object: {presign_cap_id}"))?
+        .type_()
         .to_string();
     if type_str.contains("VerifiedPresignCap") {
         Ok(true)
@@ -1483,24 +1482,13 @@ async fn is_presign_cap_verified(
 
 /// Fetch a Sui object's JSON fields by object ID.
 async fn fetch_object_fields(
-    sdk_client: &sui_sdk::SuiClient,
+    grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
-    let response = sdk_client
-        .read_api()
-        .get_object_with_options(object_id, SuiObjectDataOptions::full_content())
-        .await?;
-    let data = response
-        .data
-        .ok_or_else(|| anyhow::anyhow!("Object not found: {object_id}"))?;
-    let content = data
-        .content
-        .ok_or_else(|| anyhow::anyhow!("No content for object: {object_id}"))?;
-    let json = serde_json::to_value(&content)?;
-    let fields = json
-        .get("fields")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("No fields in object: {object_id}"))?;
+    let mut grpc_client = grpc_client.clone();
+    let (_, json) = grpc_client.get_object_with_json(object_id).await?;
+    let json = json.ok_or_else(|| anyhow::anyhow!("No JSON content for object: {object_id}"))?;
+    let fields = json.get("fields").cloned().unwrap_or(json);
     // Handle SuiMoveStruct::WithTypes serialization which wraps as
     // { "type": "...", "fields": { actual fields } }
     if fields.get("type").is_some()
@@ -1511,13 +1499,41 @@ async fn fetch_object_fields(
     Ok(fields)
 }
 
+async fn list_owned_objects_with_json(
+    grpc_client: &SuiGrpcClient,
+    owner: SuiAddress,
+) -> Result<Vec<(ObjectID, String, serde_json::Value)>> {
+    let mut page_token = None;
+    let mut objects = Vec::new();
+    loop {
+        let page = grpc_client
+            .get_owned_objects(owner, None, Some(50), page_token)
+            .await
+            .context("Failed to query owned objects")?;
+        for object in page.items {
+            let Some(move_object) = object.data.try_as_move() else {
+                continue;
+            };
+            let object_id = object.id();
+            let type_ = move_object.type_().to_string();
+            let fields = fetch_object_fields(grpc_client, object_id).await?;
+            objects.push((object_id, type_, fields));
+        }
+        let Some(next_page_token) = page.next_page_token else {
+            break;
+        };
+        page_token = Some(next_page_token);
+    }
+    Ok(objects)
+}
+
 /// Fetch dWallet metadata (curve, DKG output) from chain using the dWallet object ID.
 async fn fetch_dwallet_metadata(
     context: &WalletContext,
     dwallet_id: ObjectID,
 ) -> Result<DWalletMetadata> {
-    let sdk_client = create_sdk_client(context).await?;
-    let fields = fetch_object_fields(&sdk_client, dwallet_id).await?;
+    let grpc_client = create_grpc_client(context).await?;
+    let fields = fetch_object_fields(&grpc_client, dwallet_id).await?;
 
     let curve = fields
         .get("curve")
@@ -1568,10 +1584,10 @@ async fn fetch_presign_output(
     context: &WalletContext,
     presign_cap_id: ObjectID,
 ) -> Result<Vec<u8>> {
-    let sdk_client = create_sdk_client(context).await?;
+    let grpc_client = create_grpc_client(context).await?;
 
     // 1. Read the VerifiedPresignCap to get presign_id
-    let cap_fields = fetch_object_fields(&sdk_client, presign_cap_id).await?;
+    let cap_fields = fetch_object_fields(&grpc_client, presign_cap_id).await?;
     let presign_id_str = cap_fields
         .get("presign_id")
         .and_then(|v| v.as_str())
@@ -1583,7 +1599,7 @@ async fn fetch_presign_output(
         .context("Invalid presign_id in presign cap")?;
 
     // 2. Read the PresignSession to get state.Completed.presign
-    let session_fields = fetch_object_fields(&sdk_client, presign_id).await?;
+    let session_fields = fetch_object_fields(&grpc_client, presign_id).await?;
     let presign_bytes = session_fields
         .get("state")
         .and_then(|state| state.get("fields"))
@@ -1770,10 +1786,10 @@ impl IkaDWalletCommand {
                         eprintln!("DKG transaction submitted. Waiting for network to process...");
                     }
 
-                    let sdk_client = create_sdk_client(context).await?;
+                    let grpc_client = create_grpc_client(context).await?;
 
                     // Poll until DKG completes (public_output appears, up to 5 minutes)
-                    let fields = poll_dwallet_until_dkg_complete(&sdk_client, did, 300)
+                    let fields = poll_dwallet_until_dkg_complete(&grpc_client, did, 300)
                         .await
                         .context(
                             "Failed waiting for DKG completion. \
@@ -2327,10 +2343,12 @@ impl IkaDWalletCommand {
                 let (digest, status) = tx_digest_and_status(&response);
 
                 // For batch: find all created PresignCap objects
-                let effects = response.effects.as_ref();
-                let created_ids: Vec<ObjectID> = effects
-                    .map(|e| e.created().iter().map(|o| o.reference.object_id).collect())
-                    .unwrap_or_default();
+                let created_ids: Vec<ObjectID> = response
+                    .effects
+                    .created()
+                    .into_iter()
+                    .map(|(reference, _)| reference.0)
+                    .collect();
 
                 // Identify presign caps among created objects
                 let mut presign_cap_ids = Vec::new();
@@ -2351,11 +2369,11 @@ impl IkaDWalletCommand {
                 let event_list = events.as_deref().unwrap_or(&[]);
                 let presign_ids: Vec<String> = event_list
                     .iter()
-                    .filter(|e| e.type_.to_string().contains("PresignRequestEvent"))
-                    .filter_map(|e| {
-                        e.parsed_json
+                    .filter(|(type_, _)| type_.contains("PresignRequestEvent"))
+                    .filter_map(|(_, parsed_json)| {
+                        parsed_json
                             .get("event_data")
-                            .or(Some(&e.parsed_json))
+                            .or(Some(parsed_json))
                             .and_then(|d| d.get("presign_id"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string())
@@ -2585,8 +2603,8 @@ impl IkaDWalletCommand {
                         );
                     }
 
-                    let sdk_client = create_sdk_client(context).await?;
-                    let fields = poll_dwallet_until_dkg_complete(&sdk_client, did, 300)
+                    let grpc_client = create_grpc_client(context).await?;
+                    let fields = poll_dwallet_until_dkg_complete(&grpc_client, did, 300)
                         .await
                         .context("Failed waiting for imported key verification")?;
 
@@ -2727,8 +2745,8 @@ impl IkaDWalletCommand {
                 encryption_key_id,
                 tx: _,
             } => {
-                let sdk_client = create_sdk_client(context).await?;
-                let fields = fetch_object_fields(&sdk_client, encryption_key_id).await?;
+                let grpc_client = create_grpc_client(context).await?;
+                let fields = fetch_object_fields(&grpc_client, encryption_key_id).await?;
                 IkaDWalletCommandResponse::Get {
                     dwallet: serde_json::json!({
                         "encryption_key_id": encryption_key_id.to_string(),
@@ -2738,22 +2756,12 @@ impl IkaDWalletCommand {
             }
 
             IkaDWalletCommand::Get { dwallet_id, tx: _ } => {
-                let sdk_client = create_sdk_client(context).await?;
-
-                let object_response = sdk_client
-                    .read_api()
-                    .get_object_with_options(dwallet_id, SuiObjectDataOptions::full_content())
-                    .await?;
-
-                let data = object_response
-                    .data
-                    .ok_or_else(|| anyhow::anyhow!("dWallet object not found: {dwallet_id}"))?;
-
-                let content = data.content.ok_or_else(|| {
+                let grpc_client = create_grpc_client(context).await?;
+                let mut grpc_client = grpc_client;
+                let (_, json_value) = grpc_client.get_object_with_json(dwallet_id).await?;
+                let json_value = json_value.ok_or_else(|| {
                     anyhow::anyhow!("No content for dWallet object: {dwallet_id}")
                 })?;
-
-                let json_value = serde_json::to_value(&content)?;
 
                 IkaDWalletCommandResponse::Get {
                     dwallet: json_value,
@@ -2787,160 +2795,76 @@ impl IkaDWalletCommand {
             }
 
             IkaDWalletCommand::List { tx: _ } => {
-                let sdk_client = create_sdk_client(context).await?;
+                let grpc_client = create_grpc_client(context).await?;
                 let owner = context.active_address()?;
 
                 // Query all owned objects of type DWalletCap
                 let mut dwallets = Vec::new();
-                let mut cursor = None;
-                loop {
-                    let page = sdk_client
-                        .read_api()
-                        .get_owned_objects(
-                            owner,
-                            Some(sui_json_rpc_types::SuiObjectResponseQuery {
-                                filter: None,
-                                options: Some(SuiObjectDataOptions::full_content()),
-                            }),
-                            cursor,
-                            Some(50),
-                        )
-                        .await
-                        .context("Failed to query owned objects")?;
-
-                    for obj_resp in &page.data {
-                        let Some(data) = &obj_resp.data else {
-                            continue;
-                        };
-                        let Some(type_) = &data.type_ else { continue };
-                        let type_str = type_.to_string();
-                        if !type_str.contains("DWalletCap") {
-                            continue;
-                        }
-                        let content = data
-                            .content
-                            .as_ref()
-                            .map(|c| serde_json::to_value(c).unwrap_or_default());
-                        let fields = content
-                            .as_ref()
-                            .and_then(|c| c.get("fields"))
-                            .and_then(|f| {
-                                if f.get("type").is_some() {
-                                    f.get("fields")
-                                } else {
-                                    Some(f)
-                                }
-                            });
+                for (object_id, type_, fields) in
+                    list_owned_objects_with_json(&grpc_client, owner).await?
+                {
+                    if type_.contains("DWalletCap") {
                         let dwallet_id = fields
-                            .and_then(|f| f.get("dwallet_id"))
-                            .and_then(|v| v.as_str())
+                            .get("dwallet_id")
+                            .and_then(|value| value.as_str())
                             .unwrap_or("unknown");
                         dwallets.push(serde_json::json!({
-                            "cap_id": data.object_id.to_string(),
+                            "cap_id": object_id.to_string(),
                             "dwallet_id": dwallet_id,
                         }));
                     }
-
-                    if !page.has_next_page {
-                        break;
-                    }
-                    cursor = page.next_cursor;
                 }
 
                 IkaDWalletCommandResponse::List { dwallets }
             }
 
             IkaDWalletCommand::ListPresigns { tx: _ } => {
-                let sdk_client = create_sdk_client(context).await?;
+                let grpc_client = create_grpc_client(context).await?;
                 let owner = context.active_address()?;
 
                 let mut verified = Vec::new();
                 let mut unverified = Vec::new();
-                let mut cursor = None;
-
-                loop {
-                    let page = sdk_client
-                        .read_api()
-                        .get_owned_objects(
-                            owner,
-                            Some(sui_json_rpc_types::SuiObjectResponseQuery {
-                                filter: None,
-                                options: Some(SuiObjectDataOptions::full_content()),
-                            }),
-                            cursor,
-                            Some(50),
-                        )
-                        .await
-                        .context("Failed to query owned objects")?;
-
-                    for obj_resp in &page.data {
-                        let Some(data) = &obj_resp.data else {
-                            continue;
-                        };
-                        let Some(type_) = &data.type_ else { continue };
-                        let type_str = type_.to_string();
-
-                        let is_verified = type_str.contains("VerifiedPresignCap");
-                        let is_unverified =
-                            !is_verified && type_str.contains("UnverifiedPresignCap");
-                        if !is_verified && !is_unverified {
-                            continue;
-                        }
-
-                        let content = data
-                            .content
-                            .as_ref()
-                            .map(|c| serde_json::to_value(c).unwrap_or_default());
-                        let fields = content
-                            .as_ref()
-                            .and_then(|c| c.get("fields"))
-                            .and_then(|f| {
-                                if f.get("type").is_some() {
-                                    f.get("fields")
-                                } else {
-                                    Some(f)
-                                }
-                            });
-
-                        let presign_id = fields
-                            .and_then(|f| f.get("presign_id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let dwallet_id = fields
-                            .and_then(|f| f.get("dwallet_id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("global");
-
-                        // Fetch curve from presign session
-                        let curve_name = if let Ok(pid) = presign_id.parse::<ObjectID>() {
-                            fetch_object_fields(&sdk_client, pid)
-                                .await
-                                .ok()
-                                .and_then(|f| f.get("curve").and_then(|v| v.as_u64()))
-                                .and_then(|c| curve_id_to_name(c as u32).ok())
-                                .unwrap_or("unknown")
-                        } else {
-                            "unknown"
-                        };
-
-                        let entry = serde_json::json!({
-                            "cap_id": data.object_id.to_string(),
-                            "presign_id": presign_id,
-                            "dwallet_id": dwallet_id,
-                            "curve": curve_name,
-                        });
-
-                        if is_verified {
-                            verified.push(entry);
-                        } else {
-                            unverified.push(entry);
-                        }
+                for (object_id, type_, fields) in
+                    list_owned_objects_with_json(&grpc_client, owner).await?
+                {
+                    let is_verified = type_.contains("VerifiedPresignCap");
+                    let is_unverified = !is_verified && type_.contains("UnverifiedPresignCap");
+                    if !is_verified && !is_unverified {
+                        continue;
                     }
+                    let presign_id = fields
+                        .get("presign_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let dwallet_id = fields
+                        .get("dwallet_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("global");
 
-                    if !page.has_next_page {
-                        break;
+                    // Fetch curve from presign session
+                    let curve_name = if let Ok(pid) = presign_id.parse::<ObjectID>() {
+                        fetch_object_fields(&grpc_client, pid)
+                            .await
+                            .ok()
+                            .and_then(|f| f.get("curve").and_then(|v| v.as_u64()))
+                            .and_then(|c| curve_id_to_name(c as u32).ok())
+                            .unwrap_or("unknown")
+                    } else {
+                        "unknown"
+                    };
+
+                    let entry = serde_json::json!({
+                        "cap_id": object_id.to_string(),
+                        "presign_id": presign_id,
+                        "dwallet_id": dwallet_id,
+                        "curve": curve_name,
+                    });
+
+                    if is_verified {
+                        verified.push(entry);
+                    } else {
+                        unverified.push(entry);
                     }
-                    cursor = page.next_cursor;
                 }
 
                 // Sort by curve for readability
@@ -3007,9 +2931,9 @@ impl IkaDWalletCommand {
                 .await?;
                 let protocol_pp = network_key_info.protocol_public_parameters;
 
-                let sdk_client = create_sdk_client(context).await?;
+                let grpc_client = create_grpc_client(context).await?;
                 let encrypted_share = fetch_encrypted_share_for_dwallet(
-                    &sdk_client,
+                    &grpc_client,
                     context,
                     dwallet_id,
                     metadata.curve,
@@ -3239,7 +3163,7 @@ async fn poll_presign_until_complete(
     presign_id: ObjectID,
     timeout_secs: u64,
 ) -> Result<()> {
-    let sdk_client = create_sdk_client(context).await?;
+    let grpc_client = create_grpc_client(context).await?;
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let mut interval_ms = 2000u64;
@@ -3253,7 +3177,7 @@ async fn poll_presign_until_complete(
             );
         }
 
-        if let Ok(fields) = fetch_object_fields(&sdk_client, presign_id).await
+        if let Ok(fields) = fetch_object_fields(&grpc_client, presign_id).await
             && let Some(state) = fields.get("state")
         {
             let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
@@ -3351,9 +3275,10 @@ async fn resolve_secret_share(
         eprintln!("No secret share provided. Decrypting from on-chain encrypted share...");
     }
 
-    let sdk_client = create_sdk_client(context).await?;
+    let grpc_client = create_grpc_client(context).await?;
     let encrypted_share_and_proof =
-        fetch_encrypted_share_for_dwallet(&sdk_client, context, dwallet_id, curve_id, seed).await?;
+        fetch_encrypted_share_for_dwallet(&grpc_client, context, dwallet_id, curve_id, seed)
+            .await?;
 
     let seed_bytes = resolve_seed(context, seed.seed_file.clone(), seed.address, seed.index)?;
     let (_encryption_key, decryption_key, _signing_keypair) =
@@ -3378,7 +3303,7 @@ async fn resolve_secret_share(
 /// `encryption_key_address` is an `address` field derived from the Ed25519 signing keypair
 /// (not the Sui wallet address), so we compute it from seed args.
 async fn fetch_encrypted_share_for_dwallet(
-    sdk_client: &sui_sdk::SuiClient,
+    grpc_client: &SuiGrpcClient,
     context: &mut WalletContext,
     dwallet_id: ObjectID,
     curve_id: u32,
@@ -3391,7 +3316,7 @@ async fn fetch_encrypted_share_for_dwallet(
     let encryption_key_address: SuiAddress = signing_keypair.public().into();
 
     // 1. Get the dWallet object to find the ObjectTable ID
-    let dwallet_fields = fetch_object_fields(sdk_client, dwallet_id).await?;
+    let dwallet_fields = fetch_object_fields(grpc_client, dwallet_id).await?;
     let table_id = dwallet_fields
         .get("encrypted_user_secret_key_shares")
         .and_then(|v| v.get("fields"))
@@ -3410,16 +3335,25 @@ async fn fetch_encrypted_share_for_dwallet(
     // 2. Enumerate dynamic fields of the ObjectTable.
     //    These are DynamicObject entries — each field_info.object_id IS the
     //    EncryptedUserSecretKeyShare object directly (no Field wrapper).
-    let mut cursor = None;
+    let mut page_token = None;
     loop {
-        let page = sdk_client
-            .read_api()
-            .get_dynamic_fields(table_oid, cursor, Some(50))
+        let page = grpc_client
+            .get_dynamic_fields(table_oid, Some(50), page_token)
             .await
             .context("Failed to query encrypted share dynamic fields")?;
 
-        for field_info in &page.data {
-            let share_fields = fetch_object_fields(sdk_client, field_info.object_id).await?;
+        for field_info in &page.dynamic_fields {
+            let Some(object_id) = field_info
+                .child_id
+                .as_deref()
+                .or(field_info.field_id.as_deref())
+            else {
+                continue;
+            };
+            let object_id: ObjectID = object_id
+                .parse()
+                .context("Invalid dynamic-field object ID")?;
+            let share_fields = fetch_object_fields(grpc_client, object_id).await?;
 
             // Check if this share belongs to the current user's encryption key
             let key_address = share_fields
@@ -3443,10 +3377,10 @@ async fn fetch_encrypted_share_for_dwallet(
             return Ok(encrypted_bytes);
         }
 
-        if !page.has_next_page {
+        let Some(next_page_token) = page.next_page_token else {
             break;
-        }
-        cursor = page.next_cursor;
+        };
+        page_token = Some(next_page_token);
     }
 
     anyhow::bail!(

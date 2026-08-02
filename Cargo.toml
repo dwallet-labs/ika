@@ -314,8 +314,6 @@ sui-faucet = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2
 sui-graphql-rpc = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
 sui-indexer = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
 sui-json = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
-sui-json-rpc-api = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
 sui-keys = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
 sui-light-client = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
 sui-macros = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.73.2" }
@@ -379,5 +377,3 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
-
-

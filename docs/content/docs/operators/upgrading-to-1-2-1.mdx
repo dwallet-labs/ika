@@ -39,17 +39,13 @@ config that still carries `notifier_client_key_pair` (from a combined
 1.1.8-era setup) will not start `ika-validator` — remove the key from the
 validator YAML and run the notifier as its own `ika-notifier` process.
 
-## 2. Config files keep working — with two sharp edges
+## 2. Migrate Sui connectivity to gRPC before upgrading further
 
-Old-style configs (a plain `sui-rpc-url`) are fully supported and keep using
-JSON-RPC for every role, exactly as on 1.1.8.
-
-- A YAML with **no** `sui-rpc-url` at all no longer silently defaults to
-  `http://127.0.0.1:9000` — the node refuses to boot. Make the URL explicit.
-- If you migrate a notifier or fullnode to the new `sui-data-source` config
-  shape (keys are kebab-case in the YAML), its endpoint must serve Sui
-  **gRPC**. Do not change the config shape as part of this upgrade; upgrade
-  in place first.
+Current binaries require `sui-data-source` and no longer accept the old
+`sui-rpc-url` transport. Replace it with `sui-state-direct` (or the documented
+mirrored-validator configuration) and point it at a Sui **gRPC** endpoint.
+Validators also need the configured Sui genesis trust root. Perform and verify
+this configuration migration before deploying a binary that removes JSON-RPC.
 
 ## 3. Every Prometheus metric was renamed — dashboards and alerts will go dark
 

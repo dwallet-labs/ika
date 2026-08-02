@@ -29,10 +29,10 @@ fn rewrite_config_to_mirrored(config_path: &Path, mirror_peers: Vec<String>) -> 
     let yaml = std::fs::read_to_string(config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
     let mut config: NodeConfig = serde_yaml::from_str(&yaml).context("parse node config")?;
-    config.sui_connector_config.sui_data_source = Some(SuiDataSource::SuiStateMirrored {
+    config.sui_connector_config.sui_data_source = SuiDataSource::SuiStateMirrored {
         fallback_grpc_url: None,
         headers: Default::default(),
-    });
+    };
     config.sui_connector_config.sui_state_mirror_peers =
         mirror_peers.into_iter().map(Into::into).collect();
     let yaml = serde_yaml::to_string(&config).context("serialize node config")?;

@@ -23,10 +23,11 @@ use std::{
     fs,
     path::PathBuf,
 };
-use sui_sdk::rpc_types::SuiTransactionBlockResponse;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
+use sui_types::effects::TransactionEffectsAPI;
 
 const DEFAULT_GAS_BUDGET: u64 = 200_000_000;
 
@@ -157,16 +158,16 @@ pub enum IkaProtocolCommand {
 }
 
 pub enum IkaProtocolCommandResponse {
-    SetApprovedUpgradeByCap(SuiTransactionBlockResponse),
-    PerformApprovedUpgrade(SuiTransactionBlockResponse),
-    TryMigrateSystem(SuiTransactionBlockResponse),
-    TryMigrateCoordinator(SuiTransactionBlockResponse),
-    TryMigrateSystemByCap(SuiTransactionBlockResponse),
-    TryMigrateCoordinatorByCap(SuiTransactionBlockResponse),
-    SetPausedCurvesAndSignatureAlgorithms(SuiTransactionBlockResponse),
-    SetSupportedAndPricing(SuiTransactionBlockResponse),
-    SetGasFeeReimbursementSuiSystemCallValueByCap(SuiTransactionBlockResponse),
-    SetGlobalPresignConfig(SuiTransactionBlockResponse),
+    SetApprovedUpgradeByCap(ExecutedTransaction),
+    PerformApprovedUpgrade(ExecutedTransaction),
+    TryMigrateSystem(ExecutedTransaction),
+    TryMigrateCoordinator(ExecutedTransaction),
+    TryMigrateSystemByCap(ExecutedTransaction),
+    TryMigrateCoordinatorByCap(ExecutedTransaction),
+    SetPausedCurvesAndSignatureAlgorithms(ExecutedTransaction),
+    SetSupportedAndPricing(ExecutedTransaction),
+    SetGasFeeReimbursementSuiSystemCallValueByCap(ExecutedTransaction),
+    SetGlobalPresignConfig(ExecutedTransaction),
 }
 
 impl IkaProtocolCommand {
@@ -499,15 +500,14 @@ impl IkaProtocolCommandResponse {
 }
 
 fn write_transaction_response_without_transaction_data(
-    response: &SuiTransactionBlockResponse,
+    response: &ExecutedTransaction,
 ) -> Result<String, fmt::Error> {
-    // we requested with for full_content, so the following content should be available.
-    let success = response.status_ok().unwrap();
+    let success = response.effects.status().is_ok();
     let lines = vec![
         String::from("----- Transaction Digest ----"),
-        response.digest.to_string(),
+        response.effects.transaction_digest().to_string(),
         String::from("----- Transaction Effects ----"),
-        response.effects.as_ref().unwrap().to_string(),
+        serde_json::to_string_pretty(&response.effects).unwrap(),
     ];
     let mut writer = String::new();
     for line in lines {

@@ -12,7 +12,6 @@
 #
 # Environment variables:
 #   IKA_BIN           Path to ika binary (default: ./target/release/ika)
-#   SUI_RPC_URL       Sui fullnode RPC (default: http://127.0.0.1:9000)
 #   POLL_INTERVAL     Seconds between polls (default: 3)
 #   POLL_TIMEOUT      Max seconds to wait (default: 300)
 
@@ -20,7 +19,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 export IKA_BIN="${IKA_BIN:-./target/release/ika}"
-export SUI_RPC_URL="${SUI_RPC_URL:-http://127.0.0.1:9000}"
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -28,7 +26,6 @@ export SUI_RPC_URL="${SUI_RPC_URL:-http://127.0.0.1:9000}"
 echo "Ika CLI Integration Tests"
 echo "========================="
 echo "  Binary:  $IKA_BIN"
-echo "  RPC:     $SUI_RPC_URL"
 echo ""
 
 if [[ ! -x "$IKA_BIN" ]]; then
@@ -37,11 +34,9 @@ if [[ ! -x "$IKA_BIN" ]]; then
     exit 1
 fi
 
-# Check that Sui RPC is reachable
-if ! curl -s "$SUI_RPC_URL" -X POST -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","id":1,"method":"sui_getLatestCheckpointSequenceNumber","params":[]}' \
-    | grep -q '"result"'; then
-    echo "ERROR: Sui RPC not reachable at $SUI_RPC_URL"
+# The configured Sui CLI environment uses the gRPC client internally.
+if ! sui client chain-identifier >/dev/null 2>&1; then
+    echo "ERROR: configured Sui gRPC endpoint is not reachable"
     echo "       Start local network: ika start --force-reinitiation"
     exit 1
 fi

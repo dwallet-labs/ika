@@ -16,9 +16,7 @@ use ika_sui_client::{SuiBackend, SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, CommitteeMembership, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
-use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, SESSIONS_MANAGER_MODULE_NAME,
-};
+use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
@@ -27,7 +25,6 @@ use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockEffectsAPI};
 use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
@@ -35,6 +32,8 @@ use sui_types::digests::{
     ChainIdentifier as SuiNetworkChainIdentifier, get_mainnet_chain_identifier,
     get_testnet_chain_identifier,
 };
+use sui_types::effects::TransactionEffectsAPI;
+use sui_types::execution_status::ExecutionStatus;
 use sui_types::gas_coin::GAS;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{
@@ -70,22 +69,12 @@ pub mod verified_transport;
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,
     sui_address: SuiAddress,
-    /// SIP-58 mode: pay gas from the notifier address's SUI balance instead
-    /// of owned gas-coin objects. Submissions carry an empty gas payment and
-    /// a `ValidDuring` expiration; the entire stale-gas-version machinery is
-    /// bypassed. Opt-in via `notifier_gas_from_address_balance`.
-    gas_from_address_balance: bool,
     /// The chain's full genesis-rooted identifier, resolved once at boot.
-    /// `Some` exactly when `gas_from_address_balance` (a `ValidDuring`
-    /// expiration embeds it and validators compare the full identifier).
-    sui_network_chain_identifier: Option<SuiNetworkChainIdentifier>,
+    /// `ValidDuring` embeds it and validators compare the full identifier.
+    sui_network_chain_identifier: SuiNetworkChainIdentifier,
 }
 
 impl SuiNotifier {
-    pub(crate) fn gas_from_address_balance(&self) -> bool {
-        self.gas_from_address_balance
-    }
-
     pub(crate) fn sui_address(&self) -> SuiAddress {
         self.sui_address
     }
@@ -143,10 +132,8 @@ impl SuiConnectorService {
         // output (healthy) or source the current-epoch output from chain
         // (stranded recovery).
         stranded_network_keys: Arc<arc_swap::ArcSwap<HashSet<ObjectID>>>,
-        // OCS verified-read surface. `Some` when the OCS stack was built
-        // (a trust anchor is configured); `None` otherwise. Its presence is
-        // the node-level switch between the OCS `BagEventPump` and the legacy
-        // JSON-RPC event path — see `run_legacy_event_ingestion` below.
+        // OCS verified-read surface. Validators require it for BagEventPump;
+        // notifier/fullnode roles may omit it because they run no MPC sessions.
         reader: Option<Arc<OcsVerifiedReader>>,
         ocs_metrics: Arc<crate::sui_connector::ocs_metrics::OcsMetrics>,
         // Feed of the chain's processed checkpoint cursors into p2p state
@@ -198,109 +185,50 @@ impl SuiConnectorService {
             >,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
 
-        // Node-level gate. When a trust anchor is configured the OCS stack was
-        // built and `reader` is `Some`, so the OCS `BagEventPump` is the MPC
-        // event source; otherwise the legacy JSON-RPC syncer event path runs.
-        // `watch::Sender` (uncompleted_requests_sender) isn't `Clone`, so the
-        // two event senders belong to exactly one path: hand them to whichever
-        // is active.
-        let run_legacy_event_ingestion = reader.is_none();
-        let (syncer_new_requests, syncer_uncompleted, pump_senders) = if run_legacy_event_ingestion
-        {
-            (
-                Some(new_requests_sender),
-                Some(uncompleted_requests_sender),
-                None,
+        let task_handles = SuiSyncer::new(sui_client.clone(), sui_connector_metrics.clone())
+            .run(
+                next_epoch_committee_sender,
+                chain_next_committee_sender,
+                current_epoch_mpc_keys_sender,
+                next_epoch_mpc_keys_sender,
+                mode,
+                system_object_receiver,
+                dwallet_coordinator_receiver.clone(),
+                network_keys_sender,
+                end_of_publish_sender,
+                checkpoint_store,
+                last_session_to_complete_in_current_epoch_sender,
+                noa_checkpoints_finalized,
+                network_key_blob_source.clone(),
+                stranded_network_keys,
+                off_chain_mpc_data_source.clone(),
             )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
+
+        // Validators feed the MPC engine from the OCS-verified bag walker.
+        // Fullnodes/notifiers run no MPC sessions and do not need the pump.
+        if mode.is_validator() {
+            let reader = reader.ok_or_else(|| {
+                anyhow!("Validator requires OcsVerifiedReader for MPC event ingestion")
+            })?;
+            let pump = BagEventPump::new(
+                reader,
+                sui_client.ika_network_config.clone(),
+                dwallet_coordinator_receiver,
+                new_requests_sender,
+                uncompleted_requests_sender,
+                ocs_metrics,
+                sui_connector_metrics.clone(),
+                // 50 ms tick. Bandwidth dropped ~3 orders of magnitude when
+                // we moved from full-checkpoint shipping to inclusion proofs,
+                // so the relay can absorb 20 Hz polling cleanly. Drives MPC
+                // session-start latency down from ~1 s to ~50 ms worst-case.
+                Duration::from_millis(50),
+            );
+            tokio::spawn(pump.run());
         } else {
-            (
-                None,
-                None,
-                Some((new_requests_sender, uncompleted_requests_sender)),
-            )
-        };
-
-        let sui_modules_to_watch = vec![SESSIONS_MANAGER_MODULE_NAME.to_owned()];
-        let task_handles = SuiSyncer::new(
-            sui_client.clone(),
-            sui_modules_to_watch,
-            sui_connector_metrics.clone(),
-        )
-        .run(
-            Duration::from_secs(2),
-            next_epoch_committee_sender,
-            chain_next_committee_sender,
-            current_epoch_mpc_keys_sender,
-            next_epoch_mpc_keys_sender,
-            mode,
-            run_legacy_event_ingestion,
-            system_object_receiver,
-            dwallet_coordinator_receiver.clone(),
-            network_keys_sender,
-            syncer_new_requests,
-            end_of_publish_sender,
-            checkpoint_store,
-            last_session_to_complete_in_current_epoch_sender,
-            syncer_uncompleted,
-            noa_checkpoints_finalized,
-            network_key_blob_source.clone(),
-            stranded_network_keys,
-            off_chain_mpc_data_source.clone(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
-
-        // v4 only: validators feed the MPC engine from the OCS-verified bag
-        // walker instead of the legacy event path. Fullnodes/notifiers don't
-        // run MPC sessions and don't need the pump.
-        if let Some((new_requests_sender, uncompleted_requests_sender)) = pump_senders {
-            if mode.is_validator() {
-                let reader = reader.ok_or_else(|| {
-                    // Unreachable: this branch only runs when
-                    // `run_legacy_event_ingestion` is false, i.e. `reader` is
-                    // `Some`. Kept as a defensive guard rather than `expect`.
-                    anyhow!(
-                        "OcsVerifiedReader missing while OCS event ingestion is active; \
-                         this is a wiring bug (reader presence gates this path)."
-                    )
-                })?;
-                let pump = BagEventPump::new(
-                    reader,
-                    sui_client.ika_network_config.clone(),
-                    dwallet_coordinator_receiver,
-                    new_requests_sender,
-                    uncompleted_requests_sender,
-                    ocs_metrics,
-                    sui_connector_metrics.clone(),
-                    // 50 ms tick. Bandwidth dropped ~3 orders of magnitude when
-                    // we moved from full-checkpoint shipping to inclusion proofs,
-                    // so the relay can absorb 20 Hz polling cleanly. Drives MPC
-                    // session-start latency down from ~1 s to ~50 ms worst-case.
-                    Duration::from_millis(50),
-                );
-                tokio::spawn(pump.run());
-            } else {
-                // `reader.is_some()` (OCS configured) but this node's mode is not
-                // Validator, so the `BagEventPump` — the only MPC event source on
-                // the OCS path — is not spawned and these two non-`Clone` senders
-                // are dropped. Harmless for a pure fullnode/notifier that runs no
-                // MPC; but the MPC service is built on committee membership
-                // (`AuthorityState::is_validator`), a different predicate than the
-                // config-derived `mode`. A node that is a committee member yet
-                // configured without `consensus_config` (so `mode != Validator`)
-                // would then consume a closed channel and silently receive no
-                // sessions. Surface it loudly rather than drop in silence.
-                warn!(
-                    ?mode,
-                    "OCS reader configured but node mode is not Validator: the \
-                     BagEventPump is not spawned and the MPC event senders are \
-                     dropped. Harmless for a pure fullnode/notifier; if this node is \
-                     a committee member, it is a misconfiguration (committee key \
-                     without consensus_config) and MPC will not receive sessions — \
-                     run a committee member in Validator mode."
-                );
-                drop((new_requests_sender, uncompleted_requests_sender));
-            }
+            drop((new_requests_sender, uncompleted_requests_sender));
         }
 
         Ok((
@@ -454,113 +382,101 @@ impl SuiConnectorService {
 
         let sui_address = SuiAddress::from(&sui_key.public());
 
-        // SIP-58 address-balance gas: resolve the chain's FULL identifier once
+        // Resolve the chain's FULL identifier once
         // (a `ValidDuring` expiration embeds it verbatim). Fail the boot
         // loudly if it can't be resolved — a writer silently unable to build
         // transactions is exactly the failure shape issue #1892 is about.
-        let gas_from_address_balance = sui_connector_config.notifier_gas_from_address_balance;
-        let sui_network_chain_identifier = if gas_from_address_balance {
-            let chain_identifier = sui_client.get_sui_chain_identifier().await.map_err(|e| {
+        let sui_network_chain_identifier =
+            sui_client.get_sui_chain_identifier().await.map_err(|e| {
                 anyhow!(
-                    "notifier_gas_from_address_balance is set but the chain identifier \
-                     could not be resolved (required for ValidDuring expirations): {e}"
+                    "the chain identifier could not be resolved (required for ValidDuring \
+                     expirations): {e}"
                 )
             })?;
 
-            // Preflight the ADDRESS BALANCE (not coin objects — plain coin
-            // transfers don't fund it). An underfunded balance would
-            // otherwise surface as an hour of failed submissions followed by
-            // a panic, with the network's epoch close blocked the whole time
-            // — the issue-#1892 outage shape. Refuse to boot with the exact
-            // remediation instead: a writer that cannot pay must not run.
-            let funds = sui_client.get_sui_funds(sui_address).await.map_err(|e| {
-                anyhow!(
-                    "notifier_gas_from_address_balance is set but the funds of \
-                     {sui_address} could not be read (does the target Sui network \
-                     have accumulators/address-balance gas enabled?): {e}"
-                )
-            })?;
+        // Preflight the ADDRESS BALANCE (not coin objects — plain coin
+        // transfers don't fund it). An underfunded balance would
+        // otherwise surface as an hour of failed submissions followed by
+        // a panic, with the network's epoch close blocked the whole time
+        // — the issue-#1892 outage shape. Refuse to boot with the exact
+        // remediation instead: a writer that cannot pay must not run.
+        let funds = sui_client.get_sui_funds(sui_address).await.map_err(|e| {
+            anyhow!(
+                "the funds of {sui_address} could not be read (does the target Sui network \
+                 have accumulators/address-balance gas enabled?): {e}"
+            )
+        })?;
 
-            // Migration sweep: an operator flipping the flag on an existing
-            // notifier still holds its funds as coin objects, which
-            // address-balance gas cannot spend. Deposit them into the address
-            // balance automatically (split off the sweep tx's own gas, then
-            // `coin::send_funds`). Best-effort: a failed sweep only warns —
-            // the preflight below still decides whether the writer can run.
-            let mut address_balance = funds.in_address_balance;
-            if funds.in_coin_objects >= SWEEP_MIN_COIN_TOTAL {
-                match sweep_gas_coins_into_address_balance(
-                    &sui_client,
-                    &sui_key,
-                    sui_address,
-                    funds.in_coin_objects,
-                )
-                .await
-                {
-                    Ok(swept) => {
-                        info!(
-                            swept,
-                            "Swept gas-coin objects into the notifier's address balance"
-                        );
-                        // Count the swept funds directly instead of re-reading:
-                        // the read goes through a fullnode view that can lag
-                        // the just-finalized sweep and would flunk the
-                        // preflight spuriously.
-                        address_balance = address_balance.saturating_add(swept);
-                    }
-                    Err(e) => warn!(
-                        error = ?e,
-                        in_coin_objects = funds.in_coin_objects,
-                        "failed to sweep gas coins into the address balance; \
-                         continuing to the balance preflight without them"
-                    ),
+        // Migration sweep: an existing notifier may still hold its funds as
+        // coin objects, which address-balance gas cannot spend. Deposit them
+        // into the address balance automatically (split off the sweep tx's
+        // own gas, then `coin::send_funds`). Best-effort: a failed sweep only warns —
+        // the preflight below still decides whether the writer can run.
+        let mut address_balance = funds.in_address_balance;
+        if funds.in_coin_objects >= SWEEP_MIN_COIN_TOTAL {
+            match sweep_gas_coins_into_address_balance(
+                &sui_client,
+                &sui_key,
+                sui_address,
+                funds.in_coin_objects,
+            )
+            .await
+            {
+                Ok(swept) => {
+                    info!(
+                        swept,
+                        "Swept gas-coin objects into the notifier's address balance"
+                    );
+                    // Count the swept funds directly instead of re-reading:
+                    // the read goes through a fullnode view that can lag
+                    // the just-finalized sweep and would flunk the
+                    // preflight spuriously.
+                    address_balance = address_balance.saturating_add(swept);
                 }
+                Err(e) => warn!(
+                    error = ?e,
+                    in_coin_objects = funds.in_coin_objects,
+                    "failed to sweep gas coins into the address balance; \
+                     continuing to the balance preflight without them"
+                ),
             }
-            if address_balance < NOTIFIER_GAS_BUDGET {
-                anyhow::bail!(
-                    "notifier_gas_from_address_balance is set but {sui_address} holds only \
-                     {address_balance} MIST in its ADDRESS BALANCE — below one gas budget \
-                     ({} MIST). Deposit SUI into the address balance (coin-object \
-                     transfers do not fund it), or unset the flag to fall back to gas \
-                     coins.",
-                    NOTIFIER_GAS_BUDGET,
-                );
-            }
-            sui_connector_metrics
-                .gas_coin_balance
-                .set(i64::try_from(address_balance).unwrap_or(i64::MAX));
-            info!(
-                ?chain_identifier,
-                address_balance, "Notifier pays gas from its SUI address balance (SIP-58)"
+        }
+        if address_balance < NOTIFIER_GAS_BUDGET {
+            anyhow::bail!(
+                "{sui_address} holds only {address_balance} MIST in its ADDRESS BALANCE — \
+                 below one gas budget ({} MIST). Deposit SUI into the address balance; \
+                 coin-object transfers do not fund it.",
+                NOTIFIER_GAS_BUDGET,
             );
+        }
+        sui_connector_metrics
+            .gas_coin_balance
+            .set(i64::try_from(address_balance).unwrap_or(i64::MAX));
+        info!(
+            ?sui_network_chain_identifier,
+            address_balance, "Notifier pays gas from its SUI address balance (SIP-58)"
+        );
 
-            // Keep the writer-funds gauge live: refresh from the address
-            // balance once a minute. (In coin mode this gauge currently has
-            // no writer at all; here funds exhaustion is otherwise invisible
-            // until submissions start failing, so the gauge is the alert
-            // surface for topping up the balance.)
-            let balance_sui_client = sui_client.clone();
-            let balance_metrics = sui_connector_metrics.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                    if let Ok(funds) = balance_sui_client.get_sui_funds(sui_address).await {
-                        balance_metrics
-                            .gas_coin_balance
-                            .set(i64::try_from(funds.in_address_balance).unwrap_or(i64::MAX));
-                    }
+        // Keep the writer-funds gauge live by refreshing the address balance
+        // once a minute. Funds exhaustion is otherwise invisible until
+        // submissions start failing, so the gauge is the alert surface for
+        // topping up the balance.
+        let balance_sui_client = sui_client.clone();
+        let balance_metrics = sui_connector_metrics.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if let Ok(funds) = balance_sui_client.get_sui_funds(sui_address).await {
+                    balance_metrics
+                        .gas_coin_balance
+                        .set(i64::try_from(funds.in_address_balance).unwrap_or(i64::MAX));
                 }
-            });
-
-            Some(chain_identifier)
-        } else {
-            None
-        };
+            }
+        });
 
         Ok(Some(SuiNotifier {
             sui_key,
             sui_address,
-            gas_from_address_balance,
             sui_network_chain_identifier,
         }))
     }
@@ -649,13 +565,11 @@ async fn sweep_gas_coins_into_address_balance<C: SuiClientInner>(
         .execute_transaction_block_with_effects(transaction)
         .await
         .map_err(|e| anyhow!("sweep submission failed: {e}"))?;
-    if !response.errors.is_empty() {
-        anyhow::bail!("sweep transaction failed: {:?}", response.errors);
-    }
-    if let Some(effects) = &response.effects
-        && let SuiExecutionStatus::Failure { error } = effects.status()
-    {
-        anyhow::bail!("sweep transaction executed but aborted: {error:?}");
+    if let ExecutionStatus::Failure(failure) = response.effects.status() {
+        anyhow::bail!(
+            "sweep transaction executed but aborted: {:?}",
+            failure.error
+        );
     }
     Ok(sweep_amount)
 }
@@ -701,32 +615,17 @@ pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
     sui_notifier: &SuiNotifier,
     pt: ProgrammableTransaction,
     sui_client: &Arc<SuiClient<C>>,
-    gas_payment: Vec<ObjectRef>,
 ) -> Transaction {
     let computation_price = sui_client.get_reference_gas_price_until_success().await;
-
-    let tx_data = if sui_notifier.gas_from_address_balance {
-        let sui_epoch = sui_client.get_sui_epoch_until_success().await;
-        let chain_identifier = sui_notifier
-            .sui_network_chain_identifier
-            .expect("gas_from_address_balance implies a resolved chain identifier (set at boot)");
-        balance_gas_transaction_data(
-            sui_notifier.sui_address,
-            pt,
-            computation_price,
-            sui_epoch,
-            chain_identifier,
-            rand::random(),
-        )
-    } else {
-        TransactionData::new_programmable(
-            sui_notifier.sui_address,
-            gas_payment,
-            pt,
-            NOTIFIER_GAS_BUDGET,
-            computation_price,
-        )
-    };
+    let sui_epoch = sui_client.get_sui_epoch_until_success().await;
+    let tx_data = balance_gas_transaction_data(
+        sui_notifier.sui_address,
+        pt,
+        computation_price,
+        sui_epoch,
+        sui_notifier.sui_network_chain_identifier,
+        rand::random(),
+    );
 
     let signature = Signature::new_secure(
         &IntentMessage::new(Intent::sui_transaction(), &tx_data),

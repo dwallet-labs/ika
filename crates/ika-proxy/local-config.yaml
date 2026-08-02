@@ -39,7 +39,7 @@ remote-write:
 # Dynamic peer validation - automatically discovers validators from the blockchain
 # This section is required for validator discovery and authentication
 dynamic-peers:
-  # Sui JSON-RPC endpoint for validator discovery
+  # Sui gRPC endpoint for validator discovery
   # Mainnet: https://fullnode.mainnet.sui.io:443
   # Testnet: https://fullnode.testnet.sui.io:443
   # Devnet: https://fullnode.devnet.sui.io:443

@@ -99,11 +99,6 @@ pub enum SetupError {
     #[error("sui-state-mirrored configured but no anemo network handed in")]
     MirroredWithoutNetwork,
     #[error(
-        "OCS stack requested but the node config has no `sui-data-source` section \
-         (old-style JSON-RPC config); add a sui-data-source (gRPC) section"
-    )]
-    MissingDataSource,
-    #[error(
         "the Sui chain at the configured endpoint does not advertise \
          CheckpointArtifactsDigest (requires protocol v122+ with \
          include_checkpoint_artifacts_digest_in_summary enabled)"
@@ -208,11 +203,7 @@ pub async fn build_sui_connector_stack(
     //    on sui-state-direct nodes, by the LocalProofProvider
     //    underneath). Direct-gRPC for sui-state-direct;
     //    relay-or-fallback for sui-state-mirrored.
-    let (raw_for_ratchet, proof_provider, mirror_capable, raw_for_pushing, changeset_source): RawTransportSetup = match cfg
-        .sui_data_source
-        .as_ref()
-        .ok_or(SetupError::MissingDataSource)?
-    {
+    let (raw_for_ratchet, proof_provider, mirror_capable, raw_for_pushing, changeset_source): RawTransportSetup = match &cfg.sui_data_source {
         SuiDataSource::SuiStateDirect { url, headers, .. } => {
             // Concrete `SuiGrpcClient`: the proof builder needs
             // `get_transaction_checkpoint`, an inherent gRPC method (not part of
@@ -490,10 +481,10 @@ pub async fn build_sui_connector_stack(
     let mirror_server = if mirror_capable
         && matches!(
             cfg.sui_data_source,
-            Some(SuiDataSource::SuiStateDirect {
+            SuiDataSource::SuiStateDirect {
                 serve_mirror: true,
                 ..
-            })
+            }
         ) {
         // Front the relay server's transport with the retained-checkpoint
         // decorator: it serves the committee-ratchet primitives from this node's
@@ -594,12 +585,11 @@ mod tests {
     /// genesis / chain-identifier fields it reads matter; the rest are filler.
     fn minimal_config(sui_genesis: Option<std::path::PathBuf>) -> SuiConnectorConfig {
         SuiConnectorConfig {
-            sui_rpc_url: None,
-            sui_data_source: Some(SuiDataSource::SuiStateDirect {
+            sui_data_source: SuiDataSource::SuiStateDirect {
                 url: "http://unused".to_string(),
                 headers: Default::default(),
                 serve_mirror: false,
-            }),
+            },
             sui_state_mirror_peers: vec![],
             sui_genesis,
             sui_checkpoint_archive: None,
@@ -614,7 +604,6 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::random(),
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
-            notifier_gas_from_address_balance: false,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }

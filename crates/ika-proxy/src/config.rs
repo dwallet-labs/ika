@@ -47,7 +47,7 @@ pub struct RemoteWriteConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DynamicPeerValidationConfig {
-    /// url is the json-rpc url we use to obtain valid peers on the blockchain
+    /// Sui gRPC URL used to obtain valid peers on the blockchain.
     pub url: String,
     #[serde_as(as = "DurationSeconds<u64>")]
     pub interval: Duration,
