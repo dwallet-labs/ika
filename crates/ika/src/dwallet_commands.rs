@@ -26,6 +26,7 @@ use sui_rpc_api::Client as SuiGrpcClient;
 use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
+use sui_types::coin::Coin;
 use sui_types::effects::TransactionEffectsAPI;
 
 use dwallet_mpc_types::dwallet_mpc;
@@ -1396,8 +1397,9 @@ async fn find_ika_coin(
 ) -> Result<ObjectID> {
     let coin_type = format!("{}::ika::IKA", config.packages.ika_package_id);
     let coin_type: StructTag = coin_type.parse().context("Invalid IKA coin type")?;
+    let coin_object_type = Coin::type_(coin_type.clone().into());
     let coins = grpc_client
-        .get_owned_objects(owner, Some(coin_type.clone()), Some(1), None)
+        .get_owned_objects(owner, Some(coin_object_type), Some(1), None)
         .await
         .context("Failed to query IKA coins")?;
     let coin =
