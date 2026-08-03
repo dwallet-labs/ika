@@ -74,6 +74,18 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           set -euo pipefail
+          # A branch in the matrix may not exist right now — `dev` is created
+          # and deleted as release trains come and go, and from 2026-07-29 to
+          # 2026-08-03 its absence failed half the fan-out every single night,
+          # which is exactly how a nightly turns into noise nobody reads.
+          # Skip a missing ref with a notice instead: the dispatch matrix
+          # self-heals when the branch reappears, and a MAIN dispatch failure
+          # still fails the job loudly, which is the half that must never be
+          # silent.
+          if ! gh api "repos/$GH_REPO/branches/$BRANCH" --silent 2>/dev/null; then
+            echo "::notice::branch '$BRANCH' does not exist; skipping $SUITE dispatch"
+            exit 0
+          fi
           # Per-suite default inputs mirror each suite's own documented
           # defaults (see dev-docs/playbooks/ci-suites.md). Threads stay at
           # the validated 4-way for the memory-bound suites.
