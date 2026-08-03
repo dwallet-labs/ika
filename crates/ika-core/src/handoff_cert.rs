@@ -520,10 +520,35 @@ pub fn verify_certified_handoff_attestation(
     match verify_certified_handoff_attestation_at_current_width(cert, committee, provider) {
         Err(first @ IkaError::InvalidSignature { .. }) => {
             let other_width = !ika_types::crypto::authority_name_short_encoding();
-            ika_types::crypto::with_authority_name_short_encoding(other_width, || {
-                verify_certified_handoff_attestation_at_current_width(cert, committee, provider)
-            })
-            .map_err(|_| {
+            let retried =
+                ika_types::crypto::with_authority_name_short_encoding(other_width, || {
+                    verify_certified_handoff_attestation_at_current_width(cert, committee, provider)
+                });
+            // Counted, because this path is otherwise invisible: a successful
+            // retry looks exactly like a verification that never needed one,
+            // so "the boundary worked" cannot distinguish the two. Exactly one
+            // `recovered` is the expected shape at an activation boundary —
+            // the cert is signed at the end of epoch N under the old width and
+            // verified in N+1 under the new one. Anywhere else means two
+            // validators disagree about the width mid-epoch. `exhausted` is a
+            // bad cert rather than an encoding problem, kept on its own label
+            // so the retry is not blamed for it.
+            match &retried {
+                Ok(()) => {
+                    ika_types::metrics::record_handoff_attestation_width_retry(
+                        ika_types::metrics::WIDTH_RETRY_RECOVERED,
+                    );
+                    tracing::info!(
+                        epoch = cert.attestation.epoch,
+                        retried_at_width_bytes = if other_width { 32 } else { 48 },
+                        "handoff attestation verified at the other AuthorityName width"
+                    );
+                }
+                Err(_) => ika_types::metrics::record_handoff_attestation_width_retry(
+                    ika_types::metrics::WIDTH_RETRY_EXHAUSTED,
+                ),
+            }
+            retried.map_err(|_| {
                 // Report the FIRST failure: the retry's error is always
                 // "wrong width" noise when the cert is genuinely bad, and it
                 // would send the reader after an encoding problem that isn't

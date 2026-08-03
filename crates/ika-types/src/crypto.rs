@@ -338,8 +338,24 @@ thread_local! {
 /// sufficient: the flag guards no other memory, and correctness depends on
 /// committee-wide agreement on the protocol version, not on intra-process
 /// ordering against any particular write.
+/// Published to `ika_authority_name_encoding_width_bytes` on every call, and
+/// logged when the value actually CHANGES. Both matter and neither is
+/// redundant: the gauge is the only fleet-wide readout — a validator on the
+/// wrong width is rejected by peers while parsing their messages perfectly, so
+/// the condition otherwise presents as unexplained rejection with nothing
+/// naming an encoding — and the log line is what dates the flip when
+/// reconstructing a boundary afterwards. Instrumenting HERE rather than at the
+/// caller covers every path, including the test-only inversion fault.
 pub fn set_authority_name_short_encoding(enabled: bool) {
-    AUTHORITY_NAME_SHORT_ENCODING.store(enabled, Ordering::Relaxed);
+    let previous = AUTHORITY_NAME_SHORT_ENCODING.swap(enabled, Ordering::Relaxed);
+    crate::metrics::record_authority_name_encoding_width(enabled);
+    if previous != enabled {
+        tracing::info!(
+            width_bytes = if enabled { 32 } else { 48 },
+            previous_width_bytes = if previous { 32 } else { 48 },
+            "AuthorityName wire encoding width changed"
+        );
+    }
 }
 
 /// The `AuthorityName` encoding width in effect on this thread: the
