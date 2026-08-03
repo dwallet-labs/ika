@@ -1515,9 +1515,8 @@ async fn fetch_dwallet_metadata(
 
     let curve = fields
         .get("curve")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("Could not read curve from dWallet object"))?
-        as u32;
+        .and_then(extract_u32_from_json)
+        .ok_or_else(|| anyhow::anyhow!("Could not read curve from dWallet object"))?;
 
     // Extract DKG output from state.Active.public_output
     let dkg_output = fields
@@ -1610,6 +1609,21 @@ fn extract_bytes_from_json(value: &serde_json::Value) -> Option<Vec<u8>> {
         }
         _ => None,
     }
+}
+
+/// Read a Move `u32` from gRPC JSON.
+///
+/// Protobuf represents every JSON number as `f64`, so integral Move values
+/// arrive as `serde_json` floating-point numbers rather than unsigned integers.
+fn extract_u32_from_json(value: &serde_json::Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|value| value.try_into().ok())
+        .or_else(|| {
+            let value = value.as_f64()?;
+            (value.is_finite() && value.fract() == 0.0 && value >= 0.0 && value <= u32::MAX as f64)
+                .then_some(value as u32)
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -2820,8 +2834,8 @@ impl IkaDWalletCommand {
                         fetch_object_fields(&grpc_client, pid)
                             .await
                             .ok()
-                            .and_then(|f| f.get("curve").and_then(|v| v.as_u64()))
-                            .and_then(|c| curve_id_to_name(c as u32).ok())
+                            .and_then(|f| f.get("curve").and_then(extract_u32_from_json))
+                            .and_then(|c| curve_id_to_name(c).ok())
                             .unwrap_or("unknown")
                     } else {
                         "unknown"
@@ -3371,5 +3385,25 @@ async fn resolve_presign_output(
     match presign_output {
         Some(hex) => hex_decode(&hex),
         None => fetch_presign_output(context, presign_cap_id).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_u32_from_json;
+
+    #[test]
+    fn extracts_move_u32_from_grpc_json_number() {
+        assert_eq!(extract_u32_from_json(&serde_json::json!(1.0)), Some(1));
+        assert_eq!(
+            extract_u32_from_json(&serde_json::json!(u32::MAX)),
+            Some(u32::MAX)
+        );
+        assert_eq!(extract_u32_from_json(&serde_json::json!(1.5)), None);
+        assert_eq!(extract_u32_from_json(&serde_json::json!(-1.0)), None);
+        assert_eq!(
+            extract_u32_from_json(&serde_json::json!(u32::MAX as f64 + 1.0)),
+            None
+        );
     }
 }
