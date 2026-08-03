@@ -94,22 +94,14 @@ fn grpc_client(sui_grpc_url: &str) -> Result<SuiGrpcClient> {
     Ok(SuiGrpcClient::new(sui_grpc_url)?)
 }
 
-/// Object fields as JSON, unwrapping the `WithTypes` `{type, fields}`
-/// wrapper Sui applies to nested Move structs.
+/// Object fields in Sui's gRPC JSON representation.
 async fn fetch_object_fields(
     grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
     let mut grpc_client = grpc_client.clone();
     let (_, json) = grpc_client.get_object_with_json(object_id).await?;
-    let json = json.ok_or_else(|| anyhow!("no content for object: {object_id}"))?;
-    let fields = json.get("fields").cloned().unwrap_or(json);
-    if fields.get("type").is_some()
-        && let Some(inner) = fields.get("fields")
-    {
-        return Ok(inner.clone());
-    }
-    Ok(fields)
+    json.ok_or_else(|| anyhow!("no content for object: {object_id}"))
 }
 
 /// `vector<u8>` from Sui JSON: array-of-numbers, base64 string, or
@@ -160,10 +152,8 @@ pub(crate) async fn find_created_object_by_type(
     ))
 }
 
-/// A nested field from a matching event, traversing Move enum variant
-/// serialization (`{variant, fields}`) along `path` — starting from the
-/// `DWalletSessionEvent` wrapper's `event_data` when present. Mirrors the
-/// CLI's `extract_nested_event_field`.
+/// A nested field from matching gRPC event JSON, starting from the
+/// `DWalletSessionEvent` wrapper's `event_data` when present.
 pub(crate) async fn fetch_nested_event_field(
     sui_grpc_url: &str,
     tx_digest: &sui_types::digests::TransactionDigest,
@@ -182,9 +172,7 @@ pub(crate) async fn fetch_nested_event_field(
         let root = parsed_json.get("event_data").unwrap_or(parsed_json);
         let mut current = root;
         for (i, key) in path.iter().enumerate() {
-            let next = current
-                .get(key)
-                .or_else(|| current.get("fields").and_then(|f| f.get(key)));
+            let next = current.get(key);
             match next {
                 Some(val) if i == path.len() - 1 => {
                     return val.as_str().map(|s| s.to_string());
@@ -200,16 +188,9 @@ pub(crate) async fn fetch_nested_event_field(
 /// Poll `object_id` until its session state carries `bytes_field` and
 /// return those bytes.
 ///
-/// Completion is detected by FIELD PRESENCE, not by the state enum's
-/// variant name: the pinned Sui renders Move enum values as
-/// `{"type": ..., "fields": {...}}` WITHOUT a variant tag (the same quirk
-/// `wait_for_dwallet_dkg_complete` documents), so only the inhabited
-/// variant's fields are observable. `Completed` is the only variant
-/// carrying the output bytes, which makes the field decisive. Where a
-/// node DOES render a variant tag, `NetworkRejected` is surfaced as an
-/// error; without one, a rejected session is indistinguishable from a
-/// pending one and surfaces as this poll's timeout (whose message carries
-/// the last observed state for diagnosis).
+/// `Completed` is the only variant carrying the output bytes, which makes
+/// field presence decisive. A `NetworkRejected` variant is surfaced as an
+/// error.
 async fn poll_session_until_completed(
     sui_grpc_url: &str,
     object_id: ObjectID,
@@ -231,14 +212,13 @@ async fn poll_session_until_completed(
             Ok(fields) => {
                 let state = fields.get("state");
                 if let Some(bytes) = state
-                    .and_then(|state| state.get("fields"))
-                    .and_then(|f| f.get(bytes_field))
+                    .and_then(|state| state.get(bytes_field))
                     .and_then(extract_bytes_from_json)
                 {
                     return Ok(bytes);
                 }
                 if let Some("NetworkRejected") = state
-                    .and_then(|state| state.get("variant"))
+                    .and_then(|state| state.get("@variant"))
                     .and_then(|v| v.as_str())
                 {
                     anyhow::bail!("session {object_id} was rejected by the network");
@@ -271,14 +251,13 @@ impl IkaTestCluster {
     }
 
     /// The dwallet's decentralized DKG public output from chain state
-    /// (`state.fields.public_output` of an Active dwallet).
+    /// (`state.public_output` of an Active dwallet).
     pub async fn dwallet_public_output(&self, dwallet_id: ObjectID) -> Result<Vec<u8>> {
         let client = grpc_client(&self.sui_grpc_url)?;
         let fields = fetch_object_fields(&client, dwallet_id).await?;
         fields
             .get("state")
-            .and_then(|state| state.get("fields"))
-            .and_then(|f| f.get("public_output"))
+            .and_then(|state| state.get("public_output"))
             .and_then(extract_bytes_from_json)
             .ok_or_else(|| anyhow!("dwallet {dwallet_id} has no public_output (not Active?)"))
     }

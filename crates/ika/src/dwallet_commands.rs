@@ -901,10 +901,7 @@ fn extract_event_field(
     None
 }
 
-/// Extract a deeply nested field from event data, traversing through Move enum variant `fields`.
-///
-/// `path` is a chain of field names. For each step, it first looks for a direct child, then
-/// checks inside a `fields` sub-object (Move enum variant serialization: `{ variant, fields }`).
+/// Extract a deeply nested field from gRPC event JSON.
 fn extract_nested_event_field(
     events: &[(String, serde_json::Value)],
     event_type_substr: &str,
@@ -918,10 +915,7 @@ fn extract_nested_event_field(
         let root = parsed_json.get("event_data").unwrap_or(parsed_json);
         let mut current = root;
         for (i, key) in path.iter().enumerate() {
-            let next = current.get(key).or_else(|| {
-                // Try inside enum variant's "fields" sub-object
-                current.get("fields").and_then(|f| f.get(key))
-            });
+            let next = current.get(key);
             match next {
                 Some(val) if i == path.len() - 1 => {
                     return val.as_str().map(|s| s.to_string());
@@ -969,12 +963,11 @@ async fn poll_sign_session(
         match fetch_object_fields(&grpc_client, sign_session_id).await {
             Ok(fields) => {
                 if let Some(state) = fields.get("state") {
-                    let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
+                    let variant = state.get("@variant").and_then(|v| v.as_str()).unwrap_or("");
                     match variant {
                         "Completed" => {
                             let sig_bytes = state
-                                .get("fields")
-                                .and_then(|f| f.get("signature"))
+                                .get("signature")
                                 .and_then(extract_bytes_from_json)
                                 .unwrap_or_default();
                             return Ok(SignSessionResult::Completed {
@@ -1016,7 +1009,7 @@ async fn poll_sign_session(
 /// Poll a dWallet until its state contains `public_output` (meaning DKG succeeded and state
 /// is either `AwaitingKeyHolderSignature` or `Active`). Returns the dWallet fields JSON.
 ///
-/// Detect DKG completion by checking for `public_output` in the state fields.
+/// Detect DKG completion by checking for `public_output` in the state.
 async fn poll_dwallet_until_dkg_complete(
     grpc_client: &SuiGrpcClient,
     dwallet_id: ObjectID,
@@ -1036,24 +1029,16 @@ async fn poll_dwallet_until_dkg_complete(
             && let Some(state) = fields.get("state")
         {
             // Check for public_output — present in AwaitingKeyHolderSignature and Active
-            let has_public_output = state
-                .get("fields")
-                .and_then(|f| f.get("public_output"))
-                .is_some();
+            let has_public_output = state.get("public_output").is_some();
             if has_public_output {
                 return Ok(fields);
             }
-            // Check if state has no fields at all (unit variant like DKGRequested or Rejected)
-            let state_fields = state.get("fields");
-            let is_empty = state_fields
-                .map(|f| f.is_null() || f.as_object().map(|o| o.is_empty()).unwrap_or(false))
-                .unwrap_or(true);
-            // If it's a unit variant with a name-like field, check for rejection
-            if is_empty {
-                let state_str = serde_json::to_string(state).unwrap_or_default();
-                if state_str.contains("Rejected") {
-                    anyhow::bail!("dWallet {dwallet_id} DKG was rejected. State: {state_str}");
-                }
+            if state
+                .get("@variant")
+                .and_then(|variant| variant.as_str())
+                .is_some_and(|variant| variant.contains("Rejected"))
+            {
+                anyhow::bail!("dWallet {dwallet_id} DKG was rejected. State: {state}");
             }
         }
 
@@ -1482,23 +1467,14 @@ async fn is_presign_cap_verified(
     }
 }
 
-/// Fetch a Sui object's JSON fields by object ID.
+/// Fetch a Sui object's gRPC JSON fields by object ID.
 async fn fetch_object_fields(
     grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
     let mut grpc_client = grpc_client.clone();
     let (_, json) = grpc_client.get_object_with_json(object_id).await?;
-    let json = json.ok_or_else(|| anyhow::anyhow!("No JSON content for object: {object_id}"))?;
-    let fields = json.get("fields").cloned().unwrap_or(json);
-    // Handle SuiMoveStruct::WithTypes serialization which wraps as
-    // { "type": "...", "fields": { actual fields } }
-    if fields.get("type").is_some()
-        && let Some(inner) = fields.get("fields")
-    {
-        return Ok(inner.clone());
-    }
-    Ok(fields)
+    json.ok_or_else(|| anyhow::anyhow!("No JSON content for object: {object_id}"))
 }
 
 async fn list_owned_objects_with_json(
@@ -1546,8 +1522,7 @@ async fn fetch_dwallet_metadata(
     // Extract DKG output from state.Active.public_output
     let dkg_output = fields
         .get("state")
-        .and_then(|state| state.get("fields"))
-        .and_then(|f| f.get("public_output"))
+        .and_then(|state| state.get("public_output"))
         .and_then(extract_bytes_from_json);
 
     let is_imported_key_dwallet = fields
@@ -1604,8 +1579,7 @@ async fn fetch_presign_output(
     let session_fields = fetch_object_fields(&grpc_client, presign_id).await?;
     let presign_bytes = session_fields
         .get("state")
-        .and_then(|state| state.get("fields"))
-        .and_then(|f| f.get("presign"))
+        .and_then(|state| state.get("presign"))
         .and_then(extract_bytes_from_json)
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -1801,8 +1775,7 @@ impl IkaDWalletCommand {
                     // Extract public_output from state
                     let public_output_bytes = fields
                         .get("state")
-                        .and_then(|state| state.get("fields"))
-                        .and_then(|f| f.get("public_output"))
+                        .and_then(|state| state.get("public_output"))
                         .and_then(extract_bytes_from_json)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -2612,8 +2585,7 @@ impl IkaDWalletCommand {
 
                     let public_output_bytes = fields
                         .get("state")
-                        .and_then(|state| state.get("fields"))
-                        .and_then(|f| f.get("public_output"))
+                        .and_then(|state| state.get("public_output"))
                         .and_then(extract_bytes_from_json)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
@@ -3182,7 +3154,7 @@ async fn poll_presign_until_complete(
         if let Ok(fields) = fetch_object_fields(&grpc_client, presign_id).await
             && let Some(state) = fields.get("state")
         {
-            let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
+            let variant = state.get("@variant").and_then(|v| v.as_str()).unwrap_or("");
             match variant {
                 "Completed" => return Ok(()),
                 "NetworkRejected" => {
@@ -3190,8 +3162,7 @@ async fn poll_presign_until_complete(
                 }
                 _ => {} // Still processing
             }
-            // Also check for presign field (non-enum state representation)
-            let has_presign = state.get("fields").and_then(|f| f.get("presign")).is_some();
+            let has_presign = state.get("presign").is_some();
             if has_presign {
                 return Ok(());
             }
@@ -3321,8 +3292,7 @@ async fn fetch_encrypted_share_for_dwallet(
     let dwallet_fields = fetch_object_fields(grpc_client, dwallet_id).await?;
     let table_id = dwallet_fields
         .get("encrypted_user_secret_key_shares")
-        .and_then(|v| v.get("fields"))
-        .and_then(|f| f.get("id"))
+        .and_then(|table| table.get("id"))
         .and_then(|id| id.get("id"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
