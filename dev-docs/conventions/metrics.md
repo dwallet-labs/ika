@@ -112,31 +112,23 @@ counter. The network-key registry sites are guarded structurally by
 
 ### Process-wide wire settings need a gauge, not just a log
 
-`ika_authority_name_encoding_width_bytes` reports the width this process
-serializes `AuthorityName` at — 48 (zero-padded, pre-v7) or 32 (raw consensus
-key, v7+). It exists because the width is a **process-wide** property with no
-other readout, and because of how it fails: a validator on the wrong width
-computes different digests while parsing its peers' messages perfectly, so the
-condition presents as unexplained rejection with nothing in it naming an
-encoding. Through the v6→v7 activation the only available evidence was
-inference from what did not break.
+`ika_authority_name_encoding_width_bytes` and
+`ika_handoff_attestation_width_retry_total` existed for the v6 -> v7
+`AuthorityName` width flip and were removed with it at MIN = 7: there is one
+encoding now, so the gauge could only ever report one value, and the retry the
+counter measured no longer exists. The rule they encoded outlives them and
+governs the next wire change that needs a version boundary.
 
-The rule the metric encodes: a setting the whole committee must agree on, held
-in process memory, needs a fleet-scrapeable gauge. Two distinct values across
-hosts is then a visible split rather than something to deduce. Publish it from
-the setter rather than the caller, so every path is covered — including
-test-only fault injection, since a gate that injects a straggler should be able
-to see the straggler it injected.
-
-`ika_handoff_attestation_width_retry_total{outcome}` covers the paired
-recovery path. `recovered` means the other width verified: expected exactly
-once per activation boundary, because the handoff cert is signed at the end of
-epoch N under the old width and verified in N+1 under the new one. Anywhere
-else it means two validators disagree mid-epoch. `exhausted` means neither
-width verified — a bad certificate, not an encoding problem, kept on its own
-label so the retry is not blamed for it. Counting the recovery matters because
-a successful retry is otherwise indistinguishable from a verification that
-never needed one: "the boundary worked" cannot tell you which happened.
+A setting the whole committee must agree on, held in process memory, needs a
+fleet-scrapeable gauge for the duration of its transition — two distinct values
+across hosts is then a visible split rather than something to deduce from what
+breaks. Publish it from the setter rather than the caller, so every path is
+covered, including test-only fault injection: a gate that injects a straggler
+should be able to see the straggler it injected. If a compatibility retry
+accompanies the flip, count it, and keep "recovered" separate from "the payload
+was simply bad" — a successful retry is otherwise indistinguishable from one
+that never fired, and "the boundary worked" cannot tell you which happened.
+Retire both with the scaffolding.
 
 Per-authority output observations are collected protocol-generically but
 **exported only for an allow-listed set of protocols** (currently network-key
@@ -230,7 +222,6 @@ Regenerate with: `./scripts/check-metric-names.sh --list`
 ika_archive_actions_read
 ika_archive_dwallet_checkpoints_read
 ika_archive_system_checkpoints_read
-ika_authority_name_encoding_width_bytes
 ika_binary_max_protocol_version
 ika_configured_max_protocol_version
 ika_consensus_calculated_throughput
@@ -339,7 +330,6 @@ ika_epoch_reconfig_start_time_since_epoch_close_ms
 ika_epoch_total_computation_reward
 ika_epoch_total_duration
 ika_epoch_validator_halt_duration_ms
-ika_handoff_attestation_width_retry_total
 ika_handoff_prepare_duration_seconds
 ika_handoff_prepare_retries_total
 ika_handoff_prepare_waiting

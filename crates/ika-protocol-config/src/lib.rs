@@ -15,7 +15,7 @@ use sui_protocol_config_macros::{
 use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
-const MIN_PROTOCOL_VERSION: u64 = 6;
+const MIN_PROTOCOL_VERSION: u64 = 7;
 const MAX_PROTOCOL_VERSION: u64 = 7;
 
 // Record history of protocol version allocations here:
@@ -58,8 +58,11 @@ const MAX_PROTOCOL_VERSION: u64 = 7;
 //            `hash_next_committee_pubkey_set` reconstruct signed/hashed bytes
 //            by re-serializing locally — so two validators emitting different
 //            widths compute different digests and reject each other's
-//            signatures. See `AUTHORITY_NAME_SHORT_ENCODING` for how the width
-//            reaches serde, and the boundary caveat it documents.
+//            signatures. At MIN = 7 the padded form is no longer emitted by
+//            any supported version, so the ambient width state, the
+//            cross-epoch retry and the transition gates are gone; decoding
+//            stays lenient, because records written before the boundary hold
+//            the padded form and a node must keep reading its own history.
 // Version 8 (planned): noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -291,10 +294,14 @@ struct FeatureFlags {
     // one epoch boundary, because signature and digest bytes are reconstructed
     // by re-serializing locally (see the version-history note above).
     //
-    // Unlike every other flag here, this one cannot be consumed at its call
-    // sites: serde has no access to the protocol config. It is mirrored into
-    // the `AUTHORITY_NAME_SHORT_ENCODING` global when the epoch store is
-    // built, and the serializer reads that.
+    // Set at version 7 and therefore true at every supported version, so
+    // nothing reads it anymore — `AuthorityName` is emitted as the raw
+    // 32-byte consensus key unconditionally.
+    //
+    // Kept for the same config-digest reason as the flags above: the flag set
+    // is part of the BCS-serialized `ProtocolConfig` whose digest validators
+    // compare, so removing the field would change every supported version's
+    // digest.
     #[serde(skip_serializing_if = "is_false")]
     short_authority_names: bool,
 }
@@ -533,14 +540,6 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
-    }
-
-    /// Whether `AuthorityName` is emitted as the raw 32-byte consensus key
-    /// (v7+) rather than zero-padded into the 48-byte container. Read once
-    /// per epoch to set `AUTHORITY_NAME_SHORT_ENCODING`; nothing else should
-    /// consume it, since the encoding must be uniform across the process.
-    pub fn short_authority_names(&self) -> bool {
-        self.feature_flags.short_authority_names
     }
 
     pub fn consensus_round_prober(&self) -> bool {

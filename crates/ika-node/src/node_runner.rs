@@ -144,7 +144,6 @@ pub fn run_node_with_name(
     let registry_service = mysten_metrics::start_prometheus_server(config.metrics_address);
     let prometheus_registry = registry_service.default_registry();
     ika_types::metrics::init_invariant_violation_metric(&prometheus_registry);
-    ika_types::metrics::init_authority_name_width_metrics(&prometheus_registry);
 
     // Initialize logging
     let (_guard, filter_handle) = telemetry_subscribers::TelemetryConfig::new()

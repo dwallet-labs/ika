@@ -20,21 +20,21 @@
 //!   retired `cross_binary` exercised).
 //!
 //! The sequential replacement has transient mixed states but intentionally
-//! avoids an MPC boundary; real mixed-committee MPC is `v127_rollout`'s job.
+//! avoids an MPC boundary; real mixed-committee MPC is `v128_rollout`'s job.
 //! The OCS read topology splits at the swap: validators 0 and 1 stay direct
 //! (serving the relay), 2 and 3 flip to peer-only mirrored, and the joiner
 //! comes up mirrored — the topology the retired `cross_binary` exercised.
 //!
-//! Opt-in, via `RUN_V127_CHURN=1` (same binaries as `v127_rollout`):
+//! Opt-in, via `RUN_V128_CHURN=1` (same binaries as `v128_rollout`):
 //!
 //! ```bash
-//! RUN_V127_CHURN=1 \
+//! RUN_V128_CHURN=1 \
 //!   OLD_BIN=/path/to/ika-validator-v1.2.7 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v127_churn -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v128_churn -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -51,9 +51,9 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn v127_full_swap_then_committee_churn() {
-    if std::env::var("RUN_V127_CHURN").is_err() {
+    if std::env::var("RUN_V128_CHURN").is_err() {
         eprintln!(
-            "skipping: set RUN_V127_CHURN=1 \
+            "skipping: set RUN_V128_CHURN=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
@@ -185,7 +185,7 @@ async fn v127_full_swap_then_committee_churn() {
         .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()
         .await
-        .expect("v1.2.7 -> current full-committee upgrade + committee churn in both directions");
+        .expect("v1.2.8 -> current full-committee upgrade + committee churn in both directions");
 
     tracing::info!(
         "v1.2.7 churn PASSED: full binary swap over v1.2.7 state, a mirrored joiner folded \

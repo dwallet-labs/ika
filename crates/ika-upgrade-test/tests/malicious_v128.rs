@@ -26,24 +26,24 @@
 //! code alone is not the assertion: the network could reach epoch 3 without
 //! flagging anyone, which is exactly the vacuous-pass this guards against. A
 //! green run proves mixed-committee malicious detection against the deployed
-//! release is not vacuous — i.e. `v127_rollout`'s zero-malicious gate would
+//! release is not vacuous — i.e. `v128_rollout`'s zero-malicious gate would
 //! actually fire on a real divergence. This is NOT a production test; it
 //! validates the test infrastructure (see `.claude/skills/test-testing`).
 //!
-//! Opt-in, via `RUN_MALICIOUS_V127=1`:
+//! Opt-in, via `RUN_MALICIOUS_V128=1`:
 //!
 //! ```bash
 //! # Build the faulty binary via the feature (no source edit):
 //! cargo build --release -p ika-node --bin ika-validator --features test-testing
 //! cp target/release/ika-validator /tmp/ika-validator-FAULTY-RECONFIG
 //! # then run:
-//! RUN_MALICIOUS_V127=1 \
+//! RUN_MALICIOUS_V128=1 \
 //!   OLD_BIN=/path/to/ika-validator-v1.2.7 \
 //!   FAULTY_BIN=/tmp/ika-validator-FAULTY-RECONFIG \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test malicious_v127 -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test malicious_v128 -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -60,9 +60,9 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn honest_committee_marks_faulty_current_validator_malicious() {
-    if std::env::var("RUN_MALICIOUS_V127").is_err() {
+    if std::env::var("RUN_MALICIOUS_V128").is_err() {
         eprintln!(
-            "skipping: set RUN_MALICIOUS_V127=1 (needs OLD_BIN/FAULTY_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
+            "skipping: set RUN_MALICIOUS_V128=1 (needs OLD_BIN/FAULTY_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
     }

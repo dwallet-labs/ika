@@ -24,17 +24,17 @@
 //! swap. That is the wire-no-op the inkrypto bump must be, once the network is
 //! already on v6/strict.
 //!
-//! Opt-in (real binaries + long-running), via `RUN_V127_ROLLOUT=1`:
+//! Opt-in (real binaries + long-running), via `RUN_V128_ROLLOUT=1`:
 //!
 //! ```bash
 //! # OLD_BIN: the v1.2.7 ika-validator; NEW_BIN: the strict-only candidate
-//! RUN_V127_ROLLOUT=1 \
+//! RUN_V128_ROLLOUT=1 \
 //!   OLD_BIN=/path/to/ika-validator-v1.2.7 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v127_rollout -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v128_rollout -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -51,10 +51,10 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v127_rollout_converges_across_binary_swap_at_v6() {
-    if std::env::var("RUN_V127_ROLLOUT").is_err() {
+async fn v128_rollout_converges_across_binary_swap_at_v6() {
+    if std::env::var("RUN_V128_ROLLOUT").is_err() {
         eprintln!(
-            "skipping: set RUN_V127_ROLLOUT=1 \
+            "skipping: set RUN_V128_ROLLOUT=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
