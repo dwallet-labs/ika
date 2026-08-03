@@ -409,6 +409,16 @@ pub(crate) struct DWalletMPCManager {
     /// Once completed, we don't record new votes for these requests.
     completed_presign_sequence_numbers: HashSet<u64>,
 
+    /// dWallets that already have an agreed, non-rejected response making their
+    /// user secret key share public in this epoch.
+    ///
+    /// Keyed by the raw id bytes carried in the message, so no fallible parse
+    /// is needed. In-memory and per-epoch, like
+    /// `completed_presign_sequence_numbers`: the MPC service replays the
+    /// epoch's consensus rounds from the first one on startup, so a restart
+    /// rebuilds this from the same agreed outputs in the same order.
+    made_public_dwallets: HashSet<Vec<u8>>,
+
     /// Global presign requests collected from Sui events, to be broadcast in status updates.
     pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
 
@@ -790,6 +800,7 @@ impl DWalletMPCManager {
             idle_status_by_party: HashMap::new(),
             presign_request_votes: HashMap::new(),
             completed_presign_sequence_numbers: HashSet::new(),
+            made_public_dwallets: HashSet::new(),
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
             logged_lock_deferred_presigns: HashSet::new(),
@@ -3972,7 +3983,7 @@ impl DWalletMPCManager {
             }
         }
 
-        if let Some(outputs_to_finalize) =
+        if let Some(mut outputs_to_finalize) =
             self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round)
         {
             self.record_malicious_actors(&session_identifier, &outputs_to_finalize);
@@ -3984,9 +3995,55 @@ impl DWalletMPCManager {
                 DWalletMPCOutputKind::External { .. } => {}
             }
 
+            if let DWalletMPCOutputKind::External { output } =
+                &mut outputs_to_finalize.majority_vote
+            {
+                Self::reject_duplicate_make_public_responses(
+                    &mut self.made_public_dwallets,
+                    output,
+                );
+            }
+
             Some(outputs_to_finalize)
         } else {
             None
+        }
+    }
+
+    /// Enforces one successful make-public response per dWallet per epoch.
+    ///
+    /// A dWallet's user secret key share is made public once; the first agreed
+    /// response is the one that sets it, and a later one is reported as
+    /// rejected. That is also the honest answer to the request, since the share
+    /// is public by then either way.
+    ///
+    /// Deliberately operates on the AGREED output, after the majority vote:
+    /// every validator then applies it to identical messages in identical
+    /// consensus order and reaches the same answer. Doing this while building
+    /// this node's PROPOSED output would instead make the output itself
+    /// diverge between validators, which peers read as evidence of malice.
+    fn reject_duplicate_make_public_responses(
+        made_public_dwallets: &mut HashSet<Vec<u8>>,
+        messages: &mut [DWalletCheckpointMessageKind],
+    ) {
+        for message in messages.iter_mut() {
+            let DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(output) =
+                message
+            else {
+                continue;
+            };
+            if output.rejected {
+                continue;
+            }
+            if !made_public_dwallets.insert(output.dwallet_id.clone()) {
+                warn!(
+                    dwallet_id=?output.dwallet_id,
+                    session_sequence_number = output.session_sequence_number,
+                    "a make-public response was already agreed for this dWallet this epoch; \
+                     reporting the later one as rejected"
+                );
+                output.rejected = true;
+            }
         }
     }
 
@@ -5267,6 +5324,98 @@ mod terminal_message_log_tests {
         assert_eq!(
             state.record(start + Duration::from_secs(2), TerminalStatus::Failed),
             TerminalMessageLogAction::None
+        );
+    }
+}
+
+#[cfg(test)]
+mod make_public_duplicate_guard_tests {
+    use super::*;
+    use ika_types::message::MakeDWalletUserSecretKeySharesPublicOutput;
+
+    fn make_public(dwallet_id: &[u8], sequence_number: u64) -> DWalletCheckpointMessageKind {
+        DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
+            MakeDWalletUserSecretKeySharesPublicOutput {
+                dwallet_id: dwallet_id.to_vec(),
+                public_user_secret_key_shares: vec![0xab; 4],
+                rejected: false,
+                session_sequence_number: sequence_number,
+            },
+        )
+    }
+
+    fn rejected_flag(message: &DWalletCheckpointMessageKind) -> bool {
+        match message {
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(output) => {
+                output.rejected
+            }
+            other => panic!("unexpected message kind: {}", other.name()),
+        }
+    }
+
+    /// Only the first agreed response for a dWallet may carry success.
+    #[test]
+    fn second_response_for_the_same_dwallet_is_rejected() {
+        let mut seen = HashSet::new();
+        let mut messages = vec![
+            make_public(b"dwallet-one", 1),
+            make_public(b"dwallet-one", 2),
+        ];
+
+        DWalletMPCManager::reject_duplicate_make_public_responses(&mut seen, &mut messages);
+
+        assert!(
+            !rejected_flag(&messages[0]),
+            "the first response must stand"
+        );
+        assert!(
+            rejected_flag(&messages[1]),
+            "the second response for the same dWallet must be rejected"
+        );
+    }
+
+    /// The guard must not fire across different dWallets, and must survive the
+    /// responses arriving in separate consensus rounds (separate calls).
+    #[test]
+    fn distinct_dwallets_are_untouched_and_state_persists_across_rounds() {
+        let mut seen = HashSet::new();
+
+        let mut first_round = vec![
+            make_public(b"dwallet-one", 1),
+            make_public(b"dwallet-two", 2),
+        ];
+        DWalletMPCManager::reject_duplicate_make_public_responses(&mut seen, &mut first_round);
+        assert!(!rejected_flag(&first_round[0]));
+        assert!(!rejected_flag(&first_round[1]));
+
+        let mut second_round = vec![make_public(b"dwallet-one", 3)];
+        DWalletMPCManager::reject_duplicate_make_public_responses(&mut seen, &mut second_round);
+        assert!(
+            rejected_flag(&second_round[0]),
+            "a duplicate arriving in a later consensus round must still be rejected"
+        );
+    }
+
+    /// An already-rejected response must not consume the one success slot, or
+    /// it would suppress the genuine response that follows it.
+    #[test]
+    fn an_already_rejected_response_does_not_claim_the_dwallet() {
+        let mut seen = HashSet::new();
+        let mut rejected = vec![make_public(b"dwallet-one", 1)];
+        match &mut rejected[0] {
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(output) => {
+                output.rejected = true;
+            }
+            _ => unreachable!(),
+        }
+
+        DWalletMPCManager::reject_duplicate_make_public_responses(&mut seen, &mut rejected);
+
+        let mut later = vec![make_public(b"dwallet-one", 2)];
+        DWalletMPCManager::reject_duplicate_make_public_responses(&mut seen, &mut later);
+        assert!(
+            !rejected_flag(&later[0]),
+            "a rejected response must leave the success slot open"
         );
     }
 }
