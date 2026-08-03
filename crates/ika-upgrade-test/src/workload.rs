@@ -32,6 +32,7 @@ use sui_keys::keystore::{AccountKeystore, FileBasedKeystore, Keystore};
 use sui_rpc_api::Client as SuiGrpcClient;
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_types::base_types::SuiAddress;
+use sui_types::coin::Coin;
 use sui_types::crypto::{Signature, SuiKeyPair, get_key_pair_from_rng};
 use sui_types::effects::TransactionEffectsAPI;
 use sui_types::transaction::Transaction;
@@ -459,11 +460,17 @@ async fn transfer_one_ika(
     let client = SuiGrpcClient::new(grpc_url)?;
     let ika_type = format!("{}::ika::IKA", network_config.packages.ika_package_id);
     let ika_type: StructTag = ika_type.parse().context("parse IKA coin type")?;
+    let ika_coin_type = Coin::type_(ika_type.clone().into());
 
     let mut last_err = None;
     for _ in 0..8 {
         let coins = client
-            .get_owned_objects(publisher_address, Some(ika_type.clone()), Some(1), None)
+            .get_owned_objects(
+                publisher_address,
+                Some(ika_coin_type.clone()),
+                Some(1),
+                None,
+            )
             .await?;
         let ika_coin = match coins.items.into_iter().next() {
             Some(coin) => coin.id(),
