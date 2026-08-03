@@ -190,6 +190,7 @@ impl ValidatorConfigBuilder {
                     self.sui_data_source_override.clone().unwrap_or_else(|| {
                         SuiDataSource::SuiStateDirect {
                             url: sui_rpc_url.to_string(),
+                            headers: Default::default(),
                             serve_mirror: true,
                         }
                     })
@@ -475,6 +476,7 @@ impl FullnodeConfigBuilder {
                 sui_data_source: (!self.legacy_sui_rpc_only).then(|| {
                     SuiDataSource::SuiStateDirect {
                         url: sui_rpc_url.to_string(),
+                        headers: Default::default(),
                         serve_mirror: false,
                     }
                 }),

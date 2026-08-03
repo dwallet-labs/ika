@@ -1587,6 +1587,7 @@ impl IkaTestClusterBuilder {
                     };
                     builder = builder.with_sui_data_source(SuiDataSource::SuiStateMirrored {
                         fallback_grpc_url,
+                        headers: Default::default(),
                     });
                     // Automatic discovery mode leaves `sui_state_mirror_peers`
                     // empty: the mirrored validators must find the serving

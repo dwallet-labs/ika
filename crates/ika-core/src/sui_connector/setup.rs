@@ -213,12 +213,12 @@ pub async fn build_sui_connector_stack(
         .as_ref()
         .ok_or(SetupError::MissingDataSource)?
     {
-        SuiDataSource::SuiStateDirect { url, .. } => {
+        SuiDataSource::SuiStateDirect { url, headers, .. } => {
             // Concrete `SuiGrpcClient`: the proof builder needs
             // `get_transaction_checkpoint`, an inherent gRPC method (not part of
             // the relay-able `SuiTransport` surface).
             let grpc = Arc::new(
-                SuiGrpcClient::new(url)
+                SuiGrpcClient::new_with_headers(url, headers)
                     .await
                     .map_err(|e| SetupError::Transport(format!("connect {url}: {e}")))?,
             );
@@ -239,7 +239,10 @@ pub async fn build_sui_connector_stack(
             let grpc: Arc<dyn SuiTransport> = grpc;
             (grpc.clone(), provider, true, Some(grpc), None)
         }
-        SuiDataSource::SuiStateMirrored { fallback_grpc_url } => {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url,
+            headers,
+        } => {
             let net = network.clone().ok_or(SetupError::MirroredWithoutNetwork)?;
             let mut peer_ids = Vec::with_capacity(cfg.sui_state_mirror_peers.len());
             for entry in &cfg.sui_state_mirror_peers {
@@ -283,7 +286,7 @@ pub async fn build_sui_connector_stack(
             let raw: Arc<dyn SuiTransport> = match fallback_grpc_url {
                 Some(url) => {
                     let fallback: Arc<dyn SuiTransport> =
-                        Arc::new(SuiGrpcClient::new(url).await.map_err(|e| {
+                        Arc::new(SuiGrpcClient::new_with_headers(url, headers).await.map_err(|e| {
                             SetupError::Transport(format!("connect fallback {url}: {e}"))
                         })?);
                     Arc::new(FallbackTransport::new(relay, fallback))
@@ -594,6 +597,7 @@ mod tests {
             sui_rpc_url: None,
             sui_data_source: Some(SuiDataSource::SuiStateDirect {
                 url: "http://unused".to_string(),
+                headers: Default::default(),
                 serve_mirror: false,
             }),
             sui_state_mirror_peers: vec![],
