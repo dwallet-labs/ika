@@ -9,10 +9,17 @@
 //! Do NOT put the client behind a Mutex held across the call — that would
 //! serialize every Sui read/write on the node behind one in-flight RPC.
 
+use std::env::{self, VarError};
+use std::fmt::Display;
+use std::fs;
+use std::path::Path;
+
 use async_trait::async_trait;
 use futures::StreamExt;
+use ika_config::node::{SuiGrpcHeaderValue, SuiGrpcHeaders};
 use sui_rpc_api::Client as SuiRpcClient;
 use sui_rpc_api::client::ExecutedTransaction;
+use sui_rpc_api::client::HeadersInterceptor;
 use sui_rpc_api::proto::sui::rpc::v2 as proto;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::full_checkpoint_content::CheckpointData;
@@ -20,6 +27,7 @@ use sui_types::gas_coin::{GAS, GasCoin};
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
 use sui_types::transaction::Transaction;
+use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
@@ -34,9 +42,20 @@ pub struct SuiGrpcClient {
 impl SuiGrpcClient {
     /// Connects (lazily) and probes the endpoint by fetching the chain id.
     pub async fn new(endpoint: impl Into<String>) -> Result<Self, TransportError> {
+        Self::new_with_headers(endpoint, &SuiGrpcHeaders::new()).await
+    }
+
+    /// Connects with configured metadata attached to every request, then
+    /// probes the endpoint by fetching the chain id.
+    pub async fn new_with_headers(
+        endpoint: impl Into<String>,
+        headers: &SuiGrpcHeaders,
+    ) -> Result<Self, TransportError> {
         let endpoint = endpoint.into();
+        let headers = resolve_grpc_headers(headers)?;
         let rpc = SuiRpcClient::new(endpoint.as_str())
-            .map_err(|e| TransportError::Network(format!("connect {endpoint}: {e}")))?;
+            .map_err(|e| TransportError::Network(format!("connect {endpoint}: {e}")))?
+            .with_headers(headers);
         let client = Self { rpc, endpoint };
         let _ = client.get_chain_identifier().await?;
         Ok(client)
@@ -109,6 +128,66 @@ impl SuiGrpcClient {
             signature,
         ))
     }
+}
+
+fn resolve_grpc_headers(headers: &SuiGrpcHeaders) -> Result<HeadersInterceptor, TransportError> {
+    resolve_grpc_headers_with(
+        headers,
+        |variable| match env::var(variable) {
+            Ok(value) => Ok(value),
+            Err(VarError::NotPresent) => {
+                Err(format!("environment variable `{variable}` is not set"))
+            }
+            Err(VarError::NotUnicode(_)) => Err(format!(
+                "environment variable `{variable}` is not valid UTF-8"
+            )),
+        },
+        |path| {
+            fs::read_to_string(path).map_err(|e| format!("cannot read `{}`: {e}", path.display()))
+        },
+    )
+}
+
+fn resolve_grpc_headers_with(
+    headers: &SuiGrpcHeaders,
+    read_env: impl Fn(&str) -> Result<String, String>,
+    read_file: impl Fn(&Path) -> Result<String, String>,
+) -> Result<HeadersInterceptor, TransportError> {
+    let mut resolved = HeadersInterceptor::new();
+    for (name, source) in headers {
+        let value = match source {
+            SuiGrpcHeaderValue::FromEnv(variable) => read_env(variable),
+            SuiGrpcHeaderValue::FromFile(path) => read_file(path).map(strip_one_line_ending),
+            SuiGrpcHeaderValue::Literal(value) => Ok(value.clone()),
+        }
+        .map_err(|reason| grpc_header_config_error(name, reason))?;
+        if value.is_empty() {
+            return Err(grpc_header_config_error(name, "value is empty"));
+        }
+        let key = MetadataKey::<Ascii>::from_bytes(name.as_bytes())
+            .map_err(|_| grpc_header_config_error(name, "name is not valid ASCII metadata"))?;
+        let mut value = MetadataValue::<Ascii>::try_from(value.as_str()).map_err(|_| {
+            grpc_header_config_error(name, "value contains invalid ASCII metadata bytes")
+        })?;
+        value.set_sensitive(true);
+        resolved.headers_mut().insert(key, value);
+    }
+    Ok(resolved)
+}
+
+fn strip_one_line_ending(mut value: String) -> String {
+    if value.ends_with("\r\n") {
+        value.truncate(value.len() - 2);
+    } else if value.ends_with('\n') {
+        value.truncate(value.len() - 1);
+    }
+    value
+}
+
+fn grpc_header_config_error(name: &str, reason: impl Display) -> TransportError {
+    TransportError::Network(format!(
+        "invalid Sui gRPC header configuration for `{name}`: {reason}"
+    ))
 }
 
 fn parse_object_id(s: &str) -> Result<ObjectID, TransportError> {
@@ -412,6 +491,76 @@ impl SuiWriter for SuiGrpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_headers_resolve_all_sources_and_are_sensitive() {
+        let headers = SuiGrpcHeaders::from([
+            (
+                "authorization".to_string(),
+                SuiGrpcHeaderValue::FromEnv("SUI_AUTH".to_string()),
+            ),
+            (
+                "x-api-key".to_string(),
+                SuiGrpcHeaderValue::FromFile("/run/secrets/sui-api-key".into()),
+            ),
+            (
+                "x-client-name".to_string(),
+                SuiGrpcHeaderValue::Literal("ika-validator".to_string()),
+            ),
+        ]);
+        let resolved = resolve_grpc_headers_with(
+            &headers,
+            |variable| {
+                assert_eq!(variable, "SUI_AUTH");
+                Ok("Bearer token".to_string())
+            },
+            |path| {
+                assert_eq!(path, Path::new("/run/secrets/sui-api-key"));
+                Ok("file-token\r\n".to_string())
+            },
+        )
+        .expect("valid headers must resolve");
+
+        for (name, expected) in [
+            ("authorization", "Bearer token"),
+            ("x-api-key", "file-token"),
+            ("x-client-name", "ika-validator"),
+        ] {
+            let value = resolved.headers().get(name).expect("header must exist");
+            assert_eq!(value.to_str().expect("ASCII value"), expected);
+            assert!(value.is_sensitive(), "{name} must be marked sensitive");
+        }
+    }
+
+    #[test]
+    fn configured_header_errors_never_expose_values() {
+        let invalid_value = "private-token\nsecond-line";
+        let headers = SuiGrpcHeaders::from([(
+            "authorization".to_string(),
+            SuiGrpcHeaderValue::Literal(invalid_value.to_string()),
+        )]);
+        let err = resolve_grpc_headers_with(
+            &headers,
+            |_| unreachable!("literal source must not read the environment"),
+            |_| unreachable!("literal source must not read a file"),
+        )
+        .expect_err("newline is not valid ASCII metadata");
+        let message = err.to_string();
+        assert!(message.contains("authorization"));
+        assert!(!message.contains("private-token"));
+
+        let missing_env = SuiGrpcHeaders::from([(
+            "x-api-key".to_string(),
+            SuiGrpcHeaderValue::FromEnv("MISSING_SUI_KEY".to_string()),
+        )]);
+        let err = resolve_grpc_headers_with(
+            &missing_env,
+            |variable| Err(format!("environment variable `{variable}` is not set")),
+            |_| unreachable!("environment source must not read a file"),
+        )
+        .expect_err("missing environment variable must fail");
+        assert!(err.to_string().contains("MISSING_SUI_KEY"));
+    }
 
     /// A gRPC `NotFound` must map to `TransportError::NotFound` (carrying the
     /// message), and every other status code to `TransportError::Network`. This

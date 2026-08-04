@@ -231,6 +231,49 @@ the committee chain). `SuiDataSource` must carry `rename_all_fields =
 "kebab-case"` so `fallback-grpc-url` is not silently dropped (a dropped field
 flips a mirrored validator into peer-only).
 
+### Authenticated gRPC endpoints
+
+Both direct sources and mirrored sources with a fallback can attach arbitrary
+ASCII gRPC metadata to every request sent to their configured endpoint. This is
+the provider-neutral authentication surface: bearer authentication is an
+`authorization` header whose complete value is `Bearer …`; provider-specific
+schemes use names such as `x-api-key` or `x-auth-header`. There are no separate
+bearer- or provider-specific config branches.
+
+```yaml
+sui-data-source:
+  kind: sui-state-direct
+  url: https://provider.example.com:443
+  headers:
+    authorization:
+      from-file: /run/secrets/sui-grpc-authorization
+    x-client-name:
+      literal: ika-validator
+```
+
+A mirrored validator places the same `headers` map next to
+`fallback-grpc-url`; the headers apply only to that direct fallback, never to
+the Ika p2p relay. Configuring headers on a peer-only source (no fallback URL)
+is rejected at startup because there is no endpoint to receive them.
+
+Each header value has exactly one source:
+
+- `from-file`: recommended for credentials mounted by Kubernetes, Docker, or
+  systemd. The file is read once at startup. One terminal LF or CRLF is removed
+  to accommodate ordinary secret files; all other bytes are preserved and
+  validated. Rotation therefore requires a node restart.
+- `from-env`: reads the complete value from the named environment variable at
+  startup. A missing, non-UTF-8, or empty value fails startup.
+- `literal`: embeds the value in YAML and is intended only for non-secret
+  metadata.
+
+Header names and values are validated before the client connects. Every value
+is marked sensitive in tonic metadata, and config debug output redacts literal
+values. Errors may name the header and its environment variable or file path,
+but never include the resolved value or file contents. The same metadata covers
+unary calls, checkpoint subscriptions, and notifier transaction submission
+because it is installed on the shared upstream Sui RPC client.
+
 ## Bootstrap and the committee ratchet
 
 The trust root is the **Sui genesis blob** (`sui_genesis`). At boot the node

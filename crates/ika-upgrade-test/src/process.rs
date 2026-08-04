@@ -31,6 +31,7 @@ fn rewrite_config_to_mirrored(config_path: &Path, mirror_peers: Vec<String>) -> 
     let mut config: NodeConfig = serde_yaml::from_str(&yaml).context("parse node config")?;
     config.sui_connector_config.sui_data_source = Some(SuiDataSource::SuiStateMirrored {
         fallback_grpc_url: None,
+        headers: Default::default(),
     });
     config.sui_connector_config.sui_state_mirror_peers =
         mirror_peers.into_iter().map(Into::into).collect();

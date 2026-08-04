@@ -672,22 +672,35 @@ impl IkaNode {
             peer_only_stack = Some(stack);
             client
         } else {
-            let grpc_url =
-                match &config.sui_connector_config.sui_data_source {
-                    Some(SuiDataSource::SuiStateDirect { url, .. }) => url.clone(),
-                    Some(SuiDataSource::SuiStateMirrored {
-                        fallback_grpc_url: Some(url),
-                    }) => url.clone(),
-                    Some(SuiDataSource::SuiStateMirrored {
-                        fallback_grpc_url: None,
-                    }) => unreachable!("peer_only is handled in the branch above"),
-                    // Old-style config on a notifier/fullnode: Sui fullnodes
-                    // serve gRPC on the same endpoint as JSON-RPC.
-                    None => config.sui_connector_config.sui_rpc_url.clone().expect(
+            let empty_headers = Default::default();
+            let (grpc_url, grpc_headers) = match &config.sui_connector_config.sui_data_source {
+                Some(SuiDataSource::SuiStateDirect { url, headers, .. }) => (url.clone(), headers),
+                Some(SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: Some(url),
+                    headers,
+                }) => (url.clone(), headers),
+                Some(SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                    ..
+                }) => unreachable!("peer_only is handled in the branch above"),
+                // Old-style config on a notifier/fullnode: Sui fullnodes
+                // serve gRPC on the same endpoint as JSON-RPC.
+                None => (
+                    config.sui_connector_config.sui_rpc_url.clone().expect(
                         "the no-endpoint guard above ensures sui_rpc_url on old-style configs",
                     ),
-                };
-            Arc::new(SuiClient::new_grpc(&grpc_url, sui_client_metrics, ika_network_config).await?)
+                    &empty_headers,
+                ),
+            };
+            Arc::new(
+                SuiClient::new_grpc_with_headers(
+                    &grpc_url,
+                    grpc_headers,
+                    sui_client_metrics,
+                    ika_network_config,
+                )
+                .await?,
+            )
         };
 
         let (_, latest_system_inner) = sui_client.must_get_system_inner_object().await;

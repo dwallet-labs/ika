@@ -1976,6 +1976,7 @@ impl ClusterOfProcesses {
             builder = builder
                 .with_sui_data_source(SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: None,
+                    headers: Default::default(),
                 })
                 .with_sui_state_mirror_peers(mirror_peers.clone());
         }

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
+use ika_config::node::SuiGrpcHeaders;
 use ika_types::error::IkaError;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -76,7 +77,14 @@ impl GrpcSuiClient {
     /// Connect to a Sui fullnode over gRPC at `grpc_url`. The same direct
     /// client backs both the read transport and the writer uplink.
     pub async fn new(grpc_url: &str) -> anyhow::Result<Self> {
-        let grpc = std::sync::Arc::new(SuiGrpcClient::new(grpc_url).await?);
+        Self::new_with_headers(grpc_url, &SuiGrpcHeaders::new()).await
+    }
+
+    pub async fn new_with_headers(
+        grpc_url: &str,
+        headers: &SuiGrpcHeaders,
+    ) -> anyhow::Result<Self> {
+        let grpc = std::sync::Arc::new(SuiGrpcClient::new_with_headers(grpc_url, headers).await?);
         Ok(Self {
             transport: grpc.clone(),
             writer: Some(grpc),

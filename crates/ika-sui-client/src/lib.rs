@@ -6,6 +6,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use core::panic;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
+use ika_config::node::SuiGrpcHeaders;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -162,7 +163,22 @@ impl SuiConnectorClient {
         sui_client_metrics: Arc<SuiClientMetrics>,
         ika_network_config: IkaNetworkConfig,
     ) -> anyhow::Result<Self> {
-        let inner = grpc_backend::GrpcSuiClient::new(grpc_url).await?;
+        Self::new_grpc_with_headers(
+            grpc_url,
+            &SuiGrpcHeaders::new(),
+            sui_client_metrics,
+            ika_network_config,
+        )
+        .await
+    }
+
+    pub async fn new_grpc_with_headers(
+        grpc_url: &str,
+        headers: &SuiGrpcHeaders,
+        sui_client_metrics: Arc<SuiClientMetrics>,
+        ika_network_config: IkaNetworkConfig,
+    ) -> anyhow::Result<Self> {
+        let inner = grpc_backend::GrpcSuiClient::new_with_headers(grpc_url, headers).await?;
         let self_ = Self {
             inner: SuiBackend::Grpc(inner),
             sui_client_metrics,

@@ -9,8 +9,10 @@ use consensus_config::Parameters as ConsensusParameters;
 use ika_types::committee::EpochId;
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
@@ -353,6 +355,83 @@ pub struct IkaIdentityOverride {
     pub ika_dwallet_coordinator_object_id: ObjectID,
 }
 
+/// Source for one complete Sui gRPC metadata value.
+#[derive(Clone, Eq, PartialEq)]
+pub enum SuiGrpcHeaderValue {
+    /// Read the complete header value from this environment variable.
+    FromEnv(String),
+    /// Read the complete header value from this file at startup.
+    FromFile(PathBuf),
+    /// Embed a non-secret header value directly in the node config.
+    Literal(String),
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct SuiGrpcHeaderValueRepr {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_file: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    literal: Option<String>,
+}
+
+impl Serialize for SuiGrpcHeaderValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let repr = match self {
+            Self::FromEnv(from_env) => SuiGrpcHeaderValueRepr {
+                from_env: Some(from_env.clone()),
+                from_file: None,
+                literal: None,
+            },
+            Self::FromFile(from_file) => SuiGrpcHeaderValueRepr {
+                from_env: None,
+                from_file: Some(from_file.clone()),
+                literal: None,
+            },
+            Self::Literal(literal) => SuiGrpcHeaderValueRepr {
+                from_env: None,
+                from_file: None,
+                literal: Some(literal.clone()),
+            },
+        };
+        repr.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SuiGrpcHeaderValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let repr = SuiGrpcHeaderValueRepr::deserialize(deserializer)?;
+        match (repr.from_env, repr.from_file, repr.literal) {
+            (Some(variable), None, None) => Ok(Self::FromEnv(variable)),
+            (None, Some(path), None) => Ok(Self::FromFile(path)),
+            (None, None, Some(value)) => Ok(Self::Literal(value)),
+            _ => Err(D::Error::custom(
+                "exactly one of `from-env`, `from-file`, or `literal` must be set",
+            )),
+        }
+    }
+}
+
+impl fmt::Debug for SuiGrpcHeaderValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FromEnv(variable) => f.debug_tuple("FromEnv").field(variable).finish(),
+            Self::FromFile(path) => f.debug_tuple("FromFile").field(path).finish(),
+            Self::Literal(_) => f.debug_tuple("Literal").field(&"[REDACTED]").finish(),
+        }
+    }
+}
+
+pub type SuiGrpcHeaders = BTreeMap<String, SuiGrpcHeaderValue>;
+
 /// Where this validator gets Sui state from.
 ///
 /// `SuiStateDirect` runs against a Sui fullnode reachable over gRPC, and
@@ -392,6 +471,9 @@ pub enum SuiDataSource {
     SuiStateDirect {
         /// gRPC URL of a Sui fullnode this validator can reach directly.
         url: String,
+        /// Metadata attached to every request sent to the gRPC endpoint.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        headers: SuiGrpcHeaders,
         /// If true, expose `SuiStateMirror` to Ika peers so other validators
         /// can read Sui state through us. Defaults to true.
         #[serde(default = "default_true")]
@@ -402,7 +484,21 @@ pub enum SuiDataSource {
         /// and `get_transaction`. Trust unaffected — OCS verifies regardless.
         #[serde(skip_serializing_if = "Option::is_none")]
         fallback_grpc_url: Option<String>,
+        /// Metadata attached to every request sent to the fallback endpoint.
+        /// Must be empty when no fallback endpoint is configured.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        headers: SuiGrpcHeaders,
     },
+}
+
+impl SuiDataSource {
+    pub fn grpc_headers(&self) -> &SuiGrpcHeaders {
+        match self {
+            Self::SuiStateDirect { headers, .. } | Self::SuiStateMirrored { headers, .. } => {
+                headers
+            }
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -563,7 +659,8 @@ pub fn select_sui_transport(
                 && matches!(
                     source,
                     SuiDataSource::SuiStateMirrored {
-                        fallback_grpc_url: None
+                        fallback_grpc_url: None,
+                        ..
                     }
                 )
             {
@@ -575,9 +672,24 @@ pub fn select_sui_transport(
                         .to_string(),
                 );
             }
+            if matches!(
+                source,
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                    headers,
+                } if !headers.is_empty()
+            ) {
+                return Err(
+                    "gRPC headers are configured on a peer-only `sui-state-mirrored` source, but \
+                     it has no direct endpoint to receive them; remove `headers` or configure \
+                     `fallback-grpc-url`"
+                        .to_string(),
+                );
+            }
             Ok(match source {
                 SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: None,
+                    ..
                 } => SuiTransportPlan::PeerOnlyRelay,
                 _ => SuiTransportPlan::Grpc,
             })
@@ -1451,17 +1563,20 @@ mod tests {
     fn direct() -> SuiDataSource {
         SuiDataSource::SuiStateDirect {
             url: "http://direct:9000".to_string(),
+            headers: BTreeMap::new(),
             serve_mirror: true,
         }
     }
     fn mirrored_with_fallback() -> SuiDataSource {
         SuiDataSource::SuiStateMirrored {
             fallback_grpc_url: Some("http://fallback:9000".to_string()),
+            headers: BTreeMap::new(),
         }
     }
     fn peer_only_source() -> SuiDataSource {
         SuiDataSource::SuiStateMirrored {
             fallback_grpc_url: None,
+            headers: BTreeMap::new(),
         }
     }
 
@@ -2007,6 +2122,20 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
         );
     }
 
+    #[test]
+    fn peer_only_rejects_headers_without_an_endpoint() {
+        let source = SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: None,
+            headers: BTreeMap::from([(
+                "x-api-key".to_string(),
+                SuiGrpcHeaderValue::FromEnv("SUI_GRPC_API_KEY".to_string()),
+            )]),
+        };
+        let err = select_sui_transport(Some(&source), false, true, NodeMode::Validator)
+            .expect_err("headers without a direct endpoint must fail closed");
+        assert!(err.contains("no direct endpoint"), "{err}");
+    }
+
     /// A notifier submits transactions, which a peer-only node can't do safely
     /// (its relayed submission returns unverified effects) — so a notifier
     /// configured peer-only is rejected, while a notifier with a fallback (or
@@ -2097,6 +2226,7 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 &mirrored,
                 SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: Some(url),
+                    ..
                 } if url == "http://fallback:9000"
             ),
             "expected SuiStateMirrored with the fallback set, got {mirrored:?}"
@@ -2114,6 +2244,7 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 SuiDataSource::SuiStateDirect {
                     url,
                     serve_mirror: false,
+                    ..
                 } if url == "http://direct:9000"
             ),
             "expected SuiStateDirect {{ serve_mirror: false }}, got {direct_no_mirror:?}"
@@ -2154,6 +2285,7 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
             mirrored_round,
             SuiDataSource::SuiStateMirrored {
                 fallback_grpc_url: Some(url),
+                ..
             } if url == "http://fallback:9000"
         ));
 
@@ -2178,6 +2310,57 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
             typo.is_err(),
             "a misspelled key must fail the parse (fail-closed), not flip the node to peer-only"
         );
+    }
+
+    #[test]
+    fn sui_grpc_headers_round_trip_and_debug_redacts_literals() {
+        let source: SuiDataSource = serde_yaml::from_str(
+            r#"kind: sui-state-direct
+url: https://provider.example.com:443
+headers:
+  authorization:
+    from-env: SUI_GRPC_AUTHORIZATION
+  x-api-key:
+    from-file: /run/secrets/sui-grpc-api-key
+  x-client-name:
+    literal: private-literal
+"#,
+        )
+        .expect("all supported header sources must deserialize");
+        let headers = source.grpc_headers();
+        assert_eq!(
+            headers.get("authorization"),
+            Some(&SuiGrpcHeaderValue::FromEnv(
+                "SUI_GRPC_AUTHORIZATION".to_string()
+            ))
+        );
+        assert_eq!(
+            headers.get("x-api-key"),
+            Some(&SuiGrpcHeaderValue::FromFile(
+                "/run/secrets/sui-grpc-api-key".into()
+            ))
+        );
+        assert_eq!(
+            headers.get("x-client-name"),
+            Some(&SuiGrpcHeaderValue::Literal("private-literal".to_string()))
+        );
+        assert!(!format!("{source:?}").contains("private-literal"));
+
+        let yaml = serde_yaml::to_string(&source).expect("headers must serialize");
+        let round_trip: SuiDataSource =
+            serde_yaml::from_str(&yaml).expect("serialized headers must deserialize");
+        assert_eq!(round_trip.grpc_headers(), headers);
+
+        for invalid in [
+            "kind: sui-state-direct\nurl: http://unused\nheaders:\n  x-api-key: {}\n",
+            "kind: sui-state-direct\nurl: http://unused\nheaders:\n  x-api-key:\n    from-env: KEY\n    from-file: /secret\n",
+            "kind: sui-state-direct\nurl: http://unused\nheaders:\n  x-api-key:\n    from-environment: KEY\n",
+        ] {
+            assert!(
+                serde_yaml::from_str::<SuiDataSource>(invalid).is_err(),
+                "a header value must have exactly one recognized source: {invalid}"
+            );
+        }
     }
 
     /// An old-style config (no `sui-data-source`) that nonetheless carries a Sui
