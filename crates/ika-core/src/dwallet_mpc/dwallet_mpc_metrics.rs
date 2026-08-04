@@ -117,6 +117,39 @@ pub struct DWalletMPCMetrics {
     /// serving.
     pub(crate) internal_presign_pool_size: IntGaugeVec,
 
+    /// How many internal-presign ordinals this validator's next mint for a
+    /// pool trails the committee's completed frontier by — the direct measure
+    /// of the ordinal-stream divergence that used to be invisible (#1830).
+    ///
+    /// The per-pool ordinal counters are in-memory, and a validator whose
+    /// stream sits inside already-completed history mints identifiers the
+    /// committee finished long ago: it contributes nothing to that pool for
+    /// the rest of the epoch while looking healthy everywhere else. The
+    /// frontier is read off the `session_sequence_number` carried by every
+    /// completed internal-presign output, so this compares local mint state
+    /// against consensus-anchored data.
+    ///
+    /// Healthy is 0: a pool is minted before it completes, so the local
+    /// counter normally runs AHEAD of the frontier (the difference saturates
+    /// at 0), and a pool this process has never minted for reads 0 as well.
+    /// Published by the top-up loop from the state at the top of a round, so a
+    /// round whose completions heal the stream still publishes the divergence
+    /// it started with and the gauge settles on the next round. Sustained
+    /// positive means the stream is not converging. Same bounded `key_role`
+    /// label reduction as `internal_presign_pool_size`.
+    pub(crate) internal_presign_ordinal_lag: IntGaugeVec,
+
+    /// Internal-presign ordinals skipped by the consensus-anchored
+    /// fast-forward — how much healing the divergence above required.
+    ///
+    /// The companion to the gauge: the gauge reads 0 once a jump has landed,
+    /// so this is what shows the condition happened at all. A single large
+    /// jump is a validator rejoining a pool mid-epoch (restart, late key
+    /// install, a fresh epoch store); a sustained dribble is a validator that
+    /// is not minting for the pool at all and is being dragged along by its
+    /// peers' completions — the wedge shape.
+    pub(crate) internal_presign_ordinals_fast_forwarded_total: IntCounterVec,
+
     /// Number of consensus-agreed global presign requests waiting in the
     /// service queue because the internal pool had no presign to serve
     /// them — the direct pool-exhausted-wait signal users feel as latency.
@@ -500,6 +533,21 @@ impl DWalletMPCMetrics {
             internal_presign_pool_size: register_int_gauge_vec_with_registry!(
                 "ika_dwallet_mpc_internal_presign_pool_size",
                 "Internal presign pool size per (curve, signature_algorithm, key_role)",
+                &["curve", "signature_algorithm", "key_role"],
+                registry
+            )
+            .unwrap(),
+            internal_presign_ordinal_lag: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_internal_presign_ordinal_lag",
+                "Ordinals this validator's next internal-presign mint trails the committee's \
+                 completed frontier by, per (curve, signature_algorithm, key_role)",
+                &["curve", "signature_algorithm", "key_role"],
+                registry
+            )
+            .unwrap(),
+            internal_presign_ordinals_fast_forwarded_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_internal_presign_ordinals_fast_forwarded_total",
+                "Internal-presign ordinals skipped to rejoin the committee's completed frontier",
                 &["curve", "signature_algorithm", "key_role"],
                 registry
             )
@@ -1174,6 +1222,11 @@ pub(crate) const ALL_SESSION_STATES: &[&str] = &[
 pub(crate) const READY_RESULT_READY: &str = "ready";
 pub(crate) const READY_RESULT_NOT_READY: &str = "not_ready";
 pub(crate) const READY_RESULT_ERR: &str = "err";
+
+/// Stable label strings for the `key_role` label of the internal-presign pool
+/// metrics — the bounded stand-in for the pool's network encryption key.
+pub(crate) const KEY_ROLE_NETWORK_OWNED_ADDRESS_SIGNING: &str = "network_owned_address_signing";
+pub(crate) const KEY_ROLE_OTHER: &str = "other";
 
 /// Stable label strings for the `session_type` label.
 pub(crate) const SESSION_TYPE_USER: &str = "user";

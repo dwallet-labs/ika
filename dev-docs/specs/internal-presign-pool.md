@@ -99,12 +99,81 @@ never gave up (drain).
 callers whose work is never replayed from the round stream — in practice,
 tests. Production drains go through the recorded variants above.
 
-## What this does not fix
+## Ordinal-stream convergence
 
-The per-pool *session ordinal* counters (`instantiated_internal_presign_sessions`
-/ the next-sequence-number counters) are in-memory and rebuilt by replay, and
-a validator whose first top-up of a pool lands more than one batch lifecycle
-behind its peers starts that pool's ordinal stream offset and never converges
-(issue #1830). That is a separate defect with a separate heal
-(fast-forwarding the ordinal from the completed sequence numbers observed in
-consensus outputs); pool-slot and serve idempotency does not address it.
+Slot and serve idempotency say nothing about *which* ordinals a validator
+mints. That is the second, independent property the pool needs, and it has its
+own failure mode (issues #1952, #1830).
+
+**The ordinal stream.** Each pool's fill sessions are numbered by an in-memory
+per-`(network key, curve, signature algorithm)` counter, and an internal
+presign `SessionIdentifier` is derived from that ordinal. Nothing on chain
+announces a fill session, so the committee agrees on one only because every
+validator mints the same ordinal stream. The counter is in-memory and
+re-derived per process, while the stream belongs to the epoch.
+
+**The failure mode.** A validator that joins a pool's stream late — mid-epoch
+restart, a very late key install, an epoch entered late, an empty or
+state-synced store — starts minting ordinals the committee finished long ago.
+Those mints can never produce live work: peers early-return on an
+already-resolved identifier. Worse, the offset does not close on its own — the
+in-flight batch guard reopens on the *pool-aggregated* completion counter,
+which peers' live completions advance, so the dead-mint rate tracks the live
+window's advance rate exactly. Constant offset, zero closing speed, for the
+rest of the epoch. The validator is a spectator on that pool while every
+event-driven path (user sign, NOA) still looks healthy. If more than f stake
+is in that state at once — a rolling restart mid-epoch — the pool starves below
+the MPC threshold, global presigns become unservable, and the epoch cannot
+close.
+
+**Three convergence sources, in order of local dependence:**
+
+| source | where | needs |
+|---|---|---|
+| persisted fill high-water (`filled_presign_pool_slots`) | seed, on a pool's first mint this process | this validator's epoch store to hold the epoch's fills |
+| completed ordinals observed in consensus outputs | seed, and a fast-forward on every completed output | nothing local — the output stream itself |
+| terminal sessions in the session map | mint path, bounded per mint | this validator's session map, and a top-up actually firing |
+
+The first and third normally agree with the stream — a fill is written by
+every validator that processes the output, so a validator that has processed
+the epoch's rounds holds both — and between them they converge the ordinary
+mid-epoch restart. What they do not give is a rule with no precondition: both
+act only at a pool's FIRST mint (the seed is read once) or only while a top-up
+is firing, and both read state this validator may not have.
+
+Every completed internal-presign output carries its `session_sequence_number`,
+so the committee's completion frontier is consensus-anchored data every
+validator holds regardless of what it instantiated, what its store persisted,
+or whether it was in the pool when the ordinal was minted. The rule: on a
+completed output for a pool whose next ordinal is at-or-below that sequence
+number, jump the counter to one past it. It applies to a live counter, needs no
+mint of its own, lands in one step instead of one ordinal per walk, and holds
+when the durable proxies do not (a slot write that failed, a store that never
+held the epoch's fills, a seed read that errored).
+
+Safe by construction: the rule reads only consensus-agreed data, it moves a
+counter only FORWARD and only to one past an ordinal the committee has already
+completed (never past what peers have minted), and a validator already at the
+frontier is untouched. Ordinals skipped this way are ordinals whose sessions
+are already resolved — minting them could not have contributed anything.
+
+**Observability.** The divergence is invisible from outside the process
+otherwise — the counters are in-memory, and the symptom is "one pool gets no
+advances from this validator" while everything else is healthy. Two metrics
+name it directly:
+
+- `ika_dwallet_mpc_internal_presign_ordinal_lag{curve, signature_algorithm,
+  key_role}` — ordinals between this validator's next mint and the committee's
+  completed frontier. A pool is minted before it completes, so a participating
+  validator reads 0; sustained positive means the stream is not converging.
+  Published by the top-up loop from the state at the top of a round, so a
+  round that heals still publishes the divergence it started with.
+- `ika_dwallet_mpc_internal_presign_ordinals_fast_forwarded_total{…}` — ordinals
+  skipped to rejoin the frontier. The gauge reads 0 again once a jump lands, so
+  this is what shows the condition occurred: one large jump is a validator
+  rejoining a pool mid-epoch; a sustained dribble is a validator not minting
+  for that pool at all and being dragged along by its peers' completions.
+
+The seed and resume log lines (`seeded internal-presign ordinal stream…`,
+`internal presign top-up resumed live instantiation…`) are the per-validator
+gates the mid-epoch-restart upgrade scenario asserts on.

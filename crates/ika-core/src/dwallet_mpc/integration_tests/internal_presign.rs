@@ -2054,3 +2054,381 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
          without wedging the batch guard"
     );
 }
+
+/// Reads one pool's `(next mint ordinal, consensus completion frontier)` on
+/// one validator. Both are `None` until that validator has, respectively,
+/// minted for the pool and seen one of its completions in the consensus
+/// stream.
+fn pool_ordinal_state(
+    test_state: &IntegrationTestState,
+    service_index: usize,
+    counter_key: (NetworkKeyId, DWalletCurve, DWalletSignatureAlgorithm),
+) -> (Option<u64>, Option<u64>) {
+    let manager = test_state.dwallet_mpc_services[service_index].dwallet_mpc_manager();
+    (
+        manager
+            .next_internal_presign_sequence_number
+            .get(&counter_key)
+            .copied(),
+        manager
+            .highest_completed_internal_presign_ordinal
+            .get(&counter_key)
+            .copied(),
+    )
+}
+
+/// The two internal-presign ordinal-convergence metrics of one validator for
+/// one pool: `(lag gauge, fast-forwarded ordinals counter)`.
+fn pool_ordinal_metrics(
+    test_state: &IntegrationTestState,
+    service_index: usize,
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+    key_role: &str,
+) -> (i64, u64) {
+    let metrics = &test_state.dwallet_mpc_services[service_index]
+        .dwallet_mpc_manager()
+        .dwallet_mpc_metrics;
+    let labels = [
+        curve.to_string(),
+        algorithm.to_string(),
+        key_role.to_string(),
+    ];
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    (
+        metrics
+            .internal_presign_ordinal_lag
+            .with_label_values(&labels)
+            .get(),
+        metrics
+            .internal_presign_ordinals_fast_forwarded_total
+            .with_label_values(&labels)
+            .get(),
+    )
+}
+
+/// Fills one validator's pool past its maximum so no top-up condition can fire
+/// for it — pinning it OUT of minting while its peers keep going. The stuffing
+/// occupies one pool slot, so a distinct `slot` (and identifier) is needed per
+/// call: both the real store and this harness treat a re-filled slot as a
+/// replay and drop it.
+fn pin_validator_out_of_minting(
+    test_state: &IntegrationTestState,
+    service_index: usize,
+    algorithm: DWalletSignatureAlgorithm,
+    network_key_object_id: ObjectID,
+    slot: u64,
+) {
+    let stuffing: Vec<Vec<u8>> = (0..TEST_PRESIGN_POOL_MAXIMUM_SIZE)
+        .map(|index| vec![index as u8; 8])
+        .collect();
+    test_state.epoch_stores[service_index]
+        .insert_presigns(
+            algorithm,
+            network_key_object_id,
+            slot,
+            SessionIdentifier::new(SessionType::InternalPresign, [slot as u8; 32]),
+            stuffing,
+        )
+        .expect("insert_presigns");
+}
+
+/// Empties the given validators' pool for one algorithm, so the next
+/// delay-aligned round fires their top-up.
+fn drain_pools(
+    test_state: &IntegrationTestState,
+    service_indices: impl IntoIterator<Item = usize>,
+    algorithm: DWalletSignatureAlgorithm,
+    network_key_object_id: ObjectID,
+) {
+    for service_index in service_indices {
+        while test_state.epoch_stores[service_index]
+            .pop_presign(algorithm, network_key_object_id)
+            .expect("pop_presign")
+            .is_some()
+        {}
+    }
+}
+
+/// Regression test for issue #1830: a per-pool internal-presign ordinal
+/// counter that has fallen inside already-completed history must rejoin the
+/// committee's live window from the consensus output stream alone.
+///
+/// The counters are in-memory while a pool's ordinal stream belongs to the
+/// epoch, so a validator can end up minting identifiers the committee
+/// finished long ago. Those mints can never produce live work (peers
+/// early-return on an already-resolved identifier), and the offset advances in
+/// lockstep with the live window — constant offset, zero closing speed — so
+/// the validator contributes nothing to that pool for the rest of the epoch
+/// while every event-driven path still looks healthy. Above f stake in that
+/// state starves the pool below the MPC threshold.
+///
+/// The heal: every completed internal-presign output carries its
+/// `session_sequence_number`, so the committee's completion frontier is
+/// consensus-anchored data every validator holds regardless of what it
+/// instantiated, what its store persisted, or whether it was in the pool when
+/// the ordinal was minted. A counter at-or-below that frontier jumps past it.
+///
+/// **The diverged counter is constructed directly here.** The pre-existing
+/// (#1952) machinery already converges the reachable in-process topologies —
+/// it seeds a pool's counter from the persisted fill high-water and walks past
+/// terminal replayed sessions — but both of its sources are local, and both
+/// are consulted only at a pool's first mint or while a top-up is firing. What
+/// this test pins is the rule that has neither restriction: whatever put the
+/// counter inside completed history (a seed source that was unavailable or
+/// behind at the pool's one seeding opportunity, a store holding none of the
+/// epoch's fills, a future regression), a live counter is repaired from
+/// consensus data, without a mint of its own and in one step.
+///
+/// Flow:
+/// 1. The committee advances the pool's ordinal stream past its first batch
+///    and quiesces with the in-flight batch guard closed.
+/// 2. Validator 0 is pinned out of minting (pool stuffed to its maximum) and
+///    its counter is dragged back to ordinal 1. Driving the top-up loop must
+///    export the full distance to the frontier on the
+///    `internal_presign_ordinal_lag` gauge — the divergence signal that did
+///    not exist while this defect sat open.
+/// 3. Peers resume minting. Their completions alone must fast-forward the
+///    counter to the frontier — with no mint on validator 0, which is pinned —
+///    the fast-forward counter must record the skipped ordinals, and the gauge
+///    must return to 0.
+/// 4. Unpinned, validator 0 must then mint LIVE ordinals that every peer binds
+///    to the same session identifier: the rejoin is usable, not just a number.
+#[tokio::test]
+#[cfg(test)]
+async fn test_internal_presign_ordinal_stream_rejoins_from_consensus_completions() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // EdDSA: single-round presign, so its batches provably quorum-complete
+    // within a handful of delivered rounds.
+    let (curve, algorithm) = (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+    let batch_size = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE;
+    let epoch_id = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .epoch_id;
+    let counter_network_key_id = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .internal_presign_network_key_id(&network_key_id)
+        .expect("the DKG'd key must have a resolvable NetworkKeyId");
+    let counter_key = (counter_network_key_id, curve, algorithm);
+    // The only key of this epoch serves network-owned-address signing, so its
+    // pools carry that `key_role` metric label.
+    let key_role = "network_owned_address_signing";
+    let peer_indices: Vec<usize> = (1..test_state.dwallet_mpc_services.len()).collect();
+
+    // === Phase 1: the committee advances the pool's ordinal stream ===
+    // More than one batch deep, so ordinal 1 is provably inside completed
+    // history; guard closed, so the committee's next ordinal is exactly one
+    // past its completion frontier.
+    let mut advanced = false;
+    for _ in 0..80 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 1, network_key_id, curve, algorithm);
+        let (_, frontier) = pool_ordinal_state(&test_state, 1, counter_key);
+        if instantiated > 0
+            && instantiated == completed
+            && frontier.is_some_and(|frontier| frontier > batch_size + 1)
+        {
+            advanced = true;
+            break;
+        }
+    }
+    assert!(
+        advanced,
+        "the committee should have completed more than one EdDSA presign batch within the \
+         phase 1 budget"
+    );
+    let (live_next, live_frontier) = pool_ordinal_state(&test_state, 1, counter_key);
+    let live_next = live_next.expect("peers minted in phase 1");
+    let live_frontier = live_frontier.expect("peers completed in phase 1");
+    assert_eq!(
+        live_next,
+        live_frontier + 1,
+        "precondition: with the guard closed the committee's next ordinal is one past its \
+         completion frontier"
+    );
+
+    // === Phase 2: validator 0's stream is inside completed history ===
+    pin_validator_out_of_minting(&test_state, 0, algorithm, network_key_id, 1);
+    let minted_while_diverged = locally_minted_pool_ordinals(
+        test_state.dwallet_mpc_services[0].dwallet_mpc_manager(),
+        curve,
+        algorithm,
+        network_key_id,
+        counter_network_key_id,
+    );
+    let diverged_round = test_state.consensus_round as u64;
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager_mut();
+    manager
+        .next_internal_presign_sequence_number
+        .insert(counter_key, 1);
+    let pinned_frontier = manager
+        .highest_completed_internal_presign_ordinal
+        .get(&counter_key)
+        .copied()
+        .expect("validator 0 has observed this pool's completions");
+    // Drive the export site (the top-up loop) with the counter still behind:
+    // the heal closes the gap inside the same call that observes a completion,
+    // so this is the only way to sample the gauge mid-divergence.
+    manager.instantiate_internal_presign_sessions(
+        diverged_round,
+        TEST_PRESIGN_CONSENSUS_ROUND_DELAY * 200,
+        false,
+    );
+    let (diverged_lag, fast_forwarded_before_heal) =
+        pool_ordinal_metrics(&test_state, 0, curve, algorithm, key_role);
+    assert_eq!(
+        diverged_lag, pinned_frontier as i64,
+        "the ordinal-lag gauge must report the full distance from the local stream to the \
+         committee's completed frontier"
+    );
+    assert_eq!(
+        locally_minted_pool_ordinals(
+            test_state.dwallet_mpc_services[0].dwallet_mpc_manager(),
+            curve,
+            algorithm,
+            network_key_id,
+            counter_network_key_id,
+        ),
+        minted_while_diverged,
+        "precondition: a validator whose pool is full must not mint, so any repair below comes \
+         from the output stream"
+    );
+
+    // === Phase 3: the peers' completions alone must heal it ===
+    drain_pools(&test_state, peer_indices.clone(), algorithm, network_key_id);
+    let mut healed = None;
+    let mut saw_positive_lag = false;
+    for _ in 0..60 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        // The top-up loop exports the gauge from the state it sees at the top
+        // of the round, so a round that heals still publishes the divergence
+        // it started with — the shape an operator scrapes.
+        let (lag, _) = pool_ordinal_metrics(&test_state, 0, curve, algorithm, key_role);
+        saw_positive_lag |= lag > 0;
+        let (next, frontier) = pool_ordinal_state(&test_state, 0, counter_key);
+        if let (Some(next), Some(frontier)) = (next, frontier)
+            && next > live_frontier
+        {
+            healed = Some((next, frontier));
+            break;
+        }
+    }
+    let (healed_next, healed_frontier) = healed.expect(
+        "a counter sitting inside already-completed history must be fast-forwarded to the \
+         committee's frontier by the consensus output stream",
+    );
+    assert_eq!(
+        healed_next,
+        healed_frontier + 1,
+        "the fast-forward must land exactly one past the observed completion frontier"
+    );
+    assert_eq!(
+        locally_minted_pool_ordinals(
+            test_state.dwallet_mpc_services[0].dwallet_mpc_manager(),
+            curve,
+            algorithm,
+            network_key_id,
+            counter_network_key_id,
+        ),
+        minted_while_diverged,
+        "the pinned validator must not have minted: the repair came from the output stream, not \
+         from the mint path"
+    );
+    assert!(
+        saw_positive_lag,
+        "the ordinal-lag gauge must publish the divergence while the stream is inside \
+         already-completed history"
+    );
+    // The gauge is published by the top-up loop, so it settles one export
+    // after the jump that healed the counter.
+    let mut lag_settled = false;
+    for _ in 0..10 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        if pool_ordinal_metrics(&test_state, 0, curve, algorithm, key_role).0 == 0 {
+            lag_settled = true;
+            break;
+        }
+    }
+    assert!(
+        lag_settled,
+        "the ordinal-lag gauge must return to 0 once the stream has rejoined the frontier"
+    );
+    let (_, fast_forwarded_after_heal) =
+        pool_ordinal_metrics(&test_state, 0, curve, algorithm, key_role);
+    assert!(
+        fast_forwarded_after_heal > fast_forwarded_before_heal,
+        "the fast-forward counter must record the skipped ordinals ({fast_forwarded_after_heal} \
+         vs {fast_forwarded_before_heal})"
+    );
+
+    // === Phase 4: the rejoined stream mints ordinals the committee agrees on ===
+    drain_pools(
+        &test_state,
+        0..test_state.dwallet_mpc_services.len(),
+        algorithm,
+        network_key_id,
+    );
+    let mut minted_live = None;
+    for _ in 0..60 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let live_minted: BTreeSet<u64> = locally_minted_pool_ordinals(
+            test_state.dwallet_mpc_services[0].dwallet_mpc_manager(),
+            curve,
+            algorithm,
+            network_key_id,
+            counter_network_key_id,
+        )
+        .into_iter()
+        .filter(|&ordinal| ordinal > live_frontier)
+        .collect();
+        // Bound to the same identifier on every peer: an identifier the
+        // committee does not derive identically is the divergence this pool
+        // cannot have.
+        let bound_everywhere = live_minted.iter().all(|&ordinal| {
+            let session_identifier = internal_presign_identifier_at(
+                epoch_id,
+                ordinal,
+                curve,
+                algorithm,
+                network_key_id,
+                counter_network_key_id,
+            );
+            peer_indices.iter().all(|&peer_index| {
+                test_state.dwallet_mpc_services[peer_index]
+                    .dwallet_mpc_manager()
+                    .sessions
+                    .get(&session_identifier)
+                    .and_then(|session| session.session_sequence_number)
+                    == Some(ordinal)
+            })
+        });
+        if !live_minted.is_empty() && bound_everywhere {
+            minted_live = Some(live_minted);
+            break;
+        }
+    }
+    let minted_live = minted_live.expect(
+        "after the heal the rejoined validator must mint LIVE ordinals that every peer binds to \
+         the same session identifier",
+    );
+    let (final_lag, _) = pool_ordinal_metrics(&test_state, 0, curve, algorithm, key_role);
+    assert_eq!(
+        final_lag, 0,
+        "a validator minting live ordinals must report no internal-presign ordinal lag"
+    );
+
+    info!(
+        ?minted_live,
+        "Test completed: an internal-presign ordinal counter dragged into already-completed \
+         history rejoined the committee's live window from the consensus output stream alone, \
+         and the divergence was exported as a gauge while it lasted"
+    );
+}

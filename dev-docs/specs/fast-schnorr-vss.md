@@ -152,20 +152,21 @@ against the active committee directly.
   make each pool's ordinal stream start-time-invariant: a late-adopted key
   starts its own pool's stream fresh at 1 whenever it starts, without
   perturbing any other pool.
-  **Scope of the guarantee**: start-time invariance holds while a validator's
-  start skew for a pool stays under ONE BATCH LIFECYCLE. A validator whose
-  first top-up of a pool happens only after a full batch quorum-completed
-  among its peers (a mid-epoch restart that replays committed rounds before
-  adoption re-lands, an extremely late install) begins that pool's ordinals
-  offset from its peers' and never converges — for the rest of the epoch it
-  instantiates already-completed identifiers and contributes nothing to that
-  pool's live sessions. The pool keeps serving from the peers' quorum; the
-  cost is that validator's redundancy (and, if more than f validators are in
-  that state simultaneously, the pool itself). The heal — fast-forwarding a
-  pool's counter from the completed sequence numbers observed in consensus
-  outputs, which are consensus-anchored — is tracked follow-up work. The same
-  exposure existed under the old shared counter, with every pool coupled to
-  the divergence instead of one.
+  **Scope of the guarantee**: start-time invariance is unconditional only
+  while a validator's start skew for a pool stays under ONE BATCH LIFECYCLE.
+  A validator whose first top-up of a pool happens only after a full batch
+  quorum-completed among its peers (a mid-epoch restart that replays committed
+  rounds before adoption re-lands, an extremely late install, an epoch entered
+  late, a state-synced store) would otherwise begin that pool's ordinals offset
+  from its peers' and never converge — instantiating already-completed
+  identifiers and contributing nothing to that pool's live sessions for the
+  rest of the epoch, with the pool still served by the peers' quorum until more
+  than f validators are in that state simultaneously. Convergence past that
+  skew is restored by the ordinal heal in
+  `dev-docs/specs/internal-presign-pool.md` ("Ordinal-stream convergence"),
+  which fast-forwards the counter from the completed sequence numbers carried
+  in consensus outputs. The same exposure existed under the old shared counter,
+  with every pool coupled to the divergence instead of one.
 - **Deferred instantiation for a not-yet-installed key.** The top-up loop
   iterates every ADOPTED key, but installation into `network_keys` completes
   asynchronously per validator. Because the counters and the session identifier
