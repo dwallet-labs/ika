@@ -65,16 +65,20 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 child processes against an external `sui` localnet. Manual dispatch remains
 available. Pull requests that touch MPC, crypto dependencies, serialization,
 protocol configuration, the upgrade harness, or `Cargo.lock` automatically
-run the `v127_rollout` deployed-release gate rather than the entire matrix.
-The protocol-version *transition* gate is `v127_v7_upgrade`: dispatch it by
-hand for any change that gates behavior on a protocol version, and before
-voting v7 onto a live network.
+run the `v128_rollout` deployed-release gate rather than the entire matrix.
+There is currently **no protocol-version transition gate**: `MIN` and `MAX`
+are both 7, so no boundary exists to cross. `v127_v7_upgrade` and the
+in-process `protocol_version_transition` cluster test were retired with the
+v6 support they exercised. Both must be RESURRECTED, retargeted at the new
+boundary, by whichever change introduces protocol v8 — that is a release
+blocker for it, not a follow-up. The pattern is on record twice now: the
+v5 -> v6 flavor was retired at MIN = 6 and resurrected for v6 -> v7.
 
 > **The release workflow no longer runs any suite (changed 2026-07-23, PR
 > #1891).** It previously called this workflow with the candidate SHA and
 > blocked tag publication on `v118_mixed_rollout`; that job was removed, so
 > a release tag now builds, uploads and drafts **unconditionally**.
-> Validating a release candidate is a manual step: dispatch `v127_rollout`
+> Validating a release candidate is a manual step: dispatch `v128_rollout`
 > (the deployed-release compatibility gate) plus the cluster and
 > Rust-integration suites against the exact tagged SHA and record the runs
 > in the draft's Validation section (the notes scaffold prompts for it). A
@@ -90,9 +94,12 @@ v3/v4-era `cross_binary`, `malicious_cross_binary`, `v118_upgrade`,
 `v118_churn`, `v118_mixed_rollout`, `v121_rollout`. Retired at MIN = 6: the
 v1.2.5-based `v125_rollout`, `v125_churn`, `malicious_v125`, and the two
 version-transition gates, which were retargeted rather than dropped:
-`v125_v6_upgrade` -> `v127_v7_upgrade`, and the in-process
-`protocol_version_transition` cluster test now walks v6 -> v7. Their
-successors are `v127_rollout`/`v127_churn`/`malicious_v127`
+`v125_v6_upgrade` -> `v127_v7_upgrade`. Retired at MIN = 7: the v1.2.7-based
+`v127_rollout`, `v127_churn`, `malicious_v127`, and BOTH transition gates
+(`v127_v7_upgrade` and the `protocol_version_transition` cluster test) —
+retired outright this time rather than retargeted, because MIN = MAX = 7
+leaves no boundary; see the note above on resurrecting them at v8. Their
+successors are `v128_rollout`/`v128_churn`/`malicious_v128`
 (below), which play the same mixed-committee gate against the CURRENTLY
 deployed release (v1.2.7, both networks, protocol v6) — a pure binary swap
 with no protocol transition. (Historical `cross_binary` 96 GiB runner-OOM
@@ -101,7 +108,7 @@ forensics and its infra fix: this playbook's pre-#1751 history.)
 **Retarget the `v12X_*` family whenever the deployed release moves.** The
 scenario names carry the OLD BINARY's release, not the protocol version,
 so that this maintenance is visible rather than silent: when v1.2.8 is
-deployed, `v127_rollout`/`v127_churn`/`malicious_v127` become
+deployed, `v128_rollout`/`v128_churn`/`malicious_v128` become
 `v128_rollout`/`v128_churn`/`malicious_v128` with
 `old_ref=release/mainnet-v1.2.8`, exactly as the `v125_*` set became the
 `v127_*` set. Naming a gate after the protocol version instead is what
@@ -113,8 +120,8 @@ superficially correct while the thing it tests changes underneath is
 worse than one that visibly goes stale.
 
 **Which gates must refuse mocks.** Every gate whose evidence is
-cross-binary agreement: `v127_rollout`, `v127_churn`, `malicious_v127`
-and `v127_v7_upgrade`. Mocked cryptography is deterministic, so two
+cross-binary agreement: `v128_rollout`, `v128_churn` and `malicious_v128` —
+plus any transition gate, the moment one exists again. Mocked cryptography is deterministic, so two
 binaries agree under it for reasons that say nothing about whether they
 agree in production — a green run on mocks is not weaker evidence of the
 same claim, it is evidence of a different one. Retarget this list with
@@ -144,35 +151,34 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 # by hand on every release tag): boot the literal v1.2.7 release, upgrade
 # one validator to current, converge two mixed aggregated reshares
 # (per-authority byte-equality, zero malicious), then swap the rest.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_rollout
-#   override the old side:  -f old_ref=release/mainnet-v1.2.7 -f old_bin_name=ika-validator
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v128_rollout
+#   override the old side:  -f old_ref=release/mainnet-v1.2.8 -f old_bin_name=ika-validator
 
-# THE PROTOCOL-UPGRADE GATE: the only scenario that crosses a protocol
-# version boundary (the others are pure binary swaps that stay at v6). Boot
-# the literal v1.2.7 release at v6, swap the whole committee to current, and
-# cross v6 -> v7 — where AuthorityName stops being emitted zero-padded to 48
-# bytes and starts being emitted as the raw 32. Asserts the upgrade actually
-# activated, the boundary reshare converged, the committee kept all four
-# members, and the cross-epoch handoff cert (signed padded, verified short)
-# still verified. NOT a PR default (cost); run it by hand before voting
-# protocol v7 onto any live network.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_v7_upgrade
+# THE PROTOCOL-UPGRADE GATE: none exists right now. MIN = MAX = 7, so there
+# is no boundary to cross, and both transition gates were retired with the v6
+# support they exercised. Whichever change introduces protocol v8 must bring
+# one back — an out-of-process rehearsal that boots the deployed release,
+# swaps the committee to current, crosses the boundary, and asserts the
+# upgrade activated, the reshare converged, the committee kept every member,
+# and the cross-epoch handoff cert still verified. Treat that as a release
+# blocker for v8, not a follow-up: the version boundary is the one thing a
+# pure binary-swap gate cannot cover.
 
 # Test-test the gate with the compiled-in, feature-gated one-validator
 # reconfiguration-message fault. This run is expected to fail; its logs must
 # show the exact zero-malicious or output-convergence assertion firing.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_rollout -f test_testing_fault=true
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v128_rollout -f test_testing_fault=true
 
 # The standalone test-testing counterpart (green = detection works): honest
 # v1.2.7 committee + one faulty current validator (built in-workflow with
 # --features test-testing); honest validators must convict it and reshare
 # without it (committee dips to 3).
-gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v127
+gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v128
 
-# v127_rollout's churn counterpart: full swap, then a mirrored OCS joiner
+# v128_rollout's churn counterpart: full swap, then a mirrored OCS joiner
 # folds into the reshared v1.2.7-origin key (4→5) and a shrink reshare
 # removes an original validator (5→4).
-gh workflow run upgrade-test.yaml --ref <branch> -f test=v127_churn
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v128_churn
 
 # Old-style (1.1.8-shape, JSON-RPC-only) YAML configs for every role.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=legacy_config
@@ -195,9 +201,9 @@ notifier + a validator committee:
 |---|---|---|
 | `smoke` | current only | process harness reaches epoch 2 |
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
-| `v127_rollout` | **one current + three literal v1.2.7**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
-| `v127_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.7-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
-| `malicious_v127` | three literal v1.2.7 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
+| `v128_rollout` | **one current + three literal v1.2.7**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
+| `v128_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.2.7-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
+| `malicious_v128` | three literal v1.2.7 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
 | `legacy_config` | current only | old JSON-RPC-only configuration remains accepted for every role |
 
 ### CI runner resources
@@ -207,8 +213,8 @@ quota, a **96 GiB pod memory limit**, and no swap. Each idle `ika-validator`
 runs ≈7.5–8 GB RSS, so co-locating many validators approaches the pod limit —
 the deleted `cross_binary` scenario (5–6 validators) reproducibly OOM-killed
 the runner at that limit (`OOMKilled`/137; forensics in this playbook's
-pre-#1751 history). `v127_rollout` is 4-validator and fits comfortably;
-`v127_churn` peaks at 5 validators during its joiner phase — the same peak
+pre-#1751 history). `v128_rollout` is 4-validator and fits comfortably;
+`v128_churn` peaks at 5 validators during its joiner phase — the same peak
 as the retired `v118_churn`, which passed on these runners (the OOM death
 was specific to `cross_binary`'s heavier 5–6-validator multi-lifecycle
 profile).

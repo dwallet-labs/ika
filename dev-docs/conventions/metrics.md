@@ -110,6 +110,26 @@ allowed when operators need them, but reminders do not increment the invariant
 counter. The network-key registry sites are guarded structurally by
 `scripts/check-invariant-violation-markers.sh`.
 
+### Process-wide wire settings need a gauge, not just a log
+
+`ika_authority_name_encoding_width_bytes` and
+`ika_handoff_attestation_width_retry_total` existed for the v6 -> v7
+`AuthorityName` width flip and were removed with it at MIN = 7: there is one
+encoding now, so the gauge could only ever report one value, and the retry the
+counter measured no longer exists. The rule they encoded outlives them and
+governs the next wire change that needs a version boundary.
+
+A setting the whole committee must agree on, held in process memory, needs a
+fleet-scrapeable gauge for the duration of its transition — two distinct values
+across hosts is then a visible split rather than something to deduce from what
+breaks. Publish it from the setter rather than the caller, so every path is
+covered, including test-only fault injection: a gate that injects a straggler
+should be able to see the straggler it injected. If a compatibility retry
+accompanies the flip, count it, and keep "recovered" separate from "the payload
+was simply bad" — a successful retry is otherwise indistinguishable from one
+that never fired, and "the boundary worked" cannot tell you which happened.
+Retire both with the scaffolding.
+
 Per-authority output observations are collected protocol-generically but
 **exported only for an allow-listed set of protocols** (currently network-key
 reconfiguration; see `OUTPUT_OBSERVATION_EXPORT_PROTOCOLS` in `mpc_manager.rs`).
@@ -259,7 +279,6 @@ ika_dwallet_mpc_data_ready_quorum_round
 ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds
 ika_dwallet_mpc_data_ready_signal_stake
 ika_dwallet_mpc_data_ready_signals
-ika_dwallet_mpc_messages_after_terminal_session_total
 ika_dwallet_mpc_global_presign_requests_waiting
 ika_dwallet_mpc_global_presigns_served_total
 ika_dwallet_mpc_internal_presign_ordinal_lag
@@ -268,6 +287,7 @@ ika_dwallet_mpc_internal_presign_pool_size
 ika_dwallet_mpc_internal_presign_requests_pending_for_network_key_data
 ika_dwallet_mpc_last_completion_duration
 ika_dwallet_mpc_malicious_actors_count
+ika_dwallet_mpc_messages_after_terminal_session_total
 ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version
 ika_dwallet_mpc_network_key_instantiation_failures_total
 ika_dwallet_mpc_network_key_instantiation_sub_call_duration_seconds
@@ -388,10 +408,10 @@ ika_ocs_serve_request_by_peer_total
 ika_ocs_serve_request_total
 ika_ocs_unverified_committee_fallback_total
 ika_ocs_verify_latency_seconds
-ika_off_chain_assembly_incomplete_ticks_total
 ika_off_chain_assembly_consecutive_incomplete_ticks
 ika_off_chain_assembly_incomplete
 ika_off_chain_assembly_incomplete_duration_seconds
+ika_off_chain_assembly_incomplete_ticks_total
 ika_off_chain_assembly_last_success_timestamp_seconds
 ika_off_chain_assembly_missing
 ika_off_chain_assembly_wedged

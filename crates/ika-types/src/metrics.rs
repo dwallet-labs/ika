@@ -5,7 +5,6 @@ use once_cell::sync::OnceCell;
 use prometheus::{IntCounterVec, Registry, register_int_counter_vec_with_registry};
 
 static INVARIANT_VIOLATIONS_TOTAL: OnceCell<IntCounterVec> = OnceCell::new();
-
 pub fn init_invariant_violation_metric(registry: &Registry) {
     INVARIANT_VIOLATIONS_TOTAL.get_or_init(|| {
         register_int_counter_vec_with_registry!(

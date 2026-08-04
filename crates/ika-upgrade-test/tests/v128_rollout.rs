@@ -24,17 +24,17 @@
 //! swap. That is the wire-no-op the inkrypto bump must be, once the network is
 //! already on v6/strict.
 //!
-//! Opt-in (real binaries + long-running), via `RUN_V127_ROLLOUT=1`:
+//! Opt-in (real binaries + long-running), via `RUN_V128_ROLLOUT=1`:
 //!
 //! ```bash
 //! # OLD_BIN: the v1.2.7 ika-validator; NEW_BIN: the strict-only candidate
-//! RUN_V127_ROLLOUT=1 \
+//! RUN_V128_ROLLOUT=1 \
 //!   OLD_BIN=/path/to/ika-validator-v1.2.7 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v127_rollout -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v128_rollout -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -51,10 +51,10 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v127_rollout_converges_across_binary_swap_at_v6() {
-    if std::env::var("RUN_V127_ROLLOUT").is_err() {
+async fn v128_rollout_converges_across_binary_swap_at_v7() {
+    if std::env::var("RUN_V128_ROLLOUT").is_err() {
         eprintln!(
-            "skipping: set RUN_V127_ROLLOUT=1 \
+            "skipping: set RUN_V128_ROLLOUT=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
@@ -105,13 +105,13 @@ async fn v127_rollout_converges_across_binary_swap_at_v6() {
         // silently start exercising the AuthorityName width flip — conflating
         // deployed-release compatibility with a protocol upgrade. Crossing v7
         // is `v127_v7_upgrade`'s job.
-        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(7, 7))
         .with_base_dir(base)
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
         // No relaxed (v5) phase: the strict-only NEW binary and the v6-capable
-        // OLD binary only agree at v6, so the committee starts at v6.
-        .with_genesis_protocol_version(ProtocolVersion::new(6))
+        // OLD binary and current agree at v7, so the committee starts at v7.
+        .with_genesis_protocol_version(ProtocolVersion::new(7))
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
         .with_ika_cli(ika_cli)
         .start_all(old)
@@ -120,15 +120,15 @@ async fn v127_rollout_converges_across_binary_swap_at_v6() {
         .wait_for_epoch(2)
         .wait_for_all_validators_local_epoch(2)
         .expect_all_validators_healthy()
-        .expect_protocol_version_at_least(6)
-        .expect_protocol_version_at_most(6)
+        .expect_protocol_version_at_least(7)
+        .expect_protocol_version_at_most(7)
         .expect_network_key_reconfiguration_not_started(2)
         // ── Mixed phase: 1 NEW + 3 OLD, all at v6/strict. ──────────────────
         .stop_and_swap(&[0], current.clone())
         .expect_all_validators_healthy()
         .wait_for_all_validators_local_epoch(2)
-        .expect_protocol_version_at_most(6)
-        .expect_all_validators_protocol_version_at_most(6)
+        .expect_protocol_version_at_most(7)
+        .expect_all_validators_protocol_version_at_most(7)
         // First mixed-binary reshare: the NEW validator must converge
         // byte-identically with the OLD quorum on the aggregated (V4-tagged)
         // strict-bound output.
@@ -147,7 +147,7 @@ async fn v127_rollout_converges_across_binary_swap_at_v6() {
         .wait_for_epoch(3)
         .wait_for_all_validators_local_epoch(3)
         .expect_all_validators_healthy()
-        .expect_all_validators_protocol_version_at_most(6)
+        .expect_all_validators_protocol_version_at_most(7)
         // Second mixed boundary: proves the first convergence was not a one-off.
         .wait_for_network_key_reconfiguration_started(3)
         .wait_for_network_key_reconfiguration_completed(3)
@@ -169,7 +169,7 @@ async fn v127_rollout_converges_across_binary_swap_at_v6() {
         .wait_for_epoch(5)
         .wait_for_all_validators_local_epoch(5)
         .expect_all_validators_healthy()
-        .expect_protocol_version_at_least(6)
+        .expect_protocol_version_at_least(7)
         // First all-NEW reshare: the fully-upgraded committee must converge and
         // install the aggregated strict-bound output everywhere.
         .wait_for_network_key_reconfiguration_started(5)
@@ -190,7 +190,7 @@ async fn v127_rollout_converges_across_binary_swap_at_v6() {
         .await
         .expect(
             "v1.2.7/candidate committee must converge across the mixed phase and the full binary \
-             swap at protocol v6 (strict bound)",
+             swap at protocol v7 (short AuthorityName encoding)",
         );
 
     tracing::info!(

@@ -507,35 +507,17 @@ pub fn verify_certified_handoff_attestation(
     committee: &Committee,
     provider: &dyn ConsensusPubkeyProvider,
 ) -> IkaResult<()> {
-    // This cert was signed at the END of epoch N and is verified in N+1, so it
-    // is the one payload that straddles the v7 `AuthorityName` width flip: the
-    // signatures below are checked against bytes we RE-SERIALIZE locally, at
-    // the entering epoch's width, while the signers used the outgoing epoch's.
-    // Retry once at the other width before rejecting.
-    //
-    // This does not widen what is accepted: both widths encode the SAME
-    // attestation value (a name decodes identically from either), so the retry
-    // resolves an encoding ambiguity rather than admitting a second message.
-    // It is scoped to this thread, so concurrent serialization is untouched.
-    match verify_certified_handoff_attestation_at_current_width(cert, committee, provider) {
-        Err(first @ IkaError::InvalidSignature { .. }) => {
-            let other_width = !ika_types::crypto::authority_name_short_encoding();
-            ika_types::crypto::with_authority_name_short_encoding(other_width, || {
-                verify_certified_handoff_attestation_at_current_width(cert, committee, provider)
-            })
-            .map_err(|_| {
-                // Report the FIRST failure: the retry's error is always
-                // "wrong width" noise when the cert is genuinely bad, and it
-                // would send the reader after an encoding problem that isn't
-                // there.
-                first
-            })
-        }
-        result => result,
-    }
+    // No width retry any more: with MIN_PROTOCOL_VERSION = 7 there is one
+    // `AuthorityName` encoding, so the bytes re-serialized here are the bytes
+    // the signers produced. Through the v6->v7 straddle this cert was the one
+    // payload that crossed a width change — signed at the end of epoch N,
+    // verified in N+1 — and it retried at the other width rather than trusting
+    // the ambient value. That retry, and the thread-local override it needed,
+    // are gone with the second width.
+    verify_certified_handoff_attestation_inner(cert, committee, provider)
 }
 
-fn verify_certified_handoff_attestation_at_current_width(
+fn verify_certified_handoff_attestation_inner(
     cert: &CertifiedHandoffAttestation,
     committee: &Committee,
     provider: &dyn ConsensusPubkeyProvider,
