@@ -14,11 +14,11 @@ Check each box that your changes affect. If none of the boxes relate to your cha
 
 For each box you select, include information after the relevant heading that describes the impact of your changes that a user might notice and any actions they must take to implement updates.
 
-- [ ] Protocol:
-- [ ] Nodes (Validators and Full nodes):
-- [ ] Indexer:
-- [ ] JSON-RPC:
-- [ ] GraphQL:
+- [ ] Protocol and cryptography:
+- [ ] Move contracts:
+- [ ] Nodes (validators, fullnodes, and notifier):
 - [ ] CLI:
 - [ ] Rust SDK:
-- [ ] REST API:
+- [ ] TypeScript SDK:
+- [ ] WASM SDK:
+- [ ] Proxy and operator tooling:
