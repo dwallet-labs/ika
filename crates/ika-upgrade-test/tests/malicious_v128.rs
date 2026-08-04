@@ -109,7 +109,7 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
         // silently start exercising the AuthorityName width flip — conflating
         // deployed-release compatibility with a protocol upgrade. Crossing v7
         // is `v127_v7_upgrade`'s job.
-        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(7, 7))
         .with_base_dir(base)
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))

@@ -83,14 +83,14 @@ async fn workload_dkg_presign_sign() {
         // the all-current committee would vote itself to v7 partway through
         // and the lifecycle would straddle a protocol boundary it is not
         // meant to test. Crossing v7 is `v127_v7_upgrade`'s job.
-        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(7, 7))
         .with_base_dir(base)
         .with_epoch_duration_ms(180_000)
         .with_epoch_timeout(Duration::from_secs(900))
         .with_ika_cli(ika_cli)
         .start_all(validator)
         .wait_for_epoch(2)
-        .expect_protocol_version_at_least(6)
+        .expect_protocol_version_at_least(7)
         .run_workload("dkg-presign-sign")
         .run()
         .await

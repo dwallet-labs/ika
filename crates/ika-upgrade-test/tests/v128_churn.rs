@@ -103,7 +103,7 @@ async fn v127_full_swap_then_committee_churn() {
         // silently start exercising the AuthorityName width flip — conflating
         // deployed-release compatibility with a protocol upgrade. Crossing v7
         // is `v127_v7_upgrade`'s job.
-        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(6, 6))
+        .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(7, 7))
         .with_base_dir(base)
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
@@ -122,7 +122,7 @@ async fn v127_full_swap_then_committee_churn() {
         .wait_for_all_validators_local_epoch(2)
         .expect_all_validators_healthy()
         .expect_committee_size(4)
-        .expect_protocol_version_at_least(6)
+        .expect_protocol_version_at_least(7)
         // Sequentially swap every validator to the current build. The
         // current binaries inherit the v1.2.7-written RocksDB state and
         // reshare the v1.2.7-DKG'd network key.
