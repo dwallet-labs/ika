@@ -163,7 +163,7 @@ jobs:
           # prefix as the simtest workflow, which shares the dep graph).
           prefix-key: "simtest"
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.6
         with:
           tool: cargo-nextest
       - name: Install cargo-simtest shim
