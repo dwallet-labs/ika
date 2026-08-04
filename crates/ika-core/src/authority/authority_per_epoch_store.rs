@@ -58,6 +58,7 @@ use crate::system_checkpoints::{
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+use fastcrypto::ed25519::Ed25519Signature;
 use group::PartyID;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
@@ -1011,6 +1012,17 @@ pub struct AuthorityPerEpochStore {
     pending_handoff_signatures:
         parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
 
+    /// Pending `handoff_signatures` row mutations, waiting to be folded into
+    /// the next `ConsensusCommitOutput`. `Some(signature)` is an upsert,
+    /// `None` a delete. Every writer of that table stages here instead of
+    /// writing it, so each row lands in exactly one commit's batch and the
+    /// durable table can never run ahead of the last committed commit —
+    /// which is what makes the close gate's read of it commit-attributable
+    /// (#1927). Keyed by signer with last-op-wins, so it stays bounded by
+    /// the committee size no matter how often a peer re-broadcasts.
+    staged_handoff_signature_rows:
+        parking_lot::Mutex<BTreeMap<AuthorityName, Option<Ed25519Signature>>>,
+
     /// Buffer of relayed next-epoch joiner announcements received via
     /// consensus while this validator's `JoinerPubkeyProvider` was
     /// absent or lagged the next-epoch committee (so the joiner's
@@ -1707,19 +1719,24 @@ pub struct AuthorityEpochTables {
     /// `AuthorityPerpetualTables` (perpetual persist lands in step
     /// 7c).
     ///
-    /// write-discipline: direct — UNPROVEN (#1927). Two writers:
-    /// `record_handoff_signature` on the consensus `EndOfPublishV2` arm
-    /// (consensus-sequenced, but written out-of-band relative to the commit
-    /// batch) and the buffered drain in
-    /// `install_expected_handoff_attestation`, which runs at WALL-CLOCK local
-    /// install time. The close gate reads this table
-    /// (`handoff_signatures_meet_quorum`), so a validator whose install lags
-    /// its peers' signature commits can observe the gate satisfied at a
-    /// different round — the property #1920 removed from the `all_voted` half
-    /// of the same gate. The pure-function-of-table argument holds for the
-    /// consensus arm alone; the drain breaks it, because drained rows are not
-    /// attributable to any commit ≤ the evaluating one.
-    pub(crate) handoff_signatures: DBMap<AuthorityName, fastcrypto::ed25519::Ed25519Signature>,
+    /// write-discipline: commit-batched (#1927). Every writer — the consensus
+    /// `EndOfPublishV2` arm, the buffered drain in
+    /// `install_expected_handoff_attestation`, and that same function's
+    /// stale-row cleanup — stages into `staged_handoff_signature_rows`, which
+    /// the next commit folds into its `ConsensusCommitOutput`. So a row is
+    /// durable exactly when the commit it was staged under is, and the close
+    /// gate that sums this table (`handoff_signatures_meet_quorum`) reads a
+    /// state attributable to a commit rather than to whatever had reached
+    /// RocksDB by the instant it looked.
+    ///
+    /// This does NOT make the gate a pure function of the sequence: WHICH
+    /// commit a drained row lands under still follows this validator's local
+    /// attestation install, so peers can still cross quorum at different
+    /// commits. Retiring that residue is the sequence-pure tally in
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md (item 3),
+    /// which has its own prerequisites; see the NOTE at the gate's call site
+    /// for what holds close-safety in the meantime.
+    pub(crate) handoff_signatures: DBMap<AuthorityName, Ed25519Signature>,
 
     /// Local cache of network DKG output digests for this epoch,
     /// keyed by `dwallet_network_encryption_key_id`. Populated by
@@ -2525,6 +2542,7 @@ impl AuthorityPerEpochStore {
             joiner_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
+            staged_handoff_signature_rows: parking_lot::Mutex::new(BTreeMap::new()),
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
@@ -3153,7 +3171,6 @@ impl AuthorityPerEpochStore {
         // possible (no early-startup fallback needed). Order doesn't
         // matter — the aggregator is stake-weighted.
         let committee = self.committee();
-        let tables = self.tables()?;
         let mut replayed_signatures: usize = 0;
         // Rows that endorse a superseded attestation are dropped from the
         // aggregator AND deleted from the table below. The close-gate quorum
@@ -3161,8 +3178,14 @@ impl AuthorityPerEpochStore {
         // aggregator, so leaving stale rows behind would let a re-install
         // that changed the attestation still count the old endorsements.
         let mut stale_signers: Vec<AuthorityName> = Vec::new();
-        for entry in tables.handoff_signatures.safe_iter() {
-            let (signer, signature) = entry?;
+        // Rows already staged for the next commit count here even though they
+        // are not durable yet. They were verified against an attestation and
+        // consensus will not redeliver them, so an install that read only the
+        // committed table would drop every signature recorded since the last
+        // commit out of the rebuilt aggregator — permanently, since the
+        // aggregator is only ever rebuilt from this read.
+        let staged = self.staged_handoff_signature_rows.lock().clone();
+        for (signer, signature) in self.handoff_signature_rows_with(&staged)? {
             let msg = ika_types::handoff::HandoffSignatureMessage {
                 attestation: attestation.clone(),
                 signer,
@@ -3183,20 +3206,29 @@ impl AuthorityPerEpochStore {
             aggregator.insert_verified(signer, signature);
             replayed_signatures += 1;
         }
-        // Atomically delete the superseded rows so the table matches the
-        // installed attestation (single write batch — no half-deleted state).
-        // Done after the aggregator is fully built, so a delete failure
-        // surfaces as an error without having touched the correct in-memory
-        // aggregator. Idempotent: a crash before the write leaves the rows to
-        // be re-identified and re-deleted on the next install.
+        // Stage the superseded rows for deletion so the table matches the
+        // installed attestation. Staged rather than deleted on sight for the
+        // same reason the inserts are: this moves the close gate DOWN, so the
+        // commit it moves down at has to be a commit, not the wall-clock
+        // instant this install happened to run. Idempotent — a crash before
+        // the batch leaves the rows to be re-identified on the next install.
+        //
+        // NOT a writer this sweep can catch, and not a regression: a
+        // consensus-arm row verifying against the OUTGOING attestation can be
+        // staged after the snapshot above was cloned, so it survives into the
+        // table under the incoming one. The pre-#1927 code had the identical
+        // window (an insert landing after the sweep had iterated the table),
+        // because both versions decide what is stale from a snapshot the
+        // consensus thread can outrun. Closing it needs the gate to stop
+        // depending on which attestation a row endorses at all — the
+        // sequence-pure tally keyed by attestation digest, not a wider lock
+        // here, which would only move the race to the arm.
         if !stale_signers.is_empty() {
-            let mut batch = tables.handoff_signatures.batch();
-            batch.delete_batch(&tables.handoff_signatures, stale_signers.iter())?;
-            batch.write()?;
+            self.stage_handoff_signature_rows(stale_signers.iter().map(|signer| (*signer, None)));
             info!(
                 epoch = attestation.epoch,
                 dropped = stale_signers.len(),
-                "deleted superseded handoff signature rows on attestation re-install"
+                "staged superseded handoff signature rows for deletion on attestation re-install"
             );
         }
         let aggregator_signer_count = aggregator.signer_count();
@@ -3541,6 +3573,52 @@ impl AuthorityPerEpochStore {
         ))
     }
 
+    /// Queues `handoff_signatures` row mutations for the next commit's batch.
+    /// `Some(signature)` upserts the signer's row, `None` deletes it; the last
+    /// op staged for a signer before the flush wins, which is what a keyed
+    /// table means and what keeps the staging map bounded by committee size.
+    ///
+    /// No writer of that table may bypass this: a direct write is durable the
+    /// moment it is issued, while the close gate that sums the table is
+    /// evaluated per commit, and the two then disagree about what state the
+    /// commit was decided against (#1927, the class #1920 fixed for votes).
+    fn stage_handoff_signature_rows(
+        &self,
+        rows: impl IntoIterator<Item = (AuthorityName, Option<Ed25519Signature>)>,
+    ) {
+        self.staged_handoff_signature_rows.lock().extend(rows);
+    }
+
+    /// Removes and returns everything staged so far, for folding into the
+    /// commit currently being processed.
+    fn take_staged_handoff_signature_rows(
+        &self,
+    ) -> BTreeMap<AuthorityName, Option<Ed25519Signature>> {
+        std::mem::take(&mut *self.staged_handoff_signature_rows.lock())
+    }
+
+    /// The durable `handoff_signatures` rows as they will stand once `staged`
+    /// is written — i.e. the committed table overlaid with a set of pending
+    /// ops. Callers that must not see uncommitted state pass nothing and read
+    /// the table directly instead.
+    fn handoff_signature_rows_with(
+        &self,
+        staged: &BTreeMap<AuthorityName, Option<Ed25519Signature>>,
+    ) -> IkaResult<BTreeMap<AuthorityName, Ed25519Signature>> {
+        let mut rows = self
+            .tables()?
+            .handoff_signatures
+            .safe_iter()
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        for (signer, op) in staged {
+            match op {
+                Some(signature) => rows.insert(*signer, signature.clone()),
+                None => rows.remove(signer),
+            };
+        }
+        Ok(rows)
+    }
+
     /// Records an incoming `HandoffSignatureMessage` from consensus.
     ///
     /// When no expected attestation is installed yet, the message
@@ -3654,9 +3732,7 @@ impl AuthorityPerEpochStore {
                 self.metrics
                     .dwallet_handoff_signatures_stake
                     .set(aggregator_stake as i64);
-                self.tables()?
-                    .handoff_signatures
-                    .insert(&msg.signer, &msg.signature)?;
+                self.stage_handoff_signature_rows([(msg.signer, Some(msg.signature.clone()))]);
                 Ok(())
             }
             HandoffSignatureRecordOutcome::Certified(cert) => {
@@ -3681,9 +3757,13 @@ impl AuthorityPerEpochStore {
                 self.metrics
                     .dwallet_handoff_signatures_stake
                     .set(aggregator_stake as i64);
-                self.tables()?
-                    .handoff_signatures
-                    .insert(&msg.signer, &msg.signature)?;
+                self.stage_handoff_signature_rows([(msg.signer, Some(msg.signature.clone()))]);
+                // The cert goes to perpetual storage immediately, NOT through
+                // the commit batch: it is the once-per-epoch artifact the next
+                // epoch's barrier blocks on, it is self-verifying (a quorum of
+                // signatures over one attestation), and nothing reads it to
+                // decide a consensus-visible outcome. Only the close gate's
+                // input needs commit attribution.
                 if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
                     if let Err(e) = perpetual
                         .insert_certified_handoff_attestation(cert.attestation.epoch, &cert)
@@ -3904,23 +3984,39 @@ impl AuthorityPerEpochStore {
     /// lets the epoch close while no validator can mint the cert the next
     /// epoch's prepare-then-start barrier requires.
     ///
-    /// NOT a pure consensus function, in either direction: rows land only
-    /// after the LOCAL expected attestation installs (wall-clock), and a
-    /// re-install of a DIFFERENT attestation DELETES rows endorsing the
-    /// superseded one — so the value can move down as well as up, at
-    /// wall-clock-determined commits that differ across validators. See the
-    /// call-site NOTE in `decide_deferred_epoch_close` for why the close stays
-    /// safe anyway, and
+    /// Evaluated against the state the given commit's batch will make durable:
+    /// the committed table overlaid with the rows this commit staged (#1927).
+    /// Both halves are needed. Reading only the table would push a signature
+    /// recorded by this very commit's `EndOfPublishV2` arm into the NEXT
+    /// commit's gate — a one-commit close delay against a binary that writes
+    /// on sight, which is a mixed-rollout close-round split. Reading the
+    /// un-flushed staging map instead would let rows destined for a LATER
+    /// commit decide this one.
+    ///
+    /// STILL NOT a pure consensus function: rows land only once the LOCAL
+    /// expected attestation installs, and a re-install of a DIFFERENT
+    /// attestation deletes rows endorsing the superseded one — so the value
+    /// can move down as well as up, at commits that differ across validators.
+    /// What #1927 changed is that those moves are now attributable to a
+    /// commit, so crash-replay reproduces the gate's input — ONCE the expected
+    /// attestation is reinstalled — instead of resuming from a table that ran
+    /// ahead of the last committed commit. Replay that outruns the reinstall
+    /// buffers the redelivered bundles and reaches the close later, via the
+    /// drain or the backstop; that is the same off-consensus dependency this
+    /// paragraph opens with, not a separate hazard. See
+    /// the call-site NOTE in `decide_deferred_epoch_close` for what holds the
+    /// close safe against the residual skew, and
     /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md for the
     /// planned replacement by a sequence-pure tally.
-    pub fn handoff_signatures_meet_quorum(&self) -> IkaResult<bool> {
+    pub(crate) fn handoff_signatures_meet_quorum(
+        &self,
+        output: &ConsensusCommitOutput,
+    ) -> IkaResult<bool> {
         let committee = self.committee();
         let stake: u64 = self
-            .tables()?
-            .handoff_signatures
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(signer, _)| committee.weight(&signer))
+            .handoff_signature_rows_with(output.handoff_signature_rows())?
+            .into_keys()
+            .map(|signer| committee.weight(&signer))
             .sum();
         Ok(stake >= committee.quorum_threshold())
     }
@@ -4952,6 +5048,17 @@ impl AuthorityPerEpochStore {
             }
         }
 
+        // Fold every `handoff_signatures` row staged since the last commit
+        // into this one — both the rows this commit's `EndOfPublishV2` arms
+        // just staged and any staged off-thread by an attestation install
+        // that finished before this commit was processed. Placed here, after
+        // the transaction loop and before the close gate reads them, so the
+        // gate decides against precisely the rows this commit will persist.
+        // A drain landing mid-processing simply lands in the next commit; the
+        // point is that it lands in ONE commit and never in the gap between
+        // a decision and its batch (#1927).
+        output.record_handoff_signature_rows(self.take_staged_handoff_signature_rows());
+
         // EndOfPublish close grace: once a stake-quorum of
         // EndOfPublish votes is in, defer the epoch close
         // `end_of_publish_grace_rounds` (protocol config) more consensus
@@ -5036,9 +5143,13 @@ impl AuthorityPerEpochStore {
                 // while the handoff cert is born on NO validator — every
                 // validator then blocks at the barrier and the chain wedges.
                 // Require the handoff-cert quorum before closing. NOTE: this gate
-                // is NOT a pure consensus function. The `handoff_signatures` table
-                // is written in consensus order, but WHETHER a row exists at a
-                // given round also depends on off-consensus state — this
+                // is commit-attributable but still NOT a pure consensus function.
+                // Every row now lands in exactly one commit's batch (#1927), so
+                // the gate can no longer be decided against a table that ran
+                // ahead of the last committed commit, and a crash-replay of this
+                // commit re-derives the same input once the expected attestation
+                // is reinstalled. But WHETHER a row exists at a
+                // given round still depends on off-consensus state — this
                 // validator's `expected_handoff_attestation` install and its
                 // consensus-pubkey provider (a ~5s background Sui poll); until
                 // both are present, sequenced `EndOfPublishV2` bundles buffer and
@@ -5055,7 +5166,7 @@ impl AuthorityPerEpochStore {
                 // which also covers the deletion-flipped validator (it closes
                 // late via the backstop; its cert recovery is the barrier
                 // peer-fetch).
-                let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
+                let handoff_cert_quorum = self.handoff_signatures_meet_quorum(output)?;
 
                 // The close decision (and the liveness backstop for a genuinely
                 // non-signing validator) is the pure, unit-tested
@@ -5955,6 +6066,12 @@ pub(crate) struct ConsensusCommitOutput {
     /// pre-commit state, or the aggregator rehydrates with votes the replayed
     /// commit has not re-counted (#1917).
     end_of_publish_votes: Vec<AuthorityName>,
+    /// `handoff_signatures` row mutations folded into this commit —
+    /// `Some(signature)` upserts, `None` deletes. Batched for the same reason
+    /// the votes are, and consulted directly by the close gate so that the
+    /// gate decides against exactly the state this commit's batch will make
+    /// durable (#1927).
+    handoff_signature_rows: BTreeMap<AuthorityName, Option<Ed25519Signature>>,
     /// First commit round at which the EndOfPublish stake quorum was
     /// observed (the grace anchor). Written through this batch so it
     /// commits atomically with the commit that observed it — an
@@ -6004,6 +6121,19 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn record_end_of_publish_vote(&mut self, authority: AuthorityName) {
         self.end_of_publish_votes.push(authority);
+    }
+
+    pub(crate) fn record_handoff_signature_rows(
+        &mut self,
+        rows: BTreeMap<AuthorityName, Option<Ed25519Signature>>,
+    ) {
+        self.handoff_signature_rows.extend(rows);
+    }
+
+    pub(crate) fn handoff_signature_rows(
+        &self,
+    ) -> &BTreeMap<AuthorityName, Option<Ed25519Signature>> {
+        &self.handoff_signature_rows
     }
 
     pub(crate) fn set_end_of_publish_quorum_round(&mut self, round: u64) {
@@ -6189,6 +6319,23 @@ impl ConsensusCommitOutput {
             self.end_of_publish_votes
                 .into_iter()
                 .map(|authority| (authority, ())),
+        )?;
+        // Deletes first, then upserts: the map holds at most one op per
+        // signer, so the two sets are disjoint and the order is cosmetic —
+        // but writing it explicitly keeps it that way if the staging ever
+        // grows a per-signer history.
+        batch.delete_batch(
+            &tables.handoff_signatures,
+            self.handoff_signature_rows
+                .iter()
+                .filter(|(_, op)| op.is_none())
+                .map(|(signer, _)| signer),
+        )?;
+        batch.insert_batch(
+            &tables.handoff_signatures,
+            self.handoff_signature_rows
+                .iter()
+                .filter_map(|(signer, op)| op.as_ref().map(|signature| (signer, signature))),
         )?;
         if let Some(round) = self.end_of_publish_quorum_round {
             batch.insert_batch(&tables.end_of_publish_quorum_round, [(0u64, round)])?;
@@ -6440,7 +6587,9 @@ mod tests {
                 .unwrap();
         }
         assert!(
-            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            !epoch_store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(close_window_round))
+                .unwrap(),
             "handoff signatures must start sub-quorum (2 of 4)"
         );
 
@@ -6480,7 +6629,9 @@ mod tests {
             .insert(&names[2], &dummy_signature)
             .unwrap();
         assert!(
-            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            epoch_store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(close_window_round))
+                .unwrap(),
             "handoff signatures now at quorum (3 of 4)"
         );
 
@@ -6556,7 +6707,11 @@ mod tests {
                 .insert(name, &dummy_signature)
                 .unwrap();
         }
-        assert!(epoch_store.handoff_signatures_meet_quorum().unwrap());
+        assert!(
+            epoch_store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(0))
+                .unwrap()
+        );
 
         // STEP 1: reproduce the live path's two views as they stand once
         // EARLIER commits have durably landed every vote — the table holds all
@@ -6856,7 +7011,9 @@ mod tests {
                 .unwrap();
         }
         assert!(
-            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            !epoch_store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(anchor))
+                .unwrap(),
             "handoff signatures stay sub-quorum (2 of 4) for the whole test"
         );
         let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
@@ -7099,16 +7256,31 @@ mod tests {
             "the three A-endorsing rows are present after installing A"
         );
         assert!(
-            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            epoch_store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(0))
+                .unwrap(),
             "the close gate must read true with a quorum of A-endorsing rows and A installed"
         );
 
-        // Re-install B: the A-endorsing rows no longer verify and must be
-        // deleted from the table, flipping the gate true -> false (the gate
-        // must not count endorsements of a superseded attestation).
+        // Re-install B: the A-endorsing rows no longer verify and must stop
+        // counting toward the gate (which must not count endorsements of a
+        // superseded attestation). Since #1927 the deletion is STAGED rather
+        // than applied on sight, so it takes effect at a commit: the gate
+        // reads false as soon as a commit picks the staged deletes up, and the
+        // table is empty once that commit's batch is written.
         epoch_store
             .install_expected_handoff_attestation(attestation_b)
             .unwrap();
+        let commit_round = 10u64;
+        let mut output = ConsensusCommitOutput::new(commit_round);
+        output.record_handoff_signature_rows(epoch_store.take_staged_handoff_signature_rows());
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum(&output).unwrap(),
+            "the close gate must not count the superseded rows"
+        );
+        let mut batch = epoch_store.db_batch().unwrap();
+        output.write_to_batch(&epoch_store, &mut batch).unwrap();
+        batch.write().unwrap();
         assert_eq!(
             epoch_store
                 .tables()
@@ -7119,9 +7291,365 @@ mod tests {
             0,
             "stale A-endorsing rows must be deleted from the table on re-install to B"
         );
+    }
+
+    /// Test committee whose members carry real consensus keys, so bundled
+    /// handoff signatures actually verify — `new_simple_test_committee_of_size`
+    /// leaves `consensus_keys` empty, which rejects every signature.
+    fn handoff_test_committee() -> (Arc<Committee>, Vec<AuthorityName>, Vec<Ed25519KeyPair>) {
+        let (base_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let names: Vec<AuthorityName> = base_committee.names().copied().collect();
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|index| {
+                let mut seed = [0u8; 32];
+                seed[0] = (index + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let consensus_keys: HashMap<_, _> = names
+            .iter()
+            .copied()
+            .zip(consensus_keypairs.iter().map(|kp| kp.public().clone()))
+            .collect();
+        let committee = Arc::new(Committee::new(
+            base_committee.epoch,
+            base_committee.voting_rights.clone(),
+            HashMap::new(),
+            consensus_keys,
+            base_committee.quorum_threshold,
+            base_committee.validity_threshold,
+        ));
+        (committee, names, consensus_keypairs)
+    }
+
+    fn open_handoff_test_store(
+        dir: &Path,
+        committee: Arc<Committee>,
+        name: AuthorityName,
+    ) -> Arc<AuthorityPerEpochStore> {
+        let epoch_start_configuration = EpochStartConfiguration::new(
+            EpochStartSystem::new_for_testing_with_epoch(committee.epoch),
+        )
+        .unwrap();
+        AuthorityPerEpochStore::new(
+            name,
+            committee,
+            dir,
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap()
+    }
+
+    fn end_of_publish_v2_tx(
+        attestation: &ika_types::handoff::HandoffAttestation,
+        name: AuthorityName,
+        keypair: &Ed25519KeyPair,
+    ) -> VerifiedSequencedConsensusTransaction {
+        VerifiedSequencedConsensusTransaction::new_test(
+            ConsensusTransaction::new_end_of_publish_v2(
+                name,
+                sign_handoff_attestation(attestation.clone(), name, keypair),
+            ),
+        )
+    }
+
+    /// Drives one commit through the real `process_consensus_transactions`
+    /// path and writes its batch, returning the close-gate value the commit
+    /// was decided against and the checkpoint messages it emitted.
+    async fn run_handoff_commit(
+        store: &Arc<AuthorityPerEpochStore>,
+        round: u64,
+        transactions: &[VerifiedSequencedConsensusTransaction],
+        authority_metrics: &Arc<AuthorityMetrics>,
+    ) -> (bool, Vec<DWalletCheckpointMessageKind>) {
+        let mut output = ConsensusCommitOutput::new(round);
+        let (dwallet_messages, _system_messages, _notify_keys) = store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                transactions,
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(round, 0, true),
+                authority_metrics,
+            )
+            .await
+            .unwrap();
+        let gate = store.handoff_signatures_meet_quorum(&output).unwrap();
+        let mut batch = store.db_batch().unwrap();
+        output.write_to_batch(store, &mut batch).unwrap();
+        batch.write().unwrap();
+        (gate, dwallet_messages)
+    }
+
+    /// #1927: the close gate's signature rows must be attributable to a
+    /// commit on BOTH sides of an attestation-install skew.
+    ///
+    /// Store A installs its expected attestation up front and records each
+    /// bundled signature live on the consensus arm. Store B lags — every
+    /// bundle buffers — and installs only later, at WALL-CLOCK local time,
+    /// draining the whole buffer in one go. Pre-fix both writers put rows
+    /// straight into `handoff_signatures`, so B's drained rows became durable
+    /// at an instant no commit corresponds to, and the close gate could be
+    /// decided against state that no commit carried.
+    ///
+    /// The DISCRIMINATING assertion is the one immediately after B's install:
+    /// the drained rows must still be absent from the durable table, waiting
+    /// for a commit to carry them. Pre-fix they are already in it.
+    ///
+    /// The two-store gate comparison records what this does and does not buy.
+    /// Both stores agree on the gate at every commit here, because B's drain
+    /// is picked up by the next commit and the quorum-crossing bundle reaches
+    /// both at the same commit. It does NOT make the gate a pure function of
+    /// the sequence: B's drained rows still land in whichever commit follows
+    /// its local install, so a wider skew still moves B's quorum commit.
+    /// Retiring that residue is the sequence-pure tally in
+    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md (item 3).
+    #[tokio::test]
+    async fn handoff_gate_rows_are_commit_attributable_across_install_skew() {
+        let (committee, names, keypairs) = handoff_test_committee();
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let store_a = open_handoff_test_store(dir_a.path(), committee.clone(), names[0]);
+        let store_b = open_handoff_test_store(dir_b.path(), committee.clone(), names[1]);
+        let attestation = build_handoff_attestation(0, [0xA7u8; 32], vec![]).unwrap();
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // A is ready up front; B's own snapshot hasn't finished building.
+        store_a
+            .install_expected_handoff_attestation(attestation.clone())
+            .unwrap();
+
+        // Two commits, one bundle each. Deliberately kept SUB-quorum (2 of 4,
+        // quorum 3) so B's buffer does not trip the quorum-adoption shortcut
+        // in `record_handoff_signature` — that shortcut installs from the
+        // buffer and would close the skew this test is about.
+        let mut gate_a = Vec::new();
+        let mut gate_b = Vec::new();
+        for (index, round) in [101u64, 102].into_iter().enumerate() {
+            let transactions = [end_of_publish_v2_tx(
+                &attestation,
+                names[index],
+                &keypairs[index],
+            )];
+            let (gate, _) =
+                run_handoff_commit(&store_a, round, &transactions, &authority_metrics).await;
+            gate_a.push(gate);
+            let (gate, _) =
+                run_handoff_commit(&store_b, round, &transactions, &authority_metrics).await;
+            gate_b.push(gate);
+        }
+        assert_eq!(
+            gate_a,
+            vec![false, false],
+            "still sub-quorum on A after two of four signers"
+        );
+        assert_eq!(
+            gate_b, gate_a,
+            "#1927: the close gate must agree at every commit across the skew"
+        );
+        assert_eq!(
+            store_a
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            2,
+            "A's rows are durable, each carried by the commit that sequenced it"
+        );
+        assert_eq!(
+            store_b.pending_handoff_signatures.lock().len(),
+            2,
+            "B buffered both bundles — it has no expected attestation to verify against"
+        );
+
+        // B finally builds and installs the same attestation, BETWEEN commits.
+        // The drain re-verifies both buffered bundles and stages them.
+        store_b
+            .install_expected_handoff_attestation(attestation.clone())
+            .unwrap();
+        assert_eq!(
+            store_b
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            0,
+            "#1927: drained rows must not be durable until a commit carries them — \
+             pre-fix the install wrote them to the table at wall-clock local time, \
+             attributable to no commit at all"
+        );
+        assert_eq!(
+            store_b.staged_handoff_signature_rows.lock().len(),
+            2,
+            "both drained rows are staged for whichever commit comes next"
+        );
+
+        // The quorum-crossing bundle. A records it live; B's commit carries it
+        // plus the two rows its install drained. Both cross at THIS commit.
+        let round = 103u64;
+        let transactions = [end_of_publish_v2_tx(&attestation, names[2], &keypairs[2])];
+        for store in [&store_a, &store_b] {
+            let (gate, _) =
+                run_handoff_commit(store, round, &transactions, &authority_metrics).await;
+            assert!(
+                gate,
+                "both stores must observe the handoff quorum at the same commit"
+            );
+            assert_eq!(
+                store
+                    .tables()
+                    .unwrap()
+                    .handoff_signatures
+                    .safe_iter()
+                    .count(),
+                3,
+                "every row is durable exactly once its commit's batch is written"
+            );
+        }
+    }
+
+    /// #1927 crash-replay variant: a crash between PROCESSING the commit that
+    /// carries the quorum-crossing handoff signatures and WRITING its batch
+    /// must not leave the `handoff_signatures` table ahead of the last
+    /// committed commit.
+    ///
+    /// Pre-fix `record_handoff_signature` inserted on sight, so the rows were
+    /// durable the moment the commit was processed while the close marker,
+    /// the votes and the anchor rode the batch. The table then described a
+    /// commit that never landed — the out-of-band-write class of #1829/#1917,
+    /// on the other half of the same gate.
+    ///
+    /// No failpoint needed: "crash before the batch write" is modelled
+    /// faithfully by processing the commit and never writing its batch.
+    #[tokio::test]
+    async fn handoff_gate_survives_crash_before_signature_commit_batch() {
+        let (committee, names, keypairs) = handoff_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let attestation = build_handoff_attestation(0, [0xC5u8; 32], vec![]).unwrap();
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // Already-committed state from EARLIER commits: the EndOfPublish
+        // quorum, its grace anchor and its pinned count. Written straight to
+        // the tables because they belong to batches that already landed; the
+        // reopen below is what loads them into the in-memory aggregator.
+        let anchor = 100u64;
+        {
+            let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
+            let tables = store.tables().unwrap();
+            for name in names.iter().take(3) {
+                tables.end_of_publish.insert(name, &()).unwrap();
+            }
+            tables
+                .end_of_publish_quorum_round
+                .insert(&0u64, &anchor)
+                .unwrap();
+            tables
+                .end_of_publish_quorum_voted_count
+                .insert(&0u64, &3u64)
+                .unwrap();
+        }
+        let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
+        let grace = store.protocol_config().end_of_publish_grace_rounds();
+        assert!(grace > 1, "test needs a non-trivial grace window");
         assert!(
-            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
-            "the close gate must not count the superseded rows"
+            store.end_of_publish.lock().has_quorum(),
+            "EndOfPublish readiness must come from already-committed state, so the \
+             close hinges purely on the handoff gate"
+        );
+        store
+            .install_expected_handoff_attestation(attestation.clone())
+            .unwrap();
+
+        // The quorum commit: grace elapsed, and three bundles cross the
+        // handoff quorum. This is the round every peer closes at.
+        let quorum_round = anchor + grace;
+        let transactions: Vec<_> = (0..3)
+            .map(|index| end_of_publish_v2_tx(&attestation, names[index], &keypairs[index]))
+            .collect();
+        let mut output = ConsensusCommitOutput::new(quorum_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &transactions,
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            store.handoff_signatures_meet_quorum(&output).unwrap(),
+            "the commit's own bundles must satisfy the gate at this commit — \
+             deferring them to the next commit would delay the close by a round \
+             against a binary that writes on sight"
+        );
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "the quorum commit must close the epoch"
+        );
+
+        // CRASH: the batch is dropped, never written. Nothing this commit
+        // produced — signature rows, votes, close marker — may have reached
+        // storage.
+        drop(output);
+        assert_eq!(
+            store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            0,
+            "#1927: signature rows must ride the commit batch — an out-of-band \
+             insert survives the crash and leaves the durable table describing a \
+             commit that never landed"
+        );
+        drop(store);
+
+        // Replay: consensus redelivers the lost commit, this time to
+        // completion. The gate and the close round must come out identical to
+        // the original run.
+        let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
+        assert!(
+            store.should_accept_tx(),
+            "the close marker rode the lost batch, so the reopened epoch is open"
+        );
+        store
+            .install_expected_handoff_attestation(attestation.clone())
+            .unwrap();
+        assert!(
+            !store
+                .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(quorum_round))
+                .unwrap(),
+            "hydration must see the pre-commit state, not a half-applied commit"
+        );
+        let (gate, dwallet_messages) =
+            run_handoff_commit(&store, quorum_round, &transactions, &authority_metrics).await;
+        assert!(gate, "replay must re-derive the handoff quorum");
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "replay must close at the same round the original run did"
+        );
+        assert_eq!(
+            store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .safe_iter()
+                .count(),
+            3,
+            "the replayed commit's batch is what makes the rows durable"
         );
     }
 

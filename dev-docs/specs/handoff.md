@@ -98,13 +98,13 @@ next epoch inherits.
   that verify against the currently-installed expected attestation. A
   re-install that changes the attestation (e.g. a fresh hydration
   changed the items) drops the superseded rows from BOTH the aggregator
-  and the table, in one atomic batch-delete — because the deferred-close
-  quorum gate (`handoff_signatures_meet_quorum`) sums the TABLE, not the
-  aggregator. The table therefore plays two roles: a restart-durable
-  source for aggregator rebuild, and the close-gate quorum input; the
-  second role is what makes stale-row hygiene load-bearing. (If the
-  close gate migrates to a sequence-pure tally, that second role is
-  retired.) TRADEOFF (deliberate): the delete is destructive under
+  and the table — because the deferred-close quorum gate
+  (`handoff_signatures_meet_quorum`) sums the TABLE, not the aggregator.
+  The table therefore plays two roles: a restart-durable source for
+  aggregator rebuild, and the close-gate quorum input; the second role
+  is what makes stale-row hygiene load-bearing. (If the close gate
+  migrates to a sequence-pure tally, that second role is retired.)
+  TRADEOFF (deliberate): the delete is destructive under
   divergence — a validator that adopted the quorum's attestation via
   buffered signatures and then installed a divergent local build deletes
   the quorum's rows, flips its own close gate true → false, and closes
@@ -115,6 +115,29 @@ next epoch inherits.
   rows) is heavier schema surgery on a gate the planned sequence-pure
   close-gate rework retires — see
   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`.
+- **`handoff_signatures` write discipline: commit-batched.** No writer
+  touches the table directly. The consensus arm, the buffered drain and
+  the stale-row cleanup all stage their row mutations on the epoch
+  store, and the next consensus commit folds them into its
+  `ConsensusCommitOutput`. So a row is durable exactly when the commit
+  it was staged under is, and the close gate — which reads the
+  committed table OVERLAID with the rows the evaluating commit itself
+  staged, so a signature sequenced by this commit still counts at this
+  commit — is decided against state attributable to a commit rather
+  than to whatever had reached storage by the instant it looked. What
+  this does NOT establish: which commit a drained row lands under still
+  follows the local install, so two validators can still cross the
+  quorum at different commits. Only the sequence-pure tally retires
+  that. What it costs: rows staged into a commit whose batch is lost to
+  a crash are gone (consensus does not redeliver an already-processed
+  bundle), where a direct write would have kept them. The WINDOW is one
+  commit; the PAYLOAD is not bounded by one row — a late install drains
+  its whole buffered backlog into a single commit, so a crash there
+  loses every row that drain staged. Recovery is the same barrier
+  peer-fetch that already covers a divergent validator. The
+  certificate itself is NOT batched:
+  it goes to perpetual storage the moment it is minted, so a quorum
+  that formed before such a crash survives it.
 - **Deferred close**: after the EndOfPublish stake quorum is
   reached, the epoch close is deferred `end_of_publish_grace_rounds`
   (protocol config, default 50) consensus leader rounds past the

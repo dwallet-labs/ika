@@ -60,12 +60,22 @@ Fixed vocabulary, so the reasons stay comparable:
 | `content-addressed` | the key is a hash of the value | can a rewrite ever store different bytes under the same key? |
 
 **`direct — UNPROVEN (#issue)`** — a direct write whose argument does not
-close. Tracked, not blessed. Two exist today: the presign pools (#1928,
+close. Tracked, not blessed. One exists today: the presign pools (#1928,
 pops commit in their own batch, so a replay can bind a different presign
-than peers) and `handoff_signatures` (#1927, the buffered drain writes at
-wall-clock install time while the close gate reads the table). Adding a
-consumer that depends on the unproven property is a blocker, not a
-judgement call.
+than peers). Adding a consumer that depends on the unproven property is a
+blocker, not a judgement call.
+
+`handoff_signatures` was the other one until #1927 moved all three of its
+writers — the consensus arm, the buffered drain, and the stale-row
+cleanup — onto `commit-batched`. Worth reading as the worked example of
+converting a table rather than annotating it: the writers that were not
+on the consensus thread had to stage into the epoch store and let the
+next commit fold them in, and the gate had to start reading the
+committed table *overlaid with the evaluating commit's own staged rows*,
+or every row would have been visible one commit later than the binary
+next to it in the rollout saw it. Note also what the conversion does not
+buy: `commit-batched` says a row lands with a commit, not that the same
+commit is the one peers land it under.
 
 ## Why this class earns a convention
 
@@ -76,8 +86,8 @@ on these tables:
   rebuilt on restart → different close rounds.
 - **#1829** — freeze partition written per-row instead of in the commit
   batch → a partial write latched a shrunken frozen set permanently.
-- **#1927** — signatures drained into the table at local install time,
-  read by a consensus-visible gate.
+- **#1927** — handoff signatures drained into the table at local install
+  time, read by a consensus-visible gate.
 - **#1928** — pool pops committed in their own batch, ahead of the commit
   that consumed them.
 
