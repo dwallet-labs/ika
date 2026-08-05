@@ -27,11 +27,11 @@ use ika_sui_client::ika_validator_transactions::{
     request_add_validator_candidate, request_remove_validator, request_remove_validator_candidate,
     request_withdraw_stake, rotate_commission_cap, rotate_operation_cap, set_next_commission,
     set_next_epoch_consensus_address, set_next_epoch_consensus_pubkey_bytes,
-    set_next_epoch_mpc_data_bytes, set_next_epoch_network_address,
-    set_next_epoch_network_pubkey_bytes, set_next_epoch_p2p_address,
-    set_next_epoch_protocol_pubkey_bytes, set_pricing_vote, set_validator_metadata,
-    set_validator_name, stake_ika, undo_report_validator, validator_metadata,
-    verify_commission_cap, verify_operation_cap, verify_validator_cap, withdraw_stake,
+    set_next_epoch_network_address, set_next_epoch_network_pubkey_bytes,
+    set_next_epoch_p2p_address, set_next_epoch_protocol_pubkey_bytes, set_pricing_vote,
+    set_validator_metadata, set_validator_name, stake_ika, undo_report_validator,
+    validator_metadata, verify_commission_cap, verify_operation_cap, verify_validator_cap,
+    withdraw_stake,
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_types::crypto::generate_proof_of_possession;
@@ -307,14 +307,7 @@ pub enum IkaValidatorCommand {
         ika_sui_config: Option<PathBuf>,
     },
     #[clap(name = "set-next-epoch-mpc-data")]
-    SetNextEpochMPCData {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
-        #[clap(name = "validator-operation-cap-id", long)]
-        validator_operation_cap_id: ObjectID,
-        #[clap(name = "ika-sui-config", long)]
-        ika_sui_config: Option<PathBuf>,
-    },
+    SetNextEpochMPCData,
     #[clap(name = "verify-validator-cap")]
     VerifyValidatorCap {
         #[clap(name = "gas-budget", long)]
@@ -387,7 +380,7 @@ pub enum IkaValidatorCommandResponse {
     SetNextEpochProtocolPubkey(SuiTransactionBlockResponse),
     SetNextEpochNetworkPubkey(SuiTransactionBlockResponse),
     SetNextEpochConsensusPubkey(SuiTransactionBlockResponse),
-    SetNextEpochMPCData(SuiTransactionBlockResponse),
+    SetNextEpochMPCData(PathBuf),
     VerifyValidatorCap(SuiTransactionBlockResponse),
     VerifyOperationCap(SuiTransactionBlockResponse),
     VerifyCommissionCap(SuiTransactionBlockResponse),
@@ -396,6 +389,14 @@ pub enum IkaValidatorCommandResponse {
 }
 
 impl IkaValidatorCommand {
+    pub(crate) fn execute_set_next_epoch_mpc_data() -> Result<IkaValidatorCommandResponse> {
+        let mpc_root_seed_file_path = std::env::current_dir()?.join("root-seed.key");
+        let mpc_root_seed_file_path = generate_new_root_seed(mpc_root_seed_file_path)?;
+        Ok(IkaValidatorCommandResponse::SetNextEpochMPCData(
+            mpc_root_seed_file_path,
+        ))
+    }
+
     pub async fn execute(
         self,
         context: &mut WalletContext,
@@ -944,50 +945,7 @@ impl IkaValidatorCommand {
                 .await?;
                 IkaValidatorCommandResponse::SetNextEpochConsensusPubkey(response)
             }
-            IkaValidatorCommand::SetNextEpochMPCData {
-                gas_budget,
-                validator_operation_cap_id,
-                ika_sui_config,
-            } => {
-                let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
-                let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
-                let config = read_ika_sui_config_yaml(context, &config_path)?;
-
-                // The Move-side `mpc_data_bytes` carries the bare
-                // `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8 shape);
-                // chain readers decode that shape directly. The full
-                // `ValidatorEncryptionKeysAndProofs` bundle (PVSS + VSS HPKE) is
-                // propagated by the off-chain validator-metadata pipeline (PR
-                // #1721), not by this field.
-                let mpc_root_seed = RootSeed::random_seed();
-                let (new_validator_secrets, new_validator_publics) =
-                    ValidatorMPCSecrets::from_seed(&mpc_root_seed);
-
-                let _ = new_validator_secrets;
-                let mpc_data_bytes = bcs::to_bytes(&new_validator_publics.class_groups)?;
-
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
-
-                let response = set_next_epoch_mpc_data_bytes(
-                    context,
-                    config.packages.ika_system_package_id,
-                    config.objects.ika_system_object_id,
-                    validator_operation_cap_id,
-                    mpc_data,
-                    gas_budget,
-                )
-                .await?;
-
-                if response.status_ok().is_some() && response.status_ok().unwrap() {
-                    // Save the new seed to root-seed.key file (override if exists)
-                    let dir = std::env::current_dir()?;
-                    let mpc_root_seed_file_path = dir.join("root-seed.key");
-                    mpc_root_seed.save_to_file(mpc_root_seed_file_path.clone())?;
-                    println!("Generated new root seed key file: {mpc_root_seed_file_path:?}.");
-                }
-
-                IkaValidatorCommandResponse::SetNextEpochMPCData(response)
-            }
+            IkaValidatorCommand::SetNextEpochMPCData => Self::execute_set_next_epoch_mpc_data()?,
             IkaValidatorCommand::VerifyValidatorCap {
                 gas_budget,
                 validator_cap_id,
@@ -1148,12 +1106,8 @@ impl Display for IkaValidatorCommandResponse {
             IkaValidatorCommandResponse::ConfigEnv(path) => {
                 writeln!(writer, "Ika Sui config file saved at: {path:?}")?;
             }
-            IkaValidatorCommandResponse::SetNextEpochMPCData(response) => {
-                write!(
-                    writer,
-                    "{}",
-                    write_transaction_response_without_transaction_data(response)?
-                )?;
+            IkaValidatorCommandResponse::SetNextEpochMPCData(path) => {
+                writeln!(writer, "Generated new root seed key file: {path:?}.")?;
             }
             IkaValidatorCommandResponse::FetchCurrentPricingInfo(path) => {
                 writeln!(
@@ -1247,6 +1201,11 @@ fn read_or_generate_root_seed(
     Ok(ValidatorMPCSecrets::from_seed(&seed))
 }
 
+fn generate_new_root_seed(seed_path: PathBuf) -> Result<PathBuf> {
+    RootSeed::random_seed().save_to_file(seed_path.clone())?;
+    Ok(seed_path)
+}
+
 pub fn write_transaction_response(
     response: &SuiTransactionBlockResponse,
 ) -> Result<String, fmt::Error> {
@@ -1288,4 +1247,34 @@ pub fn write_transaction_response_without_transaction_data(
         writeln!(writer, "{colorized_line}")?;
     }
     Ok(writer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_next_epoch_mpc_data_requires_no_onchain_arguments() {
+        let command =
+            IkaValidatorCommand::try_parse_from(["ika-validator", "set-next-epoch-mpc-data"])
+                .unwrap();
+
+        assert!(matches!(command, IkaValidatorCommand::SetNextEpochMPCData));
+    }
+
+    #[test]
+    fn generate_new_root_seed_overwrites_with_valid_seed() {
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let seed_path = temporary_directory.path().join("root-seed.key");
+        let first_path = generate_new_root_seed(seed_path.clone()).unwrap();
+        let first_bytes = fs::read(&first_path).unwrap();
+
+        let second_path = generate_new_root_seed(seed_path.clone()).unwrap();
+        let second_bytes = fs::read(&second_path).unwrap();
+
+        assert_eq!(first_path, seed_path);
+        assert_eq!(second_path, seed_path);
+        assert_ne!(first_bytes, second_bytes);
+        RootSeed::from_file(seed_path).unwrap();
+    }
 }

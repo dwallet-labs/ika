@@ -271,6 +271,7 @@ ika validator set-next-epoch-consensus-pubkey \
 ### `set-next-epoch-mpc-data`
 
 ```bash
-ika validator set-next-epoch-mpc-data \
-  --validator-operation-cap-id <CAP_ID>
+ika validator set-next-epoch-mpc-data
 ```
+
+Generates a new `root-seed.key` in the current directory, replacing any existing file. This command does not submit a Sui transaction. Install the new file at the validator's configured root-seed path and restart the validator; the node derives and announces its MPC data through consensus and P2P.
