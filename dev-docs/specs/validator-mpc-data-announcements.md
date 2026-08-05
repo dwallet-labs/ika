@@ -1,8 +1,9 @@
 # Validator MPC-data announcements (off-chain validator metadata)
 
-Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`. Chain
-writes remain (write-only), but the consensus + P2P pipeline described
-here is the only read path.
+Status: active — unconditional since `MIN_PROTOCOL_VERSION = 6`. The
+legacy chain field remains for candidate registration, but operational
+MPC-data updates do not write it; the consensus + P2P pipeline described
+here is the only update and read path.
 
 ## Problem
 
@@ -31,6 +32,11 @@ which bytes* deterministic in consensus order.
   `insert_mpc_artifact_blob` verifies `Blake2b256(bytes) == digest` at
   the write boundary; P2P fetchers MUST hash-verify fetched bytes
   against the requested digest.
+- **CLI updates**: `ika validator set-next-epoch-mpc-data` replaces the
+  local `root-seed.key` only. It MUST NOT submit the derived public data
+  to Sui. After the validator installs the new file and restarts, the
+  announcement sender derives the full blob and distributes it through
+  consensus and P2P using the paths below.
 
 ## Announcement paths
 
@@ -358,10 +364,10 @@ validator latched for the whole epoch. Sourcing rules
    record is missing or undecodable fails the WHOLE read (retried by
    `must_get_epoch_start_system` / the next sync tick), never a silent
    member skip. Chain state cannot legitimately lack the record (it is
-   written at candidate registration and never emptied; under v4 chain
-   writes remain), so absence is always a read defect — and each
-   validator reads through its own fullnode, so a tolerated local gap
-   would be an unagreed party-set exclusion: divergent MPC public
+   written at candidate registration and never emptied; operational
+   updates use the off-chain path), so absence is always a read defect —
+   and each validator reads through its own fullnode, so a tolerated
+   local gap would be an unagreed party-set exclusion: divergent MPC public
    inputs across honest validators. Exclusion decisions belong
    exclusively to the consensus-agreed freeze. The completeness check
    lives at the read boundary, NOT on `Committee` construction — a

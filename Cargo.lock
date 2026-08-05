@@ -6583,6 +6583,7 @@ dependencies = [
  "sui-sdk",
  "sui-types",
  "telemetry-subscribers",
+ "tempfile",
  "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",

@@ -272,17 +272,23 @@ impl IkaCommand {
                 ..
             } => {
                 let use_json = json || cmd_json;
-                let config_path = config
-                    .or(client_config)
-                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                let mut context = WalletContext::new(&config_path)?;
-                if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!use_json);
-                } else {
-                    // Print help
-                    let mut app: Command = IkaCommand::command();
-                    app.build();
-                    app.find_subcommand_mut("validator").unwrap().print_help()?;
+                match cmd {
+                    Some(IkaValidatorCommand::SetNextEpochMPCData) => {
+                        IkaValidatorCommand::execute_set_next_epoch_mpc_data()?.print(!use_json);
+                    }
+                    Some(cmd) => {
+                        let config_path = config
+                            .or(client_config)
+                            .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                        let mut context = WalletContext::new(&config_path)?;
+                        cmd.execute(&mut context).await?.print(!use_json);
+                    }
+                    None => {
+                        // Print help
+                        let mut app: Command = IkaCommand::command();
+                        app.build();
+                        app.find_subcommand_mut("validator").unwrap().print_help()?;
+                    }
                 }
                 Ok(())
             }
