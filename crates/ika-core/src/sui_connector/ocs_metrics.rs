@@ -6,7 +6,8 @@
 //! Three groups:
 //! - `pusher_*`: sui-state-direct checkpoint-pusher health.
 //! - `push_*`: sui-state-mirrored / handler receive-side health.
-//! - `committee_head_epoch`: where the committee ratchet has reached.
+//! - `committee_head_epoch`: where the committee ratchet has reached, or
+//!   `-1` when this node runs no ratchet at all.
 
 use std::sync::Arc;
 
@@ -20,9 +21,30 @@ use prometheus::{
 #[derive(Clone, Debug)]
 pub struct OcsMetrics {
     // Committee ratchet
+    /// Highest Sui epoch the committee ratchet has reached, or
+    /// [`Self::COMMITTEE_HEAD_NOT_APPLICABLE`] (`-1`) on a node that builds no
+    /// ratchet — sui-state-direct and peer-only nodes never construct one, so
+    /// the mirroring task that owns this gauge is never spawned for them.
+    ///
+    /// The sentinel exists because `0` is otherwise ambiguous between "no
+    /// ratchet, nothing to report" and "ratchet present and holding an empty
+    /// committee set", and those need opposite responses: the first is normal,
+    /// the second is a node whose verified reads will all fail. Distinguishing
+    /// them from outside the process previously required a chain walk plus a
+    /// code read (#1980). Same reasoning as the `-1` freeze-progress sentinels
+    /// in `authority_per_epoch_store`: a real epoch can legitimately BE 0, so a
+    /// zero default reads as a plausible-but-wrong value rather than as absent.
+    ///
+    /// Note this is deliberately NOT redundant with [`Self::ratchet_stalled`]:
+    /// that flag reports a ratchet whose last attempt FAILED, and stays 0 both
+    /// when no ratchet exists and when a ratchet has never completed an attempt
+    /// at all. `head == 0 && stalled == 0` was the unreadable combination.
     pub committee_head_epoch: IntGauge,
     /// The upstream chain's current epoch, sampled by the ratchet. Lets
-    /// operators alert on ratchet lag: `chain_latest_epoch - committee_head_epoch`.
+    /// operators alert on ratchet lag: `chain_latest_epoch -
+    /// committee_head_epoch` — but that subtraction is only meaningful where
+    /// the head is not [`Self::COMMITTEE_HEAD_NOT_APPLICABLE`]. Gate it:
+    /// `chain_latest_epoch - (committee_head_epoch >= 0)`.
     pub chain_latest_epoch: IntGauge,
     /// 1 while the last completed committee-ratchet attempt failed, 0 once one
     /// succeeds. The direct health signal for a node that cannot advance its
@@ -87,17 +109,22 @@ pub struct OcsMetrics {
 }
 
 impl OcsMetrics {
+    /// Value of [`Self::committee_head_epoch`] on a node that runs no
+    /// committee ratchet. See that field's documentation for why `0` could not
+    /// serve.
+    pub const COMMITTEE_HEAD_NOT_APPLICABLE: i64 = -1;
+
     pub fn new(registry: &Registry) -> Arc<Self> {
-        Arc::new(Self {
+        let metrics = Arc::new(Self {
             committee_head_epoch: register_int_gauge_with_registry!(
                 "ika_ocs_committee_head_epoch",
-                "Highest Sui epoch the OCS committee ratchet has reached",
+                "Highest Sui epoch the OCS committee ratchet has reached; -1 means this node runs no ratchet (sui-state-direct or peer-only), so 0 unambiguously means a ratchet exists but holds no committee",
                 registry,
             )
             .unwrap(),
             chain_latest_epoch: register_int_gauge_with_registry!(
                 "ika_ocs_chain_latest_epoch",
-                "Upstream Sui current epoch sampled by the ratchet; alert on (chain_latest_epoch - committee_head_epoch)",
+                "Upstream Sui current epoch sampled by the ratchet; alert on (chain_latest_epoch - committee_head_epoch) gated on committee_head_epoch >= 0, since -1 means the node runs no ratchet",
                 registry,
             )
             .unwrap(),
@@ -214,10 +241,89 @@ impl OcsMetrics {
                 registry,
             )
             .unwrap(),
-        })
+        });
+        // Default to "no ratchet". Every node registers these metrics, but only
+        // sui-state-mirrored nodes spawn the task that maintains this gauge, so
+        // without seeding it here the untouched value would be 0 — the exact
+        // reading that means "ratchet present, committee empty".
+        metrics
+            .committee_head_epoch
+            .set(Self::COMMITTEE_HEAD_NOT_APPLICABLE);
+        metrics
     }
 
     pub fn new_for_testing() -> Arc<Self> {
         Self::new(&Registry::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A freshly-registered `OcsMetrics` must report "no ratchet", not epoch 0.
+    ///
+    /// Every node registers these metrics, but only sui-state-mirrored nodes
+    /// spawn the task that maintains the gauge. Without the seed, a
+    /// sui-state-direct node and a mirrored node whose ratchet holds an empty
+    /// committee are indistinguishable at 0 — the ambiguity that made #1980
+    /// require a chain walk and a code read to diagnose.
+    #[test]
+    fn committee_head_defaults_to_not_applicable_not_zero() {
+        let metrics = OcsMetrics::new(&Registry::new());
+        assert_eq!(
+            metrics.committee_head_epoch.get(),
+            OcsMetrics::COMMITTEE_HEAD_NOT_APPLICABLE,
+        );
+        assert_ne!(
+            metrics.committee_head_epoch.get(),
+            0,
+            "0 must stay reserved for a ratchet that exists and holds no committee"
+        );
+    }
+
+    /// The sentinel must not survive a ratchet reporting a real head — including
+    /// a genuine epoch 0, which is why the sentinel is negative rather than 0.
+    #[test]
+    fn a_real_head_overwrites_the_sentinel_including_epoch_zero() {
+        let metrics = OcsMetrics::new(&Registry::new());
+        metrics.committee_head_epoch.set(0);
+        assert_eq!(
+            metrics.committee_head_epoch.get(),
+            0,
+            "a ratchet holding epoch 0 must be reportable as 0"
+        );
+        metrics.committee_head_epoch.set(1182);
+        assert_eq!(metrics.committee_head_epoch.get(), 1182);
+    }
+
+    /// The two ratchet signals answer different questions, and the pair is what
+    /// distinguishes the three states an operator cares about.
+    #[test]
+    fn head_and_stalled_together_separate_the_three_states() {
+        let metrics = OcsMetrics::new(&Registry::new());
+
+        // (a) no ratchet: nothing to report, and nothing wrong.
+        assert_eq!(
+            metrics.committee_head_epoch.get(),
+            OcsMetrics::COMMITTEE_HEAD_NOT_APPLICABLE
+        );
+        assert_eq!(metrics.ratchet_stalled.get(), 0);
+
+        // (b) ratchet present, healthy.
+        metrics.committee_head_epoch.set(1182);
+        assert!(metrics.committee_head_epoch.get() >= 0);
+        assert_eq!(metrics.ratchet_stalled.get(), 0);
+
+        // (c) ratchet present but holding no committee — the #1980 state, which
+        // `ratchet_stalled` alone does NOT report, because no attempt has
+        // failed yet (or none has completed at all).
+        metrics.committee_head_epoch.set(0);
+        assert_eq!(metrics.committee_head_epoch.get(), 0);
+        assert_eq!(
+            metrics.ratchet_stalled.get(),
+            0,
+            "this is precisely why the head gauge has to carry the distinction itself"
+        );
     }
 }
