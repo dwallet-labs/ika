@@ -1875,6 +1875,11 @@ impl DWalletMPCService {
             self.dwallet_mpc_metrics
                 .last_process_mpc_consensus_round
                 .set(consensus_round as i64);
+            // Publish progress for the consensus-path stall detector. It has to
+            // live over there: every way this service stops also stops any
+            // check placed inside it.
+            self.epoch_store
+                .record_mpc_consumed_consensus_round(consensus_round);
             tokio::task::yield_now().await;
         }
     }

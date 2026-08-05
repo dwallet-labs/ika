@@ -110,6 +110,32 @@ allowed when operators need them, but reminders do not increment the invariant
 counter. The network-key registry sites are guarded structurally by
 `scripts/check-invariant-violation-markers.sh`.
 
+### A node must be able to tell it has stopped contributing
+
+`ika_mpc_consensus_round_lag` is how far the MPC service trails the consensus
+commit path, sampled on every commit. Small and roughly constant in normal
+operation; unbounded growth means MPC has stopped while consensus keeps
+running — the node follows consensus, serves requests, exports every other
+metric, and contributes nothing.
+
+The rule it encodes: **a subsystem cannot report its own stall.** Every path
+that stops the MPC service also stops any check placed inside it — most
+starkly the deliberate `break` on self-recognised maliciousness, which ends the
+service loop for the life of the process. So the stalled side only publishes
+its progress, and a path that is still running does the comparing.
+
+It is deliberately computable from local state alone, needing no peer data and
+no fleet context. Two validators went dark for hours in production this way
+(#1978, #1980); both were diagnosed from a fleet-wide Grafana no external
+operator can see, and both were cleared by a restart nobody knew to perform.
+A signal that only we can read is not a signal for the people running the
+network.
+
+Paired with a latched log: the sample runs on every consensus commit, so the
+loud line fires on transition into and out of the condition, and the gauge
+carries the continuous signal. `-1` before the MPC service reports its first
+round, since round 0 is a legitimate value.
+
 ### Process-wide wire settings need a gauge, not just a log
 
 `ika_authority_name_encoding_width_bytes` and
@@ -369,6 +395,7 @@ ika_messages_included_in_dwallet_checkpoint
 ika_messages_included_in_system_checkpoint
 ika_mpc_blob_store_evictions_total
 ika_mpc_blob_store_size_bytes
+ika_mpc_consensus_round_lag
 ika_mpc_data_announcement_blob_bytes
 ika_network_key_overlay_incomplete
 ika_network_key_registry_read_empty_condition_active
