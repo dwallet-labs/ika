@@ -5179,7 +5179,8 @@ impl DWalletMPCManager {
                 .len() as i64,
         );
         metrics.cryptographic_computation_core_budget.set(
-            self.cryptographic_computations_orchestrator.available_cores() as i64,
+            self.cryptographic_computations_orchestrator
+                .available_cores() as i64,
         );
 
         // ----- session-state counts + Active-session age buckets -----

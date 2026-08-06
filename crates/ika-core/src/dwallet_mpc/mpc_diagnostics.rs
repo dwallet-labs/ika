@@ -449,7 +449,9 @@ pub(crate) fn persist_malicious_diagnostic_file(
     diagnostic_json: &str,
 ) -> std::io::Result<std::path::PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("epoch_{epoch}__{anomaly_kind_label}__{session_label}.json"));
+    let path = dir.join(format!(
+        "epoch_{epoch}__{anomaly_kind_label}__{session_label}.json"
+    ));
     std::fs::write(&path, diagnostic_json)?;
     Ok(path)
 }
@@ -747,18 +749,28 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("mpc_diagnostics");
 
-        let path =
-            persist_malicious_diagnostic_file(&dir, 373, "quorum_anomaly", "bfdbe149", r#"{"a":1}"#)
-                .unwrap();
+        let path = persist_malicious_diagnostic_file(
+            &dir,
+            373,
+            "quorum_anomaly",
+            "bfdbe149",
+            r#"{"a":1}"#,
+        )
+        .unwrap();
         assert_eq!(
             path.file_name().unwrap().to_str().unwrap(),
             "epoch_373__quorum_anomaly__bfdbe149.json"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":1}"#);
 
-        let replayed =
-            persist_malicious_diagnostic_file(&dir, 373, "quorum_anomaly", "bfdbe149", r#"{"a":2}"#)
-                .unwrap();
+        let replayed = persist_malicious_diagnostic_file(
+            &dir,
+            373,
+            "quorum_anomaly",
+            "bfdbe149",
+            r#"{"a":2}"#,
+        )
+        .unwrap();
         assert_eq!(replayed, path);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":2}"#);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
