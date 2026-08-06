@@ -38,7 +38,7 @@ jobs:
           deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6.0.9
+        uses: pnpm/action-setup@v6.0.10
         with:
           # Version comes from the `package.json` "packageManager" field.
           run_install: false
