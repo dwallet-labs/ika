@@ -916,6 +916,15 @@ impl DWalletMPCMetrics {
         self.session_output_rejected.reset();
         self.session_late_output_info.reset();
         self.session_late_output_malicious_actors.reset();
+        // Epoch-scoped, not per-session, but it must reset at the same
+        // boundary: the in-memory `malicious_actors` set is rebuilt empty by
+        // the per-epoch manager ("forget the previous epoch's convictions"),
+        // while this gauge was only ever WRITTEN on a new recording — so
+        // after any conviction it exported a stale nonzero for every later
+        // epoch until the process restarted. Observed in production: 35
+        // validators still exporting 1 two epochs after the #1978
+        // conviction, keeping the malicious-actors alert permanently firing.
+        self.malicious_actors_count.set(0);
     }
 }
 
@@ -1368,5 +1377,21 @@ mod tests {
         let n = 4;
         let updated_variance = update_variance(old_mean, new_mean, old_variance, new_value, n);
         assert_eq!(updated_variance, 1891.6666673499997); // correct sample variance of [100, 120, 150, 200]
+    }
+
+    /// The malicious-actors gauge must reset with the per-epoch series: the
+    /// in-memory conviction set is rebuilt empty each epoch, and a gauge that
+    /// only ever gets written on a new recording would otherwise export a
+    /// stale nonzero for every epoch after any conviction until the process
+    /// restarts (observed in production after #1978 — it kept the
+    /// malicious-actors alert firing for days).
+    #[test]
+    fn epoch_reset_clears_the_malicious_actors_gauge() {
+        let metrics = DWalletMPCMetrics::new(&Registry::new());
+        metrics.malicious_actors_count.set(1);
+
+        metrics.reset_per_session_series();
+
+        assert_eq!(metrics.malicious_actors_count.get(), 0);
     }
 }
