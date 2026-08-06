@@ -170,6 +170,20 @@ pub struct DWalletMPCMetrics {
     /// rayon pool.
     pub(crate) network_key_instantiations_in_flight: IntGauge,
 
+    /// Cryptographic computations currently holding an orchestrator core
+    /// slot (spawned on rayon, completion update not yet drained). Slots are
+    /// reclaimed ONLY when a completion arrives, so a computation that never
+    /// completes holds its slot for the rest of the epoch — and once
+    /// `running == core budget` the orchestrator silently stops scheduling
+    /// MPC. That state was previously visible only as a `debug!` field
+    /// (#1978 stall audit); this gauge plus the budget gauge below make
+    /// slot exhaustion and slow slot leaks scrapable.
+    pub(crate) cryptographic_computations_running: IntGauge,
+
+    /// The orchestrator's core-slot budget for concurrent cryptographic
+    /// computations (the admission ceiling `running` is compared against).
+    pub(crate) cryptographic_computation_core_budget: IntGauge,
+
     /// Version (2 or 3) of the canonical network DKG output this validator most
     /// recently mirrored into the off-chain handoff. Migrates 2 -> 3 once, when
     /// a deployed key's cert-pinned reconfiguration output becomes V3 (protocol
@@ -579,6 +593,18 @@ impl DWalletMPCMetrics {
             network_key_instantiations_in_flight: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_network_key_instantiations_in_flight",
                 "Network-key instantiations currently in flight on the rayon pool",
+                registry
+            )
+            .unwrap(),
+            cryptographic_computations_running: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_cryptographic_computations_running",
+                "Cryptographic computations currently holding an orchestrator core slot (spawned on rayon, completion not yet drained)",
+                registry
+            )
+            .unwrap(),
+            cryptographic_computation_core_budget: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_cryptographic_computation_core_budget",
+                "The orchestrator's core-slot budget for concurrent cryptographic computations",
                 registry
             )
             .unwrap(),

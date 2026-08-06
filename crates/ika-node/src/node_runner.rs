@@ -145,11 +145,25 @@ pub fn run_node_with_name(
     let prometheus_registry = registry_service.default_registry();
     ika_types::metrics::init_invariant_violation_metric(&prometheus_registry);
 
-    // Initialize logging
-    let (_guard, filter_handle) = telemetry_subscribers::TelemetryConfig::new()
+    // Initialize logging.
+    //
+    // Crash on panic BY DEFAULT. The codebase's fail-loud design — dozens of
+    // `panic!`/`expect` sites in the MPC service loop and the consensus
+    // handler's "Unrecoverable error in consensus handler" — assumes a panic
+    // kills the process so the supervisor restarts it. Without this flag a
+    // panic inside a spawned tokio task kills ONLY that task: the process
+    // stays up serving metrics with a silently dead subsystem (MPC frozen /
+    // checkpoints stopped) while consensus-core keeps running — a wedge that
+    // looks healthy from the outside (see the ika #1978 stall audit). The
+    // upstream default is off unless the `CRASH_ON_PANIC` env var is set,
+    // which deployments predictably don't set; make loud-death the default
+    // and keep an explicit escape hatch for debugging.
+    let mut telemetry_config = telemetry_subscribers::TelemetryConfig::new()
         .with_env()
-        .with_prom_registry(&prometheus_registry)
-        .init();
+        .with_prom_registry(&prometheus_registry);
+    telemetry_config.crash_on_panic =
+        crash_on_panic(std::env::var("IKA_NO_CRASH_ON_PANIC").ok().as_deref());
+    let (_guard, filter_handle) = telemetry_config.init();
 
     drop(metrics_rt);
 
@@ -297,5 +311,30 @@ async fn wait_termination(mut shutdown_rx: broadcast::Receiver<()>) {
         _ = sigint => {},
         _ = sigterm_recv => {},
         _ = shutdown_recv => {},
+    }
+}
+
+/// Whether a panic anywhere in the process kills it (default), given the
+/// value of the `IKA_NO_CRASH_ON_PANIC` opt-out env var. Only the explicit
+/// sentinel `=1` opts out — mere presence (an empty or typo'd value carried
+/// over from a launch script) must not silently disable loud death, matching
+/// the `IKA_ENABLE_SMALL_PRESIGN_POOLS` convention above.
+fn crash_on_panic(no_crash_env: Option<&str>) -> bool {
+    no_crash_env != Some("1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Loud death is the default, and only the explicit `1` sentinel opts
+    /// out — an unset, empty, or typo'd variable keeps panics fatal.
+    #[test]
+    fn crash_on_panic_default_on_with_explicit_opt_out() {
+        assert!(crash_on_panic(None));
+        assert!(crash_on_panic(Some("")));
+        assert!(crash_on_panic(Some("true")));
+        assert!(crash_on_panic(Some("0")));
+        assert!(!crash_on_panic(Some("1")));
     }
 }

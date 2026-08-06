@@ -234,6 +234,13 @@ impl CryptographicComputationsOrchestrator {
             < self.available_cores_for_cryptographic_computations
     }
 
+    /// The core-slot budget concurrent computations are admitted against.
+    /// Exposed for the occupancy gauges: `currently_running == budget` is the
+    /// state in which the orchestrator refuses every new computation.
+    pub(crate) fn available_cores(&self) -> usize {
+        self.available_cores_for_cryptographic_computations
+    }
+
     pub(crate) fn running_computation_count_for_session(
         &self,
         session_identifier: &SessionIdentifier,
