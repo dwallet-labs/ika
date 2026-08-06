@@ -240,11 +240,11 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                     // Re-attempt submission with existing tx_bytes + signature.
                     if let Some((tx_bytes, signature)) = self.store.get_tx_for_submission(&tx_ref) {
                         match call_with_timeout(
-            "NOA submit_tx",
-            self.chain_submitter.submit_tx(&tx_bytes, &signature),
-        )
-        .await
-        {
+                            "NOA submit_tx",
+                            self.chain_submitter.submit_tx(&tx_bytes, &signature),
+                        )
+                        .await
+                        {
                             Ok(chain_tx_id) => {
                                 info!(
                                     kind = %K::KIND_NAME,

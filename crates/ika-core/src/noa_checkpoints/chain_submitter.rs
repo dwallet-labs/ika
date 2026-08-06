@@ -109,7 +109,9 @@ mod tests {
     /// errors are not rewrapped.
     #[tokio::test]
     async fn fast_chain_submitter_calls_pass_through() {
-        let ok = call_with_timeout("ok call", async { Ok(7u32) }).await.unwrap();
+        let ok = call_with_timeout("ok call", async { Ok(7u32) })
+            .await
+            .unwrap();
         assert_eq!(ok, 7);
 
         let err = call_with_timeout("failing call", async {
