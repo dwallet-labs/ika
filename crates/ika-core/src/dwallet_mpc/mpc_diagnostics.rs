@@ -431,6 +431,31 @@ impl MpcAnomalySnapshot {
     }
 }
 
+/// Persist a self-malicious diagnostic JSON to `dir` so it survives log
+/// rotation. A validator that recognizes itself as malicious stops its MPC
+/// service on the spot, and the diagnostic explaining WHY exists only in its
+/// own log stream — which at validator log volumes rotates out within hours
+/// (in the #1978 investigation the convicted node's window was gone before
+/// anyone asked for it). The write is bounded by construction: the emitting
+/// paths fire at most a handful of times per epoch (self-recognition breaks
+/// the service loop right after), and the filename is deterministic, so a
+/// re-emission — e.g. the post-restart replay re-convicting — overwrites
+/// idempotently rather than accumulating files.
+pub(crate) fn persist_malicious_diagnostic_file(
+    dir: &std::path::Path,
+    epoch: u64,
+    anomaly_kind_label: &str,
+    session_label: &str,
+    diagnostic_json: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!(
+        "epoch_{epoch}__{anomaly_kind_label}__{session_label}.json"
+    ));
+    std::fs::write(&path, diagnostic_json)?;
+    Ok(path)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MpcErrorDiagnostic {
     pub(crate) error_code: &'static str,
@@ -713,5 +738,55 @@ mod tests {
 
         assert!(backtrace.is_none());
         assert!(!truncated);
+    }
+
+    /// The persisted file must land under a deterministic name carrying the
+    /// epoch, anomaly kind, and session — and a re-emission (the post-restart
+    /// replay re-convicting, #1978) must overwrite that same file rather than
+    /// accumulate, so the directory stays bounded across restarts.
+    #[test]
+    fn persist_malicious_diagnostic_writes_and_overwrites_a_stable_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("mpc_diagnostics");
+
+        let path = persist_malicious_diagnostic_file(
+            &dir,
+            373,
+            "quorum_anomaly",
+            "bfdbe149",
+            r#"{"a":1}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "epoch_373__quorum_anomaly__bfdbe149.json"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":1}"#);
+
+        let replayed = persist_malicious_diagnostic_file(
+            &dir,
+            373,
+            "quorum_anomaly",
+            "bfdbe149",
+            r#"{"a":2}"#,
+        )
+        .unwrap();
+        assert_eq!(replayed, path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"a":2}"#);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    /// An unwritable destination surfaces as `Err` for the caller to log —
+    /// never a panic, since this runs on the conviction path right before the
+    /// MPC service stops.
+    #[test]
+    fn persist_malicious_diagnostic_reports_io_failure_instead_of_panicking() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Occupy the diagnostics-dir path with a FILE so create_dir_all fails.
+        let blocked = tmp.path().join("mpc_diagnostics");
+        std::fs::write(&blocked, b"in the way").unwrap();
+
+        let result = persist_malicious_diagnostic_file(&blocked, 1, "kind", "session", "{}");
+        assert!(result.is_err());
     }
 }

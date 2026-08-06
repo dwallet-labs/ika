@@ -236,7 +236,7 @@ impl DWalletMPCService {
             Some(root_seed) => root_seed.root_seed().clone(),
         };
 
-        let dwallet_mpc_manager = DWalletMPCManager::new(
+        let mut dwallet_mpc_manager = DWalletMPCManager::new(
             validator_name,
             committee.clone(),
             epoch_id,
@@ -252,6 +252,12 @@ impl DWalletMPCService {
             max_mpc_computation_cores,
             stranded_network_keys,
         );
+        // Self-malicious diagnostic snapshots are mirrored to disk beside the
+        // databases (NOT under `db_path()`/live, which is RocksDB-managed):
+        // the convicted validator's service stops right after emitting them,
+        // and its log stream — the only other copy — rotates out within hours
+        // at validator log volumes (#1978).
+        dwallet_mpc_manager.set_diagnostics_dir(node_config.db_path.join("mpc_diagnostics"));
 
         Self {
             last_read_consensus_round: None,

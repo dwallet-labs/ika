@@ -17,6 +17,7 @@ use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
     OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, SessionOrigin,
     mpc_error_diagnostic, network_key_reconfiguration_raw_output_digest,
+    persist_malicious_diagnostic_file,
 };
 use crate::dwallet_mpc::mpc_session::{
     AddMessageResult, AddOutputResult, DWalletMPCSessionOutput, DWalletSession, PublicInput,
@@ -354,6 +355,12 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) last_session_to_complete_in_current_epoch: u64,
     pub(crate) recognized_self_as_malicious: bool,
     recognized_self_as_malicious_session: Option<SessionIdentifier>,
+
+    /// Directory for persisting self-malicious diagnostic snapshots (see
+    /// [`persist_malicious_diagnostic_file`]). Set by the service at
+    /// construction (`<db_path>/mpc_diagnostics`); `None` — persistence off —
+    /// in tests that don't wire it.
+    diagnostics_dir: Option<std::path::PathBuf>,
     pub(crate) network_keys: Box<DwalletMPCNetworkKeys>,
     /// Requests parked until their network key's PUBLIC DATA is locally
     /// available. Drained LEVEL-triggered on every
@@ -810,6 +817,7 @@ impl DWalletMPCManager {
             last_session_to_complete_in_current_epoch: 0,
             recognized_self_as_malicious: false,
             recognized_self_as_malicious_session: None,
+            diagnostics_dir: None,
             network_keys: Box::new(dwallet_network_keys),
             sui_data_receivers,
             requests_pending_for_next_active_committee: Vec::new(),
@@ -4592,6 +4600,49 @@ impl DWalletMPCManager {
         }
     }
 
+    /// Wire the directory self-malicious diagnostic snapshots are persisted
+    /// to. Called once by the service at construction; unset (tests) means
+    /// persistence is off.
+    pub(crate) fn set_diagnostics_dir(&mut self, dir: std::path::PathBuf) {
+        self.diagnostics_dir = Some(dir);
+    }
+
+    /// Persist a diagnostic that identifies THIS validator as malicious (see
+    /// [`persist_malicious_diagnostic_file`] for why disk, not just logs).
+    /// Failure is logged, never propagated — this runs on the conviction
+    /// path, where the service is about to stop, and a failed write must not
+    /// change behavior.
+    fn persist_malicious_diagnostic(
+        &self,
+        anomaly_kind: MpcAnomalyKind,
+        session_label: &str,
+        diagnostic_json: &str,
+    ) {
+        let Some(dir) = &self.diagnostics_dir else {
+            return;
+        };
+        match persist_malicious_diagnostic_file(
+            dir,
+            self.epoch_id,
+            anomaly_kind.label(),
+            session_label,
+            diagnostic_json,
+        ) {
+            // Error level on purpose: this line belongs next to the other
+            // conviction-time errors so an operator filtering on ERROR finds
+            // the pointer to the preserved evidence.
+            Ok(path) => error!(
+                path = %path.display(),
+                "persisted self-malicious diagnostic snapshot to disk (survives log rotation); attach this file when reporting"
+            ),
+            Err(err) => warn!(
+                error = ?err,
+                dir = %dir.display(),
+                "failed to persist the self-malicious diagnostic snapshot"
+            ),
+        }
+    }
+
     pub(crate) fn emit_session_anomaly(
         &mut self,
         session_identifier: SessionIdentifier,
@@ -4674,6 +4725,13 @@ impl DWalletMPCManager {
                     "MPC anomaly occurred after session state was unavailable"
                 );
             }
+            if context.local_authority_malicious {
+                self.persist_malicious_diagnostic(
+                    anomaly_kind,
+                    &hex::encode(session_identifier.into_bytes()),
+                    &diagnostic_json,
+                );
+            }
             return;
         };
         let Some(snapshot) = session.anomaly_snapshot(anomaly_kind, self.epoch_id, context) else {
@@ -4742,6 +4800,16 @@ impl DWalletMPCManager {
                 "abnormal MPC session diagnostic snapshot"
             );
         }
+        // A snapshot that identifies THIS validator as malicious is the one
+        // diagnostic whose loss is unrecoverable (the service stops right
+        // after, and the emitting node's logs rotate) — mirror it to disk.
+        if snapshot.local_authority_malicious {
+            self.persist_malicious_diagnostic(
+                anomaly_kind,
+                &hex::encode(snapshot.session_id),
+                &diagnostic_json,
+            );
+        }
     }
 
     fn record_session_anomaly_metrics(
@@ -4807,6 +4875,7 @@ impl DWalletMPCManager {
                 service_loop_termination_reason = "local_validator_recognized_as_malicious",
                 "MPC service exited after local malicious recognition without a source session"
             );
+            self.persist_malicious_diagnostic(anomaly_kind, "no_session", &diagnostic_json);
             return;
         };
         self.emit_session_anomaly(
@@ -5096,6 +5165,23 @@ impl DWalletMPCManager {
         }
 
         let metrics = &self.dwallet_mpc_metrics;
+
+        // ----- orchestrator core-slot occupancy -----
+        // A slot is reserved at spawn and reclaimed only when the completion
+        // update is drained, so a computation that never completes holds its
+        // slot for the rest of the epoch — and at running == budget the
+        // orchestrator silently refuses all new MPC work. Exported so slot
+        // exhaustion (and a slow leak: a floor that survives idle periods)
+        // is scrapable instead of living in a `debug!` field.
+        metrics.cryptographic_computations_running.set(
+            self.cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .len() as i64,
+        );
+        metrics.cryptographic_computation_core_budget.set(
+            self.cryptographic_computations_orchestrator
+                .available_cores() as i64,
+        );
 
         // ----- session-state counts + Active-session age buckets -----
         // Only Active sessions get an age: Completed/Failed entries stay in
