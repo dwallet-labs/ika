@@ -12,7 +12,9 @@ use sui_types::base_types::EpochId;
 use tracing::{error, info, warn};
 
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
-use crate::noa_checkpoints::chain_submitter::{NOAChainSubmitter, TxExecutionStatus};
+use crate::noa_checkpoints::chain_submitter::{
+    NOAChainSubmitter, TxExecutionStatus, call_with_timeout,
+};
 use crate::noa_checkpoints::local_store::NOACheckpointLocalStore;
 
 // === NOACheckpointHandler ===
@@ -184,7 +186,12 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             match status {
                 NOACheckpointTxStatus::Pending => {
                     if let Some(chain_tx_id) = self.store.get_chain_tx_id(&tx_ref) {
-                        match self.chain_submitter.check_tx_status(&chain_tx_id).await {
+                        match call_with_timeout(
+                            "NOA check_tx_status",
+                            self.chain_submitter.check_tx_status(&chain_tx_id),
+                        )
+                        .await
+                        {
                             Ok(TxExecutionStatus::Executed) => {
                                 info!(
                                     kind = %K::KIND_NAME,
@@ -232,7 +239,12 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                 NOACheckpointTxStatus::SubmitFailed => {
                     // Re-attempt submission with existing tx_bytes + signature.
                     if let Some((tx_bytes, signature)) = self.store.get_tx_for_submission(&tx_ref) {
-                        match self.chain_submitter.submit_tx(&tx_bytes, &signature).await {
+                        match call_with_timeout(
+                            "NOA submit_tx",
+                            self.chain_submitter.submit_tx(&tx_bytes, &signature),
+                        )
+                        .await
+                        {
                             Ok(chain_tx_id) => {
                                 info!(
                                     kind = %K::KIND_NAME,
@@ -306,7 +318,12 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                 epoch: self.epoch,
             };
 
-            match self.chain_submitter.submit_tx(tx_bytes, signature).await {
+            match call_with_timeout(
+                "NOA submit_tx",
+                self.chain_submitter.submit_tx(tx_bytes, signature),
+            )
+            .await
+            {
                 Ok(chain_tx_id) => {
                     info!(
                         kind = %K::KIND_NAME,
@@ -370,7 +387,12 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             None => return,
         };
 
-        match self.chain_submitter.submit_tx(&tx_bytes, &signature).await {
+        match call_with_timeout(
+            "NOA submit_tx",
+            self.chain_submitter.submit_tx(&tx_bytes, &signature),
+        )
+        .await
+        {
             Ok(chain_tx_id) => {
                 info!(
                     kind = %K::KIND_NAME,
