@@ -168,11 +168,6 @@ struct FeatureFlags {
     consensus_round_prober: bool,
 
     // Enables Mysticeti fastpath.
-    // The manual `ProtocolConfig::mysticeti_fastpath` getter consults an
-    // env override before the flag; suppress the macro's plain-forward getter
-    // so the override keeps winning. The generated setter is still emitted
-    // (and is the one tests use).
-    #[skip_protocol_config_accessor]
     #[serde(skip_serializing_if = "is_false")]
     mysticeti_fastpath: bool,
 
@@ -543,13 +538,6 @@ impl ProtocolConfig {
         } else {
             self.consensus_gc_depth.unwrap_or(0)
         }
-    }
-
-    pub fn mysticeti_fastpath(&self) -> bool {
-        if let Some(enabled) = is_mysticeti_fpc_enabled_in_env() {
-            return enabled;
-        }
-        self.feature_flags.mysticeti_fastpath
     }
 }
 
@@ -1300,17 +1288,6 @@ macro_rules! check_limit_by_meter {
         };
         result
     }};
-}
-
-pub fn is_mysticeti_fpc_enabled_in_env() -> Option<bool> {
-    if let Ok(v) = std::env::var("CONSENSUS") {
-        if v == "mysticeti_fpc" {
-            return Some(true);
-        } else if v == "mysticeti" {
-            return Some(false);
-        }
-    }
-    None
 }
 
 #[cfg(all(test, not(msim)))]
