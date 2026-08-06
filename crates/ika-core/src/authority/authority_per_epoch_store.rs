@@ -502,6 +502,36 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>>;
 }
 
+/// The first per-round row STRICTLY after `last_consensus_round` — or the
+/// first row at all on a fresh start (`None`).
+///
+/// Deliberately an exclusive lower bound rather than the previous pattern of
+/// positioning the iterator AT the anchor row and skipping one (`nth(1)`):
+/// the skip variant is only correct while the row at exactly
+/// `last_consensus_round` exists in the table. If that anchor row is ever
+/// absent — a pruned table, a partially rebuilt epoch store — `nth(1)`
+/// consumes the first UNREAD row as if it were the anchor, and because every
+/// per-round stream skips the same round in lockstep, the downstream
+/// dense-stream alignment checks cannot catch it: a consensus round's MPC
+/// messages would silently never be processed. With the exclusive bound a
+/// missing anchor degrades to reading the next live row, which is the
+/// intended semantics ("everything after what I processed").
+fn next_round_row<V>(
+    table: &DBMap<Round, V>,
+    last_consensus_round: Option<Round>,
+) -> IkaResult<Option<(Round, V)>>
+where
+    V: serde::Serialize + serde::de::DeserializeOwned,
+{
+    Ok(table
+        .safe_iter_with_bounds(
+            last_consensus_round.map(|round| round.saturating_add(1)),
+            None,
+        )
+        .next()
+        .transpose()?)
+}
+
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn insert_pending_dwallet_checkpoint(
         &self,
@@ -528,14 +558,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .dwallet_mpc_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.dwallet_mpc_messages, last_consensus_round)
     }
 
     fn next_dwallet_mpc_output(
@@ -543,14 +566,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .dwallet_mpc_outputs
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.dwallet_mpc_outputs, last_consensus_round)
     }
 
     fn next_dwallet_internal_mpc_output(
@@ -558,14 +574,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .dwallet_internal_mpc_outputs
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.dwallet_internal_mpc_outputs, last_consensus_round)
     }
 
     fn next_verified_dwallet_checkpoint_message(
@@ -573,14 +582,10 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .verified_dwallet_checkpoint_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(
+            &tables.verified_dwallet_checkpoint_messages,
+            last_consensus_round,
+        )
     }
 
     fn next_verified_system_checkpoint_message(
@@ -588,14 +593,10 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .verified_system_checkpoint_messages
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(
+            &tables.verified_system_checkpoint_messages,
+            last_consensus_round,
+        )
     }
 
     fn insert_presigns(
@@ -662,14 +663,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .idle_status_updates
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.idle_status_updates, last_consensus_round)
     }
 
     fn next_sui_chain_observation_update(
@@ -677,14 +671,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .sui_chain_observation_updates
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.sui_chain_observation_updates, last_consensus_round)
     }
 
     fn next_global_presign_request(
@@ -692,14 +679,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .global_presign_requests
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.global_presign_requests, last_consensus_round)
     }
 
     fn next_noa_observation(
@@ -707,14 +687,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .noa_observations
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.noa_observations, last_consensus_round)
     }
 
     fn next_noa_presign_demand(
@@ -722,14 +695,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
         let tables = self.tables()?;
-        let mut iter = tables
-            .noa_presign_demands
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
+        next_round_row(&tables.noa_presign_demands, last_consensus_round)
     }
 
     fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
@@ -6413,6 +6379,41 @@ impl From<LockDetails> for LockDetailsWrapper {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+
+    /// `next_round_row` must return the first row STRICTLY after the anchor —
+    /// including when the anchor row itself is ABSENT from the table. The
+    /// previous `nth(1)` pattern positioned the iterator at the lower bound
+    /// and skipped one entry, which consumed the first UNREAD row as the
+    /// skip target whenever the anchor row was missing — and because every
+    /// per-round stream would skip the same round in lockstep, the
+    /// dense-stream alignment checks (which compare the streams to each
+    /// other) could never catch it.
+    #[tokio::test]
+    async fn next_round_row_does_not_skip_a_live_round_when_the_anchor_row_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = AuthorityEpochTables::open(0, dir.path(), None);
+        let messages = &tables.dwallet_mpc_messages;
+
+        // Rounds 1, 2, 3, 6, 7 present — a gap at 4..=5.
+        for round in [1u64, 2, 3, 6, 7] {
+            messages
+                .insert(&round, &Vec::<DWalletMPCMessage>::new())
+                .unwrap();
+        }
+
+        // Fresh start: the first row.
+        assert_eq!(next_round_row(messages, None).unwrap().unwrap().0, 1);
+        // Anchor present: the strictly-next row, across a gap too.
+        assert_eq!(next_round_row(messages, Some(1)).unwrap().unwrap().0, 2);
+        assert_eq!(next_round_row(messages, Some(3)).unwrap().unwrap().0, 6);
+        // Anchor ABSENT (no row at 4): the first live row after it — round 6
+        // — must be RETURNED, not consumed as the skip target. (`nth(1)`
+        // returned round 7 here, silently dropping round 6.)
+        assert_eq!(next_round_row(messages, Some(4)).unwrap().unwrap().0, 6);
+        // Past the end: no row, and no wraparound at the maximum round.
+        assert!(next_round_row(messages, Some(7)).unwrap().is_none());
+        assert!(next_round_row(messages, Some(u64::MAX)).unwrap().is_none());
+    }
     use crate::dwallet_checkpoints::DWalletCheckpointService;
     use crate::handoff_cert::{build_handoff_attestation, sign_handoff_attestation};
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
