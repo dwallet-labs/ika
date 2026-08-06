@@ -114,6 +114,24 @@ pub struct EpochMetrics {
     /// epoch-store open.
     pub consensus_last_committed_leader_round: IntGauge,
 
+    /// How many consensus rounds the MPC service trails the consensus commit
+    /// path by, sampled on every commit. Small and roughly constant in normal
+    /// operation (the MPC service consumes slightly behind the commit
+    /// boundary); UNBOUNDED GROWTH means the MPC subsystem has stopped while
+    /// consensus keeps running — the node serves consensus normally, looks
+    /// alive from every angle, and contributes nothing.
+    ///
+    /// This is the signal a validator operator needs and previously did not
+    /// have. Two validators went dark for hours in production this way (ika
+    /// #1978, #1980), both diagnosed only from a fleet-wide Grafana no
+    /// external operator can see, and both cleared by a restart nobody knew
+    /// to perform. Locally computable on purpose: it needs no peer data and no
+    /// fleet context, so it works for anyone running a validator.
+    ///
+    /// `-1` before the MPC service reports its first round, since round 0 is
+    /// a legitimate value.
+    pub mpc_consensus_round_lag: IntGauge,
+
     /// Consensus timestamp (unix seconds) of the latest commit processed at
     /// the Ika commit boundary. Zero until this process handles its first
     /// commit; metric collection never mutates it.
@@ -318,6 +336,12 @@ impl EpochMetrics {
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
                 registry
+            )
+            .unwrap(),
+            mpc_consensus_round_lag: register_int_gauge_with_registry!(
+                "ika_mpc_consensus_round_lag",
+                "Consensus rounds the MPC service trails the consensus commit path by; unbounded growth means MPC has stopped while consensus keeps running (-1 before the MPC service reports its first round)",
+                registry,
             )
             .unwrap(),
             consensus_last_committed_timestamp_seconds: register_int_gauge_with_registry!(

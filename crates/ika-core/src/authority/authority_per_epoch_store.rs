@@ -102,6 +102,28 @@ const LAST_CONSENSUS_STATS_ADDR: u64 = 0;
 const OVERRIDE_PROTOCOL_UPGRADE_BUFFER_STAKE_INDEX: u64 = 0;
 pub const EPOCH_DB_PREFIX: &str = "epoch_";
 
+/// Consensus rounds the MPC service may trail the commit path by before the
+/// node reports itself as no longer contributing.
+///
+/// Sized to be unmistakable rather than sensitive. Observed testnet round
+/// production is ~46k rounds/hour, so this is roughly an hour of falling
+/// behind — comfortably past any restart catch-up, and far below the gaps the
+/// two production incidents this exists for reached (ika #1978 sat ~247k rounds
+/// behind after 3.5h and kept going; #1980 passed 335k). A validator legitimately
+/// catching up closes the gap; a stopped one only grows it.
+const MPC_LAG_ALARM_ROUNDS: u64 = 50_000;
+
+/// What a single MPC-lag sample changed, so the loud log fires on transition
+/// rather than on every consensus commit. Returned rather than kept private so
+/// the latching is directly testable — the state flag alone cannot distinguish
+/// "logged once" from "logged every commit".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MpcLagTransition {
+    Raised,
+    Cleared,
+    Unchanged,
+}
+
 pub enum CancelConsensusCertificateReason {
     CongestionOnObjects(Vec<ObjectID>),
     DkgFailed,
@@ -242,6 +264,17 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> IkaResult<()>;
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
+
+    /// Publishes the consensus round the MPC service has finished consuming.
+    ///
+    /// The MPC service cannot report its own stall: every path that stops it
+    /// also stops the code that would notice — most starkly the deliberate
+    /// `break` on self-recognised maliciousness, which ends the service loop
+    /// for the life of the process while consensus keeps running normally.
+    /// So the MPC side only publishes its progress here, and the CONSENSUS
+    /// commit path — which is still alive in exactly the cases that matter —
+    /// does the comparing.
+    fn record_mpc_consumed_consensus_round(&self, round: Round);
 
     fn next_dwallet_mpc_message(
         &self,
@@ -511,6 +544,11 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(tables
             .pending_dwallet_checkpoints
             .insert(&checkpoint.height(), &checkpoint)?)
+    }
+
+    fn record_mpc_consumed_consensus_round(&self, round: Round) {
+        self.mpc_consumed_consensus_round
+            .store(round, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
@@ -1011,6 +1049,17 @@ pub struct AuthorityPerEpochStore {
     /// (each validator emits one V2 per epoch).
     pending_handoff_signatures:
         parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
+
+    /// Consensus round the MPC service last finished consuming, published by
+    /// the service itself. Compared against the commit round on the consensus
+    /// path to detect an MPC subsystem that has stopped while consensus keeps
+    /// running — see `record_mpc_consumed_consensus_round`. `0` until the
+    /// service reports its first round.
+    mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+
+    /// Whether the MPC-lag alarm is currently raised, so the loud log fires on
+    /// transition instead of on every consensus commit.
+    mpc_lag_alarm_active: std::sync::atomic::AtomicBool,
 
     /// Pending `handoff_signatures` row mutations, waiting to be folded into
     /// the next `ConsensusCommitOutput`. `Some(signature)` is an upsert,
@@ -2502,6 +2551,8 @@ impl AuthorityPerEpochStore {
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
+            mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            mpc_lag_alarm_active: std::sync::atomic::AtomicBool::new(false),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
             staged_handoff_signature_rows: parking_lot::Mutex::new(BTreeMap::new()),
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
@@ -3532,6 +3583,67 @@ impl AuthorityPerEpochStore {
             self.name,
             consensus_keypair,
         ))
+    }
+
+    /// Publishes how far the MPC service trails the consensus commit path, and
+    /// escalates to a loud log once the gap is unambiguous.
+    ///
+    /// A healthy validator sits a small, roughly constant distance behind: the
+    /// MPC service consumes rounds slightly after the commit boundary produces
+    /// them. A gap that grows without bound means MPC has stopped while
+    /// consensus continues — the node follows consensus, serves requests,
+    /// exports metrics, and contributes nothing.
+    ///
+    /// The threshold is deliberately generous. Genuine catch-up after a restart
+    /// transiently produces a large gap and then closes it, and we would rather
+    /// miss the first minutes of a real stall than teach operators to ignore
+    /// this line. `MPC_LAG_ALARM_ROUNDS` is roughly an hour of production round
+    /// production at observed testnet rates; the two production incidents this
+    /// exists for sat far past it for many hours.
+    ///
+    /// Logged on TRANSITION only, not per commit: this runs on every consensus
+    /// commit, so an unconditional log would emit thousands of lines an hour
+    /// and bury itself. The gauge carries the continuous signal.
+    fn report_mpc_consensus_round_lag(&self, commit_round: Round) -> MpcLagTransition {
+        let consumed = self
+            .mpc_consumed_consensus_round
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if consumed == 0 {
+            // The MPC service has not reported a round yet (fresh epoch store,
+            // still replaying). Round 0 is legitimate, so the gauge carries a
+            // sentinel rather than a plausible-looking 0.
+            self.metrics.mpc_consensus_round_lag.set(-1);
+            return MpcLagTransition::Unchanged;
+        }
+        let lag = commit_round.saturating_sub(consumed);
+        self.metrics.mpc_consensus_round_lag.set(lag as i64);
+
+        let alarming = lag >= MPC_LAG_ALARM_ROUNDS;
+        let was_alarming = self
+            .mpc_lag_alarm_active
+            .swap(alarming, std::sync::atomic::Ordering::Relaxed);
+        let transition = match (was_alarming, alarming) {
+            (false, true) => MpcLagTransition::Raised,
+            (true, false) => MpcLagTransition::Cleared,
+            _ => MpcLagTransition::Unchanged,
+        };
+        match transition {
+            MpcLagTransition::Raised => error!(
+                lag_rounds = lag,
+                commit_round,
+                mpc_consumed_round = consumed,
+                "MPC subsystem has stopped keeping up with consensus: this validator is \
+                 following consensus normally but is no longer contributing MPC work. It will \
+                 not recover on its own in every known case — check for an earlier fatal in \
+                 the dWallet MPC service, and restart the node if none explains it"
+            ),
+            MpcLagTransition::Cleared => info!(
+                lag_rounds = lag,
+                "MPC subsystem has caught back up with consensus"
+            ),
+            MpcLagTransition::Unchanged => {}
+        }
+        transition
     }
 
     /// Queues `handoff_signatures` row mutations for the next commit's batch.
@@ -4959,6 +5071,13 @@ impl AuthorityPerEpochStore {
         self.metrics
             .consensus_last_committed_timestamp_seconds
             .set((consensus_commit_info.timestamp / 1000) as i64);
+        // Self-health: is the MPC subsystem keeping up with consensus? Sampled
+        // HERE, on the commit path, because that path is still running in every
+        // case where MPC is not — including the deliberate service-loop `break`
+        // on self-recognised maliciousness, which stops MPC for the life of the
+        // process while the node keeps serving consensus and looking healthy
+        // from outside (ika #1978, #1980).
+        let _ = self.report_mpc_consensus_round_lag(consensus_commit_info.round);
 
         let mut verified_dwallet_checkpoint_certificates =
             VecDeque::with_capacity(transactions.len() + 1);
@@ -6475,6 +6594,127 @@ mod tests {
     /// `all_voted || grace_elapsed` with no handoff-cert gate, so it would close
     /// at STEP 1 (reconfig flips to `RejectAllTx`, an `EndOfPublish` close
     /// message is emitted) and FAIL the STEP 1 assertions.
+    /// A validator must be able to tell, from purely local state, that its MPC
+    /// subsystem has stopped while consensus keeps running. Both production
+    /// incidents this exists for (#1978, #1980) were invisible to their
+    /// operators and diagnosable only from a fleet-wide view they do not have.
+    #[tokio::test]
+    async fn mpc_lag_is_reported_and_alarms_only_once_stopped() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee,
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+        let lag = || epoch_store.metrics.mpc_consensus_round_lag.get();
+
+        // Before the MPC service reports anything the gauge must NOT read 0 —
+        // round 0 is a legitimate consumed round, so 0 would be a
+        // plausible-but-wrong "perfectly caught up".
+        epoch_store.report_mpc_consensus_round_lag(1_000);
+        assert_eq!(lag(), -1, "no MPC report yet must be a sentinel, not 0");
+
+        // Healthy: the service trails the commit path slightly.
+        epoch_store.record_mpc_consumed_consensus_round(990);
+        epoch_store.report_mpc_consensus_round_lag(1_000);
+        assert_eq!(lag(), 10);
+        assert!(
+            !epoch_store
+                .mpc_lag_alarm_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "an ordinary trailing distance must not alarm"
+        );
+
+        // Stopped: consensus advances, MPC does not.
+        epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
+        assert_eq!(lag(), MPC_LAG_ALARM_ROUNDS as i64);
+        assert!(
+            epoch_store
+                .mpc_lag_alarm_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "a stopped MPC subsystem must raise the alarm"
+        );
+
+        // Recovery clears it, so a restart that fixes the node is visible too.
+        epoch_store.record_mpc_consumed_consensus_round(990 + MPC_LAG_ALARM_ROUNDS);
+        epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
+        assert_eq!(lag(), 0);
+        assert!(
+            !epoch_store
+                .mpc_lag_alarm_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "catching up must clear the alarm"
+        );
+    }
+
+    /// The alarm latches, so the loud line fires on transition rather than on
+    /// every consensus commit — this runs per commit, and an unconditional log
+    /// would emit thousands of lines an hour and bury itself.
+    #[tokio::test]
+    async fn mpc_lag_alarm_does_not_re_fire_while_it_stays_raised() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee,
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        epoch_store.record_mpc_consumed_consensus_round(1);
+        // A sustained stall across many commits must announce itself exactly
+        // once. This asserts the LOGGING decision, not the flag: the flag ends
+        // up `true` either way, so observing it cannot tell a latched alarm
+        // from one that re-fires on every commit.
+        let transitions: Vec<_> = (1..=5)
+            .map(|i| epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + i))
+            .collect();
+        assert_eq!(
+            transitions,
+            vec![
+                MpcLagTransition::Raised,
+                MpcLagTransition::Unchanged,
+                MpcLagTransition::Unchanged,
+                MpcLagTransition::Unchanged,
+                MpcLagTransition::Unchanged,
+            ],
+            "the alarm must latch — this runs on EVERY consensus commit"
+        );
+        // The gauge keeps tracking growth throughout, so the continuous signal
+        // is not lost to the latching.
+        assert_eq!(
+            epoch_store.metrics.mpc_consensus_round_lag.get(),
+            (MPC_LAG_ALARM_ROUNDS + 4) as i64
+        );
+
+        // Recovery announces itself once too, then goes quiet.
+        epoch_store.record_mpc_consumed_consensus_round(MPC_LAG_ALARM_ROUNDS + 5);
+        assert_eq!(
+            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            MpcLagTransition::Cleared
+        );
+        assert_eq!(
+            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            MpcLagTransition::Unchanged
+        );
+    }
+
     #[tokio::test]
     async fn epoch_close_wiring_defers_until_handoff_cert_quorum() {
         // Four equal-weight validators: quorum_threshold = 3, validity = 2.
