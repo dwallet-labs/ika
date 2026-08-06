@@ -15,7 +15,7 @@ tracing.workspace = true
 serde_with.workspace = true
 sui-protocol-config-macros.workspace = true
 # The ProtocolConfigAccessors/Override derive macros expand to
-# `::mysten_common::rpc_format::*` paths (since mainnet-v1.73.2), so every
+# `::mysten_common::rpc_format::*` paths (since mainnet-v1.76.1), so every
 # crate deriving them must depend on mysten-common (mirrors upstream
 # sui-protocol-config).
 mysten-common.workspace = true

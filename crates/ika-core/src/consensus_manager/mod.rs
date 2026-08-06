@@ -249,6 +249,9 @@ impl ConsensusManager {
             commit_consumer,
             registry.clone(),
             *boot_counter,
+            // Sui's randomness-beacon signature handler; ika runs no
+            // randomness protocol, so there is nothing to sign.
+            None,
         )
         .await;
         let client = authority.transaction_client();

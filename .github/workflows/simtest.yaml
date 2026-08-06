@@ -64,7 +64,7 @@ env:
   # long sub-quorum windows and slow recovery tails; virtual seconds cost
   # ~nothing in wall time.
   SUI_SIM_TEST_TIMEOUT_SECS: "3600"
-  rust_stable: "1.94"
+  rust_stable: "1.97.1"
 
 jobs:
   simtest:

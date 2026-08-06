@@ -168,6 +168,11 @@ struct FeatureFlags {
     consensus_round_prober: bool,
 
     // Enables Mysticeti fastpath.
+    // The manual `ProtocolConfig::mysticeti_fastpath` getter consults an
+    // env override before the flag; suppress the macro's plain-forward getter
+    // so the override keeps winning. The generated setter is still emitted
+    // (and is the one tests use).
+    #[skip_protocol_config_accessor]
     #[serde(skip_serializing_if = "is_false")]
     mysticeti_fastpath: bool,
 
@@ -527,25 +532,6 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
-    /// True iff Fast Schnorr (VSS) signature algorithms are enabled at this
-    /// protocol version (>= 4). Gates the internal NOA-VSS presign pool and
-    /// the Rust-side defense-in-depth VSS request guard.
-    pub fn fast_schnorr_supported(&self) -> bool {
-        self.feature_flags.fast_schnorr_supported
-    }
-
-    pub fn bls_checkpoints(&self) -> bool {
-        self.feature_flags.bls_checkpoints
-    }
-
-    pub fn noa_checkpoints(&self) -> bool {
-        self.feature_flags.noa_checkpoints
-    }
-
-    pub fn consensus_round_prober(&self) -> bool {
-        self.feature_flags.consensus_round_prober
-    }
-
     pub fn mysticeti_num_leaders_per_round(&self) -> Option<usize> {
         self.feature_flags.mysticeti_num_leaders_per_round
     }
@@ -564,23 +550,6 @@ impl ProtocolConfig {
             return enabled;
         }
         self.feature_flags.mysticeti_fastpath
-    }
-
-    pub fn consensus_batched_block_sync(&self) -> bool {
-        self.feature_flags.consensus_batched_block_sync
-    }
-
-    pub fn consensus_skip_gced_blocks_in_direct_finalization(&self) -> bool {
-        self.feature_flags
-            .consensus_skip_gced_blocks_in_direct_finalization
-    }
-
-    pub fn enforce_checkpoint_timestamp_monotonicity(&self) -> bool {
-        self.feature_flags.enforce_checkpoint_timestamp_monotonicity
-    }
-
-    pub fn consensus_zstd_compression(&self) -> bool {
-        self.feature_flags.consensus_zstd_compression
     }
 }
 
@@ -1239,33 +1208,9 @@ impl ProtocolConfig {
         self.feature_flags.mysticeti_num_leaders_per_round = val;
     }
 
-    pub fn set_consensus_round_prober_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_round_prober = val;
-    }
-
-    pub fn set_mysticeti_fastpath_for_testing(&mut self, val: bool) {
-        self.feature_flags.mysticeti_fastpath = val;
-    }
-
-    pub fn set_consensus_batched_block_sync_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_batched_block_sync = val;
-    }
-
     pub fn set_consensus_skip_gced_blocks_in_direct_finalization(&mut self, val: bool) {
         self.feature_flags
             .consensus_skip_gced_blocks_in_direct_finalization = val;
-    }
-
-    pub fn set_enforce_checkpoint_timestamp_monotonicity_for_testing(&mut self, val: bool) {
-        self.feature_flags.enforce_checkpoint_timestamp_monotonicity = val;
-    }
-
-    pub fn set_internal_presign_sessions_for_testing(&mut self, val: bool) {
-        self.feature_flags.internal_presign_sessions = val;
-    }
-
-    pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
-        self.feature_flags.noa_checkpoints = val;
     }
 }
 

@@ -48,7 +48,7 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  rust_stable: "1.94"
+  rust_stable: "1.97.1"
   # ika-wasm's prepare script builds wasm-pack with `--${PROFILE}`; the
   # integration tests run real client-side crypto through that WASM, so it
   # must be a release build (debug crypto is far too slow).

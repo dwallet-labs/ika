@@ -92,7 +92,13 @@ impl ConsensusClient for LazyMysticetiClient {
         let (block_ref, tx_indices, status_waiter) = client
             .as_ref()
             .expect("Client should always be returned")
-            .submit(transactions_bytes)
+            // Normal keeps the pre-1.76 single-lane behavior for ALL ika
+            // traffic. High is a 128-slot reserved lane for low-volume
+            // critical submissions; ika's dominant traffic here is MPC
+            // messages (bulk), which would overflow it — routing select
+            // kinds (EndOfPublish, checkpoint signatures) as High is a
+            // possible follow-up tune, not a drop-in.
+            .submit(transactions_bytes, consensus_core::Priority::Normal)
             .await
             .tap_err(|err| {
                 // Will be logged by caller as well.

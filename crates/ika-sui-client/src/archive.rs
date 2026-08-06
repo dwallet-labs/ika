@@ -90,7 +90,7 @@ impl SuiCheckpointArchive {
     /// or `no-sign-request`).
     pub fn new(url: impl Into<String>, options: Vec<(String, String)>) -> Self {
         let url = url.into();
-        let store = build_object_store(&url, options.clone());
+        let store = build_object_store(&url, options.clone(), vec![]);
         Self {
             url,
             options,
