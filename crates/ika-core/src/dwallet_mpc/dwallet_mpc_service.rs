@@ -422,6 +422,42 @@ impl DWalletMPCService {
         self.last_read_consensus_round
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) async fn send_status_update_to_consensus_for_testing(&mut self, is_idle: bool) {
+        self.send_status_update_to_consensus(is_idle).await
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn buffer_noa_observation_for_testing(
+        &mut self,
+        observation: NOACheckpointTxObservation,
+    ) {
+        self.buffered_noa_observations.push(observation);
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn buffered_noa_observations_for_testing(&self) -> &[NOACheckpointTxObservation] {
+        &self.buffered_noa_observations
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn buffer_noa_presign_demand_for_testing(
+        &mut self,
+        demand: ConsensusNOAPresignDemand,
+    ) {
+        self.buffered_noa_presign_demands.push(demand);
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn buffered_noa_presign_demands_for_testing(&self) -> &[ConsensusNOAPresignDemand] {
+        &self.buffered_noa_presign_demands
+    }
+
     /// Wire up NOA checkpoint handlers for testing.
     ///
     /// `new_for_testing` creates a disconnected sign-output receiver (the connected one
@@ -845,16 +881,23 @@ impl DWalletMPCService {
             }
         }
 
-        // One message per buffered NOA observation.
+        // One message per buffered NOA observation. On submit failure, re-buffer
+        // the observation for the next status update: its producer is one-shot
+        // (the checkpoint handler marks a tx confirmed-locally / voted-failed
+        // BEFORE emitting the observation), so a dropped observation would never
+        // be re-emitted and this validator's finalize/fail vote would be silently
+        // lost. Retrying a submission that actually landed is harmless — the
+        // observation tally is a per-authority set.
         let noa_observations = std::mem::take(&mut self.buffered_noa_observations);
-        for obs in &noa_observations {
+        for obs in noa_observations {
             let tx = ConsensusTransaction::new_noa_observation(self.name, obs.clone());
             if let Err(e) = self
                 .dwallet_submit_to_consensus
                 .submit_to_consensus(&[tx])
                 .await
             {
-                error!(error = ?e, consensus_round, "Failed to submit NOA observation");
+                error!(error = ?e, consensus_round, "Failed to submit NOA observation; re-buffering for retry");
+                self.buffered_noa_observations.push(obs);
             }
         }
 
@@ -862,12 +905,16 @@ impl DWalletMPCService {
         // for wire safety — the `NOAPresignDemand` consensus kind must never reach
         // a peer that predates it. Consensus dedups cross-validator duplicates by
         // the demand-id digest key, and the assignment drain is idempotent.
+        // On submit failure, re-buffer the demand for the next status update:
+        // `announced_noa_demand_digests` marks a demand announced when it is
+        // buffered, so a dropped demand would never be re-announced by this
+        // validator.
         if self.protocol_config.noa_checkpoints() {
             let noa_presign_demands = std::mem::take(&mut self.buffered_noa_presign_demands);
             for demand in noa_presign_demands {
                 let tx = ConsensusTransaction::new_noa_presign_demand(
                     demand.authority,
-                    demand.demand_id,
+                    demand.demand_id.clone(),
                     demand.signature_algorithm,
                     demand.network_encryption_key_id,
                 );
@@ -876,7 +923,8 @@ impl DWalletMPCService {
                     .submit_to_consensus(&[tx])
                     .await
                 {
-                    error!(error = ?e, consensus_round, "Failed to submit NOA presign demand");
+                    error!(error = ?e, consensus_round, "Failed to submit NOA presign demand; re-buffering for retry");
+                    self.buffered_noa_presign_demands.push(demand);
                 }
             }
         }
