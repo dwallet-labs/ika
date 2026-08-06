@@ -288,12 +288,6 @@ pub struct Scenario {
     /// these; joiners added via `join_validator_mirrored` mirror through them
     /// too. Empty (default) = every validator reads Sui directly.
     pub direct_validators: Vec<usize>,
-    /// Boot the whole cluster (validators + notifier) from old-style
-    /// (1.1.8-shape) configs: `sui-rpc-url` only, no `sui-data-source`, no
-    /// trust anchor — the deprecated JSON-RPC transport every mainnet node
-    /// runs on rollout day. Not compatible with `direct_validators` or
-    /// mirrored joiners (those require `sui-data-source`).
-    pub legacy_sui_config: bool,
     /// Genesis protocol version. `None` genesis-es at `ProtocolVersion::MIN`
     /// (the usual rolling-upgrade start). Set this to start the cluster at a
     /// higher version — e.g. a strict-bound v6 committee that has no relaxed
@@ -322,7 +316,6 @@ impl Scenario {
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
             supported_protocol_versions: None,
             direct_validators: Vec::new(),
-            legacy_sui_config: false,
             genesis_protocol_version: None,
         }
     }
@@ -330,13 +323,6 @@ impl Scenario {
     /// Override the genesis protocol version (default `ProtocolVersion::MIN`).
     pub fn with_genesis_protocol_version(mut self, v: ProtocolVersion) -> Self {
         self.genesis_protocol_version = Some(v);
-        self
-    }
-
-    /// Boot the whole cluster from old-style (1.1.8-shape) configs — the
-    /// legacy JSON-RPC path for every role. See the field doc.
-    pub fn with_legacy_sui_config(mut self) -> Self {
-        self.legacy_sui_config = true;
         self
     }
 
@@ -682,9 +668,6 @@ impl Scenario {
                     .with_genesis_global_presign_config(self.genesis_global_presign_config);
                     if let Some(versions) = self.supported_protocol_versions {
                         builder = builder.with_supported_protocol_versions(versions);
-                    }
-                    if self.legacy_sui_config {
-                        builder = builder.with_legacy_sui_config();
                     }
                     if let Some(dir) = &self.base_dir {
                         builder = builder.with_base_dir(dir.clone());
@@ -1077,7 +1060,7 @@ impl Scenario {
                     // workloads in different epochs never contend on objects.
                     let driver = WorkloadDriver::new(
                         ika_cli.clone(),
-                        c.rpc_url().to_string(),
+                        c.grpc_url().to_string(),
                         c.faucet_url().to_string(),
                         c.network_config().clone(),
                         c.publisher_keypair().copy(),

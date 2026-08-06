@@ -191,8 +191,8 @@ Always get the latest IDs from the canonical source files in the repo:
 # Mainnet validator must have:
 sui-connector-config:
   sui-chain-identifier: mainnet
-  # NEW-STYLE gRPC (replaces deprecated sui-rpc-url). A validator on this path
-  # MUST also set sui-genesis (see references/configuration.md).
+  # All Sui I/O uses gRPC. Validators MUST also set sui-genesis
+  # (see references/configuration.md).
   sui-data-source:
     kind: sui-state-direct
     url: 'http://<your-sui-fullnode>:9000'

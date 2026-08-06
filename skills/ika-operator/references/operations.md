@@ -277,7 +277,7 @@ static-peers:
 |---|---|---|
 | Extremely slow startup | Debug build | Build with `--release` |
 | Port conflict on 8080 | P2P port taken | Change `p2p-config.listen-address` |
-| Sui chain mismatch error | Wrong chain identifier | Verify `sui-rpc-url` matches `sui-chain-identifier` |
+| Sui chain mismatch error | Wrong chain identifier | Verify the `sui-data-source` endpoint matches `sui-chain-identifier` |
 | Missing package ID error | Wrong contract IDs | Update package/object IDs to match deployed contracts |
 | Consensus DB disk full | No pruning | Set `db-retention-epochs: 0`, lower `db-pruner-period-secs` |
 | State sync stalled | No peers | Add seed peers, check network connectivity |

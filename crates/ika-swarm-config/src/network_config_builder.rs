@@ -9,7 +9,7 @@ use crate::validator_initialization_config::ValidatorInitializationConfigBuilder
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::{
     AuthorityOverloadConfig, RunWithRange, get_testing_sui_faucet_url,
-    get_testing_sui_fullnode_rpc_url,
+    get_testing_sui_fullnode_grpc_url,
 };
 use ika_protocol_config::ProtocolVersion;
 use ika_types::committee::Committee;
@@ -62,7 +62,7 @@ pub enum StateAccumulatorV2EnabledConfig {
 pub struct ConfigBuilder<R = OsRng> {
     rng: Option<R>,
     config_directory: PathBuf,
-    sui_fullnode_rpc_url: String,
+    sui_fullnode_grpc_url: String,
     sui_faucet_url: String,
     epoch_duration_ms: Option<u64>,
     protocol_version: Option<ProtocolVersion>,
@@ -82,13 +82,13 @@ pub struct ConfigBuilder<R = OsRng> {
 impl ConfigBuilder {
     pub fn new<P: AsRef<Path>>(
         config_directory: P,
-        sui_fullnode_rpc_url: String,
+        sui_fullnode_grpc_url: String,
         sui_faucet_url: String,
     ) -> Self {
         Self {
             rng: Some(OsRng),
             config_directory: config_directory.as_ref().into(),
-            sui_fullnode_rpc_url,
+            sui_fullnode_grpc_url,
             sui_faucet_url,
             epoch_duration_ms: None,
             protocol_version: None,
@@ -108,11 +108,11 @@ impl ConfigBuilder {
     }
 
     pub fn new_with_temp_dir() -> Self {
-        let sui_fullnode_rpc_url = get_testing_sui_fullnode_rpc_url();
+        let sui_fullnode_grpc_url = get_testing_sui_fullnode_grpc_url();
         let sui_faucet_url = get_testing_sui_faucet_url();
         Self::new(
             nondeterministic!(tempfile::tempdir().unwrap()).keep(),
-            sui_fullnode_rpc_url,
+            sui_fullnode_grpc_url,
             sui_faucet_url,
         )
     }
@@ -237,7 +237,7 @@ impl<R> ConfigBuilder<R> {
         ConfigBuilder {
             rng: Some(rng),
             config_directory: self.config_directory,
-            sui_fullnode_rpc_url: self.sui_fullnode_rpc_url,
+            sui_fullnode_grpc_url: self.sui_fullnode_grpc_url,
             sui_faucet_url: self.sui_faucet_url,
             epoch_duration_ms: self.epoch_duration_ms,
             protocol_version: self.protocol_version,
@@ -338,7 +338,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         }
         let bootstrap = crate::sui_client::init_ika_on_sui(
             &validator_initialization_configs,
-            self.sui_fullnode_rpc_url.to_string(),
+            self.sui_fullnode_grpc_url.to_string(),
             self.sui_faucet_url.to_string(),
             initiation_parameters,
             self.genesis_global_presign_config,
@@ -352,8 +352,8 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         let ika_dwallet_coordinator_object_id = bootstrap.system.ika_dwallet_coordinator_object_id;
         let publisher_keypair = bootstrap.publisher_keypair;
 
-        // Validators built here are new-style (`SuiStateDirect`), and the node
-        // boot gate requires every new-style validator to carry a Sui trust
+        // Validators built here use `SuiStateDirect`, and the node boot gate
+        // requires every validator to carry a Sui trust
         // anchor (its MPC event source on the gRPC path is the anchor-verified
         // BagEventPump). The Sui localnet was started externally, so its
         // genesis blob file is not on a known path: reconstruct the blob from
@@ -361,7 +361,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         // directory, and point every validator's `sui_genesis` at it. Without
         // it the swarm/`ika start`/ts-integration validators are rejected at
         // boot with "`sui-data-source` is set but no Sui trust anchor".
-        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.sui_fullnode_rpc_url)
+        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.sui_fullnode_grpc_url)
             .await
             .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for OCS trust anchor: {e}"))?;
         let sui_genesis_path = self.config_directory.join("sui_genesis.blob");
@@ -421,7 +421,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
 
                 builder.build(
                     validator,
-                    self.sui_fullnode_rpc_url.clone(),
+                    self.sui_fullnode_grpc_url.clone(),
                     ika_package_id,
                     ika_common_package_id,
                     ika_dwallet_2pc_mpc_package_id,
@@ -457,7 +457,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
                 let config = builder.build(
                     &mut OsRng,
                     &validator_initialization_configs,
-                    self.sui_fullnode_rpc_url.clone(),
+                    self.sui_fullnode_grpc_url.clone(),
                     ika_package_id,
                     ika_common_package_id,
                     ika_dwallet_2pc_mpc_package_id,

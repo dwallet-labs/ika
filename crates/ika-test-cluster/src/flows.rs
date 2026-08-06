@@ -11,7 +11,7 @@
 //! Shapes mirror the battle-tested CLI (`ika` binary `dwallet_commands`):
 //! transaction builders from `ika_sui_client::ika_dwallet_transactions`,
 //! user-side crypto from `dwallet_mpc_centralized_party`, and completion by
-//! polling object state through the fullnode RPC.
+//! polling object state through the fullnode gRPC endpoint.
 
 use anyhow::{Context, Result, anyhow};
 use dwallet_mpc_centralized_party::{
@@ -25,8 +25,10 @@ use ika_sui_client::ika_dwallet_transactions::{
     request_presign_tx, request_sign_tx,
 };
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
-use sui_json_rpc_types::{SuiObjectDataOptions, SuiTransactionBlockEffectsAPI as _};
+use sui_rpc_api::Client as SuiGrpcClient;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_types::base_types::ObjectID;
+use sui_types::effects::TransactionEffectsAPI as _;
 
 use crate::{
     DEFAULT_DWALLET_TX_GAS_BUDGET, DwalletDkgHandle, IkaTestCluster, UserEncryptionKey,
@@ -88,39 +90,18 @@ impl ImportedKeyHandle {
     }
 }
 
-async fn sdk_client(sui_rpc_url: &str) -> Result<sui_sdk::SuiClient> {
-    Ok(sui_sdk::SuiClientBuilder::default()
-        .build(sui_rpc_url)
-        .await?)
+fn grpc_client(sui_grpc_url: &str) -> Result<SuiGrpcClient> {
+    Ok(SuiGrpcClient::new(sui_grpc_url)?)
 }
 
-/// Object fields as JSON, unwrapping the `WithTypes` `{type, fields}`
-/// wrapper Sui applies to nested Move structs.
+/// Object fields in Sui's gRPC JSON representation.
 async fn fetch_object_fields(
-    sdk_client: &sui_sdk::SuiClient,
+    grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
-    let response = sdk_client
-        .read_api()
-        .get_object_with_options(object_id, SuiObjectDataOptions::full_content())
-        .await?;
-    let data = response
-        .data
-        .ok_or_else(|| anyhow!("object not found: {object_id}"))?;
-    let content = data
-        .content
-        .ok_or_else(|| anyhow!("no content for object: {object_id}"))?;
-    let json = serde_json::to_value(&content)?;
-    let fields = json
-        .get("fields")
-        .cloned()
-        .ok_or_else(|| anyhow!("no fields in object: {object_id}"))?;
-    if fields.get("type").is_some()
-        && let Some(inner) = fields.get("fields")
-    {
-        return Ok(inner.clone());
-    }
-    Ok(fields)
+    let mut grpc_client = grpc_client.clone();
+    let (_, json) = grpc_client.get_object_with_json(object_id).await?;
+    json.ok_or_else(|| anyhow!("no content for object: {object_id}"))
 }
 
 /// `vector<u8>` from Sui JSON: array-of-numbers, base64 string, or
@@ -142,25 +123,21 @@ fn extract_bytes_from_json(value: &serde_json::Value) -> Option<Vec<u8>> {
 /// First created object of the transaction whose Move type contains
 /// `type_substr` (skipping dynamic-field wrappers).
 pub(crate) async fn find_created_object_by_type(
-    sui_rpc_url: &str,
-    response: &sui_json_rpc_types::SuiTransactionBlockResponse,
+    sui_grpc_url: &str,
+    response: &ExecutedTransaction,
     type_substr: &str,
 ) -> Result<ObjectID> {
-    let effects = response
-        .effects
-        .as_ref()
-        .ok_or_else(|| anyhow!("tx has no effects"))?;
-    let client = sdk_client(sui_rpc_url).await?;
-    for created in effects.created() {
-        let object_id = created.reference.object_id;
-        let Ok(resp) = client
-            .read_api()
-            .get_object_with_options(object_id, SuiObjectDataOptions::new().with_type())
-            .await
-        else {
+    let mut client = grpc_client(sui_grpc_url)?;
+    for (reference, _) in response.effects.created() {
+        let object_id = reference.0;
+        let Ok(object) = client.get_object(object_id).await else {
             continue;
         };
-        let Some(type_str) = resp.data.and_then(|d| d.type_).map(|t| t.to_string()) else {
+        let Some(type_str) = object
+            .data
+            .try_as_move()
+            .map(|data| data.type_().to_string())
+        else {
             continue;
         };
         if type_str.contains("dynamic_field") || type_str.contains("dynamic_object_field") {
@@ -175,32 +152,27 @@ pub(crate) async fn find_created_object_by_type(
     ))
 }
 
-/// A nested field from a matching event, traversing Move enum variant
-/// serialization (`{variant, fields}`) along `path` — starting from the
-/// `DWalletSessionEvent` wrapper's `event_data` when present. Mirrors the
-/// CLI's `extract_nested_event_field`.
+/// A nested field from matching gRPC event JSON, starting from the
+/// `DWalletSessionEvent` wrapper's `event_data` when present.
 pub(crate) async fn fetch_nested_event_field(
-    sui_rpc_url: &str,
+    sui_grpc_url: &str,
     tx_digest: &sui_types::digests::TransactionDigest,
     event_type_substr: &str,
     path: &[&str],
 ) -> Option<String> {
-    let client = sdk_client(sui_rpc_url).await.ok()?;
-    let events = client.event_api().get_events(*tx_digest).await.ok()?;
-    for event in &events {
+    let mut client = grpc_client(sui_grpc_url).ok()?;
+    let transaction = client.get_transaction(tx_digest).await.ok()?;
+    let events = transaction.events?;
+    for (index, event) in events.data.iter().enumerate() {
         let type_str = event.type_.to_string();
         if !type_str.contains(event_type_substr) {
             continue;
         }
-        let root = event
-            .parsed_json
-            .get("event_data")
-            .unwrap_or(&event.parsed_json);
+        let parsed_json = transaction.event_json.get(index)?.as_ref()?;
+        let root = parsed_json.get("event_data").unwrap_or(parsed_json);
         let mut current = root;
         for (i, key) in path.iter().enumerate() {
-            let next = current
-                .get(key)
-                .or_else(|| current.get("fields").and_then(|f| f.get(key)));
+            let next = current.get(key);
             match next {
                 Some(val) if i == path.len() - 1 => {
                     return val.as_str().map(|s| s.to_string());
@@ -216,23 +188,16 @@ pub(crate) async fn fetch_nested_event_field(
 /// Poll `object_id` until its session state carries `bytes_field` and
 /// return those bytes.
 ///
-/// Completion is detected by FIELD PRESENCE, not by the state enum's
-/// variant name: the pinned Sui renders Move enum values as
-/// `{"type": ..., "fields": {...}}` WITHOUT a variant tag (the same quirk
-/// `wait_for_dwallet_dkg_complete` documents), so only the inhabited
-/// variant's fields are observable. `Completed` is the only variant
-/// carrying the output bytes, which makes the field decisive. Where a
-/// node DOES render a variant tag, `NetworkRejected` is surfaced as an
-/// error; without one, a rejected session is indistinguishable from a
-/// pending one and surfaces as this poll's timeout (whose message carries
-/// the last observed state for diagnosis).
+/// `Completed` is the only variant carrying the output bytes, which makes
+/// field presence decisive. A `NetworkRejected` variant is surfaced as an
+/// error.
 async fn poll_session_until_completed(
-    sui_rpc_url: &str,
+    sui_grpc_url: &str,
     object_id: ObjectID,
     bytes_field: &str,
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>> {
-    let client = sdk_client(sui_rpc_url).await?;
+    let client = grpc_client(sui_grpc_url)?;
     let start = tokio::time::Instant::now();
     let mut last_observed = String::from("(no fetch yet)");
     let mut poll_count: u64 = 0;
@@ -247,14 +212,13 @@ async fn poll_session_until_completed(
             Ok(fields) => {
                 let state = fields.get("state");
                 if let Some(bytes) = state
-                    .and_then(|state| state.get("fields"))
-                    .and_then(|f| f.get(bytes_field))
+                    .and_then(|state| state.get(bytes_field))
                     .and_then(extract_bytes_from_json)
                 {
                     return Ok(bytes);
                 }
                 if let Some("NetworkRejected") = state
-                    .and_then(|state| state.get("variant"))
+                    .and_then(|state| state.get("@variant"))
                     .and_then(|v| v.as_str())
                 {
                     anyhow::bail!("session {object_id} was rejected by the network");
@@ -287,14 +251,13 @@ impl IkaTestCluster {
     }
 
     /// The dwallet's decentralized DKG public output from chain state
-    /// (`state.fields.public_output` of an Active dwallet).
+    /// (`state.public_output` of an Active dwallet).
     pub async fn dwallet_public_output(&self, dwallet_id: ObjectID) -> Result<Vec<u8>> {
-        let client = sdk_client(&self.sui_rpc_url).await?;
+        let client = grpc_client(&self.sui_grpc_url)?;
         let fields = fetch_object_fields(&client, dwallet_id).await?;
         fields
             .get("state")
-            .and_then(|state| state.get("fields"))
-            .and_then(|f| f.get("public_output"))
+            .and_then(|state| state.get("public_output"))
             .and_then(extract_bytes_from_json)
             .ok_or_else(|| anyhow!("dwallet {dwallet_id} has no public_output (not Active?)"))
     }
@@ -328,8 +291,8 @@ impl IkaTestCluster {
         .await
         .context("request_presign_tx failed")?;
         let presign_cap_id =
-            find_created_object_by_type(&self.sui_rpc_url, &response, "PresignCap").await?;
-        let client = sdk_client(&self.sui_rpc_url).await?;
+            find_created_object_by_type(&self.sui_grpc_url, &response, "PresignCap").await?;
+        let client = grpc_client(&self.sui_grpc_url)?;
         let cap_fields = fetch_object_fields(&client, presign_cap_id).await?;
         let presign_id: ObjectID = cap_fields
             .get("presign_id")
@@ -366,8 +329,8 @@ impl IkaTestCluster {
         .await
         .context("request_global_presign_tx failed")?;
         let presign_cap_id =
-            find_created_object_by_type(&self.sui_rpc_url, &response, "PresignCap").await?;
-        let client = sdk_client(&self.sui_rpc_url).await?;
+            find_created_object_by_type(&self.sui_grpc_url, &response, "PresignCap").await?;
+        let client = grpc_client(&self.sui_grpc_url)?;
         let cap_fields = fetch_object_fields(&client, presign_cap_id).await?;
         let presign_id: ObjectID = cap_fields
             .get("presign_id")
@@ -387,7 +350,7 @@ impl IkaTestCluster {
         presign: &PresignHandle,
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>> {
-        poll_session_until_completed(&self.sui_rpc_url, presign.presign_id, "presign", timeout)
+        poll_session_until_completed(&self.sui_grpc_url, presign.presign_id, "presign", timeout)
             .await
     }
 
@@ -511,7 +474,7 @@ impl IkaTestCluster {
         )
         .await
         .context("request_future_sign_tx failed")?;
-        find_created_object_by_type(&self.sui_rpc_url, &response, "PartialUserSignatureCap").await
+        find_created_object_by_type(&self.sui_grpc_url, &response, "PartialUserSignatureCap").await
     }
 
     /// Waits until every user-initiated session the coordinator has
@@ -662,24 +625,20 @@ impl IkaTestCluster {
         .await
         .context("request_imported_key_dwallet_verification failed")?;
 
-        let digest = *response
-            .effects
-            .as_ref()
-            .ok_or_else(|| anyhow!("import verification tx has no effects"))?
-            .transaction_digest();
+        let digest = *response.effects.transaction_digest();
         let event = "DWalletImportedKeyVerificationRequestEvent";
         let dwallet_id: ObjectID =
-            fetch_event_field(&self.sui_rpc_url, &digest, event, "dwallet_id")
+            fetch_event_field(&self.sui_grpc_url, &digest, event, "dwallet_id")
                 .await
                 .ok_or_else(|| anyhow!("{event} missing dwallet_id"))?
                 .parse()?;
         let dwallet_cap_id: ObjectID =
-            fetch_event_field(&self.sui_rpc_url, &digest, event, "dwallet_cap_id")
+            fetch_event_field(&self.sui_grpc_url, &digest, event, "dwallet_cap_id")
                 .await
                 .ok_or_else(|| anyhow!("{event} missing dwallet_cap_id"))?
                 .parse()?;
         let encrypted_share_id: ObjectID = fetch_event_field(
-            &self.sui_rpc_url,
+            &self.sui_grpc_url,
             &digest,
             event,
             "encrypted_user_secret_key_share_id",
@@ -729,7 +688,7 @@ impl IkaTestCluster {
         dwallet_id: ObjectID,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let client = sdk_client(&self.sui_rpc_url).await?;
+        let client = grpc_client(&self.sui_grpc_url)?;
         let start = tokio::time::Instant::now();
         loop {
             if start.elapsed() > timeout {
@@ -790,13 +749,9 @@ impl IkaTestCluster {
         .await
         .context("request_re_encrypt_user_share failed")?;
 
-        let digest = *response
-            .effects
-            .as_ref()
-            .ok_or_else(|| anyhow!("re-encrypt tx has no effects"))?
-            .transaction_digest();
+        let digest = *response.effects.transaction_digest();
         let new_share_id: ObjectID = fetch_event_field(
-            &self.sui_rpc_url,
+            &self.sui_grpc_url,
             &digest,
             "EncryptedShareVerificationRequestEvent",
             "encrypted_user_secret_key_share_id",
@@ -885,19 +840,15 @@ impl IkaTestCluster {
     /// reads "object not found" precisely when the sign succeeds).
     async fn wait_for_sign_session(
         &self,
-        response: &sui_json_rpc_types::SuiTransactionBlockResponse,
+        response: &ExecutedTransaction,
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>> {
-        let digest = *response
-            .effects
-            .as_ref()
-            .ok_or_else(|| anyhow!("sign tx has no effects"))?
-            .transaction_digest();
+        let digest = *response.effects.transaction_digest();
         let sign_id: ObjectID =
-            fetch_event_field(&self.sui_rpc_url, &digest, "SignRequestEvent", "sign_id")
+            fetch_event_field(&self.sui_grpc_url, &digest, "SignRequestEvent", "sign_id")
                 .await
                 .ok_or_else(|| anyhow!("SignRequestEvent missing sign_id"))?
                 .parse()?;
-        poll_session_until_completed(&self.sui_rpc_url, sign_id, "signature", timeout).await
+        poll_session_until_completed(&self.sui_grpc_url, sign_id, "signature", timeout).await
     }
 }

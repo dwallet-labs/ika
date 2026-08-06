@@ -71,9 +71,7 @@ ika-types.workspace = true
 
 ika-sui-client.workspace = true
 sui-config.workspace = true
-sui-json-rpc-types.workspace = true
 sui-light-client.workspace = true
-sui-sdk.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
 strum_macros.workspace = true

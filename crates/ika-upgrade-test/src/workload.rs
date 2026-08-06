@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! dWallet workload driver — runs a full **DKG → Presign → Sign** lifecycle
-//! against the cluster's Sui RPC and confirms each step completes on-chain.
+//! against the cluster's Sui gRPC endpoint and confirms each step completes on-chain.
 //!
 //! Rather than re-derive the ~500-line user-side 2PC flow (encryption-key
 //! derivation, centralized DKG, encrypt-and-prove, accept-encrypted-share,
@@ -24,14 +24,17 @@ use anyhow::{Context, Result, bail};
 use ika_config::Config;
 use ika_types::ika_coin::INKU_PER_IKA;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use move_core_types::language_storage::StructTag;
 use rand::rngs::OsRng;
 use serde::Serialize;
 use shared_crypto::intent::{Intent, IntentMessage};
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore, Keystore};
-use sui_sdk::SuiClientBuilder;
+use sui_rpc_api::Client as SuiGrpcClient;
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_types::base_types::SuiAddress;
+use sui_types::coin::Coin;
 use sui_types::crypto::{Signature, SuiKeyPair, get_key_pair_from_rng};
+use sui_types::effects::TransactionEffectsAPI;
 use sui_types::transaction::Transaction;
 
 const ENV_ALIAS: &str = "localnet";
@@ -67,7 +70,7 @@ pub struct WorkloadDriver {
     ika_binary: PathBuf,
     client_config: PathBuf,
     ika_config: PathBuf,
-    rpc_url: String,
+    grpc_url: String,
     network_config: IkaNetworkConfig,
     /// Holds the keystore + configs + secret-share file for the driver's life.
     work_dir: tempfile::TempDir,
@@ -82,7 +85,7 @@ impl WorkloadDriver {
     /// `client.yaml` + `ika_sui_config.yaml`.
     pub async fn new(
         ika_binary: PathBuf,
-        rpc_url: String,
+        grpc_url: String,
         faucet_url: String,
         network_config: IkaNetworkConfig,
         publisher_keypair: SuiKeyPair,
@@ -95,7 +98,7 @@ impl WorkloadDriver {
         let user_keypair = SuiKeyPair::Ed25519(user_ed);
 
         faucet_sui(&faucet_url, user_address).await?;
-        transfer_one_ika(&rpc_url, &publisher_keypair, &network_config, user_address)
+        transfer_one_ika(&grpc_url, &publisher_keypair, &network_config, user_address)
             .await
             .context("fund workload user with IKA")?;
 
@@ -114,7 +117,7 @@ impl WorkloadDriver {
             external_keys: None,
             envs: vec![SuiEnv {
                 alias: ENV_ALIAS.to_string(),
-                rpc: rpc_url.clone(),
+                rpc: grpc_url.clone(),
                 ws: None,
                 basic_auth: None,
                 chain_id: None,
@@ -140,7 +143,7 @@ impl WorkloadDriver {
             ika_binary,
             client_config,
             ika_config,
-            rpc_url,
+            grpc_url,
             network_config,
             work_dir,
             user_address,
@@ -154,8 +157,8 @@ impl WorkloadDriver {
         use ika_sui_client::metrics::SuiClientMetrics;
         use ika_types::sui::DWalletCoordinatorInner;
 
-        let ika = IkaClient::new(
-            &self.rpc_url,
+        let ika = IkaClient::new_grpc(
+            &self.grpc_url,
             SuiClientMetrics::new_for_testing(),
             self.network_config.clone(),
         )
@@ -448,26 +451,29 @@ async fn faucet_sui(faucet_url: &str, recipient: SuiAddress) -> Result<()> {
 /// `stake_ika`. Retries a few times since this single setup txn shares the
 /// publisher's gas with the notifier.
 async fn transfer_one_ika(
-    rpc_url: &str,
+    grpc_url: &str,
     publisher: &SuiKeyPair,
     network_config: &IkaNetworkConfig,
     recipient: SuiAddress,
 ) -> Result<()> {
-    use sui_sdk::rpc_types::SuiTransactionBlockResponseOptions;
-    use sui_types::transaction_driver_types::ExecuteTransactionRequestType;
-
     let publisher_address: SuiAddress = (&publisher.public()).into();
-    let client = SuiClientBuilder::default().build(rpc_url).await?;
+    let client = SuiGrpcClient::new(grpc_url)?;
     let ika_type = format!("{}::ika::IKA", network_config.packages.ika_package_id);
+    let ika_type: StructTag = ika_type.parse().context("parse IKA coin type")?;
+    let ika_coin_type = Coin::type_(ika_type.clone().into());
 
     let mut last_err = None;
     for _ in 0..8 {
         let coins = client
-            .coin_read_api()
-            .get_coins(publisher_address, Some(ika_type.clone()), None, Some(1))
+            .get_owned_objects(
+                publisher_address,
+                Some(ika_coin_type.clone()),
+                Some(1),
+                None,
+            )
             .await?;
-        let ika_coin = match coins.data.into_iter().next() {
-            Some(c) => c.coin_object_id,
+        let ika_coin = match coins.items.into_iter().next() {
+            Some(coin) => coin.id(),
             None => bail!("publisher {publisher_address} owns no {ika_type}"),
         };
         let tx_data = client
@@ -485,17 +491,13 @@ async fn transfer_one_ika(
             &IntentMessage::new(Intent::sui_transaction(), &tx_data),
             publisher,
         );
+        let transaction = Transaction::from_data(tx_data, vec![signature]);
         match client
-            .quorum_driver_api()
-            .execute_transaction_block(
-                Transaction::from_data(tx_data, vec![signature]),
-                SuiTransactionBlockResponseOptions::new().with_effects(),
-                Some(ExecuteTransactionRequestType::WaitForLocalExecution),
-            )
+            .execute_transaction_and_wait_for_checkpoint(&transaction)
             .await
         {
             Ok(resp) => {
-                if resp.status_ok() == Some(true) {
+                if resp.effects.status().is_ok() {
                     return Ok(());
                 }
                 last_err = Some(anyhow::anyhow!("IKA transfer effects: {:?}", resp.effects));

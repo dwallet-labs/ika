@@ -25,7 +25,7 @@ use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORITIES;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
-use sui_sdk::SuiClientBuilder;
+use sui_rpc_api::Client as SuiGrpcClient;
 use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
@@ -77,13 +77,13 @@ pub enum IkaCommand {
         #[clap(long)]
         force_reinitiation: bool,
 
-        /// Sui full node rpc url. Default is http://127.0.0.1:9000.
+        /// Sui fullnode gRPC URL. Default is http://127.0.0.1:9000.
         #[clap(
             long,
             default_value = "http://127.0.0.1:9000",
-            value_name = "SUI_FULLNODE_RPC_URL"
+            value_name = "SUI_FULLNODE_GRPC_URL"
         )]
-        sui_fullnode_rpc_url: String,
+        sui_fullnode_grpc_url: String,
 
         /// Sui faucet url. Default is http://127.0.0.1:9123/gas.
         #[clap(
@@ -223,7 +223,7 @@ impl IkaCommand {
             IkaCommand::Start {
                 config_dir,
                 force_reinitiation,
-                sui_fullnode_rpc_url,
+                sui_fullnode_grpc_url,
                 sui_faucet_url,
                 no_full_node,
                 epoch_duration_ms,
@@ -248,7 +248,7 @@ impl IkaCommand {
                             config_dir.clone(),
                             force_reinitiation,
                             epoch_duration_ms,
-                            sui_fullnode_rpc_url,
+                            sui_fullnode_grpc_url,
                             sui_faucet_url,
                             no_full_node,
                         )
@@ -366,7 +366,7 @@ async fn start(
     config: Option<PathBuf>,
     force_reinitiation: bool,
     epoch_duration_ms: Option<u64>,
-    sui_fullnode_rpc_url: String,
+    sui_fullnode_grpc_url: String,
     _sui_faucet_url: String,
     no_full_node: bool,
 ) -> Result<(), anyhow::Error> {
@@ -377,14 +377,12 @@ async fn start(
         );
     }
 
-    if let Err(e) = SuiClientBuilder::default()
-        .build(&sui_fullnode_rpc_url)
-        .await
-    {
+    let sui_client = SuiGrpcClient::new(&sui_fullnode_grpc_url)?;
+    if let Err(e) = sui_client.get_chain_identifier().await {
         bail!(
-            "Cannot reach Sui full node at {sui_fullnode_rpc_url}: {e}.\n\
+            "Cannot reach the Sui gRPC endpoint at {sui_fullnode_grpc_url}: {e}.\n\
              Start a local Sui node first (e.g. `sui start --with-faucet --force-regenesis`) \
-             or pass `--sui-fullnode-rpc-url <URL>` to point at a running node."
+             or pass `--sui-fullnode-grpc-url <URL>` to point at a running node."
         );
     }
 

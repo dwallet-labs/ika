@@ -4,7 +4,7 @@
 # Source this file from test scripts:
 #   source "$(dirname "$0")/helpers.sh"
 #
-# Requires: IKA_BIN, SUI_RPC_URL environment variables.
+# Requires: IKA_BIN and a configured Sui CLI environment.
 # The CLI auto-resolves ika config from ~/.ika/ika_config/ika_sui_config.yaml.
 
 set -euo pipefail
@@ -13,7 +13,6 @@ set -euo pipefail
 # Globals
 # ---------------------------------------------------------------------------
 IKA_BIN="${IKA_BIN:-./target/release/ika}"
-SUI_RPC_URL="${SUI_RPC_URL:-http://127.0.0.1:9000}"
 POLL_INTERVAL="${POLL_INTERVAL:-3}"
 POLL_TIMEOUT="${POLL_TIMEOUT:-300}"  # seconds
 
@@ -156,29 +155,23 @@ json_has_field() {
 }
 
 # ---------------------------------------------------------------------------
-# Sui RPC helpers
+# Sui gRPC helpers (through the Sui CLI)
 # ---------------------------------------------------------------------------
-sui_rpc() {
-    local method="$1"; shift
-    curl -s "$SUI_RPC_URL" -X POST -H 'Content-Type: application/json' \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":[$*]}"
-}
-
 # Fetch object fields as JSON string.
 fetch_object_fields() {
     local object_id="$1"
-    sui_rpc "sui_getObject" "\"$object_id\", {\"showContent\": true}" | \
-        python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['result']['data']['content']['fields']))"
+    sui client --json object "$object_id" | \
+        python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['content']['fields']))"
 }
 
 # Get transaction object changes.
 tx_created_objects() {
     local digest="$1"
-    sui_rpc "sui_getTransactionBlock" "\"$digest\", {\"showObjectChanges\": true}" | \
+    sui client --json tx-block "$digest" | \
         python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-for c in data['result'].get('objectChanges', []):
+for c in data.get('objectChanges', []):
     if c.get('type') == 'created':
         short_type = c['objectType'].split('::')[-1]
         print(f\"{short_type} {c['objectId']}\")
@@ -253,37 +246,7 @@ get_active_address() {
     sui client active-address 2>/dev/null
 }
 
-# Query existing encryption key IDs for the active address by looking up
-# CreatedEncryptionKeyEvent events via Sui RPC.
-# Returns the first encryption_key_id found, or empty string.
-query_existing_encryption_key() {
-    local address
-    address=$(get_active_address)
-    if [[ -z "$address" ]]; then
-        return 0
-    fi
-    local events_json
-    events_json=$(curl -s "$SUI_RPC_URL" -X POST -H 'Content-Type: application/json' \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"suix_queryEvents\",\"params\":[{\"Sender\":\"$address\"},null,100,false]}") || true
-    python3 -c "
-import json, sys
-try:
-    data = json.loads(sys.argv[1])
-    for evt in data.get('result', {}).get('data', []):
-        if 'CreatedEncryptionKeyEvent' in evt.get('type', ''):
-            parsed = evt.get('parsedJson', {})
-            eid = parsed.get('encryption_key_id')
-            if eid:
-                print(eid)
-                sys.exit(0)
-except Exception:
-    pass
-" "$events_json" 2>/dev/null || true
-}
-
 # Register an encryption key for a curve. Returns the encryption_key_id.
-# If registration fails (e.g., key already exists), falls back to querying
-# existing encryption key events on-chain.
 register_encryption_key() {
     local curve_name="$1"
     local result
@@ -292,12 +255,11 @@ register_encryption_key() {
         json_field "$result" "encryption_key_id"
         return 0
     fi
-    # Registration failed (likely already registered). Query on-chain events.
-    query_existing_encryption_key
+    return 1
 }
 
 # Register encryption key only if not already cached in $TEST_TMPDIR.
-# If the key was already registered on-chain, falls back to querying events.
+# The cache avoids attempting duplicate registration during a test run.
 ensure_encryption_key() {
     local curve_name="$1"
     local cache_file="${TEST_TMPDIR}/encryption_key_${curve_name}"

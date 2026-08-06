@@ -1055,8 +1055,8 @@ mod network_key_id_derivation_tool {
     use std::str::FromStr;
     use sui_types::base_types::ObjectID;
 
-    // (env, rpcs, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml.
-    // rpcs: canonical Mysten endpoint first, public fallback second — these
+    // (env, gRPC URLs, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml.
+    // Endpoints: canonical Mysten endpoint first, public fallback second — these
     // are read-only tools and either endpoint can be temporarily down.
     type DeployedEnv<'a> = (
         &'a str,
@@ -1112,27 +1112,27 @@ mod network_key_id_derivation_tool {
         )
     }
 
-    /// Tries each of the env's RPC endpoints in order; `None` (with a printed
+    /// Tries each of the environment's gRPC endpoints in order; `None` (with a printed
     /// reason) when none is reachable, so one downed endpoint doesn't sink
     /// the other env's run.
     async fn connect(env: &DeployedEnv<'_>) -> Option<SuiConnectorClient> {
-        let (name, rpcs, ..) = env;
-        for rpc in rpcs.iter().copied() {
-            match SuiConnectorClient::new(
-                rpc,
+        let (name, grpc_urls, ..) = env;
+        for grpc_url in grpc_urls.iter().copied() {
+            match SuiConnectorClient::new_grpc(
+                grpc_url,
                 SuiClientMetrics::new_for_testing(),
                 ika_network_config(env),
             )
             .await
             {
                 Ok(client) => {
-                    println!("CONNECT {name}: using {rpc}");
+                    println!("CONNECT {name}: using {grpc_url}");
                     return Some(client);
                 }
-                Err(e) => println!("CONNECT {name}: {rpc} failed: {e}"),
+                Err(e) => println!("CONNECT {name}: {grpc_url} failed: {e}"),
             }
         }
-        println!("SKIP {name}: no RPC endpoint reachable");
+        println!("SKIP {name}: no gRPC endpoint reachable");
         None
     }
 

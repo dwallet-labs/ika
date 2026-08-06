@@ -43,12 +43,9 @@ use sui::client_commands::{
 use sui_config::SUI_CLIENT_CONFIG;
 use sui_keys::key_derive::generate_new_key;
 use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
+use sui_rpc_api::Client;
 use sui_rpc_api::client::ExecutedTransaction;
 use sui_rpc_api::proto;
-use sui_sdk::SuiClient;
-use sui_sdk::SuiClientBuilder;
-use sui_sdk::rpc_types::SuiObjectDataOptions;
-use sui_sdk::rpc_types::{SuiObjectDataFilter, SuiObjectResponseQuery};
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
@@ -194,7 +191,7 @@ fn contract_paths_from_dir(
 
 pub async fn init_ika_on_sui(
     validator_initialization_configs: &Vec<ValidatorInitializationConfig>,
-    sui_fullnode_rpc_url: String,
+    sui_grpc_url: String,
     sui_faucet_url: String,
     initiation_parameters: InitiationParameters,
     genesis_global_presign_config: GenesisGlobalPresignConfig,
@@ -223,7 +220,7 @@ pub async fn init_ika_on_sui(
         external_keys: None,
         envs: vec![SuiEnv {
             alias: active_env.to_string(),
-            rpc: sui_fullnode_rpc_url.clone(),
+            rpc: sui_grpc_url,
             ws: None,
             basic_auth: None,
             chain_id: None,
@@ -236,9 +233,7 @@ pub async fn init_ika_on_sui(
 
     let mut context = WalletContext::new(&config_path)?;
 
-    let client: SuiClient = SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
+    let client = context.grpc_client()?;
 
     let mut request_tokens_from_faucet_futures = vec![
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
@@ -325,7 +320,7 @@ pub async fn init_ika_on_sui(
 /// or modify package state before calling [`initialize_ika_system`].
 pub async fn publish_ika_packages(
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     publisher_address: SuiAddress,
     contract_paths: &ContractPaths,
 ) -> Result<PublishedIkaPackages, anyhow::Error> {
@@ -394,7 +389,7 @@ pub async fn publish_ika_packages(
 /// the IKA supply, and that each validator address has been funded with gas.
 pub async fn initialize_ika_system(
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     publisher_address: SuiAddress,
     packages: &PublishedIkaPackages,
     validator_initialization_configs: &[ValidatorInitializationConfig],
@@ -573,7 +568,7 @@ pub async fn initialize_ika_system(
 pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -698,7 +693,7 @@ impl GenesisGlobalPresignConfig {
 pub async fn set_global_presign_config(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -775,7 +770,7 @@ pub async fn set_global_presign_config(
 pub async fn ika_system_initialize(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1066,16 +1061,13 @@ pub async fn ika_system_initialize(
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     let response = client
-        .read_api()
-        .get_object_with_options(
-            dwallet_2pc_mpc_coordinator_id,
-            SuiObjectDataOptions::new().with_owner(),
-        )
+        .clone()
+        .get_object(dwallet_2pc_mpc_coordinator_id)
         .await?;
 
-    let Some(Owner::Shared {
+    let Owner::Shared {
         initial_shared_version,
-    }) = response.data.unwrap().owner
+    } = response.owner
     else {
         return Err(anyhow::Error::msg("Owner does not exist"));
     };
@@ -1086,7 +1078,7 @@ pub async fn ika_system_initialize(
 pub async fn ika_system_set_witness_approving_advance_epoch(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1149,7 +1141,7 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
 pub async fn ika_system_add_upgrade_cap_by_cap(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1233,7 +1225,7 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
 pub async fn init_initialize(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_common_package_id: ObjectID,
     ika_system_package_id: ObjectID,
     init_cap_id: ObjectID,
@@ -1323,17 +1315,11 @@ pub async fn init_initialize(
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    let response = client
-        .read_api()
-        .get_object_with_options(
-            ika_system_object_id,
-            SuiObjectDataOptions::new().with_owner(),
-        )
-        .await?;
+    let response = client.clone().get_object(ika_system_object_id).await?;
 
-    let Some(Owner::Shared {
+    let Owner::Shared {
         initial_shared_version,
-    }) = response.data.unwrap().owner
+    } = response.owner
     else {
         return Err(anyhow::Error::msg("Owner does not exist"));
     };
@@ -1348,7 +1334,7 @@ pub async fn init_initialize(
 pub async fn request_add_validator(
     validator_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1391,7 +1377,7 @@ pub async fn request_add_validator(
 pub async fn request_remove_validator(
     validator_address: SuiAddress,
     context: &mut WalletContext,
-    client: SuiClient,
+    client: Client,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1443,9 +1429,7 @@ pub async fn stake_ika(
         mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
-    let client: SuiClient = SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
+    let client = context.grpc_client()?;
 
     let ika_supply_ref = client
         .transaction_builder()
@@ -1485,27 +1469,21 @@ pub async fn stake_ika(
 
 pub async fn minted_ika(
     publisher_address: SuiAddress,
-    client: SuiClient,
+    client: Client,
     ika_package_id: ObjectID,
 ) -> Result<ObjectID, anyhow::Error> {
     let data = client
-        .read_api()
         .get_owned_objects(
             publisher_address,
-            Some(SuiObjectResponseQuery {
-                filter: Some(SuiObjectDataFilter::StructType(IKACoin::type_(
-                    ika_package_id.into(),
-                ))),
-                options: None,
-            }),
-            None,
+            Some(IKACoin::type_(ika_package_id.into())),
+            Some(1),
             None,
         )
         .await?;
 
-    let ika_supply_id = &data.data.first().unwrap().object_id()?;
+    let ika_supply_id = data.items.first().unwrap().id();
 
-    Ok(*ika_supply_id)
+    Ok(ika_supply_id)
 }
 
 pub async fn request_add_validator_candidate(
@@ -1633,13 +1611,13 @@ pub async fn request_add_validator_candidate(
     let validator_cap_id = find_created_object_by_type(&response, &validator_cap_type)
         .expect("ValidatorCap object not found");
 
-    let validator_cap_bcs = SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?
-        .read_api()
-        .get_move_object_bcs(validator_cap_id)
-        .await?;
-    let validator_cap: ValidatorCapV1 = bcs::from_bytes(&validator_cap_bcs)?;
+    let validator_cap_object = context.grpc_client()?.get_object(validator_cap_id).await?;
+    let validator_cap_bcs = validator_cap_object
+        .data
+        .try_as_move()
+        .ok_or_else(|| anyhow::Error::msg("ValidatorCap is not a Move object"))?
+        .contents();
+    let validator_cap: ValidatorCapV1 = bcs::from_bytes(validator_cap_bcs)?;
 
     Ok((validator_cap.validator_id, validator_cap_id))
 }
@@ -1947,15 +1925,12 @@ pub async fn estimate_gas_budget(
     gas_payment: Vec<ObjectRef>,
     sponsor: Option<SuiAddress>,
 ) -> Result<u64, anyhow::Error> {
-    let client: SuiClient = SuiClientBuilder::default()
-        .build(context.get_active_env()?.rpc.clone())
-        .await?;
     let SuiClientCommandResult::DryRun(dry_run) =
         execute_dry_run(context, signer, kind, None, gas_price, gas_payment, sponsor).await?
     else {
         bail!("Wrong SuiClientCommandResult. Should be SuiClientCommandResult::DryRun.")
     };
-    let rgp = client.read_api().get_reference_gas_price().await?;
+    let rgp = context.get_reference_gas_price().await?;
 
     Ok(estimate_gas_budget_from_gas_cost(
         dry_run.transaction.effects.gas_cost_summary(),

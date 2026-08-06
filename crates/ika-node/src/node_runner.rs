@@ -83,7 +83,25 @@ pub fn run_node_with_name(
     let cmd = clap::Command::new(bin_name).version(version);
     let args = NodeArgs::augment_args(cmd).get_matches();
     let args = NodeArgs::from_arg_matches(&args).expect("Failed to parse arguments");
-    let mut config = NodeConfig::load(&args.config_path).unwrap();
+    let mut config = NodeConfig::load(&args.config_path).unwrap_or_else(|error| {
+        let migration_hint = if error
+            .to_string()
+            .contains("missing field `sui-data-source`")
+        {
+            concat!(
+                "\nLegacy `sui-rpc-url` configuration is no longer supported. Add:\n",
+                "sui-data-source:\n",
+                "  kind: sui-state-direct\n",
+                "  url: <SUI_GRPC_URL>"
+            )
+        } else {
+            ""
+        };
+        panic!(
+            "failed to load node config from {}: {error}{migration_hint}",
+            args.config_path.display()
+        );
+    });
     assert!(
         config.supported_protocol_versions.is_none(),
         "supported_protocol_versions cannot be read from the config file"

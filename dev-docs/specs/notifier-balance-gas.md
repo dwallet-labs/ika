@@ -1,99 +1,64 @@
-# Notifier gas modes (gas coins vs. SIP-58 address-balance gas)
+# Notifier address-balance gas
 
-How the network's single writer pays for its Sui transactions, why the
-gas-coin path carries a whole caching/recovery apparatus, and the opt-in
-SIP-58 mode that deletes that failure class. Actors: the notifier's
-`sui_executor`/`build_sui_transaction`, the Sui chain's protocol flags.
+The network's single writer always pays for Sui transactions from its SIP-58
+address balance. Gas-coin selection, object-reference caching, and stale gas
+object recovery are not supported modes.
 
-## Gas-coin mode (default)
+## Transaction construction
 
-Each submission carries an owned gas-coin `ObjectRef` whose version must be
-exactly current. Because the notifier's fullnode view lags the validators,
-the executor maintains `NotifierSubmitState`: the post-transaction gas ref is
-cached from each transaction's effects, stale-gas rejections clear the cache
-and record a re-fetch version floor, and the gas coin must never be shared
-with any other spender (equivocation locks it for the epoch). This machinery
-exists solely to fight gas-object versioning; it has wedged epoch advance
-before and is the reason two writers can never share an address.
+An empty gas payment on a programmable transaction pays gas from the sender's
+SUI address balance. `balance_gas_transaction_data` constructs every notifier
+transaction with:
 
-## Address-balance mode (`notifier_gas_from_address_balance: true`)
+- an empty `gas_data.payment`;
+- the fixed notifier gas budget;
+- `ValidDuring { min_epoch: current Sui epoch, max_epoch: current + 1,
+  chain: full genesis-rooted ChainIdentifier, nonce: random u32 }`.
 
-SIP-58: an **empty gas payment** on a programmable transaction pays gas from
-the sender's SUI address balance, and a `ValidDuring` expiration replaces the
-replay protection that gas-coin version bumps provided. Decision rules:
+The one-epoch extension keeps a transaction built immediately before a Sui
+epoch boundary valid through submission. It is the maximum window accepted by
+`is_replay_protected`. The current Sui epoch is fetched for each submission.
+The chain identifier is resolved once at boot and failure to resolve it is a
+fatal configuration/startup error.
 
-1. **Construction** (`balance_gas_transaction_data`): empty `gas_data.payment`,
-   same fixed budget, expiration `ValidDuring { min_epoch: current SUI epoch,
-   max_epoch: current + 1, chain: full genesis-rooted ChainIdentifier, nonce:
-   random u32 }`. The one-epoch extension keeps a submission built just
-   before a Sui epoch boundary valid instead of expiring mid-flight; it is
-   the maximum `is_replay_protected` allows, and multi-epoch expiration
-   (protocol 105) predates every network's address-balance-gas enablement.
-   Trade-off: an abandoned signed-but-never-executed transaction can hold
-   its balance reservation for up to two epochs instead of one.
-2. **Chain identifier** is resolved ONCE at boot (compiled-in for
-   mainnet/testnet via the short id; genesis checkpoint digest otherwise) and
-   a failure to resolve it fails the boot loudly — a writer silently unable
-   to build transactions is the issue-#1892 failure shape.
-3. **Current SUI epoch** is fetched per submission with the same
-   retry-forever contract as the reference gas price.
-4. **The whole gas-object apparatus is bypassed**: `next_gas_coins` returns
-   no refs, effects-based gas caching is skipped (the effects' gas object is
-   a placeholder), and stale-gas rejection handling is inert. The
-   stale-gas-version failure class does not exist without gas objects.
-5. **Checkpoint fee reimbursement** cannot `MergeCoins` into
-   `Argument::GasCoin` (none exists); it is transferred to the writer's
-   address as an owned coin instead, for the operator to sweep.
+Checkpoint fee reimbursement cannot merge into `Argument::GasCoin`, because
+address-balance transactions have no gas coin. Reimbursement is transferred to
+the writer as an owned coin and swept into its address balance on a later boot.
 
-## Boot-time behavior (preflight + migration sweep)
+## Boot-time preparation
 
-With the flag on, `prepare_for_sui` runs, in order:
+`prepare_for_sui` runs these steps in order:
 
-1. **Chain identifier resolution** (fail boot loudly if unresolvable).
-2. **Funds read** (`get_sui_funds`: address balance vs. coin objects; an
-   unreadable balance — accumulators disabled on the target chain — fails
-   boot loudly).
-3. **Migration sweep**: if the address holds >= 1 SUI in coin objects (the
-   state every pre-SIP-58 notifier is in when the flag is first flipped),
-   deposit them into the address balance automatically: one transaction
-   using ALL owned gas coins as its own gas payment (the protocol merges
-   them into the first), `SplitCoins(GasCoin, [total - sweep budget])`, and
-   `coin::send_funds<SUI>(split, sender)`. The gas coin itself cannot be
-   passed by value to a Move call, hence split-then-deposit; the sweep
-   budget's unspent remainder stays behind as one small coin, below the
-   1-SUI re-sweep threshold (no churn). Best-effort: a failed sweep warns
-   and falls through to the preflight.
-4. **Balance preflight**: refuse to boot below one gas budget of address
-   balance (counting a just-swept amount directly rather than re-reading
-   through a possibly-lagging fullnode view), with the exact remediation in
-   the error. A writer that cannot pay must not take the writer role.
-5. **Funds gauge**: `ika_sui_connector_gas_coin_balance` is seeded and then
-   refreshed every 60s from the address balance (this gauge previously had
-   no writer at all), making balance drain alertable before submissions
-   fail. Mid-flight exhaustion still ends in the historical
-   hour-retry-then-panic path, same as coin-mode gas exhaustion.
+1. Resolve the full Sui chain identifier; fail startup if it is unavailable.
+2. Read SUI funds split between address balance and owned coin objects; fail
+   startup when the balance accumulator is unavailable.
+3. If at least 1 SUI remains in coin objects, perform a best-effort migration
+   sweep. The sweep uses those coins as ordinary gas payment, splits
+   `total - sweep budget`, and calls `coin::send_funds<SUI>` to deposit the
+   split amount into the writer's address balance. The small gas remainder is
+   below the re-sweep threshold.
+4. Refuse to start when the address balance is below one notifier gas budget.
+5. Seed and refresh `ika_sui_connector_gas_coin_balance` every 60 seconds from
+   the address balance. The historical metric name is retained for dashboard
+   compatibility.
 
-## Preconditions and rollout
+## Preconditions
 
-- Sui protocol flags `enable_accumulators` + `enable_address_balance_gas_payments`:
-  testnet since protocol 108, mainnet since 124, localnets at max version.
-- The notifier address must hold SUI in its ADDRESS BALANCE — funded either
-  by the automatic boot sweep of its existing coin objects (above) or by an
-  explicit balance deposit (plain coin transfers do not fund it). Each
-  submission reserves the full gas budget from the balance for its validity
-  window; the writer submits serially, so one budget of headroom suffices,
-  plus float.
-- Default OFF. The intended rollout is a testnet canary of the flag before
-  any mainnet use; the gas-coin path stays the default until then.
+- Sui must enable `enable_accumulators` and
+  `enable_address_balance_gas_payments`.
+- The notifier address must hold enough SUI in its address balance. Plain coin
+  transfers create coin objects; the boot sweep or an explicit balance deposit
+  moves those funds into the address balance.
+- The writer submits serially. One gas budget is the minimum startup threshold;
+  operators should maintain additional float.
 
-## Key invariants
+## Invariants
 
-1. With the flag off, byte-identical behavior to the pre-SIP-58 writer.
-2. With the flag on, no transaction ever references a gas object — node-view
-   staleness cannot invalidate a submission.
-3. Every balance-gas transaction is replay-protected
-   (`TransactionExpiration::is_replay_protected`), pinned to the exact chain,
-   and unique per (inputs, epoch window, nonce).
-4. Reimbursement funds are never burned or stranded in either mode: merged
-   into the gas coin (coin mode) or transferred to the writer address
-   (balance mode).
+1. Ordinary notifier transactions never reference a gas object, so a lagging
+   fullnode cannot invalidate them through a stale gas-object version.
+2. Every notifier transaction is replay-protected, pinned to the exact chain,
+   and unique for its inputs, epoch window, and nonce.
+3. Reimbursement funds are transferred to the writer and remain recoverable by
+   the boot sweep.
+4. The only gas-coin transaction is the migration sweep itself, which is needed
+   to move pre-existing coin objects into the mandatory address balance.

@@ -119,7 +119,7 @@ pub fn move_object_contents(object: &Object) -> Option<&[u8]> {
 }
 
 /// Lean view of a single dynamic-field entry. Independent of any specific
-/// transport encoding (proto, JSON-RPC, anemo) so that consumers don't bind
+/// transport encoding (proto or anemo) so that consumers don't bind
 /// to one source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicFieldEntry {
@@ -240,19 +240,19 @@ pub struct SuiFundsBreakdown {
 /// The notifier's **writer** surface — building and submitting transactions.
 /// Kept separate from [`SuiTransport`] because only a node with a direct Sui
 /// uplink can do these: a read-only relay/peer transport never implements them.
-/// `get_reference_gas_price` and `list_owned_gas_coins` live here too — they
-/// exist only to *build* transactions (gas price + gas-coin selection), so they
-/// share the writer's "needs a direct uplink" constraint rather than being
-/// general reads. Implemented only by [`crate::grpc::SuiGrpcClient`]; a
+/// `get_reference_gas_price` and `list_owned_gas_coins` live here too. Gas
+/// price is required for balance-gas transactions; owned gas coins are read
+/// only by the boot-time migration sweep. Both share the writer's "needs a
+/// direct uplink" constraint rather than being general reads. Implemented only
+/// by [`crate::grpc::SuiGrpcClient`]; a
 /// gRPC-backed `SuiClient` carries one when (and only when) it was opened
 /// against a direct fullnode.
 #[async_trait]
 pub trait SuiWriter: Send + Sync {
     async fn get_reference_gas_price(&self) -> Result<u64, TransportError>;
-    /// Owned SUI gas-coin object refs for `address`. Mirrors the JSON-RPC
-    /// `get_gas_objects` selection: filters owned objects to the SUI `GasCoin`
-    /// struct type and returns their `ObjectRef`s. Used to pick gas for
-    /// transaction submission.
+    /// Owned SUI gas-coin object refs for `address`. Filters owned objects to the SUI `GasCoin`
+    /// struct type and returns their `ObjectRef`s for the boot-time migration
+    /// sweep into the address balance.
     async fn list_owned_gas_coins(
         &self,
         address: SuiAddress,

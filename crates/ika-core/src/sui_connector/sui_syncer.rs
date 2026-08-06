@@ -1,16 +1,13 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! The SuiSyncer module handles synchronizing Events emitted
-//! on the Sui blockchain from concerned modules of `ika_system` package.
+//! Synchronizes Ika state from Sui.
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
-use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
-use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use crate::validator_metadata::OffChainAssemblyMissingReason;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
-use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
+use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
@@ -23,17 +20,14 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::sui::{
     DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner, SystemInnerTrait,
 };
-use mysten_metrics::spawn_logged_monitored_task;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use sui_types::base_types::ObjectID;
-use sui_types::{Identifier, event::EventID};
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::{
-    sync::Notify,
     task::JoinHandle,
     time::{self, Duration},
 };
@@ -41,9 +35,6 @@ use tracing::{debug, error, info, warn};
 
 pub struct SuiSyncer<C> {
     sui_client: Arc<SuiClient<C>>,
-    // The last transaction that the syncer has fully processed.
-    // Syncer will resume posting this transaction (i.e., exclusive) when it starts.
-    modules: Vec<Identifier>,
     metrics: Arc<SuiConnectorMetrics>,
 }
 
@@ -194,21 +185,15 @@ impl<C> SuiSyncer<C>
 where
     C: SuiClientInner + 'static,
 {
-    pub fn new(
-        sui_client: Arc<SuiClient<C>>,
-        modules: Vec<Identifier>,
-        metrics: Arc<SuiConnectorMetrics>,
-    ) -> Self {
+    pub fn new(sui_client: Arc<SuiClient<C>>, metrics: Arc<SuiConnectorMetrics>) -> Self {
         Self {
             sui_client,
-            modules,
             metrics,
         }
     }
 
     pub async fn run(
         self,
-        query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
         current_epoch_mpc_keys_sender: Sender<
@@ -218,24 +203,14 @@ where
             Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
         >,
         mode: NodeMode,
-        // When `true` (protocol v≤3, OCS off), this syncer runs the legacy
-        // JSON-RPC event-ingestion path (`run_event_listening_task` +
-        // `sync_uncompleted_events`). When `false` (v4, OCS on), the
-        // `BagEventPump` feeds the MPC engine instead and these tasks are
-        // skipped. The two event senders are `None` in the latter case
-        // because they are handed to the pump (and `watch::Sender` is not
-        // `Clone`, so they can only belong to one path).
-        run_legacy_event_ingestion: bool,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_requests_sender: Option<tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>>,
         end_of_publish_sender: Sender<Option<u64>>,
         dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
-        uncompleted_requests_sender: Option<Sender<(Vec<DWalletSessionRequest>, EpochId)>>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
@@ -253,7 +228,7 @@ where
         >,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!(?mode, "Starting SuiSyncer");
-        let mut task_handles = vec![];
+        let task_handles = vec![];
         let sui_client_clone = self.sui_client.clone();
 
         // All modes need network keys (for mid-epoch reconfiguration)
@@ -297,67 +272,6 @@ where
                 dwallet_coordinator_object_receiver.clone(),
                 last_session_to_complete_in_current_epoch_sender,
             ));
-            // Legacy (v≤3) uncompleted-events poller. Under v4 the
-            // BagEventPump emits the recovery snapshot instead.
-            if run_legacy_event_ingestion
-                && let Some(uncompleted_requests_sender) = uncompleted_requests_sender
-            {
-                info!("Syncing uncompleted events");
-                tokio::spawn(Self::sync_uncompleted_events(
-                    sui_client_clone,
-                    dwallet_coordinator_object_receiver.clone(),
-                    system_object_receiver.clone(),
-                    uncompleted_requests_sender,
-                    self.metrics.clone(),
-                ));
-            }
-        }
-
-        // Legacy (v≤3) event listening: validators poll Sui events over
-        // JSON-RPC to drive MPC sessions. Under v4 the BagEventPump replaces
-        // this, so the block is skipped and `new_requests_sender` is `None`
-        // (it was handed to the pump instead).
-        if run_legacy_event_ingestion && mode.is_validator() {
-            let new_requests_sender = new_requests_sender
-                .expect("run_legacy_event_ingestion implies new_requests_sender is Some");
-            let ika_dwallet_2pc_mpc_package_id = self
-                .sui_client
-                .ika_network_config
-                .packages
-                .ika_dwallet_2pc_mpc_package_id;
-            let ika_dwallet_2pc_mpc_package_id_v2 = self
-                .sui_client
-                .ika_network_config
-                .packages
-                .ika_dwallet_2pc_mpc_package_id_v2;
-            let mut package_ids = vec![ika_dwallet_2pc_mpc_package_id];
-            if let Some(ika_dwallet_2pc_mpc_package_id_v2) = ika_dwallet_2pc_mpc_package_id_v2 {
-                package_ids.push(ika_dwallet_2pc_mpc_package_id_v2);
-            }
-            for package_id in package_ids {
-                for module in self.modules.clone() {
-                    let metrics = self.metrics.clone();
-                    let sui_client_clone = self.sui_client.clone();
-                    let new_requests_sender_clone = new_requests_sender.clone();
-                    let system_object_receiver_clone = system_object_receiver.clone();
-                    task_handles.push(spawn_logged_monitored_task!(
-                        Self::run_event_listening_task(
-                            system_object_receiver_clone,
-                            module,
-                            package_id,
-                            sui_client_clone,
-                            query_interval,
-                            metrics,
-                            new_requests_sender_clone,
-                        )
-                    ));
-                }
-            }
-        } else {
-            info!(
-                ?mode,
-                run_legacy_event_ingestion, "Skipping legacy event listening task"
-            );
         }
 
         Ok(task_handles)
@@ -396,100 +310,6 @@ where
                 )
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    }
-
-    async fn sync_uncompleted_events(
-        sui_client: Arc<SuiClient<C>>,
-        dwallet_coordinator_object_receiver: Receiver<
-            Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
-        >,
-        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
-        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
-        metrics: Arc<SuiConnectorMetrics>,
-    ) {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        loop {
-            let Some((_, coordinator_inner)) = dwallet_coordinator_object_receiver
-                .borrow()
-                .as_ref()
-                .cloned()
-            else {
-                warn!("DWalletCoordinator object not available, retrying...");
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            };
-
-            match sui_client
-                .pull_dwallet_mpc_uncompleted_events(&coordinator_inner)
-                .await
-            {
-                Ok((events, epoch)) => {
-                    // Expose the backlog as a single gauge so operators can see "chain
-                    // has N uncompleted sessions from this validator's perspective" at
-                    // a glance.
-                    metrics.uncompleted_events_backlog.set(events.len() as i64);
-                    let requests = events.iter().filter_map(|event| {
-                        debug!(
-                            event_type=?event.type_.clone(),
-                            current_epoch=?epoch,
-                            contents=?event.contents.clone(),
-                            "Processing an uncompleted event from Sui"
-                        );
-
-                        match sui_event_into_session_request(
-                            &sui_client.ika_network_config,
-                            event.type_.clone(),
-                            &event.contents,
-                            true,
-                        ) {
-                            Ok(Some(event)) => {
-                                Some(event)
-                            }
-                            Ok(None) => None,
-                            Err(e) => {
-                                error!(error=?e, event_type =? event.type_, "failed to parse Sui event");
-                                None
-                            }
-                        }
-                    }).collect::<Vec<_>>();
-
-                    if let Err(err) = uncompleted_requests_sender.send((requests, epoch)) {
-                        error!(
-                            error=?err,
-                            current_epoch=?epoch,
-                            "failed to send uncompleted events to the channel"
-                        );
-                    };
-                }
-                Err(err) => {
-                    warn!(
-                        error=?err,
-                         "failed to load missed events from Sui"
-                    );
-                }
-            }
-            // Epoch-scale the re-poll so a restarted validator re-discovers
-            // in-flight session requests (system + reconfiguration) fast
-            // enough to drive them to completion before the epoch's
-            // end-of-publish window. Without this, a mid-epoch restart at a
-            // short epoch leaves those sessions `WaitingForSessionRequest`
-            // (never re-advanced) and the epoch can't advance. A no-op at
-            // production epoch lengths (clamps back to 30s). Mirrors the
-            // epoch-scaling already done by `sync_next_committee`.
-            let epoch_duration_ms = system_object_receiver
-                .borrow()
-                .as_ref()
-                .map(|(_, system_inner)| system_inner.epoch_duration_ms());
-            let poll_interval = epoch_duration_ms
-                .map(|ms| {
-                    crate::validator_metadata::epoch_scaled_poll_interval(
-                        ms,
-                        Duration::from_secs(30),
-                    )
-                })
-                .unwrap_or(Duration::from_secs(30));
-            tokio::time::sleep(poll_interval).await;
         }
     }
 
@@ -1796,127 +1616,6 @@ where
                 if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
                     error!(error=?err, "failed to send end of publish epoch to the channel");
                 }
-            }
-        }
-    }
-
-    async fn run_event_listening_task(
-        // The module where interested events are defined.
-        // Module is always of ika system package.
-        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
-        module: Identifier,
-        package_id: ObjectID,
-        sui_client: Arc<SuiClient<C>>,
-        query_interval: Duration,
-        metrics: Arc<SuiConnectorMetrics>,
-        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
-    ) {
-        info!(?module, "Starting sui events listening task");
-        let mut interval = time::interval(query_interval);
-        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-
-        // Create a task to update metrics
-        let notify = Arc::new(Notify::new());
-        let notify_clone = notify.clone();
-        let sui_client_clone = sui_client.clone();
-        let last_synced_sui_checkpoints_metric = metrics
-            .last_synced_sui_checkpoints
-            .with_label_values(&[&module.to_string()]);
-        spawn_logged_monitored_task!(async move {
-            loop {
-                notify_clone.notified().await;
-                let Ok(Ok(latest_checkpoint_sequence_number)) = retry_with_max_elapsed_time!(
-                    sui_client_clone.get_latest_checkpoint_sequence_number(),
-                    Duration::from_secs(120)
-                ) else {
-                    error!(
-                        "failed to query the latest checkpoint sequence number from the sui client after retry"
-                    );
-                    continue;
-                };
-                last_synced_sui_checkpoints_metric.set(latest_checkpoint_sequence_number as i64);
-            }
-        });
-        let mut cursor: Option<EventID> = None;
-        let mut start_epoch_cursor: Option<EventID> = None;
-        let mut loop_index: usize = 0;
-        loop {
-            // Fetching the epoch start TX digest less frequently
-            // as it is unexpected to change often.
-            if loop_index.is_multiple_of(10) {
-                debug!("Querying epoch start cursor from Sui");
-                let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned()
-                else {
-                    warn!("System object not available, retrying...");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    continue;
-                };
-                let SystemInner::V1(system_inner) = system_inner;
-                let Ok(epoch_start_tx_digest) = system_inner.epoch_start_tx_digest.try_into()
-                else {
-                    // This should not happen, but if it does, we need to know about it.
-                    error!("cloud not parse `epoch_start_tx_digest` - wrong length");
-                    continue;
-                };
-                let start_epoch_event = EventID::from((epoch_start_tx_digest, 0));
-                if start_epoch_cursor != Some(start_epoch_event) {
-                    start_epoch_cursor = Some(start_epoch_event);
-                    cursor = start_epoch_cursor;
-                }
-            }
-            loop_index += 1;
-
-            interval.tick().await;
-            let Ok(Ok(events)) = retry_with_max_elapsed_time!(
-                sui_client.query_events_by_module(module.clone(), package_id, cursor),
-                Duration::from_secs(120)
-            ) else {
-                // todo(zeev): alert.
-                warn!("sui client failed to query events from the sui network — retrying");
-                continue;
-            };
-
-            let len = events.data.len();
-            if len != 0 {
-                if !events.has_next_page {
-                    // If this is the last page, it means we have processed all
-                    // events up to the latest checkpoint
-                    // We can then update the latest checkpoint metric.
-                    notify.notify_one();
-                }
-
-                let requests = events
-                    .data
-                    .iter()
-                    .filter_map(|event| {
-                        match sui_event_into_session_request(
-                            &sui_client.ika_network_config,
-                            event.type_.clone(),
-                            event.bcs.bytes(),
-                            false,
-                        ) {
-                            Ok(Some(request)) => Some(request),
-                            Ok(None) => None,
-                            Err(e) => {
-                                error!(error=?e, ?module, event_type =? event.type_, "failed to parse Sui event");
-                                None
-                            }
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                if let Err(e) = new_requests_sender.send(requests) {
-                    error!(error=?e, ?module, "failed to send new events to the channel");
-                }
-
-                if let Some(next) = events.next_cursor {
-                    cursor = Some(next);
-                }
-                info!(
-                    ?module,
-                    ?cursor,
-                    "Observed {len} new events from Sui network"
-                );
             }
         }
     }

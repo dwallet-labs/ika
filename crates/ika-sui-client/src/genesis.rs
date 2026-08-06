@@ -33,7 +33,7 @@ use fastcrypto::encoding::{Base58, Encoding};
 use ika_config::node::SuiChainIdentifier;
 use ika_types::digests::ChainIdentifier;
 use sui_config::genesis::Genesis;
-use sui_rpc_api::Client as SuiRpcClient;
+use sui_rpc_api::Client as SuiGrpcClient;
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::committee::Committee;
 use sui_types::digests::{
@@ -115,7 +115,7 @@ pub fn load_and_verify_sui_genesis(
 /// summary→contents→effects→objects binding rejects internally-inconsistent
 /// blobs on every chain.
 pub async fn fetch_genesis_blob(grpc_url: &str) -> Result<Genesis, GenesisError> {
-    let mut client = SuiRpcClient::new(grpc_url).map_err(|e| GenesisError::Fetch {
+    let mut client = SuiGrpcClient::new(grpc_url).map_err(|e| GenesisError::Fetch {
         url: grpc_url.to_string(),
         detail: format!("connect: {e}"),
     })?;

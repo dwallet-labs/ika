@@ -3,10 +3,8 @@
 
 //! End-to-end SIP-58 address-balance gas on the writer path.
 //!
-//! The cluster boots with `notifier_gas_from_address_balance` enabled. The
-//! notifier's funding arrives as ordinary coin objects (the exact state of a
-//! production notifier when the flag is first flipped), so this drives the
-//! whole flag-on contract for real, against a live Sui localnet running at
+//! The notifier's funding arrives as ordinary coin objects, so this drives the
+//! address-balance contract for real against a live Sui localnet running at
 //! max protocol version (address-balance gas enabled):
 //!
 //! - boot: chain-identifier resolution, funds read, the automatic migration
@@ -38,7 +36,6 @@ async fn epochs_close_with_notifier_on_address_balance_gas() {
     let cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(30_000)
-        .with_notifier_gas_from_address_balance()
         .build()
         .await
         .expect(

@@ -198,8 +198,7 @@ fn parse_object_id(s: &str) -> Result<ObjectID, TransportError> {
 fn convert_dynamic_field(
     proto: proto::DynamicField,
 ) -> Result<Option<DynamicFieldEntry>, TransportError> {
-    // Match JSON-RPC `get_dynamic_fields` `object_id` semantics: for a dynamic
-    // *object* field (ObjectTable/ObjectBag) the resolved id is the wrapped
+    // For a dynamic *object* field (ObjectTable/ObjectBag), the resolved id is the wrapped
     // value object (`child_id`), not the `Field<K, ID>` wrapper (`field_id`).
     // Consumers that decode a bare value (e.g. the network encryption keys
     // ObjectTable) need the value object; plain dynamic fields (table-vec

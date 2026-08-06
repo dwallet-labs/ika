@@ -3,10 +3,8 @@
 
 //! gRPC implementation of [`SuiClientInner`].
 //!
-//! Mirrors the Ika-domain decode/aggregate logic of the JSON-RPC
-//! `impl SuiClientInner for SuiSdkClient` (in `lib.rs`) but reads/writes
-//! Sui exclusively over the gRPC [`SuiTransport`] surface. Used in OCS
-//! mode where the node must not depend on the JSON-RPC fullnode API.
+//! Implements the Ika-domain decode/aggregate logic over the gRPC
+//! [`SuiTransport`] surface.
 //!
 //! Object reads return BCS by pulling the Move object's `contents()`.
 //! Versioned-inner reads derive the dynamic-field child id deterministically
@@ -21,26 +19,23 @@ use ika_config::node::SuiGrpcHeaders;
 use ika_types::error::IkaError;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
-    DBSuiEvent, DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyData,
 };
 use ika_types::sui::Validator;
 use ika_types::sui::staking::StakingPool;
 use ika_types::sui::system_inner_v1::DWalletCoordinatorInnerV1;
 use itertools::Itertools;
-use sui_json_rpc_types::{
-    EventFilter, EventPage, SuiTransactionBlockEffects, SuiTransactionBlockResponse,
-};
 use sui_types::base_types::{EpochId, ObjectID, ObjectRef, SuiAddress};
 use sui_types::collection_types::Table;
 use sui_types::dynamic_field::Field;
-use sui_types::event::EventID;
 use sui_types::object::{Object, Owner};
 use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
 
 use crate::SuiClientInner;
 use crate::grpc::SuiGrpcClient;
 use crate::transport::{
-    SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by,
+    SubmittedTransaction, SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
+    dynamic_field_child_owned_by,
 };
 use sui_types::digests::ChainIdentifier as SuiNetworkChainIdentifier;
 
@@ -65,7 +60,7 @@ impl GrpcSuiClientError {
 
 pub struct GrpcSuiClient {
     transport: std::sync::Arc<dyn SuiTransport>,
-    /// Writer uplink: gas price, gas-coin selection, and transaction
+    /// Writer uplink: gas price, migration-sweep coin reads, and transaction
     /// submission. `Some` only when this client was opened against a direct
     /// fullnode (`new`); `None` on a read-only node built over a relay
     /// transport (`with_transport`). Writes are notifier-gated to a direct
@@ -103,8 +98,8 @@ impl GrpcSuiClient {
     }
 
     /// The writer uplink, or a clear error on a read-only node. Transaction
-    /// building/submission (and the gas-price / gas-coin reads that only serve
-    /// it) are notifier-gated to a direct fullnode connection.
+    /// building/submission (and the migration-sweep reads that serve it) are
+    /// notifier-gated to a direct fullnode connection.
     fn writer(&self) -> Result<&std::sync::Arc<dyn SuiWriter>, TransportError> {
         self.writer.as_ref().ok_or_else(|| {
             TransportError::Network(
@@ -139,7 +134,7 @@ impl GrpcSuiClient {
 
     /// Walk every dynamic field of `parent`, fetch each child object, and
     /// hand its `(object_id, bcs_contents)` to `handle`. Reproduces the
-    /// paginated table walk the JSON-RPC backend performs. Children are
+    /// paginated table walk. Children are
     /// fetched one batch round-trip per page rather than one per entry —
     /// on the relay transport a page is one RPC instead of `page.len()`.
     async fn for_each_dynamic_child<F>(
@@ -204,20 +199,6 @@ fn move_object_contents(object: &Object, id: ObjectID) -> Result<Vec<u8>, GrpcSu
 #[async_trait]
 impl SuiClientInner for GrpcSuiClient {
     type Error = GrpcSuiClientError;
-
-    /// Unsupported on the gRPC backend. OCS mode ingests events via the
-    /// `BagEventPump`, never `query_events`, so this is never reached there.
-    async fn query_events(
-        &self,
-        _query: EventFilter,
-        _cursor: Option<EventID>,
-    ) -> Result<EventPage, Self::Error> {
-        Err(GrpcSuiClientError::Other(
-            "query_events is unsupported on the gRPC backend; OCS mode \
-             ingests events via BagEventPump"
-                .into(),
-        ))
-    }
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
         Ok(self.transport.get_chain_identifier().await?)
@@ -294,27 +275,6 @@ impl SuiClientInner for GrpcSuiClient {
         dwallet_coordinator_id: ObjectID,
     ) -> Result<Vec<u8>, Self::Error> {
         self.object_bcs(dwallet_coordinator_id).await
-    }
-
-    /// Unsupported on the gRPC backend: OCS ingests session events via the
-    /// `BagEventPump` (`verified_dynamic_fields_page`), which binds every entry to its
-    /// parent bag (spec invariant 5). The recovery walk this replaced read each
-    /// entry with an inclusion-only `get_object` and SKIPPED that
-    /// collection-membership binding, so a relay could have injected a
-    /// validly-proven event from a foreign bag. It was already dead here — the
-    /// only caller runs solely on the legacy JSON-RPC path (`reader.is_none()`),
-    /// which dispatches to the JSON-RPC backend, never this one — so erroring
-    /// kills the latent footgun: an accidental future wiring fails loudly rather
-    /// than ingesting collection-unbound events. Mirrors `query_events`.
-    async fn get_uncompleted_events(
-        &self,
-        _coordinator_events_bag_id: ObjectID,
-    ) -> Result<Vec<DBSuiEvent>, Self::Error> {
-        Err(GrpcSuiClientError::Other(
-            "get_uncompleted_events is unsupported on the gRPC backend; OCS mode \
-             ingests events via BagEventPump (which binds each entry to its bag)"
-                .into(),
-        ))
     }
 
     async fn get_mpc_data_from_validators_pool(
@@ -544,34 +504,23 @@ impl SuiClientInner for GrpcSuiClient {
         _ika_package_id: ObjectID,
         _ika_system_package_id: ObjectID,
     ) -> Result<Vec<(ObjectID, MovePackageDigest)>, Self::Error> {
-        // Matches the JSON-RPC backend: this returns an empty set today.
+        // No available package discovery is implemented today.
         Ok(vec![])
     }
 
     async fn execute_transaction_block_with_effects(
         &self,
         tx: Transaction,
-    ) -> Result<SuiTransactionBlockResponse, IkaError> {
+    ) -> Result<SubmittedTransaction, IkaError> {
         let tx_digest = *tx.digest();
-        let executed = self
+        let submitted = self
             .writer()
             .map_err(|e| IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string()))?
             .execute_transaction(&tx)
             .await
             .map_err(|e| IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string()))?;
 
-        let effects = SuiTransactionBlockEffects::try_from(executed.effects).map_err(|e| {
-            IkaError::SuiClientTxFailureGeneric(
-                tx_digest,
-                format!("can't convert transaction effects: {e}"),
-            )
-        })?;
-
-        Ok(SuiTransactionBlockResponse {
-            digest: tx_digest,
-            effects: Some(effects),
-            ..Default::default()
-        })
+        Ok(submitted)
     }
 
     async fn get_gas_objects(&self, address: SuiAddress) -> Vec<ObjectRef> {

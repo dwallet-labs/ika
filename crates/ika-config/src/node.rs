@@ -190,16 +190,16 @@ impl fmt::Display for NodeMode {
     }
 }
 
-pub fn get_testing_sui_fullnode_rpc_url() -> String {
-    std::env::var("SUI_FULLNODE_RPC_URL")
-        .unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string())
+pub fn get_testing_sui_fullnode_grpc_url() -> String {
+    std::env::var("SUI_FULLNODE_GRPC_URL")
+        .unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FULLNODE_GRPC_URL.to_string())
 }
 
 pub fn get_testing_sui_faucet_url() -> String {
     std::env::var("SUI_FAUCET_URL").unwrap_or_else(|_| LOCAL_DEFAULT_SUI_FAUCET_URL.to_string())
 }
 
-pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "http://127.0.0.1:9000";
+pub const LOCAL_DEFAULT_SUI_FULLNODE_GRPC_URL: &str = "http://127.0.0.1:9000";
 pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "http://127.0.0.1:9123/gas";
 
 #[serde_as]
@@ -563,21 +563,9 @@ pub fn resolve_sui_checkpoint_archive(
     })
 }
 
-/// The Sui read-transport a node boots, decided by [`select_sui_transport`]
-/// purely from config shape + role — never from chain state, so a protocol
-/// flag can't halt running validators en masse at an upgrade boundary.
+/// The Sui read transport a node boots, decided by [`select_sui_transport`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuiTransportPlan {
-    /// Old-style config (no `sui-data-source`), any role: the deprecated
-    /// JSON-RPC path — the 1.1.8 behavior the config shape used to select.
-    /// A binary upgrade must not change a node's transport under an
-    /// unchanged config (an endpoint that serves JSON-RPC need not serve
-    /// Sui gRPC, and for a notifier that mismatch surfaces as a
-    /// network-wide epoch-advance stall); moving to gRPC is an explicit
-    /// config migration (`sui-data-source`). Also the only path serving
-    /// `query_events`, which a validator needs for MPC event ingestion.
-    /// Sui is sunsetting JSON-RPC.
-    LegacyJsonRpc,
     /// `sui-state-mirrored` with no `fallback-grpc-url`: the node has no direct
     /// Sui uplink, so every read crosses the verified OCS relay.
     PeerOnlyRelay,
@@ -586,115 +574,63 @@ pub enum SuiTransportPlan {
     Grpc,
 }
 
-/// Decide the Sui read-transport from a node's config shape and role, rejecting
-/// the invalid combinations. Pure so it can be exhaustively unit-tested; the
-/// `ika-node` boot path executes the returned plan (build the client, stand up
-/// the relay, …).
+/// Decide the Sui read transport from the configured data source and role,
+/// rejecting invalid combinations. Pure so it can be exhaustively unit-tested;
+/// the `ika-node` boot path executes the returned plan.
 ///
-/// The choice keys off the SHAPE of the node's own config, never off chain
-/// state — both read paths consume the same on-chain state, and transport must
-/// stay node-local so a protocol flag can't halt running validators at an
-/// upgrade boundary. Inputs:
-/// - `data_source`: the `sui-data-source` section, if present (new-style).
-/// - `sui_rpc_url_present`: whether the legacy `sui-rpc-url` field is set. Only
-///   consulted on an old-style config; ignored (but loggable) once
-///   `data_source` is present.
 /// - `has_anchor`: whether a Sui trust anchor is configured (enables OCS).
 /// - `mode`: the node's role. A validator runs MPC and needs a Sui event
 ///   source; a notifier submits transactions; a fullnode does neither.
 pub fn select_sui_transport(
-    data_source: Option<&SuiDataSource>,
-    sui_rpc_url_present: bool,
+    data_source: &SuiDataSource,
     has_anchor: bool,
     mode: NodeMode,
 ) -> Result<SuiTransportPlan, String> {
-    match data_source {
-        // Old-style config (no `sui-data-source` section).
-        None => {
-            if !sui_rpc_url_present {
-                // No endpoint at all — fail closed rather than guess.
-                return Err(
-                    "no Sui endpoint configured: set `sui-data-source` (gRPC; the \
-                     supported path) — the legacy `sui-rpc-url` field alone selects the \
-                     deprecated JSON-RPC path"
-                        .to_string(),
-                );
-            }
-            if has_anchor {
-                return Err(
-                    "a Sui trust anchor is configured but `sui-data-source` is not; the \
-                     anchor-verified OCS path runs over gRPC — add a sui-data-source section"
-                        .to_string(),
-                );
-            }
-            // Every role keeps the JSON-RPC path the same config selected on
-            // 1.1.8: a binary upgrade must not silently change a node's
-            // transport (`sui-rpc-url` endpoints are not guaranteed to serve
-            // Sui gRPC — many managed providers don't — and for the notifier,
-            // the sole submitter of checkpoints and advance_epoch, a soft
-            // gRPC failure is a network-wide epoch-advance stall). Moving to
-            // gRPC is an explicit migration: add `sui-data-source`. The
-            // JSON-RPC backend serves every role's needs, as on 1.1.8:
-            // `query_events` for validator MPC ingestion, quorum-driver
-            // submission for the notifier.
-            Ok(SuiTransportPlan::LegacyJsonRpc)
-        }
-        // New-style config (`sui-data-source` present): all Sui I/O over gRPC.
-        Some(source) => {
-            if mode.is_validator() && !has_anchor {
-                return Err(
-                    "`sui-data-source` is set but no Sui trust anchor is configured: a \
-                     validator on the gRPC path has no MPC event source without one (no JSON-RPC \
-                     `query_events`, and the verified BagEventPump requires the committee chain); \
-                     configure sui_genesis"
-                        .to_string(),
-                );
-            }
-            // A notifier is the only role that submits transactions. Peer-only
-            // (`sui-state-mirrored` with no fallback) has no direct Sui uplink:
-            // its relayed submission path returns *unverified* effects bytes, so
-            // the design assumes notifiers never run peer-only. Enforce it here
-            // rather than let a misconfigured notifier submit through that path.
-            if mode.is_notifier()
-                && matches!(
-                    source,
-                    SuiDataSource::SuiStateMirrored {
-                        fallback_grpc_url: None,
-                        ..
-                    }
-                )
-            {
-                return Err(
-                    "a notifier is configured peer-only (`sui-state-mirrored` with no \
-                     `fallback-grpc-url`), but a notifier submits transactions and a peer-only \
-                     node has no direct Sui uplink — its relayed submission returns unverified \
-                     effects; set `fallback-grpc-url`, or use `sui-state-direct`"
-                        .to_string(),
-                );
-            }
-            if matches!(
-                source,
-                SuiDataSource::SuiStateMirrored {
-                    fallback_grpc_url: None,
-                    headers,
-                } if !headers.is_empty()
-            ) {
-                return Err(
-                    "gRPC headers are configured on a peer-only `sui-state-mirrored` source, but \
-                     it has no direct endpoint to receive them; remove `headers` or configure \
-                     `fallback-grpc-url`"
-                        .to_string(),
-                );
-            }
-            Ok(match source {
-                SuiDataSource::SuiStateMirrored {
-                    fallback_grpc_url: None,
-                    ..
-                } => SuiTransportPlan::PeerOnlyRelay,
-                _ => SuiTransportPlan::Grpc,
-            })
-        }
+    if mode.is_validator() && !has_anchor {
+        return Err(
+            "no Sui trust anchor is configured: a validator needs the verified \
+             BagEventPump as its MPC event source; configure sui_genesis"
+                .to_string(),
+        );
     }
+    if mode.is_notifier()
+        && matches!(
+            data_source,
+            SuiDataSource::SuiStateMirrored {
+                fallback_grpc_url: None,
+                ..
+            }
+        )
+    {
+        return Err(
+            "a notifier is configured peer-only (`sui-state-mirrored` with no \
+             `fallback-grpc-url`), but a notifier submits transactions and a peer-only \
+             node has no direct Sui uplink — its relayed submission returns unverified \
+             effects; set `fallback-grpc-url`, or use `sui-state-direct`"
+                .to_string(),
+        );
+    }
+    if matches!(
+        data_source,
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: None,
+            headers,
+        } if !headers.is_empty()
+    ) {
+        return Err(
+            "gRPC headers are configured on a peer-only `sui-state-mirrored` source, but \
+             it has no direct endpoint to receive them; remove `headers` or configure \
+             `fallback-grpc-url`"
+                .to_string(),
+        );
+    }
+    Ok(match data_source {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: None,
+            ..
+        } => SuiTransportPlan::PeerOnlyRelay,
+        _ => SuiTransportPlan::Grpc,
+    })
 }
 
 /// One `sui-state-mirror-peers` entry: a bare hex-encoded anemo peer id (the
@@ -754,23 +690,10 @@ impl From<String> for SuiStateMirrorPeer {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SuiConnectorConfig {
-    /// Legacy JSON-RPC url of a Sui fullnode (old-style configs). Ignored
-    /// whenever [`SuiConnectorConfig::sui_data_source`] is present, and
-    /// optional so a migrated config can DROP this field entirely. At least
-    /// one of the two must be set; a config with neither has no Sui endpoint
-    /// and is rejected at startup.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sui_rpc_url: Option<String>,
-    /// Source of Sui state and tx-submission for this node — the new-style
-    /// gRPC config that replaces `sui_rpc_url`. Its PRESENCE is what selects
-    /// the read path: a config without it is an old-style (pre-OCS) config,
-    /// and a validator on one keeps the DEPRECATED legacy JSON-RPC path
-    /// (Sui is sunsetting JSON-RPC — migrate by adding this section plus a
-    /// trust anchor). When present, all Sui I/O runs over gRPC and a
-    /// validator must also configure a trust anchor (its MPC event source on
-    /// this path is the anchor-verified `BagEventPump`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sui_data_source: Option<SuiDataSource>,
+    /// Source of Sui state and transaction submission. All direct Sui I/O uses
+    /// gRPC. Validators must also configure a trust anchor because their MPC
+    /// event source is the anchor-verified `BagEventPump`.
+    pub sui_data_source: SuiDataSource,
     /// Optional pinned override of the peers used for `SuiStateMirror` reads.
     /// If empty when reading over the mirror (`SuiDataSource::SuiStateMirrored`),
     /// the connector will try every connected peer (relying on those that
@@ -875,27 +798,6 @@ pub struct SuiConnectorConfig {
     /// Path of the file where sui client key (any SuiKeyPair) is stored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notifier_client_key_pair: Option<KeyPairWithPath>,
-
-    /// Pay the notifier's gas from its SUI **Address Balance** (SIP-58)
-    /// instead of owned gas-coin objects. Submissions then carry no gas
-    /// `ObjectRef` at all (`ValidDuring` expiration, empty gas payment), which
-    /// removes the whole class of stale-gas-version wedges the coin path
-    /// fights: the transaction is valid regardless of how far this node's
-    /// fullnode view lags.
-    ///
-    /// Requirements before enabling:
-    /// - The target Sui network must have address-balance gas payments
-    ///   enabled (Sui protocol >= 108 on testnet, >= 124 on mainnet; always
-    ///   on for localnets at max version).
-    /// - The notifier address must hold its SUI in the ADDRESS BALANCE, not
-    ///   (only) in coin objects — deposit via the Sui CLI/SDK balance
-    ///   transfer. Each submission reserves the full gas budget from the
-    ///   balance for the transaction's validity window.
-    ///
-    /// Default `false`: the gas-coin path remains the production default
-    /// until this mode has been canaried on testnet.
-    #[serde(default)]
-    pub notifier_gas_from_address_balance: bool,
 
     /// Override the last processed EventID for sui module `ika_system`.
     /// When set, SuiSyncer will start from this cursor (exclusively) instead of the one in storage.
@@ -1580,14 +1482,11 @@ mod tests {
         }
     }
 
-    const ALL_MODES: [NodeMode; 3] = [NodeMode::Validator, NodeMode::Fullnode, NodeMode::Notifier];
-
     // ---- compiled-in on-chain ika identity resolution ----
 
     fn config_for_chain(chain: SuiChainIdentifier) -> SuiConnectorConfig {
         SuiConnectorConfig {
-            sui_rpc_url: None,
-            sui_data_source: Some(direct()),
+            sui_data_source: direct(),
             sui_state_mirror_peers: vec![],
             sui_genesis: None,
             sui_checkpoint_archive: None,
@@ -1602,7 +1501,6 @@ mod tests {
             ika_dwallet_coordinator_object_id: ObjectID::ZERO,
             verified_cache_retention_checkpoints: None,
             notifier_client_key_pair: None,
-            notifier_gas_from_address_balance: false,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
     }
@@ -2027,62 +1925,12 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
         }
     }
 
-    // ---- old-style config (no `sui-data-source`) ----
-
-    /// No endpoint at all is rejected before anything else — independent of
-    /// anchor/role, the operator gets the "no Sui endpoint" error.
-    #[test]
-    fn no_endpoint_is_rejected() {
-        for has_anchor in [false, true] {
-            for mode in ALL_MODES {
-                let err = select_sui_transport(None, false, has_anchor, mode).unwrap_err();
-                assert!(
-                    err.contains("no Sui endpoint configured"),
-                    "anchor={has_anchor} mode={mode}: {err}"
-                );
-            }
-        }
-    }
-
-    /// An old-style config (only `sui-rpc-url`, no anchor) keeps the
-    /// deprecated JSON-RPC path for EVERY role — the transport a 1.1.8 node
-    /// ran on that exact config. A binary upgrade must never flip transport
-    /// under an unchanged config (the endpoint may not serve Sui gRPC, and a
-    /// notifier failing softly on gRPC stalls epoch advance network-wide);
-    /// gRPC requires explicitly configuring `sui-data-source`.
-    #[test]
-    fn old_style_keeps_legacy_json_rpc_for_every_role() {
-        for mode in ALL_MODES {
-            assert_eq!(
-                select_sui_transport(None, true, false, mode),
-                Ok(SuiTransportPlan::LegacyJsonRpc),
-                "mode={mode}"
-            );
-        }
-    }
-
-    /// A trust anchor without a `sui-data-source` section is rejected (the
-    /// anchor-verified OCS path runs over gRPC) — for every role.
-    #[test]
-    fn anchor_without_data_source_is_rejected() {
-        for mode in ALL_MODES {
-            let err = select_sui_transport(None, true, true, mode).unwrap_err();
-            assert!(
-                err.contains("trust anchor is configured but `sui-data-source` is not"),
-                "mode={mode}: {err}"
-            );
-        }
-    }
-
-    // ---- new-style config (`sui-data-source` present) ----
-
     /// A validator on the gRPC path with no anchor has no MPC event source —
     /// rejected for every data-source variant.
     #[test]
-    fn new_style_validator_without_anchor_is_rejected() {
+    fn validator_without_anchor_is_rejected() {
         for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
-            let err =
-                select_sui_transport(Some(&source), false, false, NodeMode::Validator).unwrap_err();
+            let err = select_sui_transport(&source, false, NodeMode::Validator).unwrap_err();
             assert!(
                 err.contains("no Sui trust anchor is configured"),
                 "{source:?}: {err}"
@@ -2094,16 +1942,11 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
     #[test]
     fn direct_and_mirrored_with_fallback_use_grpc() {
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator),
+            select_sui_transport(&direct(), true, NodeMode::Validator),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(
-                Some(&mirrored_with_fallback()),
-                false,
-                true,
-                NodeMode::Validator
-            ),
+            select_sui_transport(&mirrored_with_fallback(), true, NodeMode::Validator),
             Ok(SuiTransportPlan::Grpc)
         );
     }
@@ -2113,11 +1956,11 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
     #[test]
     fn peer_only_uses_the_relay() {
         assert_eq!(
-            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Validator),
+            select_sui_transport(&peer_only_source(), true, NodeMode::Validator),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
         assert_eq!(
-            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Fullnode),
+            select_sui_transport(&peer_only_source(), true, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
     }
@@ -2131,7 +1974,7 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 SuiGrpcHeaderValue::FromEnv("SUI_GRPC_API_KEY".to_string()),
             )]),
         };
-        let err = select_sui_transport(Some(&source), false, true, NodeMode::Validator)
+        let err = select_sui_transport(&source, true, NodeMode::Validator)
             .expect_err("headers without a direct endpoint must fail closed");
         assert!(err.contains("no direct endpoint"), "{err}");
     }
@@ -2142,23 +1985,17 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
     /// direct) uplink is fine.
     #[test]
     fn a_notifier_configured_peer_only_is_rejected() {
-        let err = select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Notifier)
-            .unwrap_err();
+        let err = select_sui_transport(&peer_only_source(), true, NodeMode::Notifier).unwrap_err();
         assert!(
             err.contains("notifier") && err.contains("peer-only"),
             "{err}"
         );
         assert_eq!(
-            select_sui_transport(
-                Some(&mirrored_with_fallback()),
-                false,
-                true,
-                NodeMode::Notifier
-            ),
+            select_sui_transport(&mirrored_with_fallback(), true, NodeMode::Notifier),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, NodeMode::Notifier),
+            select_sui_transport(&direct(), true, NodeMode::Notifier),
             Ok(SuiTransportPlan::Grpc)
         );
     }
@@ -2169,28 +2006,13 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
     #[test]
     fn a_fullnode_is_exempt_from_the_anchor_requirement() {
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, false, NodeMode::Fullnode),
+            select_sui_transport(&direct(), false, NodeMode::Fullnode),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(Some(&peer_only_source()), false, false, NodeMode::Fullnode),
+            select_sui_transport(&peer_only_source(), false, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
-    }
-
-    /// Once `sui-data-source` is present, the legacy `sui-rpc-url` field never
-    /// changes the decision — the new-style section always wins, for every role.
-    #[test]
-    fn data_source_presence_ignores_the_legacy_rpc_url() {
-        for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
-            for mode in ALL_MODES {
-                assert_eq!(
-                    select_sui_transport(Some(&source), true, true, mode),
-                    select_sui_transport(Some(&source), false, true, mode),
-                    "{source:?} mode={mode}: rpc-url presence must not matter"
-                );
-            }
-        }
     }
 
     // ---- `SuiDataSource` serde shape (kebab-case wire format) ----
@@ -2359,28 +2181,6 @@ headers:
             assert!(
                 serde_yaml::from_str::<SuiDataSource>(invalid).is_err(),
                 "a header value must have exactly one recognized source: {invalid}"
-            );
-        }
-    }
-
-    /// An old-style config (no `sui-data-source`) that nonetheless carries a Sui
-    /// trust anchor is a misconfiguration: the anchor enables the OCS path, which
-    /// runs over gRPC and therefore requires a `sui-data-source` section. With
-    /// `sui-rpc-url` present (so we get past the no-endpoint check) and
-    /// `has_anchor = true`, `select_sui_transport` rejects this for *every* role
-    /// with a message that names the anchor-without-data-source mismatch.
-    #[test]
-    fn old_style_config_with_anchor_is_rejected_message() {
-        for mode in ALL_MODES {
-            let err = select_sui_transport(None, true, true, mode)
-                .expect_err("anchor without sui-data-source must be rejected");
-            assert!(
-                err.contains("trust anchor is configured but `sui-data-source` is not"),
-                "mode={mode}: error must flag the anchor-without-data-source misconfig, got: {err}"
-            );
-            assert!(
-                err.contains("OCS"),
-                "mode={mode}: error should mention the OCS path, got: {err}"
             );
         }
     }

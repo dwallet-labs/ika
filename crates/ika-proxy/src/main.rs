@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         },
     };
 
-    let sui_client = SuiClient::new(
+    let sui_client = SuiClient::new_grpc(
         &config.dynamic_peers.url,
         sui_client_metrics,
         ika_network_config,

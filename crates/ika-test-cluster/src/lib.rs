@@ -46,13 +46,13 @@ use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, Sessi
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU16, Ordering};
-use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_keys::key_derive::generate_new_key;
-use sui_sdk::SuiClientBuilder;
+use sui_rpc_api::Client as SuiGrpcClient;
 use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
 use sui_swarm_config::network_config_builder::ConfigBuilder;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SignatureScheme;
+use sui_types::effects::TransactionEffectsAPI;
 use test_cluster::{TestCluster, TestClusterBuilder};
 
 #[cfg(not(msim))]
@@ -89,7 +89,7 @@ pub struct IkaTestCluster {
     /// re-publishing or re-initializing.
     pub packages: PublishedIkaPackages,
     pub system: InitializedIkaSystem,
-    pub sui_rpc_url: String,
+    pub sui_grpc_url: String,
     pub publisher_address: SuiAddress,
     /// Validator protocol public keys in the configured order. The i-th name
     /// is the authority name of the validator built from
@@ -315,7 +315,7 @@ impl IkaTestCluster {
             .await
         );
 
-        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        let client = self.test_cluster.wallet().grpc_client()?;
         retry_on_object_contention!(
             "request_add_validator",
             request_add_validator(
@@ -336,7 +336,7 @@ impl IkaTestCluster {
         }
         let validator_config = joiner_builder.build(
             &joiner_init,
-            self.sui_rpc_url.clone(),
+            self.sui_grpc_url.clone(),
             self.packages.ika_package_id,
             self.packages.ika_common_package_id,
             self.packages.ika_dwallet_2pc_mpc_package_id,
@@ -375,7 +375,7 @@ impl IkaTestCluster {
                 .account_key_pair
                 .public(),
         );
-        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        let client = self.test_cluster.wallet().grpc_client()?;
         retry_on_object_contention!(
             "request_remove_validator",
             request_remove_validator(
@@ -428,7 +428,7 @@ impl IkaTestCluster {
     /// the actual MPC takes another epoch boundary to settle —
     /// callers typically pair this with `wait_for_new_network_key`.
     pub async fn request_network_key_dkg(&mut self) -> Result<()> {
-        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        let client = self.test_cluster.wallet().grpc_client()?;
         ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
             self.publisher_address,
             self.test_cluster.wallet_mut(),
@@ -513,8 +513,8 @@ impl IkaTestCluster {
             self.system.ika_system_object_id,
             self.system.ika_dwallet_coordinator_object_id,
         );
-        SuiConnectorClient::new(
-            &self.sui_rpc_url,
+        SuiConnectorClient::new_grpc(
+            &self.sui_grpc_url,
             SuiClientMetrics::new_for_testing(),
             ika_network_config,
         )
@@ -619,13 +619,9 @@ impl IkaTestCluster {
                 .unwrap_or_else(|| anyhow::anyhow!("register_encryption_key: out of retries"))
         })?;
 
-        let digest = *response
-            .effects
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("register_encryption_key tx has no effects"))?
-            .transaction_digest();
+        let digest = *response.effects.transaction_digest();
         let encryption_key_id_str = fetch_event_field(
-            &self.sui_rpc_url,
+            &self.sui_grpc_url,
             &digest,
             "CreatedEncryptionKeyEvent",
             "encryption_key_id",
@@ -770,13 +766,9 @@ impl IkaTestCluster {
             last_err.unwrap_or_else(|| anyhow::anyhow!("request_dwallet_dkg: out of retries"))
         })?;
 
-        let digest = *response
-            .effects
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("request_dwallet_dkg tx has no effects"))?
-            .transaction_digest();
+        let digest = *response.effects.transaction_digest();
         let dwallet_id_str = fetch_event_field(
-            &self.sui_rpc_url,
+            &self.sui_grpc_url,
             &digest,
             "DWalletDKGRequestEvent",
             "dwallet_id",
@@ -787,11 +779,11 @@ impl IkaTestCluster {
             .parse()
             .map_err(|e| anyhow::anyhow!("failed to parse dwallet_id {dwallet_id_str}: {e}"))?;
         let dwallet_cap_id =
-            flows::find_created_object_by_type(&self.sui_rpc_url, &response, "DWalletCap")
+            flows::find_created_object_by_type(&self.sui_grpc_url, &response, "DWalletCap")
                 .await
                 .map_err(|e| anyhow::anyhow!("DKG created no DWalletCap: {e}"))?;
         let encrypted_user_secret_key_share_id = flows::fetch_nested_event_field(
-            &self.sui_rpc_url,
+            &self.sui_grpc_url,
             &digest,
             "DWalletDKGRequestEvent",
             &[
@@ -872,11 +864,8 @@ impl IkaTestCluster {
     /// failure). Returns `Ok` on success terminal state, `Err` on
     /// rejection or timeout.
     ///
-    /// Events-based detection (`DWalletSessionResultEvent` emitted
-    /// by `sessions_manager`) doesn't surface reliably through the
-    /// Sui SDK's `MoveEventModule` / `MoveModule` filters in this
-    /// in-process setup, so we query the on-chain object state
-    /// instead. The `DWalletCoordinator` stores each dWallet as a
+    /// Query the on-chain object state directly. The
+    /// `DWalletCoordinator` stores each dWallet as a
     /// dynamic object field of its `dwallets: ObjectTable<ID,
     /// DWallet>`, which means the dwallet has its own ObjectID and
     /// can be fetched directly via `get_object`.
@@ -885,10 +874,7 @@ impl IkaTestCluster {
         dwallet_id: ObjectID,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        use sui_json_rpc_types::SuiObjectDataOptions;
-        let client = sui_sdk::SuiClientBuilder::default()
-            .build(&self.sui_rpc_url)
-            .await?;
+        let mut client = SuiGrpcClient::new(&self.sui_grpc_url)?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut last_observed_state = String::from("(no get_object response yet)");
         loop {
@@ -897,13 +883,8 @@ impl IkaTestCluster {
                     "timeout waiting for dWallet {dwallet_id} to reach terminal DKG state; last observed: {last_observed_state}"
                 );
             }
-            let resp = client
-                .read_api()
-                .get_object_with_options(dwallet_id, SuiObjectDataOptions::full_content())
-                .await?;
-            if let Some(data) = resp.data
-                && let Some(content) = data.content
-            {
+            let (_, content) = client.get_object_with_json(dwallet_id).await?;
+            if let Some(content) = content {
                 let state_str = format!("{content:?}");
                 last_observed_state = state_str.clone();
                 // The `state` field encodes the DKG progression
@@ -1091,28 +1072,25 @@ pub(crate) const DEFAULT_DWALLET_TX_GAS_BUDGET: u64 = 1_000_000_000;
 /// then falls back to nested `event_data` (for events wrapped in a
 /// `DWalletSessionEvent`).
 ///
-/// `execute_transaction` in `ika-sui-client` builds a
-/// `SuiTransactionBlockResponse` with only `effects` populated — events
-/// have to be fetched separately via the SDK's `event_api`.
+/// `execute_transaction` in `ika-sui-client` builds a response with only
+/// `effects` populated, so events are fetched from the transaction over gRPC.
 pub(crate) async fn fetch_event_field(
-    sui_rpc_url: &str,
+    sui_grpc_url: &str,
     tx_digest: &sui_types::digests::TransactionDigest,
     event_type_substr: &str,
     field_name: &str,
 ) -> Option<String> {
-    let client = sui_sdk::SuiClientBuilder::default()
-        .build(sui_rpc_url)
-        .await
-        .ok()?;
-    let events = client.event_api().get_events(*tx_digest).await.ok()?;
-    for event in &events {
+    let mut client = SuiGrpcClient::new(sui_grpc_url).ok()?;
+    let transaction = client.get_transaction(tx_digest).await.ok()?;
+    let events = transaction.events?;
+    for (index, event) in events.data.iter().enumerate() {
         let type_str = event.type_.to_string();
         if type_str.contains(event_type_substr) {
-            if let Some(val) = event.parsed_json.get(field_name).and_then(|v| v.as_str()) {
+            let parsed_json = transaction.event_json.get(index)?.as_ref()?;
+            if let Some(val) = parsed_json.get(field_name).and_then(|v| v.as_str()) {
                 return Some(val.to_string());
             }
-            if let Some(val) = event
-                .parsed_json
+            if let Some(val) = parsed_json
                 .get("event_data")
                 .and_then(|d| d.get(field_name))
                 .and_then(|v| v.as_str())
@@ -1156,8 +1134,8 @@ pub struct IkaTestClusterBuilder {
     /// and seed every validator's `sui_genesis` with it, so the OCS verifier
     /// bootstraps and validators ingest MPC
     /// session events via the OCS `BagEventPump`. On by default because the
-    /// node refuses to run a validator on the deprecated legacy JSON-RPC
-    /// path against a protocol-v4 chain — an anchorless validator at v4
+    /// node refuses to run an anchorless validator against a protocol-v4 chain
+    /// — an anchorless validator at v4
     /// fails boot. Opt out (`with_ocs_genesis_anchor(false)`) only for
     /// pre-v4 protocol versions.
     ocs_genesis_anchor: bool,
@@ -1186,10 +1164,6 @@ pub struct IkaTestClusterBuilder {
     /// default (mirrored validators get the direct validators' peer ids
     /// pinned).
     automatic_mirror_peers: bool,
-    /// When true, the notifier fullnode pays gas from its SUI ADDRESS BALANCE
-    /// (SIP-58) instead of gas-coin objects. Its funding still arrives as
-    /// coin objects, so boot exercises the automatic migration sweep too.
-    notifier_gas_from_address_balance: bool,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1247,15 +1221,7 @@ impl IkaTestClusterBuilder {
             sui_state_direct_count: None,
             peer_only_mirrored: false,
             automatic_mirror_peers: false,
-            notifier_gas_from_address_balance: false,
         }
-    }
-
-    /// Notifier pays gas from its SUI address balance (SIP-58); boot sweeps
-    /// its coin-object funding into the balance first.
-    pub fn with_notifier_gas_from_address_balance(mut self) -> Self {
-        self.notifier_gas_from_address_balance = true;
-        self
     }
 
     /// Activate the OCS verified-state path: write the localnet's genesis
@@ -1398,7 +1364,7 @@ impl IkaTestClusterBuilder {
             .build()
             .await;
 
-        let sui_rpc_url = test_cluster.rpc_url().to_string();
+        let sui_grpc_url = test_cluster.rpc_url().to_string();
         let publisher_address = test_cluster.get_address_0();
 
         let mut rng = OsRng;
@@ -1447,7 +1413,7 @@ impl IkaTestClusterBuilder {
         // contracts temp dir so the pubfile lives and dies with that TempDir.
         std::env::set_current_dir(contract_paths.contracts_dir.path())?;
 
-        let client = SuiClientBuilder::default().build(&sui_rpc_url).await?;
+        let client = test_cluster.wallet().grpc_client()?;
 
         let packages = publish_ika_packages(
             test_cluster.wallet_mut(),
@@ -1583,7 +1549,7 @@ impl IkaTestClusterBuilder {
                     let fallback_grpc_url = if self.peer_only_mirrored {
                         None
                     } else {
-                        Some(sui_rpc_url.clone())
+                        Some(sui_grpc_url.clone())
                     };
                     builder = builder.with_sui_data_source(SuiDataSource::SuiStateMirrored {
                         fallback_grpc_url,
@@ -1599,7 +1565,7 @@ impl IkaTestClusterBuilder {
                 }
                 builder.build(
                     v,
-                    sui_rpc_url.clone(),
+                    sui_grpc_url.clone(),
                     packages.ika_package_id,
                     packages.ika_common_package_id,
                     packages.ika_dwallet_2pc_mpc_package_id,
@@ -1623,14 +1589,8 @@ impl IkaTestClusterBuilder {
         // calls `wait_for_epoch` hangs. Run one notifier (a fullnode carrying the
         // publisher's Sui key) so reconfiguration actually progresses.
         // Give the notifier its OWN funded Sui key rather than reusing the
-        // publisher's. Sharing the publisher gas coin makes the notifier's
-        // cached gas ref go stale whenever the test wallet spends from the same
-        // address (validator management, funding, faucet, presign drivers), and
-        // the in-process notifier fullnode lags the validators too far behind to
-        // recover the current version — the rejected-version re-fetch loops and
-        // wedges epoch advance. Production notifiers run a dedicated key, so a
-        // dedicated, publisher-funded key here matches reality and removes the
-        // cross-actor gas contention.
+        // publisher's. Production notifiers run a dedicated key, so a
+        // dedicated, publisher-funded key here matches reality.
         let (notifier_address, notifier_keypair, _scheme, _phrase) =
             generate_new_key(SignatureScheme::ED25519, None, None)?;
         let fund_notifier_tx_data = test_cluster
@@ -1642,15 +1602,10 @@ impl IkaTestClusterBuilder {
             .sign_and_execute_transaction(&fund_notifier_tx_data)
             .await;
         let mut notifier_rng = OsRng;
-        let mut notifier_config_builder = FullnodeConfigBuilder::new();
-        if self.notifier_gas_from_address_balance {
-            notifier_config_builder =
-                notifier_config_builder.with_notifier_gas_from_address_balance();
-        }
-        let notifier_config = notifier_config_builder.build(
+        let notifier_config = FullnodeConfigBuilder::new().build(
             &mut notifier_rng,
             &validator_initialization_configs,
-            sui_rpc_url.clone(),
+            sui_grpc_url.clone(),
             packages.ika_package_id,
             packages.ika_common_package_id,
             packages.ika_dwallet_2pc_mpc_package_id,
@@ -1688,7 +1643,7 @@ impl IkaTestClusterBuilder {
             swarm,
             packages,
             system,
-            sui_rpc_url,
+            sui_grpc_url,
             publisher_address,
             validator_names,
             ika_node_port_base,

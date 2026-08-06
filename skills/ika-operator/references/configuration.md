@@ -72,8 +72,7 @@ run-with-range:
 
 ```yaml
 sui-connector-config:
-  # NEW-STYLE (recommended): all Sui I/O over gRPC. Its presence selects the
-  # read path; it replaces the deprecated `sui-rpc-url` below.
+  # Required: all Sui I/O uses gRPC.
   sui-data-source:
     kind: sui-state-direct                 # direct uplink to a Sui fullnode (gRPC)
     url: 'http://127.0.0.1:9000'
@@ -84,12 +83,6 @@ sui-connector-config:
   # fullnode (the last checkpoint of a recent epoch). Ignored once the node's
   # perpetual sui_committees table is populated (wipe it to re-anchor).
   sui-trusted-anchor: '0x...'
-
-  # DEPRECATED — legacy JSON-RPC endpoint. Sui is sunsetting JSON-RPC. A
-  # validator with ONLY this (no `sui-data-source`) keeps the legacy read path;
-  # it is ignored whenever `sui-data-source` is present, so a migrated config
-  # can drop it. At least one of the two must be set.
-  # sui-rpc-url: 'http://127.0.0.1:9000'
 
   # Chain validation
   sui-chain-identifier: testnet            # Values: mainnet | testnet | custom (kebab-case)

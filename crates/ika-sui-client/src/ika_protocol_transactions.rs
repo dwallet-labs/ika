@@ -15,7 +15,7 @@ use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use std::collections::HashMap;
-use sui_json_rpc_types::SuiTransactionBlockResponse;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::ObjectID;
@@ -47,7 +47,7 @@ pub async fn set_approved_upgrade_by_cap(
     package_id: ObjectID,
     digest: Option<Vec<u8>>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
     let protocol_cap_ref = client
         .transaction_builder()
@@ -93,7 +93,7 @@ pub async fn perform_approved_upgrade(
     modules: Vec<String>,
     dependencies: Vec<ObjectID>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let package_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&package_id)?))?;
 
@@ -169,7 +169,7 @@ pub async fn try_migrate_system(
     new_ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let sender = context.active_address()?;
@@ -195,7 +195,7 @@ pub async fn try_migrate_coordinator(
     new_ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_coordinator_object_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let sender = context.active_address()?;
@@ -225,7 +225,7 @@ pub async fn try_migrate_system_by_cap(
     new_ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -262,7 +262,7 @@ pub async fn try_migrate_coordinator_by_cap(
     new_ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_coordinator_object_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let sender = context.active_address()?;
@@ -306,7 +306,7 @@ pub async fn set_paused_curves_and_signature_algorithms(
     paused_signature_algorithms: Vec<u32>,
     paused_hash_schemes: Vec<u32>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let verified_protocol_cap = get_verified_protocol_cap(
@@ -365,7 +365,7 @@ pub async fn set_supported_and_pricing(
     default_pricing: Vec<Entry<PricingInfoKey, PricingInfoValue>>,
     supported_curves_to_signature_algorithms_to_hash_schemes: HashMap<u32, HashMap<u32, Vec<u32>>>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let verified_protocol_cap = get_verified_protocol_cap(
@@ -428,7 +428,7 @@ pub async fn set_gas_fee_reimbursement_sui_system_call_value_by_cap(
     protocol_cap_id: ObjectID,
     gas_fee_reimbursement_sui_system_call_value: u64,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let verified_protocol_cap = get_verified_protocol_cap(
@@ -591,7 +591,7 @@ pub async fn set_global_presign_config(
     curve_to_signature_algorithms_for_dkg: HashMap<u32, Vec<u32>>,
     curve_to_signature_algorithms_for_imported_key: HashMap<u32, Vec<u32>>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let verified_protocol_cap = get_verified_protocol_cap(

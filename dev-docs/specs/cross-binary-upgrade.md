@@ -245,9 +245,6 @@ drives them across epochs. The surviving scenarios (current build only):
   workflow's `test_testing_fault` input runs the same fault through
   `v127_rollout` itself (that run must fail closed); `malicious_v127` is
   also directly dispatchable (the workflow builds the faulty binary).
-- `tests/legacy_config.rs` — the current build on old-style (1.1.8-shape,
-  JSON-RPC-only) YAML configs for every role, through a full lifecycle.
-
 How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the

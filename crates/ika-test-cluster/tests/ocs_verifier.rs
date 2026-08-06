@@ -6,9 +6,8 @@
 //!
 //! With `.with_ocs_genesis_anchor(true)` every validator boots from the Sui
 //! localnet's epoch-0 committee (the unsafe-genesis bootstrap), which makes
-//! `has_anchor` true so the OCS stack is built. This flips MPC session-
-//! event ingestion from the legacy JSON-RPC `query_events` listener to the
-//! OCS `BagEventPump`, which walks the verified `session_events` bags through
+//! `has_anchor` true so the OCS stack is built. MPC session-event ingestion
+//! uses the OCS `BagEventPump`, which walks the verified `session_events` bags through
 //! `OcsVerifiedReader` (every read checked against the committee via an
 //! inclusion proof against the checkpoint's artifacts digest).
 //!

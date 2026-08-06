@@ -41,7 +41,6 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
-use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SuiKeyPair;
@@ -75,7 +74,7 @@ pub struct ClusterOfProcesses {
     pub notifier: ValidatorProcess,
     network_config: IkaNetworkConfig,
     ika_client: IkaClient<SuiBackend>,
-    rpc_url: String,
+    grpc_url: String,
     /// The genesis publisher's Sui key — funded with SUI + the initial IKA
     /// supply. The workload driver reuses it as the user paying session fees.
     publisher_keypair: SuiKeyPair,
@@ -188,11 +187,6 @@ pub struct ClusterBuilder {
     /// pre-upgrade need `Empty` (the mainnet-v1.1.8 state) and apply the full
     /// config post-upgrade via [`ClusterOfProcesses::set_global_presign_config`].
     genesis_global_presign_config: GenesisGlobalPresignConfig,
-    /// Boot every validator AND the notifier from an old-style (1.1.8-shape)
-    /// config: `sui-rpc-url` only, no `sui-data-source`, no trust anchor —
-    /// the deprecated JSON-RPC transport every mainnet node runs on rollout
-    /// day. Rehearses the legacy path end-to-end on the new binary.
-    legacy_sui_config: bool,
     /// Pins every validator's ADVERTISED `supported_protocol_versions` instead
     /// of letting each binary advertise its own `MIN..=MAX`. Scenarios that
     /// must stay at one protocol version need this: once `MAX_PROTOCOL_VERSION`
@@ -219,7 +213,6 @@ impl ClusterBuilder {
             sui_binary,
             base_dir: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
-            legacy_sui_config: false,
         }
     }
 
@@ -272,13 +265,6 @@ impl ClusterBuilder {
         self
     }
 
-    /// Boot the whole cluster (validators + notifier) from old-style
-    /// (1.1.8-shape) configs — `sui-rpc-url` only, the legacy JSON-RPC path.
-    pub fn with_legacy_sui_config(mut self) -> Self {
-        self.legacy_sui_config = true;
-        self
-    }
-
     pub async fn build(self) -> Result<ClusterOfProcesses> {
         let genesis_version = self
             .genesis_protocol_version
@@ -306,7 +292,7 @@ impl ClusterBuilder {
         )
         .await
         .context("start sui localnet")?;
-        let rpc_url = sui.rpc_url().to_string();
+        let grpc_url = sui.grpc_url().to_string();
         let faucet_url = sui.faucet_url().to_string();
 
         // 2. Validator init configs (keys + addresses + ports).
@@ -340,7 +326,7 @@ impl ClusterBuilder {
         std::env::set_current_dir(&base).context("chdir to base dir for publish")?;
         let init_result = init_ika_on_sui(
             &validator_init_configs,
-            rpc_url.clone(),
+            grpc_url.clone(),
             faucet_url,
             initiation_parameters,
             self.genesis_global_presign_config,
@@ -387,13 +373,9 @@ impl ClusterBuilder {
         // set refuses to boot without a Sui trust anchor. Reconstruct the Sui
         // localnet's genesis blob over gRPC, write it into the run's base dir,
         // and seed every validator's `sui_genesis` with it, mirroring
-        // IkaTestClusterBuilder. A legacy-config cluster gets NO anchor at all
-        // — an old-style config with an anchor is one of the mixed shapes the
-        // node rejects at boot.
-        let sui_genesis_path = if self.legacy_sui_config {
-            None
-        } else {
-            let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&rpc_url)
+        // IkaTestClusterBuilder.
+        let sui_genesis_path = {
+            let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&grpc_url)
                 .await
                 .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for OCS anchor: {e}"))?;
             let path = base.join("sui_genesis.blob");
@@ -402,7 +384,7 @@ impl ClusterBuilder {
                 bcs::to_bytes(&sui_genesis).context("serialize Sui genesis blob")?,
             )
             .with_context(|| format!("write Sui genesis blob {}", path.display()))?;
-            Some(path)
+            path
         };
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
@@ -422,17 +404,15 @@ impl ClusterBuilder {
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
-            let mut builder = ValidatorConfigBuilder::new().with_config_directory(data_dir.clone());
-            builder = match &sui_genesis_path {
-                Some(path) => builder.with_sui_genesis(path.clone()),
-                None => builder.with_legacy_sui_rpc_only(),
-            };
+            let mut builder = ValidatorConfigBuilder::new()
+                .with_config_directory(data_dir.clone())
+                .with_sui_genesis(sui_genesis_path.clone());
             if let Some(cores) = max_mpc_computation_cores {
                 builder = builder.with_max_mpc_computation_cores(cores);
             }
             let mut node_config = builder.build(
                 init,
-                rpc_url.clone(),
+                grpc_url.clone(),
                 ika_package_id,
                 ika_common_package_id,
                 ika_dwallet_2pc_mpc_package_id,
@@ -464,15 +444,12 @@ impl ClusterBuilder {
         let notifier_dir = base.join("notifier");
         std::fs::create_dir_all(&notifier_dir)?;
         let mut notifier_rng = OsRng;
-        let mut notifier_builder =
+        let notifier_builder =
             FullnodeConfigBuilder::new().with_config_directory(notifier_dir.clone());
-        if self.legacy_sui_config {
-            notifier_builder = notifier_builder.with_legacy_sui_rpc_only();
-        }
         let notifier_config = notifier_builder.build(
             &mut notifier_rng,
             &validator_init_configs,
-            rpc_url.clone(),
+            grpc_url.clone(),
             ika_package_id,
             ika_common_package_id,
             ika_dwallet_2pc_mpc_package_id,
@@ -499,8 +476,8 @@ impl ClusterBuilder {
             ika_system_object_id,
             ika_dwallet_coordinator_object_id,
         );
-        let ika_client = IkaClient::new(
-            &rpc_url,
+        let ika_client = IkaClient::new_grpc(
+            &grpc_url,
             SuiClientMetrics::new_for_testing(),
             network_config.clone(),
         )
@@ -513,7 +490,7 @@ impl ClusterBuilder {
             notifier,
             network_config,
             ika_client,
-            rpc_url,
+            grpc_url,
             publisher_keypair,
             committee,
             validator_peer_ids,
@@ -1819,8 +1796,8 @@ impl ClusterOfProcesses {
         &self.network_config
     }
 
-    pub fn rpc_url(&self) -> &str {
-        &self.rpc_url
+    pub fn grpc_url(&self) -> &str {
+        &self.grpc_url
     }
 
     pub fn faucet_url(&self) -> &str {
@@ -1928,7 +1905,7 @@ impl ClusterOfProcesses {
             .await
         );
 
-        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        let client = self.wallet.grpc_client()?;
         retry_on_object_contention!(
             "request_add_validator",
             request_add_validator(
@@ -1948,9 +1925,9 @@ impl ClusterOfProcesses {
         std::fs::create_dir_all(&data_dir)?;
         // Same OCS v4 trust anchor as the genesis validators (see `build`): the
         // genesis checkpoint is immutable, so re-fetch the blob for the joiner
-        // (a legacy-config cluster wrote none at build time) and write it into
+        // (a cluster may have written none at build time) and write it into
         // the joiner's own data dir.
-        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.rpc_url)
+        let sui_genesis = ika_sui_client::genesis::fetch_genesis_blob(&self.grpc_url)
             .await
             .map_err(|e| anyhow::anyhow!("fetch Sui genesis blob for joiner OCS anchor: {e}"))?;
         let sui_genesis_path = data_dir.join("sui_genesis.blob");
@@ -1982,7 +1959,7 @@ impl ClusterOfProcesses {
         }
         let node_config = builder.build(
             &init,
-            self.rpc_url.clone(),
+            self.grpc_url.clone(),
             self.packages.ika_package_id,
             self.packages.ika_common_package_id,
             self.packages.ika_dwallet_2pc_mpc_package_id,
@@ -2053,7 +2030,7 @@ impl ClusterOfProcesses {
             .get(index)
             .with_context(|| format!("validator index {index} out of range"))?
             .clone();
-        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        let client = self.wallet.grpc_client()?;
         retry_on_object_contention!(
             "request_remove_validator",
             request_remove_validator(
@@ -2077,7 +2054,7 @@ impl ClusterOfProcesses {
     /// only fills with `internal_presign_sessions` on) — the same ordering a
     /// real mainnet rollout from v1.1.8 must follow.
     pub async fn set_global_presign_config(&mut self) -> Result<()> {
-        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        let client = self.wallet.grpc_client()?;
         let (curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key) =
             GenesisGlobalPresignConfig::Full.curve_to_signature_algorithm_maps();
         retry_on_object_contention!(

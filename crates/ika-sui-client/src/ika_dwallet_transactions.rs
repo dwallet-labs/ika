@@ -24,7 +24,7 @@ use ika_types::sui::{
     SIGN_DURING_DKG_REQUEST_FUNCTION_NAME, VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME,
     VERIFY_PRESIGN_CAP_FUNCTION_NAME,
 };
-use sui_json_rpc_types::SuiTransactionBlockResponse;
+use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
@@ -102,7 +102,7 @@ pub async fn register_encryption_key(
     encryption_key_signature: Vec<u8>,
     signer_public_key: Vec<u8>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -158,7 +158,7 @@ pub async fn request_dwallet_dkg(
     coins: PaymentCoinArgs,
     sign_during_dkg: Option<SignDuringDkgParams>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -279,7 +279,7 @@ pub async fn request_dwallet_dkg_with_public_share(
     coins: PaymentCoinArgs,
     sign_during_dkg: Option<SignDuringDkgParams>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -447,7 +447,7 @@ pub async fn request_presign_tx(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -499,7 +499,7 @@ pub async fn request_batch_presign_tx(
     session_identifier_bytes_list: Vec<Vec<u8>>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -551,7 +551,7 @@ pub async fn request_batch_global_presign_tx(
     session_identifier_bytes_list: Vec<Vec<u8>>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -614,7 +614,7 @@ pub async fn request_global_presign_tx(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -670,7 +670,7 @@ pub async fn verify_presign_cap(
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     presign_cap_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -724,7 +724,7 @@ pub async fn request_sign_tx(
     coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -862,7 +862,7 @@ pub async fn request_imported_key_sign_tx(
     coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -964,7 +964,7 @@ pub async fn request_future_sign_tx(
     coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1053,7 +1053,7 @@ pub async fn request_imported_key_dwallet_verification(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1125,7 +1125,7 @@ pub async fn request_make_shares_public(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1183,7 +1183,7 @@ pub async fn request_re_encrypt_user_share(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1245,7 +1245,7 @@ pub async fn accept_encrypted_user_share(
     encrypted_user_secret_key_share_id: ObjectID,
     user_output_signature: Vec<u8>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1286,7 +1286,7 @@ pub async fn approve_message_tx(
     hash_scheme: u32,
     message: Vec<u8>,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
@@ -1381,7 +1381,7 @@ pub async fn create_zero_ika_coin(
     context: &mut WalletContext,
     ika_package_id: ObjectID,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     use move_core_types::identifier::Identifier;
     use move_core_types::language_storage::{StructTag, TypeTag};
     use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
@@ -1428,7 +1428,7 @@ pub async fn request_future_sign_fulfill_tx(
     session_identifier_bytes: Vec<u8>,
     coins: PaymentCoinArgs,
     gas_budget: u64,
-) -> Result<SuiTransactionBlockResponse, Error> {
+) -> Result<ExecutedTransaction, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
 
