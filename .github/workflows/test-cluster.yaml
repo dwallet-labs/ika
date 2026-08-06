@@ -114,7 +114,7 @@ jobs:
           prefix-key: "test-cluster"
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2.85.6
+        uses: taiki-e/install-action@v2.85.7
         with:
           tool: cargo-nextest
 
