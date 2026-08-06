@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-centralized-party"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "anyhow",
  "bcs",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-types"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "anyhow",
  "bcs",
