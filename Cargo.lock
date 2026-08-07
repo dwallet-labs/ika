@@ -6575,7 +6575,7 @@ dependencies = [
  "ika-swarm-config",
  "ika-types",
  "move-core-types",
- "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=53016c1a9038154b1e47b96f0a314efa7e7d809b)",
+ "msim",
  "rand 0.9.0",
  "reqwest",
  "serde",
@@ -9588,36 +9588,7 @@ dependencies = [
  "futures",
  "lazy_static",
  "libc",
- "msim-macros 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
- "naive-timer",
- "pin-project-lite",
- "rand 0.8.5",
- "real_tokio",
- "serde",
- "socket2 0.4.10",
- "tap",
- "tokio-util 0.7.18 (git+https://github.com/MystenLabs/tokio-msim-fork.git?rev=e8ce7593bfbfbbd7c7ee8671faecb062a8966b2d)",
- "toml 0.5.11",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "msim"
-version = "0.1.0"
-source = "git+https://github.com/MystenLabs/mysten-sim.git?rev=53016c1a9038154b1e47b96f0a314efa7e7d809b#53016c1a9038154b1e47b96f0a314efa7e7d809b"
-dependencies = [
- "ahash 0.7.8",
- "async-task",
- "bincode 1.3.3",
- "bytes",
- "cc",
- "downcast-rs 1.2.1",
- "erasable",
- "futures",
- "lazy_static",
- "libc",
- "msim-macros 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=53016c1a9038154b1e47b96f0a314efa7e7d809b)",
+ "msim-macros",
  "naive-timer",
  "pin-project-lite",
  "rand 0.8.5",
@@ -9635,17 +9606,6 @@ dependencies = [
 name = "msim-macros"
 version = "0.1.0"
 source = "git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6#2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6"
-dependencies = [
- "darling 0.14.4",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "msim-macros"
-version = "0.1.0"
-source = "git+https://github.com/MystenLabs/mysten-sim.git?rev=53016c1a9038154b1e47b96f0a314efa7e7d809b#53016c1a9038154b1e47b96f0a314efa7e7d809b"
 dependencies = [
  "darling 0.14.4",
  "proc-macro2",
@@ -13562,7 +13522,7 @@ dependencies = [
  "move-symbol-pool",
  "move-trace-format",
  "move-vm-profiler",
- "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
+ "msim",
  "mysten-common",
  "normalize-line-endings",
  "num-bigint 0.4.6",
@@ -15248,7 +15208,7 @@ name = "sui-proc-macros"
 version = "0.7.0"
 source = "git+https://github.com/MystenLabs/sui?tag=mainnet-v1.76.1#433212f8f2768ac22dd412229c970b8a5281d4e5"
 dependencies = [
- "msim-macros 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
+ "msim-macros",
  "proc-macro2",
  "quote",
  "sui-enum-compat-util",
@@ -15524,7 +15484,7 @@ dependencies = [
  "lru 0.10.1",
  "move-package-alt",
  "move-package-alt-compilation",
- "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
+ "msim",
  "mysten-network",
  "rand 0.8.5",
  "serde",
@@ -15582,7 +15542,7 @@ dependencies = [
  "move-package-alt",
  "move-package-alt-compilation",
  "move-symbol-pool",
- "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
+ "msim",
  "mysten-common",
  "serde",
  "sui-move-build",
@@ -17260,7 +17220,7 @@ dependencies = [
  "fastcrypto",
  "fdlimit",
  "hdrhistogram",
- "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6)",
+ "msim",
  "mysten-common",
  "mysten-metrics",
  "once_cell",
