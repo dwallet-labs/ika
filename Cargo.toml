@@ -183,7 +183,7 @@ moka = { version = "0.12", default-features = false, features = [
     "atomic64",
 ] }
 more-asserts = "0.3.1"
-msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "53016c1a9038154b1e47b96f0a314efa7e7d809b", package = "msim" }
+msim = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6", package = "msim" }
 multiaddr = "0.18.2"
 nonempty = "0.12.0"
 num-bigint = "0.4.6"
