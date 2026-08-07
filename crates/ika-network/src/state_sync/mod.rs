@@ -526,7 +526,7 @@ impl PeerBalancer {
                     .map(|peer| (peer.connection_rtt(), peer, *info))
             })
             .collect();
-        peers.sort_by(|(rtt_a, _, _), (rtt_b, _, _)| rtt_a.cmp(rtt_b));
+        peers.sort_by_key(|(rtt_a, _, _)| *rtt_a);
         Self {
             peers: peers
                 .into_iter()

@@ -1402,9 +1402,9 @@ impl AuthorityKeyPairWithPath {
 /// Read from file as Base64 encoded `privkey` and return a AuthorityKeyPair.
 pub fn read_authority_keypair_from_file(path: &PathBuf) -> AuthorityKeyPair {
     let contents = std::fs::read_to_string(path)
-        .unwrap_or_else(|_| panic!("Invalid authority keypair file at path {:?}", &path));
+        .unwrap_or_else(|_| panic!("Invalid authority keypair file at path {:?}", path));
     AuthorityKeyPair::decode_base64(contents.as_str().trim())
-        .unwrap_or_else(|_| panic!("Invalid authority keypair file at path {:?}", &path))
+        .unwrap_or_else(|_| panic!("Invalid authority keypair file at path {:?}", path))
 }
 
 /// Wrapper struct for RootSeed that can be deserialized from a file path.

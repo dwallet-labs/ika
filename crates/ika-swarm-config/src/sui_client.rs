@@ -825,9 +825,7 @@ pub async fn ika_system_initialize(
         .collect();
 
     // Insert pricing for all curves for protocols without signature algorithms
-    for (curve, _signature_algorithms_to_hash_schemes) in
-        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
-    {
+    for curve in SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.keys() {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
         let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
 

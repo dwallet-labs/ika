@@ -378,12 +378,9 @@ fn decode_session_event(verified: &VerifiedObject) -> Option<DBSuiEvent> {
         o.data.try_as_move()
     }
     let move_obj = move_obj(&verified.object)?;
-    let event_tag = match move_obj.type_().type_params().get(1) {
-        Some(cow) => match cow.as_ref() {
-            TypeTag::Struct(s) => (**s).clone(),
-            _ => return None,
-        },
-        None => return None,
+    let event_tag = match move_obj.type_().type_params().get(1)?.as_ref() {
+        TypeTag::Struct(s) => (**s).clone(),
+        _ => return None,
     };
     Some(DBSuiEvent {
         type_: event_tag,
