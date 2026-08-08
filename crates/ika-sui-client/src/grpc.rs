@@ -441,7 +441,6 @@ impl SuiWriter for SuiGrpcClient {
         let mut page_token = None;
         loop {
             if refs.len() >= MAX_GAS_PAYMENT_OBJECTS {
-                refs.truncate(MAX_GAS_PAYMENT_OBJECTS);
                 break;
             }
             let page = rpc
