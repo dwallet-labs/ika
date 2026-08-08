@@ -572,6 +572,27 @@ impl OcsVerifiedReader {
                     let verified_summary = self
                         .verify_summary(summary)
                         .map_err(|e| self.record_fail("batch_objects", e))?;
+                    // The map key is the RELAY'S claim about which
+                    // checkpoint this entry came from; `verify_summary` only
+                    // proves the summary is genuine, not that it is the
+                    // summary for THAT sequence. Without this, a relay could
+                    // file a genuine committee-signed summary for an old
+                    // checkpoint under an arbitrary current-looking key and
+                    // serve a validly-proven stale object against it —
+                    // passing the freshness check on the claimed number while
+                    // the proof binds to the old one. The single-object path
+                    // avoids this by taking the sequence FROM the summary
+                    // (`*resp.summary.sequence_number()`); these paths need
+                    // the key to find the summary, so they assert instead.
+                    if *verified_summary.sequence_number() != seq {
+                        return Err(self.record_fail(
+                            "batch_objects",
+                            ReaderError::InvalidProof(format!(
+                                "summary served for checkpoint {seq} is actually checkpoint {}",
+                                verified_summary.sequence_number()
+                            )),
+                        ));
+                    }
                     e.insert(verified_summary)
                 }
             };
@@ -777,6 +798,27 @@ impl OcsVerifiedReader {
                     let verified_summary = self
                         .verify_summary(summary)
                         .map_err(|e| self.record_fail("dynamic_field_entry", e))?;
+                    // The map key is the RELAY'S claim about which
+                    // checkpoint this entry came from; `verify_summary` only
+                    // proves the summary is genuine, not that it is the
+                    // summary for THAT sequence. Without this, a relay could
+                    // file a genuine committee-signed summary for an old
+                    // checkpoint under an arbitrary current-looking key and
+                    // serve a validly-proven stale object against it —
+                    // passing the freshness check on the claimed number while
+                    // the proof binds to the old one. The single-object path
+                    // avoids this by taking the sequence FROM the summary
+                    // (`*resp.summary.sequence_number()`); these paths need
+                    // the key to find the summary, so they assert instead.
+                    if *verified_summary.sequence_number() != seq {
+                        return Err(self.record_fail(
+                            "dynamic_field_entry",
+                            ReaderError::InvalidProof(format!(
+                                "summary served for checkpoint {seq} is actually checkpoint {}",
+                                verified_summary.sequence_number()
+                            )),
+                        ));
+                    }
                     e.insert(verified_summary)
                 }
             };
@@ -2567,6 +2609,43 @@ mod tests {
         assert!(
             matches!(err, ReaderError::Transport(TransportError::NotFound(_))),
             "expected NotFound for the slot/id count mismatch, got {err:?}",
+        );
+    }
+
+    /// A relay may file a GENUINE committee-signed summary under a sequence
+    /// number that summary did not come from.
+    ///
+    /// Everything else in the path still passes: the summary verifies (it is
+    /// real), the inclusion proof verifies against it (it was built for that
+    /// checkpoint), and the freshness check sees only the fabricated,
+    /// current-looking number. So the anchor a stale object is judged by
+    /// becomes the relay's choice — which is what the currency gate exists to
+    /// deny. The single-object path is immune because it reads the sequence
+    /// off the summary; these paths need the key to FIND the summary, so they
+    /// have to assert the two agree.
+    #[tokio::test]
+    async fn batch_read_rejects_a_summary_filed_under_the_wrong_sequence() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x31);
+        let object = test_object(id, 3, address_owner(0xAB));
+        // A real summary and a real proof, both for checkpoint 100 ...
+        let (summary_for_100, proof) =
+            sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        // ... served as though they were checkpoint 900's.
+        let entry = field_entry(object, proof, 900, "", Vec::new());
+        let resp = BatchVerifiedObjectsResponse {
+            summaries: BTreeMap::from([(900, summary_for_100)]),
+            results: vec![Some(entry)],
+            claimed_latest_checkpoint_seq: 900,
+        };
+        let (_dir, reader, _metrics) = reader_with(StagedProvider::batch(resp), committee, None);
+        let err = reader
+            .verified_objects(&[id])
+            .await
+            .expect_err("a summary filed under a sequence it did not come from must be rejected");
+        assert!(
+            matches!(err, ReaderError::InvalidProof(_)),
+            "expected InvalidProof for the summary/sequence mismatch, got {err:?}",
         );
     }
 
