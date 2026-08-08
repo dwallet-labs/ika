@@ -1898,11 +1898,20 @@ pub(crate) async fn execute_sui_transaction(
     gas_payment: Vec<ObjectRef>,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let gas_payment = if gas_payment.is_empty() {
-        let Some(gas_ref) = context.get_one_gas_object_owned_by_address(signer).await? else {
+        // Pay with ALL of the signer's gas coins, not an arbitrary one:
+        // `get_one_gas_object_owned_by_address` returns whatever the read
+        // api lists first, with no balance check, so a long scenario that
+        // funds every step from one address eventually picks a coin worth
+        // less than DEFAULT_GAS_BUDGET and dies with "Balance of gas object
+        // ... is lower than the needed amount". Multi-coin payment funds
+        // the budget from the total and gas-smashes the dust into one coin
+        // as a side effect. Capped at Sui's max_gas_payment_objects (256).
+        let mut gas_refs = context.get_all_gas_objects_owned_by_address(signer).await?;
+        if gas_refs.is_empty() {
             panic!("No gas object found in the wallet context.");
-        };
-
-        vec![gas_ref]
+        }
+        gas_refs.truncate(256);
+        gas_refs
     } else {
         gas_payment
     };
