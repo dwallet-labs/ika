@@ -570,7 +570,24 @@ impl PartialOrd for SessionIdentifier {
 
 impl Ord for SessionIdentifier {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.session_identifier.cmp(&other.session_identifier)
+        // Every field, so `Ord` agrees with the derived `Eq`/`Hash`. Comparing
+        // the digest alone reported `Equal` for values that are `!=` — which
+        // breaks the total-order contract that `BTreeMap`, `sort` and `dedup`
+        // rely on, and is reachable because `Deserialize` is derived and so
+        // accepts any (type, digest, preimage) triple off the wire rather than
+        // only the ones `new` can produce.
+        //
+        // Digest first, so the order is unchanged wherever digests differ —
+        // which is every honestly-constructed pair, since the digest commits
+        // to the other two fields. The remaining fields only break ties that
+        // could not previously be broken at all.
+        self.session_identifier
+            .cmp(&other.session_identifier)
+            .then_with(|| self.session_type.cmp(&other.session_type))
+            .then_with(|| {
+                self.session_identifier_preimage
+                    .cmp(&other.session_identifier_preimage)
+            })
     }
 }
 

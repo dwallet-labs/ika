@@ -1211,6 +1211,21 @@ fn read_or_generate_root_seed(
 }
 
 fn generate_new_root_seed(seed_path: PathBuf) -> Result<PathBuf> {
+    // Refuse to write over an existing file. A root seed is the only copy of
+    // a validator's MPC secrets — there is no derivation path back to it —
+    // and this command defaults its target to `root-seed.key` in the CURRENT
+    // WORKING DIRECTORY, so an operator running it from a node's data
+    // directory would otherwise destroy the live seed with no prompt and no
+    // backup. Refusing costs one manual `mv`; the alternative is
+    // unrecoverable.
+    if seed_path.exists() {
+        anyhow::bail!(
+            "refusing to overwrite an existing root seed at {}. A root seed cannot be \
+             recovered once replaced — move or delete this file deliberately if you really \
+             intend to generate a new one.",
+            seed_path.display()
+        );
+    }
     RootSeed::random_seed().save_to_file(seed_path.clone())?;
     Ok(seed_path)
 }
@@ -1265,18 +1280,23 @@ mod tests {
     }
 
     #[test]
-    fn generate_new_root_seed_overwrites_with_valid_seed() {
+    fn generate_new_root_seed_writes_once_and_then_refuses() {
         let temporary_directory = tempfile::tempdir().unwrap();
         let seed_path = temporary_directory.path().join("root-seed.key");
         let first_path = generate_new_root_seed(seed_path.clone()).unwrap();
         let first_bytes = fs::read(&first_path).unwrap();
-
-        let second_path = generate_new_root_seed(seed_path.clone()).unwrap();
-        let second_bytes = fs::read(&second_path).unwrap();
-
         assert_eq!(first_path, seed_path);
-        assert_eq!(second_path, seed_path);
-        assert_ne!(first_bytes, second_bytes);
-        RootSeed::from_file(seed_path).unwrap();
+        RootSeed::from_file(seed_path.clone()).unwrap();
+
+        // A root seed is unrecoverable once replaced, and this command
+        // defaults to the working directory — so a second run must not
+        // silently destroy the first seed.
+        let second = generate_new_root_seed(seed_path.clone());
+        assert!(second.is_err(), "a second run must refuse, not overwrite");
+        assert_eq!(
+            fs::read(&seed_path).unwrap(),
+            first_bytes,
+            "the existing seed must be left byte-identical"
+        );
     }
 }
