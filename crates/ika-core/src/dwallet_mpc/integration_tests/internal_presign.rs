@@ -21,10 +21,12 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::RootSeed;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
-use ika_types::message::DWalletCheckpointMessageKind;
+use ika_types::message::{
+    DWalletCheckpointMessageKind, MakeDWalletUserSecretKeySharesPublicOutput,
+};
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, SessionIdentifier,
-    SessionType,
+    DWalletMPCOutput, DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData,
+    DWalletNetworkEncryptionKeyState, SessionIdentifier, SessionType,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -2429,5 +2431,190 @@ async fn test_internal_presign_ordinal_stream_rejoins_from_consensus_completions
         "Test completed: an internal-presign ordinal counter dragged into already-completed \
          history rejoined the committee's live window from the consensus output stream alone, \
          and the divergence was exported as a gauge while it lasted"
+    );
+}
+
+/// A byzantine peer must not be able to strand an internal-presign ordinal by
+/// pre-claiming its session with a "native" output.
+///
+/// Internal-presign session identifiers are derived from public data alone
+/// (epoch, pool ordinal, curve, algorithm, network key), so any committee
+/// member can compute a future ordinal's identifier and report an output for it
+/// before anyone has instantiated the session. The output-receipt path creates
+/// a placeholder whose computation type comes from the SENDER's `is_native()`
+/// flag, so that placeholder can arrive typed `Native`.
+///
+/// Instantiation then finds the placeholder and upgrades it in place. If the
+/// upgrade leaves the type alone, the session runs `Active` + `Native`: every
+/// peer's round message is dropped by `add_message`, and the computation routes
+/// to the native path and fails `InvalidDWalletProtocolType` on every tick. The
+/// ordinal never completes, so the pool's in-flight top-up guard stays closed
+/// until the stale-batch expiry — one message per ordinal, from one validator,
+/// starving the pool that user presigns are served from.
+///
+/// Asserts the placeholder really is `Native` before instantiation (the
+/// precondition the attack needs), that instantiation normalizes it back to a
+/// fresh MPC buffer, and that the ordinal then goes on to complete.
+#[tokio::test]
+#[cfg(test)]
+async fn test_internal_presign_instantiation_normalizes_byzantine_native_placeholder() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_object_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let curve = DWalletCurve::Secp256k1;
+    let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+    let target = 0usize;
+    let byzantine_authority = test_state
+        .committee
+        .names()
+        .nth(1)
+        .copied()
+        .expect("committee has a second member");
+
+    // Derive the identifier of the ordinal the target will mint next, from the
+    // same public inputs an attacker has — nothing here observes the target.
+    let (poisoned_identifier, poisoned_ordinal) = {
+        let manager = test_state.dwallet_mpc_services[target].dwallet_mpc_manager();
+        let counter_network_key_id = manager
+            .internal_presign_network_key_id(&network_key_object_id)
+            .expect("the bootstrapped network key must resolve a NetworkKeyId");
+        let ordinal = manager
+            .next_internal_presign_sequence_number
+            .get(&(counter_network_key_id, curve, algorithm))
+            .copied()
+            .unwrap_or(1);
+        (
+            internal_presign_identifier_at(
+                manager.epoch_id,
+                ordinal,
+                curve,
+                algorithm,
+                network_key_object_id,
+                counter_network_key_id,
+            ),
+            ordinal,
+        )
+    };
+    assert!(
+        !test_state.dwallet_mpc_services[target]
+            .dwallet_mpc_manager()
+            .sessions
+            .contains_key(&poisoned_identifier),
+        "ordinal {poisoned_ordinal} must not be instantiated yet for the attack to apply"
+    );
+
+    // The byzantine peer reports an output for that not-yet-requested ordinal.
+    let poison = DWalletMPCOutputReport::External(DWalletMPCOutput {
+        authority: byzantine_authority,
+        session_identifier: poisoned_identifier,
+        output: vec![
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
+                MakeDWalletUserSecretKeySharesPublicOutput {
+                    dwallet_id: vec![1u8; 32],
+                    public_user_secret_key_shares: vec![],
+                    rejected: false,
+                    session_sequence_number: 0,
+                },
+            ),
+        ],
+        malicious_authorities: vec![],
+    });
+    let _ = test_state.dwallet_mpc_services[target]
+        .dwallet_mpc_manager_mut()
+        .handle_consensus_round_outputs(test_state.consensus_round as u64, vec![poison]);
+
+    // Attack precondition: the target now holds a Native-typed placeholder.
+    {
+        let session = test_state.dwallet_mpc_services[target]
+            .dwallet_mpc_manager()
+            .sessions
+            .get(&poisoned_identifier)
+            .expect("the poison output should have created a placeholder on the target");
+        assert!(
+            matches!(session.status, SessionStatus::WaitingForSessionRequest),
+            "the poisoned placeholder should be WaitingForSessionRequest"
+        );
+        assert!(
+            !matches!(session.computation_type, SessionComputationType::MPC { .. }),
+            "the poisoned placeholder should be typed Native (the attack precondition)"
+        );
+    }
+
+    // Run until the target mints that ordinal and leaves the placeholder state.
+    const MAX_ACTIVATION_ROUNDS: usize = 40;
+    let mut activation_rounds = 0usize;
+    while matches!(
+        test_state.dwallet_mpc_services[target]
+            .dwallet_mpc_manager()
+            .sessions
+            .get(&poisoned_identifier)
+            .map(|session| &session.status),
+        Some(SessionStatus::WaitingForSessionRequest)
+    ) {
+        run_one_round_delivering_messages(&mut test_state).await;
+        activation_rounds += 1;
+        assert!(
+            activation_rounds < MAX_ACTIVATION_ROUNDS,
+            "the target never instantiated ordinal {poisoned_ordinal} within \
+             {MAX_ACTIVATION_ROUNDS} rounds"
+        );
+    }
+
+    // Instantiation must have discarded the poisoned type.
+    {
+        let session = test_state.dwallet_mpc_services[target]
+            .dwallet_mpc_manager()
+            .sessions
+            .get(&poisoned_identifier)
+            .expect("the target should still hold the session after instantiation");
+        assert!(
+            matches!(session.computation_type, SessionComputationType::MPC { .. }),
+            "instantiation must normalize the byzantine Native placeholder back to an MPC buffer"
+        );
+    }
+
+    // And the ordinal must go on to complete: normalizing the type is only
+    // worth anything if the session it unblocks actually produces its presign.
+    const MAX_COMPLETION_ROUNDS: usize = 40;
+    let mut completion_rounds = 0usize;
+    loop {
+        let status_is_complete = {
+            let session = test_state.dwallet_mpc_services[target]
+                .dwallet_mpc_manager()
+                .sessions
+                .get(&poisoned_identifier)
+                .expect("the target should still hold the session");
+            assert!(
+                !matches!(session.status, SessionStatus::Failed),
+                "the poisoned ordinal must not fail after normalization"
+            );
+            matches!(
+                session.status,
+                SessionStatus::Completed | SessionStatus::ComputationCompleted
+            )
+        };
+        if status_is_complete {
+            break;
+        }
+        run_one_round_delivering_messages(&mut test_state).await;
+        completion_rounds += 1;
+        assert!(
+            completion_rounds < MAX_COMPLETION_ROUNDS,
+            "the normalized ordinal {poisoned_ordinal} never completed within \
+             {MAX_COMPLETION_ROUNDS} rounds"
+        );
+    }
+
+    info!(
+        poisoned_ordinal,
+        activation_rounds,
+        completion_rounds,
+        "a byzantine Native placeholder on an internal-presign ordinal was normalized at \
+         instantiation and the ordinal completed"
     );
 }
