@@ -1149,9 +1149,10 @@ impl DWalletMPCService {
                 }
             };
 
-            let mpc_outputs = self
-                .epoch_store
-                .next_dwallet_mpc_output(self.last_read_consensus_round);
+            let mpc_outputs = stop_on_epoch_end!(
+                self.epoch_store
+                    .next_dwallet_mpc_output(self.last_read_consensus_round)
+            );
 
             let (external_mpc_outputs_consensus_round, external_mpc_outputs) = match mpc_outputs {
                 Ok(mpc_outputs) => {
@@ -1188,9 +1189,10 @@ impl DWalletMPCService {
             // flag that gates instantiation so a node ignores the internal-output
             // stream until internal presign is actually live.
             let internal_mpc_outputs = if self.protocol_config.internal_presign_sessions_enabled() {
-                let mpc_outputs = self
-                    .epoch_store
-                    .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
+                let mpc_outputs = stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_dwallet_internal_mpc_output(self.last_read_consensus_round)
+                );
 
                 match mpc_outputs {
                     Ok(Some((round, outputs))) => {
@@ -1223,9 +1225,10 @@ impl DWalletMPCService {
                 Vec::new()
             };
 
-            let verified_dwallet_checkpoint_messages = self
-                .epoch_store
-                .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round);
+            let verified_dwallet_checkpoint_messages = stop_on_epoch_end!(
+                self.epoch_store
+                    .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round)
+            );
             let verified_dwallet_checkpoint_messages = match verified_dwallet_checkpoint_messages {
                 Ok(Some((round, messages))) => {
                     // Validate round matches
@@ -1263,9 +1266,10 @@ impl DWalletMPCService {
             // rounds) skips the stream the older binary never wrote, instead of
             // tripping the dense-per-round alignment check below.
             let verified_system_checkpoint_messages = if self.protocol_config.noa_checkpoints() {
-                let verified_system_checkpoint_messages = self
-                    .epoch_store
-                    .next_verified_system_checkpoint_message(self.last_read_consensus_round);
+                let verified_system_checkpoint_messages = stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_verified_system_checkpoint_message(self.last_read_consensus_round)
+                );
                 match verified_system_checkpoint_messages {
                     Ok(Some((round, messages))) => {
                         if round != mpc_messages_consensus_round {
@@ -1301,10 +1305,10 @@ impl DWalletMPCService {
             // flag that gates writing them so pre-feature history (v1.1.8 rounds)
             // is skipped rather than tripping the alignment check.
             let idle_status_updates = if self.protocol_config.internal_presign_sessions_enabled() {
-                match self
-                    .epoch_store
-                    .next_idle_status_update(self.last_read_consensus_round)
-                {
+                match stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_idle_status_update(self.last_read_consensus_round)
+                ) {
                     Ok(Some((round, updates))) => {
                         if round != mpc_messages_consensus_round {
                             error!(
@@ -1332,10 +1336,10 @@ impl DWalletMPCService {
             // system-checkpoint handler consumes, so they belong to the NOA
             // cluster — gate on `noa_checkpoints` like the system-checkpoint read.
             let sui_chain_observation_updates = if self.protocol_config.noa_checkpoints() {
-                match self
-                    .epoch_store
-                    .next_sui_chain_observation_update(self.last_read_consensus_round)
-                {
+                match stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_sui_chain_observation_update(self.last_read_consensus_round)
+                ) {
                     Ok(Some((round, updates))) => {
                         if round != mpc_messages_consensus_round {
                             error!(
@@ -1365,10 +1369,10 @@ impl DWalletMPCService {
                 .protocol_config
                 .internal_presign_sessions_enabled()
             {
-                match self
-                    .epoch_store
-                    .next_global_presign_request(self.last_read_consensus_round)
-                {
+                match stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_global_presign_request(self.last_read_consensus_round)
+                ) {
                     Ok(Some((round, msgs))) => {
                         if round != mpc_messages_consensus_round {
                             error!(
@@ -1392,10 +1396,10 @@ impl DWalletMPCService {
 
             // NOA observations belong to the NOA cluster — gate on `noa_checkpoints`.
             let noa_observation_messages = if self.protocol_config.noa_checkpoints() {
-                match self
-                    .epoch_store
-                    .next_noa_observation(self.last_read_consensus_round)
-                {
+                match stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_noa_observation(self.last_read_consensus_round)
+                ) {
                     Ok(Some((round, msgs))) => {
                         if round != mpc_messages_consensus_round {
                             error!(
@@ -1419,10 +1423,10 @@ impl DWalletMPCService {
 
             // NOA presign demands belong to the NOA cluster — gate on `noa_checkpoints()`.
             let noa_presign_demand_messages = if self.protocol_config.noa_checkpoints() {
-                match self
-                    .epoch_store
-                    .next_noa_presign_demand(self.last_read_consensus_round)
-                {
+                match stop_on_epoch_end!(
+                    self.epoch_store
+                        .next_noa_presign_demand(self.last_read_consensus_round)
+                ) {
                     Ok(Some((round, msgs))) => {
                         if round != mpc_messages_consensus_round {
                             error!(
