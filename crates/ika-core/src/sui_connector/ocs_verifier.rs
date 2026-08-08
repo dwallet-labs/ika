@@ -410,12 +410,19 @@ impl OcsVerifyingClient {
                     }
                 },
                 None => {
-                    warn!(
-                        head,
-                        target,
-                        "ratchet: epoch boundary pruned upstream and the archive does not \
-                         enumerate this epoch; trying next fallback"
-                    );
+                    // Only a SUCCESSFUL enumeration that lacks this epoch means
+                    // the archive does not hold it. If the call itself failed,
+                    // the arm above already reported that and we know nothing
+                    // about what the archive holds — saying otherwise here
+                    // would mislabel an outage as a determinate answer.
+                    if archive_error.is_none() {
+                        warn!(
+                            head,
+                            target,
+                            "ratchet: epoch boundary pruned upstream and the archive does not \
+                             enumerate this epoch; trying next fallback"
+                        );
+                    }
                 }
             }
         }

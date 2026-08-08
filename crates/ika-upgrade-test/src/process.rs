@@ -120,6 +120,10 @@ impl ValidatorProcess {
         // and whole-run log assertions are evaluated at the end — truncating
         // here would delete the earlier window those assertions exist to
         // inspect, so they would pass by having nothing left to read.
+        //
+        // The corollary for scenario authors: a POSITIVE log assertion can now
+        // match an occurrence from before a restart. Assert on something the
+        // phase under test emits uniquely, or capture a line offset first.
         let log = OpenOptions::new()
             .create(true)
             .append(true)
