@@ -86,12 +86,20 @@ which bytes* deterministic in consensus order.
 - **Emit gate** (`decide_ready_to_finalize`, producer-side): each
   validator withholds its first ready signal until the next-epoch
   committee is published AND every one of its members is **covered** —
-  blob locally validated, or digest present in the prior epoch's
-  handoff certificate. A prior-cert member cannot be dropped by the
-  freeze (carry-forward re-freezes it at the prior digest, see below),
-  so waiting for its fresh announcement buys nothing; only uncovered
-  members — a first-time joiner still propagating, or a member that has
-  never announced in any epoch — hold the gate open. That wait is
+  blob locally validated, or carried forward by the freeze. Coverage by
+  carry-forward needs BOTH halves of what carry-forward actually does
+  (see below): a digest in the prior epoch's handoff certificate, AND
+  membership in the CURRENT committee, which is the set the freeze walks.
+  Such a member cannot be dropped by the freeze, so waiting for its fresh
+  announcement buys nothing. Everyone else holds the gate open — a
+  first-time joiner still propagating, a member that has never announced
+  in any epoch, and a member rejoining after a gap, which has a
+  prior-cert digest but is absent from the current committee and so is
+  NOT carried forward. Exempting that last case on its prior-cert digest
+  alone stops the network waiting for a member the freeze then silently
+  drops: seated next epoch with full voting weight but no class-groups
+  entry, MPC-dead for that epoch, and in neither the frozen nor the
+  excluded set, so nothing reports it. That wait is
   bounded by a deadline: the 3/4-epoch liveness backstop, tightened —
   once the validator first observes `V_{e+1}` published — to
   `min(backstop, first-observed-publication + grace)` with
@@ -202,8 +210,11 @@ which bytes* deterministic in consensus order.
   present in the prior epoch's handoff certificate (its
   `ValidatorMpcData` items) is frozen at its prior-cert digest; the
   bytes resolve from perpetual `mpc_artifact_blobs`
-  (`carry_forward_stable_mpc_data`). Only members with no prior-cert
-  digest — first-time joiners — can be excluded for failing to announce
+  (`carry_forward_stable_mpc_data`). The walk is over the CURRENT
+  committee, so a prior-cert name that is not seated this epoch is not
+  reached — which is why the emit gate above requires both halves.
+  Among CURRENT members, only those with no prior-cert digest —
+  first-time joiners — can be excluded for failing to announce
   (a joiner that misses the freeze is excluded, not waited for). This
   restores the v3 "always available" property for any validator ever
   frozen: a member that restarts near the epoch boundary keeps its seat
