@@ -139,6 +139,22 @@ pub enum ConsensusTransactionKey {
     NOAPresignDemand([u8; 32]),
 }
 
+impl ConsensusTransactionKey {
+    /// Whether this key embeds an unbounded payload rather than being a
+    /// digest or a small tuple.
+    ///
+    /// Most variants are a digest or an `(authority, u64)`-shaped tuple —
+    /// tens of bytes. Two carry their whole MPC payload, so anything that
+    /// budgets by ENTRY COUNT rather than by bytes is really budgeting
+    /// `count * unbounded`.
+    pub fn embeds_payload(&self) -> bool {
+        matches!(
+            self,
+            Self::DWalletMPCMessage(..) | Self::DWalletMPCOutput(..)
+        )
+    }
+}
+
 impl Debug for ConsensusTransactionKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

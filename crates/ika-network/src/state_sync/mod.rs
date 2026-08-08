@@ -88,6 +88,13 @@ use tracing::{debug, error, info, instrument, trace, warn};
 /// deployed on a fresh database chases checkpoint 1 forever ("no peers were
 /// able to help sync checkpoint 1"), synced pinned at 0 while known grows —
 /// the 2026-07 epoch-close outage shape (issue #1892).
+/// Ceiling on peer-pushed checkpoint bodies held per stream.
+///
+/// Generous relative to any legitimate backlog — sync advances sequentially,
+/// so the useful entries are the ones near our current position — while
+/// bounding what an unauthenticated push can pin in memory.
+const MAX_UNPROCESSED_CHECKPOINTS: usize = 10_000;
+
 #[derive(Clone)]
 pub struct OnChainCheckpointCursors {
     pub dwallet: watch::Receiver<Option<DWalletCheckpointSequenceNumber>>,
@@ -424,6 +431,39 @@ impl PeerHeights {
         self.unprocessed_checkpoints.insert(digest, checkpoint);
         self.sequence_number_to_digest
             .insert(sequence_number, digest);
+        Self::evict_beyond(
+            &mut self.unprocessed_checkpoints,
+            &mut self.sequence_number_to_digest,
+        );
+    }
+
+    /// Bounds the stored bodies by dropping the FURTHEST-ahead entries.
+    ///
+    /// These maps are fed directly by an unauthenticated push RPC whose rate
+    /// limit defaults to `None`, and are pruned only by
+    /// `cleanup_old_checkpoints`, which removes entries at or below a synced
+    /// target — so entries far ahead of us are never reached by that pruning
+    /// and accumulate without limit.
+    ///
+    /// Evicting from the top is deliberate: sync advances upward from where we
+    /// are, so the entries closest to our position are the useful ones, and a
+    /// peer pushing an implausibly high sequence number is exactly the case
+    /// worth discarding. A peer's reported HEIGHT is kept regardless — that is
+    /// one `u64`, it is what tells us how far behind we are, and bounding it
+    /// would blind the sync target.
+    fn evict_beyond<D, S, T>(bodies: &mut HashMap<D, T>, by_sequence: &mut HashMap<S, D>)
+    where
+        D: Copy + Eq + std::hash::Hash,
+        S: Copy + Ord + std::hash::Hash,
+    {
+        while by_sequence.len() > MAX_UNPROCESSED_CHECKPOINTS {
+            let Some(highest) = by_sequence.keys().copied().max() else {
+                break;
+            };
+            if let Some(digest) = by_sequence.remove(&highest) {
+                bodies.remove(&digest);
+            }
+        }
     }
 
     #[allow(unused)]
@@ -473,6 +513,10 @@ impl PeerHeights {
             .insert(digest, system_checkpoint);
         self.sequence_number_to_digest_system_checkpoint
             .insert(sequence_number, digest);
+        Self::evict_beyond(
+            &mut self.unprocessed_system_checkpoint,
+            &mut self.sequence_number_to_digest_system_checkpoint,
+        );
     }
 
     #[allow(unused)]
