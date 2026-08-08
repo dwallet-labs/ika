@@ -54,6 +54,23 @@ pub struct CommitteeStoreTables {
 /// decode errors instead of panicking, precisely for old-layout records.
 const COMMITTEE_SCHEMA_VERSION_CURRENT: u64 = 3;
 
+/// The marker generation at and above which the one-time 1.1.8 legacy scan is
+/// known to be unnecessary.
+///
+/// Deliberately NOT `COMMITTEE_SCHEMA_VERSION_CURRENT`. That constant answers
+/// "which layout does this binary write", and it moves whenever the record
+/// shape changes; this one answers "could this store still hold 1.1.8
+/// records", which stopped being true the moment any marker-writing binary
+/// opened it. Gating the scan on the current generation re-armed it on every
+/// data dir written by the previous release — the exact reopen-under-the-
+/// legacy-view pattern the marker was introduced to stop, which `debug_fatal!`s
+/// on a current-layout record in debug and msim builds.
+///
+/// The re-armed scan could not have helped either: a genuine 1.1.8 record
+/// carries 48-byte BLS-basis names in `voting_rights`, which the deserializer
+/// now rejects outright, so the loop can only produce decode failures.
+const COMMITTEE_SCHEMA_VERSION_MIGRATED: u64 = 2;
+
 // These functions are used to initialize the DB tables
 fn committee_table_default_config() -> DBOptions {
     default_db_options().optimize_for_point_lookup(64)
@@ -97,7 +114,7 @@ impl CommitteeStore {
         // #1836). Release builds log-and-skip instead, which is why the
         // real-binary upgrade rehearsal never saw it.
         match tables.committee_schema_version.get(&()) {
-            Ok(Some(version)) if version >= COMMITTEE_SCHEMA_VERSION_CURRENT => return,
+            Ok(Some(version)) if version >= COMMITTEE_SCHEMA_VERSION_MIGRATED => return,
             Ok(_) => {}
             Err(e) => {
                 // A marker read error must NOT skip the migration: a
@@ -293,6 +310,50 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "the marker-guarded reopen must not have rewritten the record"
+        );
+    }
+
+    /// A store carrying an OLDER marker generation must still skip the scan.
+    ///
+    /// This is the regression that motivated splitting
+    /// `COMMITTEE_SCHEMA_VERSION_MIGRATED` out of
+    /// `COMMITTEE_SCHEMA_VERSION_CURRENT`: gating on the current generation
+    /// meant every bump re-armed the scan on every data directory the
+    /// previous release had written, reopening the legacy view over
+    /// current-layout records.
+    ///
+    /// A regressed gate fails THIS test on the assert: the scan would run and
+    /// rewrite the planted record, so the legacy view no longer finds it. The
+    /// `debug_fatal!` panic is the failure mode for a store holding
+    /// current-layout records, which `marker_skips_the_scan_on_reopen`
+    /// covers.
+    #[tokio::test]
+    async fn an_older_marker_generation_still_skips_the_scan() {
+        let path = fresh_path();
+        let (legacy_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        {
+            let store = CommitteeStore::new(path.clone(), None);
+            // Pretend this directory was last opened by the previous release,
+            // which wrote generation 2.
+            store
+                .tables
+                .committee_schema_version
+                .insert(&(), &COMMITTEE_SCHEMA_VERSION_MIGRATED)
+                .unwrap();
+            legacy_view(&store)
+                .insert(
+                    &legacy_committee.epoch,
+                    &LegacyCommittee::mirror_of(&legacy_committee),
+                )
+                .unwrap();
+        }
+        let store = CommitteeStore::new(path.clone(), None);
+        assert!(
+            legacy_view(&store)
+                .get(&legacy_committee.epoch)
+                .unwrap()
+                .is_some(),
+            "a store marked as already migrated must not be re-scanned"
         );
     }
 
