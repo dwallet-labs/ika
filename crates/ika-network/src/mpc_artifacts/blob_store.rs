@@ -223,8 +223,10 @@ pub async fn fetch_blob(
         .peer(peer_id)
         .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
     let mut client = ValidatorMetadataClient::new(peer);
+    let request = anemo::Request::new(GetMpcDataBlobRequest { blob_hash })
+        .with_timeout(super::ARTIFACT_RPC_TIMEOUT);
     let response = client
-        .get_mpc_data_blob(GetMpcDataBlobRequest { blob_hash })
+        .get_mpc_data_blob(request)
         .await
         .map_err(|status| anyhow::anyhow!("get_mpc_data_blob failed: {status:?}"))?;
     Ok(response.into_inner().map(|b| b.bytes))
