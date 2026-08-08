@@ -360,6 +360,12 @@ impl OcsVerifyingClient {
         last_seq: Option<CheckpointSequenceNumber>,
         reason: &str,
     ) -> Result<(), OcsError> {
+        // Set when an archive call FAILED, as distinct from the archive
+        // cleanly reporting that it does not hold this epoch. Those are not the
+        // same verdict: a failed call means we do not know, and only a clean
+        // absence justifies the terminal `ProofChainBroken` below — which is
+        // not retryable and so fails node startup outright.
+        let mut archive_error: Option<String> = None;
         if let Some(archive) = &self.archive {
             let seq = match last_seq {
                 Some(seq) => Some(seq),
@@ -373,6 +379,7 @@ impl OcsVerifyingClient {
                             "ratchet: archive epochs.json enumeration failed while resolving a \
                              pruned epoch record; trying next fallback"
                         );
+                        archive_error = Some(e.to_string());
                         None
                     }
                 },
@@ -399,6 +406,7 @@ impl OcsVerifyingClient {
                             "ratchet: epoch boundary pruned upstream and the verified archive \
                              fallback also failed; trying next fallback"
                         );
+                        archive_error = Some(e.to_string());
                     }
                 },
                 None => {
@@ -410,6 +418,20 @@ impl OcsVerifyingClient {
                     );
                 }
             }
+        }
+        if let Some(error) = archive_error {
+            warn!(
+                head,
+                ?last_seq,
+                target,
+                reason,
+                %error,
+                "ratchet: epoch boundary pruned upstream and the archive could not be consulted; \
+                 reporting a retryable failure rather than a broken proof chain"
+            );
+            return Err(OcsError::Transport(TransportError::Network(format!(
+                "checkpoint archive fallback for epoch {head} failed: {error}"
+            ))));
         }
         error!(
             head,
@@ -1153,6 +1175,37 @@ mod tests {
         assert_eq!(store.head_epoch(), 2, "archive bridged the pruned records");
         assert_eq!(mock.get_committee_call_count(), 0);
         assert_eq!(metrics.ratchet_stalled.get(), 0);
+    }
+
+    /// An archive that is configured but cannot be CONSULTED is a different
+    /// verdict from an archive that cleanly does not hold the epoch. The first
+    /// means "unknown" and must stay retryable; only the second justifies the
+    /// terminal `ProofChainBroken`, which at boot fails startup outright. Here
+    /// every archive enumeration fails, so nothing is learned either way.
+    #[tokio::test]
+    async fn archive_that_cannot_be_consulted_is_retryable_not_terminal() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee.clone());
+        let mut archive = archive_for_chain(&committee, &keys, 2);
+        // Never answers, so neither the cold-bootstrap backfill nor the
+        // per-boundary fallback can resolve a sequence number.
+        archive.fail_enumerations = StdMutex::new(u32::MAX);
+        let archive: Arc<dyn CheckpointArchive> = Arc::new(archive);
+
+        let mock = Arc::new(mock_with_history(&committee, &keys, 2, 2));
+        let metrics = OcsMetrics::new_for_testing();
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone())
+            .with_archive(Some(archive));
+
+        let err = client.ratchet_to_current_epoch().await.unwrap_err();
+        assert!(
+            err.is_retryable(),
+            "an archive that could not be consulted must stay retryable, got {err:?}"
+        );
+        assert!(
+            !matches!(err, OcsError::ProofChainBroken { .. }),
+            "a failed archive call is not proof that the chain is broken: {err:?}"
+        );
     }
 
     /// Anchor-less cold start on a history-less source (fresh DB, genesis-only

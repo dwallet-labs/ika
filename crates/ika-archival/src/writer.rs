@@ -91,10 +91,8 @@ impl DWalletCheckpointWriter {
         let epoch_num = manifest.epoch_num();
         let checkpoint_sequence_num = manifest.next_dwallet_checkpoint_seq_num();
         let epoch_dir = root_dir_path.join(format!("{EPOCH_DIR_PREFIX}{epoch_num}"));
-        if epoch_dir.exists() {
-            fs::remove_dir_all(&epoch_dir)?;
-        }
         fs::create_dir_all(&epoch_dir)?;
+        clear_staged_files(&epoch_dir, DWALLET_CHECKPOINT_FILE_SUFFIX)?;
         let checkpoint_file = Self::next_file(
             &epoch_dir,
             checkpoint_sequence_num,
@@ -142,10 +140,8 @@ impl DWalletCheckpointWriter {
         {
             self.cut()?;
             self.update_to_next_epoch();
-            if self.epoch_dir().exists() {
-                fs::remove_dir_all(self.epoch_dir())?;
-            }
             fs::create_dir_all(self.epoch_dir())?;
+            clear_staged_files(&self.epoch_dir(), DWALLET_CHECKPOINT_FILE_SUFFIX)?;
             self.reset()?;
         }
 
@@ -301,10 +297,8 @@ impl SystemCheckpointWriter {
         let epoch_num = manifest.epoch_num();
         let system_checkpoint_sequence_num = manifest.next_system_checkpoint_seq_num();
         let epoch_dir = root_dir_path.join(format!("{EPOCH_DIR_PREFIX}{epoch_num}"));
-        if epoch_dir.exists() {
-            fs::remove_dir_all(&epoch_dir)?;
-        }
         fs::create_dir_all(&epoch_dir)?;
+        clear_staged_files(&epoch_dir, SYSTEM_CHECKPOINT_FILE_SUFFIX)?;
         let system_checkpoint_file = Self::next_file(
             &epoch_dir,
             system_checkpoint_sequence_num,
@@ -355,10 +349,8 @@ impl SystemCheckpointWriter {
         {
             self.cut()?;
             self.update_to_next_epoch();
-            if self.epoch_dir().exists() {
-                fs::remove_dir_all(self.epoch_dir())?;
-            }
             fs::create_dir_all(self.epoch_dir())?;
+            clear_staged_files(&self.epoch_dir(), SYSTEM_CHECKPOINT_FILE_SUFFIX)?;
             self.reset()?;
         }
 
@@ -767,4 +759,26 @@ impl ArchiveWriter {
         fs::remove_file(path_to_filesystem(dir, &path)?)?;
         Ok(())
     }
+}
+
+/// Clears only this writer's own staged files under `epoch_dir`, leaving files
+/// belonging to the other writer untouched.
+///
+/// The dWallet and system checkpoint writers stage into the SAME epoch
+/// directory and are constructed one after the other, so removing the whole
+/// directory would delete the sibling's freshly created, still-open output file
+/// and its first `cut()` would then fail on a path that no longer exists. The
+/// two write disjoint file names, so clearing just this writer's suffix is
+/// enough to drop stale partial files from a previous run.
+fn clear_staged_files(epoch_dir: &Path, suffix: &str) -> Result<()> {
+    if !epoch_dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(epoch_dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == suffix) {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }

@@ -296,8 +296,11 @@ async fn get_decryption_key_shares_from_public_output(
             }
         };
 
-        if let Err(err) = key_shares_sender.send(res) {
-            error!(error=?err, "failed to send key shares");
+        // `oneshot::Sender::send` hands the payload back inside `Err`, so the
+        // "error" here IS the value that was being sent. This payload must not
+        // reach the log; report only that the send failed.
+        if key_shares_sender.send(res).is_err() {
+            error!("failed to send key shares: the receiver is gone");
         }
     });
 
@@ -861,8 +864,10 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
             )
         };
 
-        if let Err(err) = key_public_data_sender.send(res) {
-            error!(error=?err, "failed to send a network encryption key ");
+        // Same shape as above: the `Err` carries the payload back, so it is
+        // not formatted into the log.
+        if key_public_data_sender.send(res).is_err() {
+            error!("failed to send a network encryption key: the receiver is gone");
         }
     });
 

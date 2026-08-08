@@ -9,7 +9,7 @@
 //! is persistent and survives `swap_binary`, which is what makes the on-disk
 //! compatibility assertion real.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -116,8 +116,15 @@ impl ValidatorProcess {
         if self.child.is_some() {
             bail!("validator {} already running", self.index);
         }
-        let log = File::create(&self.log_path)
-            .with_context(|| format!("create log file {}", self.log_path.display()))?;
+        // Append rather than truncate. Scenarios restart validators mid-run,
+        // and whole-run log assertions are evaluated at the end — truncating
+        // here would delete the earlier window those assertions exist to
+        // inspect, so they would pass by having nothing left to read.
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+            .with_context(|| format!("open log file {}", self.log_path.display()))?;
         let stderr = log.try_clone()?;
         tracing::info!(
             index = self.index,
