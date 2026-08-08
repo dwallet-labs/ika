@@ -167,9 +167,22 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     consensus_round_prober: bool,
 
-    // Enables Mysticeti fastpath.
+    // Enables consensus transaction voting. Named `mysticeti_fastpath` until
+    // 2026-08: Sui renamed the `ConsensusProtocolConfig::new` parameter this
+    // flag feeds (`mysticeti_fastpath` -> `transaction_voting_enabled`) at a
+    // tag before mainnet-v1.73.2, and ika's caller kept the old name — so the
+    // flag has in fact been ika's transaction-voting switch, off, for as long
+    // as both networks have been live. Renaming is digest-safe: BCS does not
+    // encode field names, and a false flag is skipped entirely.
+    //
+    // Turning it on changes the DAG consensus builds and requires a
+    // version-gated rollout, not a flip: with voting on, a node replaying a
+    // backlog of certified commits panics in consensus-core's
+    // `linearizer::calculate_commit_timestamp` (the commit-sync path does not
+    // accept a leader's uncommitted round-1 ancestors that the
+    // median-timestamp computation expects).
     #[serde(skip_serializing_if = "is_false")]
-    mysticeti_fastpath: bool,
+    transaction_voting_enabled: bool,
 
     // Set number of leaders per round for Mysticeti commits.
     #[serde(skip_serializing_if = "Option::is_none")]

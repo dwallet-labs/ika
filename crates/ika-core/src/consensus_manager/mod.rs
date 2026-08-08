@@ -60,25 +60,18 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.consensus_max_transactions_in_block_bytes(),
         config.consensus_max_num_transactions_in_block(),
         config.gc_depth(),
-        // `transaction_voting_enabled`: ika runs this OFF, unlike Sui (which
-        // hardcodes `true`). The slot is fed by `mysticeti_fastpath()`, an
-        // ika feature flag that is false at every supported protocol version
-        // — Sui renamed this constructor parameter out from under that call
-        // some tags before mainnet-v1.73.2, so what reads like a fastpath
-        // toggle has in fact been ika's transaction-voting switch for as long
-        // as both networks have been live.
-        //
-        // Keep it flag-sourced rather than hardcoding upstream's `true`:
+        // `transaction_voting_enabled`: ika runs this OFF (false at every
+        // supported protocol version), unlike Sui, which hardcodes `true`.
+        // Keep it flag-sourced rather than adopting upstream's constant:
         // flipping it on changes the DAG that consensus builds, and a node
         // replaying a backlog of certified commits then panics in
         // consensus-core's `linearizer::calculate_commit_timestamp` ("We
         // should have all blocks in dag state") — the commit-sync path does
-        // not accept a leader's uncommitted round-1 ancestors, which the new
+        // not accept a leader's uncommitted round-1 ancestors, which the
         // median-timestamp computation `expect`s. Reproduced 2/2 in the
-        // upgrade test on the sui-1.76.1 bump. Turning voting on is therefore
-        // a deliberate, version-gated protocol change (add an ika feature
-        // flag), never a side effect of a Sui bump.
-        config.mysticeti_fastpath(),
+        // upgrade test. Enabling voting is a deliberate, version-gated
+        // protocol change, never a side effect of a Sui bump.
+        config.transaction_voting_enabled(),
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
         // `enable_v3`: hardcoded `false` to match upstream exactly. At the
