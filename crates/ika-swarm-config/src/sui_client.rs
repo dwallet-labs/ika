@@ -142,6 +142,55 @@ pub async fn fund_address_from_faucet(
         })
 }
 
+/// Faucet-fund `address` until its total SUI gas balance is at least
+/// `min_total_mist`, waiting for each grant to actually land.
+///
+/// Two failure modes make the plain fire-and-forget
+/// [`fund_address_from_faucet`] insufficient for gas-critical steps:
+/// the faucet executes its transfer asynchronously ("It can take up to 1
+/// minute to get the coin"), and a long-lived payer can arrive at a step
+/// with its earlier grants already burned down to dust (seen live in
+/// v128_churn: the publisher entered the join step with 0.199 SUI total
+/// against a 5 SUI budget). Polling the summed gas-coin balance covers
+/// both.
+pub async fn ensure_sui_balance_from_faucet(
+    context: &WalletContext,
+    address: SuiAddress,
+    sui_faucet_url: String,
+    min_total_mist: u64,
+) -> Result<(), anyhow::Error> {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+    async fn total_gas(context: &WalletContext, address: SuiAddress) -> Result<u64, anyhow::Error> {
+        Ok(context
+            .gas_objects(address)
+            .await?
+            .iter()
+            .map(|(value, _)| *value)
+            .sum())
+    }
+
+    if total_gas(context, address).await? >= min_total_mist {
+        return Ok(());
+    }
+    fund_address_from_faucet(address, sui_faucet_url).await?;
+
+    let deadline = tokio::time::Instant::now() + MAX_WAIT;
+    loop {
+        if total_gas(context, address).await? >= min_total_mist {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "faucet grant for {address} did not raise the SUI balance to \
+                 {min_total_mist} MIST within {MAX_WAIT:?}"
+            );
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
 
@@ -235,7 +284,12 @@ pub async fn init_ika_on_sui(
 
     let client = context.grpc_client()?;
 
+    // The publisher pays for the whole bootstrap (4 package publishes, system
+    // init, genesis staking) and observed runs have ended bootstrap with only
+    // dust left of two grants — give it four for margin.
     let mut request_tokens_from_faucet_futures = vec![
+        request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
+        request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
     ];
