@@ -34,6 +34,16 @@ use crate::transport::{
     SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
 };
 
+/// Sui rejects a transaction whose gas payment names more than
+/// `max_gas_payment_objects` objects — 256 on every live network. Selecting
+/// every coin the address owns therefore stops working, for every submission,
+/// as soon as it accumulates more than that; and the whole set is not needed
+/// in the first place. Stop paging at the cap.
+const MAX_GAS_PAYMENT_OBJECTS: usize = 256;
+
+/// Deadline for a transaction submission.
+const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub struct SuiGrpcClient {
     rpc: SuiRpcClient,
     endpoint: String,
@@ -430,6 +440,9 @@ impl SuiWriter for SuiGrpcClient {
         let mut refs = Vec::new();
         let mut page_token = None;
         loop {
+            if refs.len() >= MAX_GAS_PAYMENT_OBJECTS {
+                break;
+            }
             let page = rpc
                 .get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
                 .await
@@ -444,6 +457,7 @@ impl SuiWriter for SuiGrpcClient {
                 None => break,
             }
         }
+        refs.truncate(MAX_GAS_PAYMENT_OBJECTS);
         Ok(refs)
     }
 
@@ -479,7 +493,19 @@ impl SuiWriter for SuiGrpcClient {
         tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError> {
         let mut rpc = self.rpc.clone();
-        let executed = rpc.execute_transaction(tx).await.map_err(Self::rpc_err)?;
+        // Bounded because the notifier holds its serial submission lock across
+        // this call: the underlying client configures a connect timeout and
+        // keepalives but no per-request deadline, so an upstream that accepts
+        // the request and never answers would stall every notifier write
+        // behind it, with no watchdog able to fire.
+        let executed = tokio::time::timeout(SUBMIT_TIMEOUT, rpc.execute_transaction(tx))
+            .await
+            .map_err(|_| {
+                TransportError::Network(format!(
+                    "execute_transaction exceeded {SUBMIT_TIMEOUT:?} with no response"
+                ))
+            })?
+            .map_err(Self::rpc_err)?;
         Ok(SubmittedTransaction {
             digest: *tx.digest(),
             effects: executed.effects,

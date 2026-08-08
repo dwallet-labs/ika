@@ -542,9 +542,15 @@ async fn sweep_gas_coins_into_address_balance<C: SuiClientInner>(
     if gas_coins.is_empty() {
         anyhow::bail!("coin balance is {coin_total} MIST but no gas-coin objects were listed");
     }
-    if gas_coins.len() > SWEEP_MAX_GAS_COINS {
+    if gas_coins.len() >= SWEEP_MAX_GAS_COINS {
         // The subset's value is unknown, so a correct split amount can't be
         // computed. This does not happen to a writer address in practice.
+        //
+        // `>=`, not `>`: the lister truncates at the same cap, so a returned
+        // set of exactly this length may be a truncation of a larger holding.
+        // `coin_total` still counts every coin, so proceeding would smash a
+        // 256-coin payment while splitting the full balance, and the
+        // SplitCoins would abort on chain instead of bailing here.
         anyhow::bail!(
             "{} gas coins exceed the {SWEEP_MAX_GAS_COINS}-object gas payment cap;              consolidate them manually",
             gas_coins.len()

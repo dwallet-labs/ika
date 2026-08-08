@@ -45,8 +45,10 @@ pub async fn fetch_certified_handoff_attestation(
         .peer(peer_id)
         .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
     let mut client = ValidatorMetadataClient::new(peer);
+    let request = anemo::Request::new(GetCertifiedHandoffAttestationRequest { epoch })
+        .with_timeout(super::ARTIFACT_RPC_TIMEOUT);
     let response = client
-        .get_certified_handoff_attestation(GetCertifiedHandoffAttestationRequest { epoch })
+        .get_certified_handoff_attestation(request)
         .await
         .map_err(|status| {
             anyhow::anyhow!("get_certified_handoff_attestation failed: {status:?}")

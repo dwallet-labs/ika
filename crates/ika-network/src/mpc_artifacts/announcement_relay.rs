@@ -110,8 +110,10 @@ pub async fn submit_announcement_to_peer(
         .peer(peer_id)
         .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
     let mut client = ValidatorMetadataClient::new(peer);
+    let request = anemo::Request::new(SubmitMpcDataAnnouncementRequest { announcement, blob })
+        .with_timeout(super::ARTIFACT_RPC_TIMEOUT);
     let response = client
-        .submit_mpc_data_announcement(SubmitMpcDataAnnouncementRequest { announcement, blob })
+        .submit_mpc_data_announcement(request)
         .await
         .map_err(|status| anyhow::anyhow!("submit_mpc_data_announcement failed: {status:?}"))?;
     Ok(response.into_inner())
