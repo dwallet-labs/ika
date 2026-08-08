@@ -89,6 +89,24 @@ on:
       # ever running had it not been dispatched by hand.
       - "crates/ika-core/src/authority.rs"
       - "crates/ika-core/src/authority/**"
+      # consensus_handler.rs decides which sequenced transactions are
+      # processed at all (verification order, dedup admission) and
+      # messages_consensus.rs defines the consensus transaction/key types —
+      # whose BCS encoding is persisted and append-only. Both change what a
+      # mixed-binary committee agrees on, which is precisely what the
+      # rollout scenarios assert, and both were missing here for the same
+      # reason authority.rs once was.
+      - "crates/ika-core/src/consensus_handler.rs"
+      - "crates/ika-types/src/messages_consensus.rs"
+      # The whole p2p crate, not just state_sync and mpc_artifacts. This
+      # suite spawns REAL validator processes that reach each other over
+      # anemo: checkpoint sync, handoff-certificate and blob fetch at epoch
+      # entry, and peer discovery are all load-bearing for a cross-binary
+      # run. A per-subdirectory list would re-open this same gap the next
+      # time someone adds a module, which is how consensus_handler.rs and
+      # authority.rs both came to be missing. The cost is that unrelated p2p
+      # churn also triggers the suite; that is the cheaper mistake.
+      - "crates/ika-network/**"
       - "crates/ika-core/src/dwallet_mpc/**"
       - "crates/ika-core/src/dwallet_session_request.rs"
       - "crates/ika-core/src/request_protocol_data.rs"
