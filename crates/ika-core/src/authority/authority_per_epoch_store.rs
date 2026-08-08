@@ -2934,27 +2934,33 @@ impl AuthorityPerEpochStore {
         signed: &SignedValidatorMpcDataAnnouncement,
         blob: &[u8],
     ) -> IkaResult {
-        // Persist the joiner's blob immediately (hash-verified,
-        // content-addressed) even if the announcement itself must be
-        // buffered until the joiner pubkey provider installs: bytes
-        // keyed by their own digest are inert unless a frozen digest
-        // matches them, so storage needn't wait on the signature check.
-        self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
+        // The blob is stored on every path that RETAINS the announcement —
+        // accepted, or buffered for re-evaluation — because those paths need
+        // the bytes later and consensus won't redeliver them. It is
+        // deliberately NOT stored on the drop path below: that verdict is
+        // final, and `mpc_artifact_blobs` is perpetual with no pruning, so
+        // persisting there left permanent bytes behind an announcement we had
+        // just decided to discard. Storage is still hash-verified and
+        // content-addressed, so ordering it after the verdict costs nothing.
         let next_epoch = self.epoch().saturating_add(1);
         let Some(provider) = self.joiner_pubkey_provider.load_full() else {
             // Provider not installed yet — buffer and re-evaluate on
             // install, rather than drop a relay consensus won't
             // redeliver.
+            self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
             self.buffer_relayed_joiner_announcement(signed);
             return Ok(());
         };
         match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
-            JoinerAnnouncementVerdict::Accept => {}
+            JoinerAnnouncementVerdict::Accept => {
+                self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
+            }
             JoinerAnnouncementVerdict::UnregisteredJoiner => {
                 // The installed provider predates this joiner's
                 // registration (a next-epoch committee snapshot that
                 // hasn't caught up). Buffer; the next provider install
                 // re-evaluates it.
+                self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
                 self.buffer_relayed_joiner_announcement(signed);
                 return Ok(());
             }
@@ -2965,7 +2971,8 @@ impl AuthorityPerEpochStore {
                 warn!(
                     ?verdict,
                     authority = ?signed.announcement.validator,
-                    "joiner mpc data announcement rejected — dropping"
+                    "joiner mpc data announcement rejected — dropping without \
+                     persisting its blob"
                 );
                 return Ok(());
             }
