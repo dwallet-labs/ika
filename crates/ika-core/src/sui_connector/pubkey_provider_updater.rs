@@ -114,16 +114,16 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     // validator id (StakingPool.id == BlsCommitteeMember.validator_id).
     // Lossy: a departed prior-committee member with an unparseable protocol
     // pubkey is skipped, not fatal — bootstrap must not crash-loop on one bad
-    // record. NOTE: the skip is NOT graceful quorum degradation. The skipped
-    // member is absent from `voting_rights`, and cert verification
-    // HARD-REJECTS a certificate carrying a weight-0 signer's signature —
-    // and since that member's own node runs fine, its signature is in every
-    // aggregated cert, so every served cert fails verification and bootstrap
-    // surfaces `Rejected`. The warn below makes that outcome attributable to
-    // the corrupt prior-committee record instead of the Rejected log's
-    // default "wrong prior-committee view / wrong peers" guidance. (Trigger
-    // requires registration-validated snapshot bytes to fail BLS parse —
-    // near-unreachable; the pre-lossy behavior was a panic crash-loop.)
+    // record. The skip costs that member's stake from the achievable cert
+    // quorum: it is absent from `voting_rights`, so its signature resolves to
+    // weight 0 and cert verification skips it. A quorum of the remaining
+    // members still validates the handoff; only if enough members drop to put
+    // the rest below quorum does bootstrap fail, which is correct. The warn
+    // below keeps that attributable to the corrupt prior-committee record
+    // rather than the Rejected log's default "wrong prior-committee view /
+    // wrong peers" guidance. (Trigger requires registration-validated
+    // snapshot bytes to fail BLS parse — near-unreachable; the pre-lossy
+    // behavior was a panic crash-loop.)
     let bls_members = system_inner.read_bls_committee_lossy(bls_committee);
     if bls_members.len() < bls_committee.members.len() {
         let parsed_ids: HashSet<ObjectID> = bls_members.iter().map(|(id, _)| *id).collect();
@@ -166,7 +166,9 @@ fn build_prior_committee(
     // (`set_next_epoch_consensus_pubkey_bytes`, effectuated at epoch
     // advance), in which case this names the member under its new key while
     // the cert names it under the old one, and the signer resolves to weight
-    // 0. Rotation under a consensus-key identity is unfinished business; see
+    // 0. Cert verification skips a weight-0 signer, so a rotation costs that
+    // member's stake from the achievable quorum rather than failing the cert.
+    // Rotation under a consensus-key identity is unfinished business; see
     // dev-docs/specs/committee-consensus-keys.md. A member whose
     // validator_info fails verify has no resolvable name and drops out (the
     // verify-failure warn below attributes it).

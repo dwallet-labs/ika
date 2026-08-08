@@ -530,17 +530,47 @@ fn verify_certified_handoff_attestation_inner(
         .map_err(|e| IkaError::Unknown(format!("bcs encode handoff intent message: {e}")))?;
     let mut seen = HashSet::new();
     let mut stake: StakeUnit = 0;
+    let mut non_members: usize = 0;
+    let mut unresolvable: usize = 0;
     for (signer, signature) in &cert.signatures {
         if !seen.insert(*signer) {
+            // A repeated signer is malformed however you read it — a
+            // well-formed cert never carries one — and letting it through
+            // would risk double-counting stake. Unlike the two skips below,
+            // this cannot arise from honest chain state.
             return Err(IkaError::Unknown(format!(
                 "duplicate signer {signer:?} in certified handoff attestation"
             )));
         }
         let weight = committee.weight(signer);
         if weight == 0 {
-            return Err(IkaError::Unknown(format!(
-                "signer {signer:?} is not a member of the verifying committee"
-            )));
+            // Not a member of the committee we are verifying against. Skip
+            // the signature rather than failing the whole cert: it carries
+            // zero stake either way, so the quorum check below stays the
+            // fail-closed gate, and verifying against a wholly wrong
+            // committee still accumulates 0 and is rejected there.
+            //
+            // Rejecting outright made honest chain state fatal. The
+            // verifying committee is named from each member's CURRENT
+            // on-chain consensus key, so a member that rotated that key at
+            // the boundary is named under the new key while the cert names
+            // it under the old one; and a member whose `validator_info`
+            // fails `verify()` — reachable for a departed validator with a
+            // stale record — is absent from the committee entirely. Either
+            // way its signature is in every cert every honest peer serves,
+            // so EVERY candidate failed, and a node with no persisted prior
+            // committee (a joiner, or a restored database) shut itself down.
+            //
+            // It also removes a rejection lever: any peer could kill an
+            // otherwise-valid cert by appending one junk signer entry.
+            debug!(
+                ?signer,
+                "handoff signer is not a member of the verifying committee \
+                 (rotated consensus key, or absent from the committee snapshot); \
+                 skipping its signature"
+            );
+            non_members += 1;
+            continue;
         }
         let Some(pubkey) = provider.consensus_pubkey(signer) else {
             // Genuine prior-committee member (weight > 0, above) whose
@@ -560,6 +590,7 @@ fn verify_certified_handoff_attestation_inner(
                 "prior-committee handoff signer pubkey unresolvable (departed since signing); \
                  skipping its signature"
             );
+            unresolvable += 1;
             continue;
         };
         pubkey
@@ -570,9 +601,15 @@ fn verify_certified_handoff_attestation_inner(
         stake = stake.saturating_add(weight);
     }
     if stake < committee.quorum_threshold() {
+        // Report what was skipped: with both skips above, "stake 0" on its
+        // own no longer distinguishes a cert for the wrong committee from
+        // one whose signers have all departed.
         return Err(IkaError::Unknown(format!(
-            "certified handoff attestation stake {stake} below quorum threshold {}",
-            committee.quorum_threshold()
+            "certified handoff attestation stake {stake} below quorum threshold {} \
+             ({non_members} of {} signer(s) not in the verifying committee, \
+             {unresolvable} with an unresolvable consensus pubkey)",
+            committee.quorum_threshold(),
+            cert.signatures.len(),
         )));
     }
     Ok(())

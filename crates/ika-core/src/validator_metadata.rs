@@ -3165,6 +3165,78 @@ mod tests {
         );
     }
 
+    /// A signer that carries no weight in the verifying committee must be
+    /// SKIPPED, not fatal — the remaining stake still decides.
+    ///
+    /// This is the shape the chain read actually produces. The prior
+    /// committee is named from each member's CURRENT on-chain consensus key
+    /// and drops any member whose `validator_info` fails to verify, while the
+    /// quorum threshold comes from the chain and still counts every member.
+    /// So a member that rotated its consensus key at the boundary, or whose
+    /// record is stale, is absent from `voting_rights` while its signature
+    /// sits in every certificate every honest peer serves.
+    ///
+    /// Rejecting the certificate over that signer made every candidate fail,
+    /// so a node with no persisted prior committee — a joiner, or a restored
+    /// database — halted itself for the epoch, deterministically and
+    /// network-wide.
+    #[test]
+    fn verify_certified_handoff_attestation_skips_a_signer_with_no_weight() {
+        let (full_committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x12; 32], vec![]).expect("build");
+        // All four sign: the aggregator keeps collecting past quorum, so a
+        // real cert carries every signature that arrived.
+        let mut agg = HandoffAggregator::new(full_committee.clone(), att.clone());
+        for index in 0..4 {
+            let msg = sign_handoff_attestation(att.clone(), names[index], &consensus_kps[index]);
+            agg.insert_verified(names[index], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+        assert_eq!(cert.signatures.len(), 4);
+
+        // The chain read lost one member, so it is absent from
+        // `voting_rights` — but the thresholds still come from the chain and
+        // count all four. Three members remain, exactly quorum.
+        let read_committee = Arc::new(Committee::new(
+            5,
+            names[..3].iter().map(|name| (*name, 1u64)).collect(),
+            HashMap::new(),
+            names[..3]
+                .iter()
+                .copied()
+                .zip(consensus_kps[..3].iter().map(|kp| kp.public().clone()))
+                .collect(),
+            full_committee.quorum_threshold(),
+            full_committee.validity_threshold(),
+        ));
+        verify_certified_handoff_attestation(&cert, &read_committee, &provider)
+            .expect("a signer with no weight must be skipped, leaving the quorum to decide");
+
+        // The quorum check stays the fail-closed gate: lose one more member
+        // and the remaining stake is short, so the cert is rejected — and the
+        // error says how many signers were skipped, so "stake too low" can
+        // still be told apart from "wrong committee entirely".
+        let short_committee = Arc::new(Committee::new(
+            5,
+            names[..2].iter().map(|name| (*name, 1u64)).collect(),
+            HashMap::new(),
+            names[..2]
+                .iter()
+                .copied()
+                .zip(consensus_kps[..2].iter().map(|kp| kp.public().clone()))
+                .collect(),
+            full_committee.quorum_threshold(),
+            full_committee.validity_threshold(),
+        ));
+        let err = verify_certified_handoff_attestation(&cert, &short_committee, &provider)
+            .expect_err("below quorum once too many members are missing");
+        let msg = format!("{err}").to_lowercase();
+        assert!(
+            msg.contains("quorum") && msg.contains("not in the verifying committee"),
+            "expected a below-quorum error naming the skipped signers, got: {msg}"
+        );
+    }
+
     /// Exactly-quorum stake must verify; quorum-minus-one stake
     /// must not. With 4 unit-stake validators, quorum_threshold = 3.
     /// Building a cert with 3 valid signatures and verifying, then
