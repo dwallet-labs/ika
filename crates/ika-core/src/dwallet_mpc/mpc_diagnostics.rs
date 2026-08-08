@@ -548,8 +548,16 @@ pub(crate) struct BoundedSessionDiagnostics {
 
 impl BoundedSessionDiagnostics {
     pub(crate) fn new(initial_status: String) -> Self {
+        // Grow on demand rather than reserving the full ring up front. A
+        // session is created for any session identifier named by a message
+        // arriving through consensus, and the vast majority record a handful
+        // of events, so pre-reserving `MAX_SESSION_DIAGNOSTIC_EVENTS` slots
+        // paid the worst-case footprint for every session in the epoch —
+        // several kilobytes each, against a map that is not pruned until the
+        // epoch advances. `record` still caps the length, so the ceiling is
+        // unchanged; only the up-front reservation goes away.
         let mut diagnostics = Self {
-            events: VecDeque::with_capacity(MAX_SESSION_DIAGNOSTIC_EVENTS),
+            events: VecDeque::new(),
             dropped_events: 0,
             emitted_anomalies: HashSet::new(),
         };

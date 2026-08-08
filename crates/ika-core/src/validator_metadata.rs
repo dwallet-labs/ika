@@ -146,8 +146,13 @@ pub enum JoinerAnnouncementVerdict {
     /// All checks passed; caller may proceed to apply the
     /// latest-by-timestamp insert rule.
     Accept,
-    /// The provider doesn't know about this authority. Drop the
-    /// announcement; it's either spam or the provider is stale.
+    /// The provider doesn't know about this authority — either spam, or
+    /// the provider predates the joiner's registration.
+    ///
+    /// NOT necessarily a drop: because a stale provider is indistinguishable
+    /// from spam here, the per-epoch store buffers this verdict and
+    /// re-evaluates it when the next provider installs. Only the signature
+    /// and envelope verdicts are final.
     UnregisteredJoiner,
     /// The joiner's Ed25519 signature didn't verify against its
     /// consensus pubkey.
@@ -161,9 +166,11 @@ pub enum JoinerAnnouncementVerdict {
 /// Pure verification of a next-epoch joiner announcement. Intended
 /// for both unit tests and for `AuthorityPerEpochStore`'s next-epoch
 /// branch — the per-epoch-store method calls this and only inserts
-/// on `Accept`. Returning anything other than `Accept` is non-fatal
-/// (callers should `drop and log`); these are protocol-level
-/// outcomes, not unexpected errors.
+/// on `Accept`. Returning anything other than `Accept` is non-fatal;
+/// these are protocol-level outcomes, not unexpected errors. What a
+/// caller does with a non-`Accept` verdict is its own decision — the
+/// per-epoch store drops the final ones and buffers `UnregisteredJoiner`
+/// for re-evaluation.
 pub fn verify_joiner_announcement(
     signed: &SignedValidatorMpcDataAnnouncement,
     provider: &dyn JoinerPubkeyProvider,
