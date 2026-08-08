@@ -22,12 +22,9 @@ tag=$(echo "$tags" | head -1)
 echo "root Cargo.toml Sui pin: $tag"
 
 # Every other location must carry the same tag (same flavor, same version).
-check_file() {
-    local file="$1"
-    [ -f "$file" ] || return 0
-    local found
-    found=$(grep -oE "$TAG_RE" "$file" | sort -u || true)
-    [ -n "$found" ] || return 0
+# Compare whatever tags a file carries against the root pin.
+compare_tags() {
+    local file="$1" found="$2"
     local mismatched
     mismatched=$(echo "$found" | grep -v -x "$tag" || true)
     if [ -n "$mismatched" ]; then
@@ -39,12 +36,55 @@ check_file() {
     fi
 }
 
+# A location that MUST exist and MUST carry the pin. A missing file or a file
+# that has lost its tag used to return success silently, so a rename or a
+# refactor that dropped the pin read as green.
+check_file() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "ERROR: $file is checked for the Sui pin but does not exist" >&2
+        echo "       Update the list in $0 if the file moved." >&2
+        fail=1
+        return 0
+    fi
+    local found
+    found=$(grep -oE "$TAG_RE" "$file" | sort -u || true)
+    if [ -z "$found" ]; then
+        echo "ERROR: $file is checked for the Sui pin but carries no release tag" >&2
+        echo "       Update the list in $0 if the pin legitimately moved out." >&2
+        fail=1
+        return 0
+    fi
+    compare_tags "$file" "$found"
+}
+
+# A location that legitimately carries no tag today because it resolves Sui
+# deps against the root workspace, but must not drift if a direct pin is added
+# later. The FILE must still exist: if it does not, this list is stale and the
+# guard has quietly stopped watching something.
+check_optional_pin() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo "ERROR: $file is listed for the Sui pin check but does not exist" >&2
+        echo "       Update the list in $0 if the file moved or was removed." >&2
+        fail=1
+        return 0
+    fi
+    local found
+    found=$(grep -oE "$TAG_RE" "$file" | sort -u || true)
+    if [ -z "$found" ]; then
+        echo "$file: OK (no direct pin)"
+        return 0
+    fi
+    compare_tags "$file" "$found"
+}
+
 check_file .github/workflows/ts-integration-tests.yaml
 check_file .github/workflows/ts-ci.yaml
+check_file .github/workflows/system-tests-ci.yaml
 check_file CLAUDE.md
 # Excluded workspaces: manifests resolve workspace deps against the root,
 # but any direct tag pin added later must stay in lockstep.
-check_file sdk/ika-wasm/Cargo.toml
-check_file sdk/dwallet-mpc-wasm/Cargo.toml
+check_optional_pin sdk/ika-wasm/Cargo.toml
 
 exit "$fail"

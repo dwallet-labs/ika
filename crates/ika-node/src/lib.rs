@@ -1054,30 +1054,47 @@ impl IkaNode {
                 .clone();
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
-                match IkaCheckpointPusher::new(
-                    raw_transport,
-                    perpetual_for_push,
-                    metrics_for_push,
-                    &packages,
-                    // The scan must outrun the fullnode's checkpoint pruning
-                    // watermark, which can trail the executed head by as
-                    // little as ~2 seconds: at a 2s cadence the pusher lost
-                    // the 2-3 newest checkpoints of every pruner tick —
-                    // permanently, since a pruned full checkpoint never
-                    // materializes again. 250ms keeps the pusher within a
-                    // checkpoint or two of the head (a get_latest + at most
-                    // a few full-checkpoint fetches per tick — negligible
-                    // load); the pusher's pending-gap retries backstop
-                    // whatever still slips through.
-                    std::time::Duration::from_millis(250),
-                    cache_for_push,
-                    committees_for_push,
-                )
-                .await
-                {
-                    Ok(pusher) => pusher.run().await,
-                    Err(e) => warn!(error = ?e, "checkpoint folder failed to start"),
-                }
+                // Retry construction instead of giving up for the lifetime of
+                // the process. The constructor talks to the fullnode, so a
+                // transient failure at boot used to disable the pusher
+                // permanently — leaving this node's shared verified-state cache
+                // unfed and its mirrored peers unserved, with no further
+                // attempt and nothing but one warning to say so.
+                const PUSHER_START_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+                let pusher = loop {
+                    match IkaCheckpointPusher::new(
+                        raw_transport.clone(),
+                        perpetual_for_push.clone(),
+                        metrics_for_push.clone(),
+                        &packages,
+                        // The scan must outrun the fullnode's checkpoint pruning
+                        // watermark, which can trail the executed head by as
+                        // little as ~2 seconds: at a 2s cadence the pusher lost
+                        // the 2-3 newest checkpoints of every pruner tick —
+                        // permanently, since a pruned full checkpoint never
+                        // materializes again. 250ms keeps the pusher within a
+                        // checkpoint or two of the head (a get_latest + at most
+                        // a few full-checkpoint fetches per tick — negligible
+                        // load); the pusher's pending-gap retries backstop
+                        // whatever still slips through.
+                        std::time::Duration::from_millis(250),
+                        cache_for_push.clone(),
+                        committees_for_push.clone(),
+                    )
+                    .await
+                    {
+                        Ok(pusher) => break pusher,
+                        Err(e) => {
+                            warn!(
+                                error = ?e,
+                                retry_in = ?PUSHER_START_RETRY,
+                                "checkpoint pusher failed to start; retrying"
+                            );
+                            tokio::time::sleep(PUSHER_START_RETRY).await;
+                        }
+                    }
+                };
+                pusher.run().await;
             });
         }
 

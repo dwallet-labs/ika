@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -1186,17 +1186,25 @@ fn read_or_generate_root_seed(
     ValidatorMPCSecrets,
     ika_types::committee::ValidatorEncryptionKeysAndProofs,
 )> {
-    let seed = match RootSeed::from_file(seed_path.clone()) {
-        Ok(seed) => {
-            println!("Use existing seed: {seed_path:?}.",);
-            seed
-        }
-        Err(_) => {
-            let seed = RootSeed::random_seed();
-            seed.save_to_file(seed_path.clone())?;
-            println!("Generated root seed () file: {seed_path:?}.",);
-            seed
-        }
+    // Decide on the file's EXISTENCE, not on whether it parsed. `from_file`
+    // reports an absent file and an unreadable or corrupt one as the same
+    // error, and generating a fresh seed overwrites the path — so treating any
+    // failure as "no seed" would destroy a validator's only copy of a seed
+    // that is merely unreadable right now.
+    let seed = if seed_path.exists() {
+        let seed = RootSeed::from_file(seed_path.clone()).with_context(|| {
+            format!(
+                "root seed file {seed_path:?} exists but could not be read; refusing to \
+                 overwrite it with a freshly generated seed"
+            )
+        })?;
+        println!("Use existing seed: {seed_path:?}.",);
+        seed
+    } else {
+        let seed = RootSeed::random_seed();
+        seed.save_to_file(seed_path.clone())?;
+        println!("Generated root seed () file: {seed_path:?}.",);
+        seed
     };
 
     Ok(ValidatorMPCSecrets::from_seed(&seed))
