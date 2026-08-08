@@ -320,8 +320,13 @@ mod tests {
     /// `COMMITTEE_SCHEMA_VERSION_CURRENT`: gating on the current generation
     /// meant every bump re-armed the scan on every data directory the
     /// previous release had written, reopening the legacy view over
-    /// current-layout records — which `debug_fatal!`s under debug assertions,
-    /// so this test would panic rather than fail if the gate regressed.
+    /// current-layout records.
+    ///
+    /// A regressed gate fails THIS test on the assert: the scan would run and
+    /// rewrite the planted record, so the legacy view no longer finds it. The
+    /// `debug_fatal!` panic is the failure mode for a store holding
+    /// current-layout records, which `marker_skips_the_scan_on_reopen`
+    /// covers.
     #[tokio::test]
     async fn an_older_marker_generation_still_skips_the_scan() {
         let path = fresh_path();
