@@ -429,12 +429,45 @@ impl PeerHeights {
         let digest = *checkpoint.digest();
         let sequence_number = *checkpoint.sequence_number();
         self.unprocessed_checkpoints.insert(digest, checkpoint);
-        self.sequence_number_to_digest
-            .insert(sequence_number, digest);
+        Self::displace_previous_body(
+            &mut self.unprocessed_checkpoints,
+            &mut self.sequence_number_to_digest,
+            sequence_number,
+            digest,
+        );
         Self::evict_beyond(
             &mut self.unprocessed_checkpoints,
             &mut self.sequence_number_to_digest,
         );
+    }
+
+    /// Points `sequence_number` at `digest`, dropping the body it displaces.
+    ///
+    /// Without this the two maps drift apart and the ceiling below counts the
+    /// wrong thing. Bodies are keyed by DIGEST and the index by SEQUENCE, and
+    /// the push RPC verifies no signature — the only gate is that the sender
+    /// is a registered same-chain peer. So one peer can push many bodies that
+    /// all claim a single far-ahead sequence number with distinct digests:
+    /// each adds a body while merely overwriting the same index key, leaving
+    /// the counted map at one entry while the bodies grow without limit.
+    ///
+    /// Keeping only the newest body per sequence is safe: two valid
+    /// certificates for one sequence would mean the committee equivocated,
+    /// and the fetch path re-checks against pinned digests regardless.
+    fn displace_previous_body<D, S, T>(
+        bodies: &mut HashMap<D, T>,
+        by_sequence: &mut HashMap<S, D>,
+        sequence_number: S,
+        digest: D,
+    ) where
+        D: Copy + Eq + std::hash::Hash,
+        S: Copy + Eq + std::hash::Hash,
+    {
+        if let Some(previous) = by_sequence.insert(sequence_number, digest)
+            && previous != digest
+        {
+            bodies.remove(&previous);
+        }
     }
 
     /// Bounds the stored bodies by dropping the FURTHEST-ahead entries.
@@ -511,8 +544,12 @@ impl PeerHeights {
         let sequence_number = *system_checkpoint.sequence_number();
         self.unprocessed_system_checkpoint
             .insert(digest, system_checkpoint);
-        self.sequence_number_to_digest_system_checkpoint
-            .insert(sequence_number, digest);
+        Self::displace_previous_body(
+            &mut self.unprocessed_system_checkpoint,
+            &mut self.sequence_number_to_digest_system_checkpoint,
+            sequence_number,
+            digest,
+        );
         Self::evict_beyond(
             &mut self.unprocessed_system_checkpoint,
             &mut self.sequence_number_to_digest_system_checkpoint,
@@ -2137,6 +2174,59 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod peer_heights_bounds_tests {
+    use super::*;
+
+    /// The bound counts the SEQUENCE index, but bodies are keyed by digest.
+    /// The push RPC verifies no signature, so one peer can push many crafted
+    /// bodies that all claim a single far-ahead sequence number with distinct
+    /// digests — each adding a body while merely overwriting one index entry.
+    /// Displacing the previous body is what keeps the two in step.
+    #[test]
+    fn same_sequence_distinct_digests_cannot_grow_the_body_map() {
+        let mut bodies: HashMap<u64, ()> = HashMap::new();
+        let mut by_sequence: HashMap<u64, u64> = HashMap::new();
+        const FAR_AHEAD: u64 = 9_999_999;
+
+        for digest in 0..50_000u64 {
+            bodies.insert(digest, ());
+            PeerHeights::displace_previous_body(&mut bodies, &mut by_sequence, FAR_AHEAD, digest);
+            PeerHeights::evict_beyond(&mut bodies, &mut by_sequence);
+        }
+
+        assert_eq!(by_sequence.len(), 1, "one sequence was ever claimed");
+        assert_eq!(
+            bodies.len(),
+            1,
+            "bodies must not outgrow the index they are counted by"
+        );
+    }
+
+    /// Across distinct sequences the ceiling applies, and it discards the
+    /// furthest-ahead — sync advances upward, so the entries nearest our
+    /// position are the ones worth keeping.
+    #[test]
+    fn distinct_sequences_are_capped_and_evict_from_the_top() {
+        let mut bodies: HashMap<u64, ()> = HashMap::new();
+        let mut by_sequence: HashMap<u64, u64> = HashMap::new();
+
+        for sequence in 0..(MAX_UNPROCESSED_CHECKPOINTS as u64 + 5_000) {
+            bodies.insert(sequence, ());
+            PeerHeights::displace_previous_body(&mut bodies, &mut by_sequence, sequence, sequence);
+            PeerHeights::evict_beyond(&mut bodies, &mut by_sequence);
+        }
+
+        assert_eq!(by_sequence.len(), MAX_UNPROCESSED_CHECKPOINTS);
+        assert_eq!(bodies.len(), MAX_UNPROCESSED_CHECKPOINTS);
+        assert!(by_sequence.contains_key(&0), "the nearest entry is kept");
+        assert!(
+            !by_sequence.contains_key(&(MAX_UNPROCESSED_CHECKPOINTS as u64 + 4_999)),
+            "the furthest-ahead entry is the one dropped"
+        );
+    }
 }
 
 #[cfg(test)]
