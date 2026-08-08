@@ -2612,6 +2612,36 @@ mod tests {
         );
     }
 
+    /// The dynamic-field twin of
+    /// `batch_read_rejects_a_summary_filed_under_the_wrong_sequence`. The
+    /// assertion is duplicated in both paths, so the coverage has to be too —
+    /// otherwise removing one of them stays green.
+    #[tokio::test]
+    async fn field_page_rejects_a_summary_filed_under_the_wrong_sequence() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let parent_id = ObjectID::from_single_byte(0x57);
+        let entry_id = ObjectID::from_single_byte(0x58);
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(parent_id.into()));
+        // Genuine summary and proof for checkpoint 100, served as 900.
+        let (summary_for_100, proof) =
+            sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::bag(field_page_response(
+            summary_for_100,
+            field_entry(object, proof, 900, "", vec![]),
+            900,
+        ));
+        let (_dir, reader, _metrics) = reader_with(provider, committee, None);
+
+        let err = reader
+            .verified_dynamic_fields_page(parent_id, None, None)
+            .await
+            .expect_err("a summary filed under a sequence it did not come from must be rejected");
+        assert!(
+            matches!(err, ReaderError::InvalidProof(_)),
+            "expected InvalidProof for the summary/sequence mismatch, got {err:?}",
+        );
+    }
+
     /// A relay may file a GENUINE committee-signed summary under a sequence
     /// number that summary did not come from.
     ///
