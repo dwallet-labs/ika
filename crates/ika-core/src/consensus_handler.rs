@@ -337,7 +337,18 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
 
                 let key = verified_transaction.0.key();
                 let in_set = !processed_set.insert(key.clone());
-                let in_cache = self.processed_cache.put(key, ()).is_some();
+                // The LRU is a local fast path in front of the durable
+                // `is_consensus_message_processed` check, so declining to cache
+                // a key costs one DB read and nothing else. Two key variants
+                // embed their whole MPC payload, so admitting them budgets
+                // `PROCESSED_CACHE_CAP` entries times an unbounded per-entry
+                // size — a cap in name only. They are the ones least worth
+                // caching anyway: an MPC message or output is submitted once.
+                let in_cache = if key.embeds_payload() {
+                    false
+                } else {
+                    self.processed_cache.put(key, ()).is_some()
+                };
 
                 if in_set || in_cache {
                     self.metrics.skipped_consensus_txns_cache_hit.inc();
@@ -515,6 +526,15 @@ impl From<SerializableSequencedConsensusTransactionKind> for SequencedConsensusT
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Debug, Ord, PartialOrd)]
 pub enum SequencedConsensusTransactionKey {
     External(ConsensusTransactionKey),
+}
+
+impl SequencedConsensusTransactionKey {
+    /// See [`ConsensusTransactionKey::embeds_payload`].
+    pub fn embeds_payload(&self) -> bool {
+        match self {
+            Self::External(key) => key.embeds_payload(),
+        }
+    }
 }
 
 impl SequencedConsensusTransactionKind {
