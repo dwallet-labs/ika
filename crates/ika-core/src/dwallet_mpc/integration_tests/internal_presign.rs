@@ -838,8 +838,7 @@ async fn test_internal_presign_continues_when_idle() {
     // multiple presigns, pushing the pool past max by up to
     // sessions_to_instantiate * (n - threshold).
     let max_overshoot = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
-        * (test_state.dwallet_mpc_services.len() as u64
-            - test_state.committee.quorum_threshold() as u64);
+        * (test_state.dwallet_mpc_services.len() as u64 - test_state.committee.quorum_threshold());
     assert!(
         pool_size_final >= max_pool_size,
         "pool should reach at least max_pool_size (max={}, got={})",

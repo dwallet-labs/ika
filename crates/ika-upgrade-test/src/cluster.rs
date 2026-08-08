@@ -27,7 +27,7 @@ use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
     GenesisGlobalPresignConfig, InitializedIkaSystem, PublishedIkaPackages,
-    fund_address_from_faucet, init_ika_on_sui, request_add_validator,
+    ensure_sui_balance_from_faucet, init_ika_on_sui, request_add_validator,
     request_add_validator_candidate, request_remove_validator, set_global_presign_config,
     stake_ika,
 };
@@ -1872,9 +1872,29 @@ impl ClusterOfProcesses {
         self.wallet
             .add_account(init.name.clone(), init.account_key_pair.copy())
             .await;
-        fund_address_from_faucet(joiner_address, self.sui.faucet_url().to_string())
-            .await
-            .context("faucet-fund joiner")?;
+        // 6 SUI: enough for the joiner's candidate + activation txs at the
+        // flat 5 SUI budget, and far below a single faucet grant.
+        ensure_sui_balance_from_faucet(
+            &self.wallet,
+            joiner_address,
+            self.sui.faucet_url().to_string(),
+            6_000_000_000,
+        )
+        .await
+        .context("faucet-fund joiner")?;
+
+        // The publisher signs `stake_ika` below, and by this point in a long
+        // scenario its bootstrap grants can be burned down to dust (v128_churn
+        // reached this step with 0.199 SUI total against the 5 SUI budget).
+        // Top it up and wait for the grant to land before signing.
+        ensure_sui_balance_from_faucet(
+            &self.wallet,
+            self.publisher_address,
+            self.sui.faucet_url().to_string(),
+            15_000_000_000,
+        )
+        .await
+        .context("faucet-fund publisher before stake_ika")?;
 
         let metadata = init.to_validator_info();
         let (validator_id, validator_cap_id) = retry_on_object_contention!(

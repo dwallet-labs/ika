@@ -745,7 +745,7 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
     // Sort + dedup by authority so the BCS bytes are canonical — one
     // `(peer, hash)` pair per peer (a validator validates a single
     // blob per peer).
-    validated_peers.sort_by(|left, right| left.0.cmp(&right.0));
+    validated_peers.sort_by_key(|entry| entry.0);
     validated_peers.dedup_by(|left, right| left.0 == right.0);
     let signal = EpochMpcDataReadySignal {
         authority,

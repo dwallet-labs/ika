@@ -167,9 +167,22 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     consensus_round_prober: bool,
 
-    // Enables Mysticeti fastpath.
+    // Enables consensus transaction voting. Named `mysticeti_fastpath` until
+    // 2026-08: Sui renamed the `ConsensusProtocolConfig::new` parameter this
+    // flag feeds (`mysticeti_fastpath` -> `transaction_voting_enabled`) at a
+    // tag before mainnet-v1.73.2, and ika's caller kept the old name — so the
+    // flag has in fact been ika's transaction-voting switch, off, for as long
+    // as both networks have been live. Renaming is digest-safe: BCS does not
+    // encode field names, and a false flag is skipped entirely.
+    //
+    // Turning it on changes the DAG consensus builds and requires a
+    // version-gated rollout, not a flip: with voting on, a node replaying a
+    // backlog of certified commits panics in consensus-core's
+    // `linearizer::calculate_commit_timestamp` (the commit-sync path does not
+    // accept a leader's uncommitted round-1 ancestors that the
+    // median-timestamp computation expects).
     #[serde(skip_serializing_if = "is_false")]
-    mysticeti_fastpath: bool,
+    transaction_voting_enabled: bool,
 
     // Set number of leaders per round for Mysticeti commits.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -527,25 +540,6 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
-    /// True iff Fast Schnorr (VSS) signature algorithms are enabled at this
-    /// protocol version (>= 4). Gates the internal NOA-VSS presign pool and
-    /// the Rust-side defense-in-depth VSS request guard.
-    pub fn fast_schnorr_supported(&self) -> bool {
-        self.feature_flags.fast_schnorr_supported
-    }
-
-    pub fn bls_checkpoints(&self) -> bool {
-        self.feature_flags.bls_checkpoints
-    }
-
-    pub fn noa_checkpoints(&self) -> bool {
-        self.feature_flags.noa_checkpoints
-    }
-
-    pub fn consensus_round_prober(&self) -> bool {
-        self.feature_flags.consensus_round_prober
-    }
-
     pub fn mysticeti_num_leaders_per_round(&self) -> Option<usize> {
         self.feature_flags.mysticeti_num_leaders_per_round
     }
@@ -557,30 +551,6 @@ impl ProtocolConfig {
         } else {
             self.consensus_gc_depth.unwrap_or(0)
         }
-    }
-
-    pub fn mysticeti_fastpath(&self) -> bool {
-        if let Some(enabled) = is_mysticeti_fpc_enabled_in_env() {
-            return enabled;
-        }
-        self.feature_flags.mysticeti_fastpath
-    }
-
-    pub fn consensus_batched_block_sync(&self) -> bool {
-        self.feature_flags.consensus_batched_block_sync
-    }
-
-    pub fn consensus_skip_gced_blocks_in_direct_finalization(&self) -> bool {
-        self.feature_flags
-            .consensus_skip_gced_blocks_in_direct_finalization
-    }
-
-    pub fn enforce_checkpoint_timestamp_monotonicity(&self) -> bool {
-        self.feature_flags.enforce_checkpoint_timestamp_monotonicity
-    }
-
-    pub fn consensus_zstd_compression(&self) -> bool {
-        self.feature_flags.consensus_zstd_compression
     }
 }
 
@@ -1239,33 +1209,9 @@ impl ProtocolConfig {
         self.feature_flags.mysticeti_num_leaders_per_round = val;
     }
 
-    pub fn set_consensus_round_prober_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_round_prober = val;
-    }
-
-    pub fn set_mysticeti_fastpath_for_testing(&mut self, val: bool) {
-        self.feature_flags.mysticeti_fastpath = val;
-    }
-
-    pub fn set_consensus_batched_block_sync_for_testing(&mut self, val: bool) {
-        self.feature_flags.consensus_batched_block_sync = val;
-    }
-
     pub fn set_consensus_skip_gced_blocks_in_direct_finalization(&mut self, val: bool) {
         self.feature_flags
             .consensus_skip_gced_blocks_in_direct_finalization = val;
-    }
-
-    pub fn set_enforce_checkpoint_timestamp_monotonicity_for_testing(&mut self, val: bool) {
-        self.feature_flags.enforce_checkpoint_timestamp_monotonicity = val;
-    }
-
-    pub fn set_internal_presign_sessions_for_testing(&mut self, val: bool) {
-        self.feature_flags.internal_presign_sessions = val;
-    }
-
-    pub fn set_noa_checkpoints_for_testing(&mut self, val: bool) {
-        self.feature_flags.noa_checkpoints = val;
     }
 }
 
@@ -1355,17 +1301,6 @@ macro_rules! check_limit_by_meter {
         };
         result
     }};
-}
-
-pub fn is_mysticeti_fpc_enabled_in_env() -> Option<bool> {
-    if let Ok(v) = std::env::var("CONSENSUS") {
-        if v == "mysticeti_fpc" {
-            return Some(true);
-        } else if v == "mysticeti" {
-            return Some(false);
-        }
-    }
-    None
 }
 
 #[cfg(all(test, not(msim)))]

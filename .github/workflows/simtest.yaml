@@ -64,7 +64,7 @@ env:
   # long sub-quorum windows and slow recovery tails; virtual seconds cost
   # ~nothing in wall time.
   SUI_SIM_TEST_TIMEOUT_SECS: "3600"
-  rust_stable: "1.94"
+  rust_stable: "1.97.1"
 
 jobs:
   simtest:
@@ -126,6 +126,11 @@ jobs:
         env:
           MSIM_TEST_SEED: ${{ inputs.seed }}
           MSIM_TEST_NUM: ${{ inputs.test_num }}
+          # The fault-matrix sim tests run real class-groups crypto whose
+          # synchronous steps can exceed msim's 5s no-progress watchdog;
+          # 60s matches scripts/simtest/codecov.sh. Without it every test
+          # aborts with "deadlock detected" while progressing normally.
+          MSIM_WATCHDOG_TIMEOUT_MS: "60000"
         run: |
           # --no-tests=pass is a nextest option, so it must come BEFORE the
           # `--` separator: the workspace currently has zero #[sim_test]

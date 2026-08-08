@@ -142,6 +142,55 @@ pub async fn fund_address_from_faucet(
         })
 }
 
+/// Faucet-fund `address` until its total SUI gas balance is at least
+/// `min_total_mist`, waiting for each grant to actually land.
+///
+/// Two failure modes make the plain fire-and-forget
+/// [`fund_address_from_faucet`] insufficient for gas-critical steps:
+/// the faucet executes its transfer asynchronously ("It can take up to 1
+/// minute to get the coin"), and a long-lived payer can arrive at a step
+/// with its earlier grants already burned down to dust (seen live in
+/// v128_churn: the publisher entered the join step with 0.199 SUI total
+/// against a 5 SUI budget). Polling the summed gas-coin balance covers
+/// both.
+pub async fn ensure_sui_balance_from_faucet(
+    context: &WalletContext,
+    address: SuiAddress,
+    sui_faucet_url: String,
+    min_total_mist: u64,
+) -> Result<(), anyhow::Error> {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+    async fn total_gas(context: &WalletContext, address: SuiAddress) -> Result<u64, anyhow::Error> {
+        Ok(context
+            .gas_objects(address)
+            .await?
+            .iter()
+            .map(|(value, _)| *value)
+            .sum())
+    }
+
+    if total_gas(context, address).await? >= min_total_mist {
+        return Ok(());
+    }
+    fund_address_from_faucet(address, sui_faucet_url).await?;
+
+    let deadline = tokio::time::Instant::now() + MAX_WAIT;
+    loop {
+        if total_gas(context, address).await? >= min_total_mist {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "faucet grant for {address} did not raise the SUI balance to \
+                 {min_total_mist} MIST within {MAX_WAIT:?}"
+            );
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
 
@@ -235,7 +284,12 @@ pub async fn init_ika_on_sui(
 
     let client = context.grpc_client()?;
 
+    // The publisher pays for the whole bootstrap (4 package publishes, system
+    // init, genesis staking) and observed runs have ended bootstrap with only
+    // dust left of two grants — give it four for margin.
     let mut request_tokens_from_faucet_futures = vec![
+        request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
+        request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
     ];
@@ -825,9 +879,7 @@ pub async fn ika_system_initialize(
         .collect();
 
     // Insert pricing for all curves for protocols without signature algorithms
-    for (curve, _signature_algorithms_to_hash_schemes) in
-        SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.iter()
-    {
+    for curve in SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.keys() {
         let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(curve)?))?;
         let none_option = ptb.input(CallArg::Pure(bcs::to_bytes(&None::<u32>)?))?;
 
@@ -1900,11 +1952,20 @@ pub(crate) async fn execute_sui_transaction(
     gas_payment: Vec<ObjectRef>,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let gas_payment = if gas_payment.is_empty() {
-        let Some(gas_ref) = context.get_one_gas_object_owned_by_address(signer).await? else {
+        // Pay with ALL of the signer's gas coins, not an arbitrary one:
+        // `get_one_gas_object_owned_by_address` returns whatever the read
+        // api lists first, with no balance check, so a long scenario that
+        // funds every step from one address eventually picks a coin worth
+        // less than DEFAULT_GAS_BUDGET and dies with "Balance of gas object
+        // ... is lower than the needed amount". Multi-coin payment funds
+        // the budget from the total and gas-smashes the dust into one coin
+        // as a side effect. Capped at Sui's max_gas_payment_objects (256).
+        let mut gas_refs = context.get_all_gas_objects_owned_by_address(signer).await?;
+        if gas_refs.is_empty() {
             panic!("No gas object found in the wallet context.");
-        };
-
-        vec![gas_ref]
+        }
+        gas_refs.truncate(256);
+        gas_refs
     } else {
         gas_payment
     };

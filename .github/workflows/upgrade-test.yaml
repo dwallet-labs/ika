@@ -221,7 +221,7 @@ env:
   RUST_BACKTRACE: 1
   RUST_LOG: ${{ inputs.rust_log || 'info' }}
   CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
-  rust_stable: "1.94"
+  rust_stable: "1.97.1"
 
 jobs:
   # Resolve `inputs.test` into the matrix of scenarios to run: 'all' fans every

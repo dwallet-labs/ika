@@ -230,7 +230,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.94"
+          toolchain: "1.97.1"
           targets: ${{ matrix.target }}
 
       - name: Install dependencies (macOS)

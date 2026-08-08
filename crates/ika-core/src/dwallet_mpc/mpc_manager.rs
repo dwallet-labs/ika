@@ -3487,8 +3487,8 @@ impl DWalletMPCManager {
     ) {
         let mut ready_to_advance_sessions: Vec<_> = self
             .sessions
-            .iter()
-            .filter_map(|(_, session)| {
+            .values()
+            .filter_map(|session| {
                 let SessionStatus::Active { request, .. } = &session.status else {
                     return None;
                 };
@@ -3543,8 +3543,7 @@ impl DWalletMPCManager {
             })
             .collect();
 
-        ready_to_advance_sessions
-            .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
+        ready_to_advance_sessions.sort_by_key(|&(_, request)| request);
 
         let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 

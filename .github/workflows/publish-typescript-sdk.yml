@@ -18,7 +18,7 @@ permissions:
 env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
-  rust_stable: 1.94
+  rust_stable: 1.97.1
   SUI_VERSION: 'sui@mainnet'
 
 jobs:

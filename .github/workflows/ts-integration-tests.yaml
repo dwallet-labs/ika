@@ -48,7 +48,7 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  rust_stable: "1.94"
+  rust_stable: "1.97.1"
   # ika-wasm's prepare script builds wasm-pack with `--${PROFILE}`; the
   # integration tests run real client-side crypto through that WASM, so it
   # must be a release build (debug crypto is far too slow).
@@ -122,11 +122,11 @@ jobs:
         with:
           version: "latest"
 
-      # The Cargo workspace pins Sui to mainnet-v1.73.2; a mismatched local
+      # The Cargo workspace pins Sui to mainnet-v1.76.1; a mismatched local
       # sui completes DKG but stalls reconfiguration, so pin the binary too.
-      - name: Install Sui mainnet-v1.73.2
+      - name: Install Sui mainnet-v1.76.1
         run: |
-          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.73.2/sui-mainnet-v1.73.2-ubuntu-x86_64.tgz > sui.tgz
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.76.1/sui-mainnet-v1.76.1-ubuntu-x86_64.tgz > sui.tgz
           tar -xzf sui.tgz
           mkdir -p "$HOME/.local/bin"
           cp ./sui "$HOME/.local/bin/sui"
