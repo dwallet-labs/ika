@@ -5176,6 +5176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastbloom"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
+dependencies = [
+ "getrandom 0.3.1",
+ "libm",
+ "rand 0.9.0",
+ "siphasher 1.0.1",
+]
+
+[[package]]
 name = "fastcrypto"
 version = "0.1.11"
 source = "git+https://github.com/MystenLabs/fastcrypto?rev=3273734b9791df0c3d1655509476e10a49978528#3273734b9791df0c3d1655509476e10a49978528"
@@ -8269,6 +8281,12 @@ checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
 dependencies = [
  "hashbrown 0.16.1",
 ]
+
+[[package]]
+name = "lru-slab"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lsp-server"
@@ -11507,13 +11525,15 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.9"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2fe5ef3495d7d2e377ff17b1a8ce2ee2ec2a18cde8b6ad6619d65d0701c135d"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "bytes",
- "getrandom 0.2.16",
- "rand 0.8.5",
+ "fastbloom",
+ "getrandom 0.3.1",
+ "lru-slab",
+ "rand 0.9.0",
  "ring",
  "rustc-hash 2.1.0",
  "rustls",
