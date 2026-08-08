@@ -160,6 +160,75 @@ impl Server {
             .with_label_values(&[op])
             .observe(started.elapsed().as_secs_f64());
     }
+
+    /// The lowest sequence at or above `from_seq` this node can serve, or
+    /// `None` when there is none (the caller is caught up to our head, or the
+    /// head is unreadable).
+    ///
+    /// The common case costs exactly the one fetch the caller was going to
+    /// make anyway. Only when `from_seq` itself is unavailable do we look for
+    /// the floor, and then only if `from_seq` is actually behind the head —
+    /// ahead of the head means "nothing yet", which is not a gap to skip.
+    async fn first_servable_seq(&self, from_seq: CheckpointSequenceNumber) -> Option<u64> {
+        if self.transport.get_full_checkpoint(from_seq).await.is_ok() {
+            return Some(from_seq);
+        }
+        let head = *self
+            .transport
+            .get_latest_checkpoint()
+            .await
+            .ok()?
+            .sequence_number();
+        if from_seq >= head {
+            return None;
+        }
+        let floor = lowest_available_seq(from_seq + 1, head, |seq| async move {
+            self.transport.get_full_checkpoint(seq).await.is_ok()
+        })
+        .await?;
+        tracing::info!(
+            requested_seq = from_seq,
+            serving_from = floor,
+            head,
+            "changeset_page: requested sequence is below our retention floor; \
+             fast-forwarding so the caller can re-anchor instead of stalling"
+        );
+        Some(floor)
+    }
+}
+
+/// Lowest sequence in `[lo, hi]` for which `is_available` holds, by binary
+/// search; `None` if none does.
+///
+/// Sound because retention is a suffix: a fullnode keeps a contiguous
+/// `[floor, head]`, so availability is monotone in the sequence number and
+/// the search is O(log(hi - lo)) probes rather than a linear walk over a gap
+/// that can be millions of checkpoints wide.
+async fn lowest_available_seq<P, F>(lo: u64, hi: u64, mut is_available: P) -> Option<u64>
+where
+    P: FnMut(u64) -> F,
+    F: std::future::Future<Output = bool>,
+{
+    if lo > hi {
+        return None;
+    }
+    let (mut lo, mut hi) = (lo, hi);
+    let mut found = None;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        if is_available(mid).await {
+            found = Some(mid);
+            // Everything above `mid` is available too; the floor is at or
+            // below it.
+            if mid == 0 {
+                break;
+            }
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    found
 }
 
 fn map_err(e: TransportError) -> Status {
@@ -223,10 +292,29 @@ impl SuiStateMirror for Server {
     ) -> Result<Response<ChangesetPageResponse>, Status> {
         let ChangesetPageRequest { from_seq, limit } = request.into_inner();
         let limit = (limit as usize).min(MAX_CHANGESET_PAGE);
+        // `from_seq` below our retention floor must fast-forward, not return
+        // empty. The receiver's cursor falls back to its `bootstrap_from`
+        // exactly when its index is empty, so an empty page leaves it asking
+        // for the same pruned sequence forever — the index never fills, the
+        // currency gate never engages, and it does not recover until the
+        // process restarts. Serving from our floor instead re-anchors it:
+        // `ChangesetIndex::absorb` bootstrap-cases an empty index, so the
+        // first entry it folds becomes its base. (A gap below that base is
+        // legitimate and already the pull path's model.)
+        //
+        // Only the FIRST requested sequence is fast-forwarded. A later
+        // unavailable sequence inside the page is the head, and stopping
+        // there is what keeps the served prefix contiguous.
+        let start_seq = match self.first_servable_seq(from_seq).await {
+            Some(seq) => seq,
+            // Nothing at or above `from_seq` — the receiver is caught up to
+            // our head, and an empty page is the correct "no progress" answer.
+            None => return Ok(Response::new(ChangesetPageResponse { entries: vec![] })),
+        };
         let mut entries = Vec::with_capacity(limit);
-        for seq in from_seq..from_seq.saturating_add(limit as u64) {
-            // Stop at the first unavailable checkpoint (head reached / pruned):
-            // a short, contiguous prefix is exactly what the receiver folds.
+        for seq in start_seq..start_seq.saturating_add(limit as u64) {
+            // Stop at the first unavailable checkpoint (head reached): a
+            // short, contiguous prefix is exactly what the receiver folds.
             let checkpoint = match self.transport.get_full_checkpoint(seq).await {
                 Ok(checkpoint) => checkpoint,
                 Err(_) => break,
@@ -359,4 +447,61 @@ pub fn make_server(
         // cheap metadata reads (were uncapped)
         .add_layer_for_get_current_epoch(inflight!(INFLIGHT_METADATA_READ))
         .add_layer_for_get_chain_identifier(inflight!(INFLIGHT_METADATA_READ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// Availability is a retained suffix `[floor, head]`, which is what makes
+    /// the binary search sound.
+    fn retained_from(floor: u64) -> impl Fn(u64) -> std::future::Ready<bool> {
+        move |seq| std::future::ready(seq >= floor)
+    }
+
+    #[tokio::test]
+    async fn finds_the_floor_of_a_pruned_prefix() {
+        assert_eq!(
+            lowest_available_seq(1, 1_000_000, retained_from(432_101)).await,
+            Some(432_101)
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_the_low_bound_when_everything_is_available() {
+        assert_eq!(lowest_available_seq(7, 99, retained_from(0)).await, Some(7));
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_nothing_in_range_is_available() {
+        assert_eq!(lowest_available_seq(1, 500, retained_from(900)).await, None);
+    }
+
+    #[tokio::test]
+    async fn handles_a_single_element_range_both_ways() {
+        assert_eq!(lowest_available_seq(5, 5, retained_from(5)).await, Some(5));
+        assert_eq!(lowest_available_seq(5, 5, retained_from(6)).await, None);
+        // An inverted range is empty, not a panic: `from_seq + 1 > head` is
+        // reachable when the head moves between the two reads.
+        assert_eq!(lowest_available_seq(9, 8, retained_from(0)).await, None);
+    }
+
+    /// The point of the search: a gap of a million checkpoints costs ~20
+    /// probes, not a million. A linear walk here would be its own outage.
+    #[tokio::test]
+    async fn probes_logarithmically_not_linearly() {
+        let probes = Cell::new(0usize);
+        let found = lowest_available_seq(1, 1_000_000, |seq| {
+            probes.set(probes.get() + 1);
+            std::future::ready(seq >= 999_999)
+        })
+        .await;
+        assert_eq!(found, Some(999_999));
+        assert!(
+            probes.get() <= 21,
+            "expected ~log2(1e6) probes, made {}",
+            probes.get()
+        );
+    }
 }
