@@ -3091,6 +3091,25 @@ impl DWalletMPCManager {
                     "instantiating new internal presign session",
                 );
                 if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                    // Normalize a non-MPC placeholder type before activating.
+                    // A placeholder can be created with
+                    // `SessionComputationType::Native` by an output report that
+                    // arrives before the request: the output-receipt path
+                    // derives the type from the sender-controlled `is_native()`
+                    // flag, and an internal-presign identifier is derivable from
+                    // public data alone. Left as-is, `add_message` would drop
+                    // every real round message and the computation would route
+                    // to the native path and fail `InvalidDWalletProtocolType`
+                    // on every honest validator, so the ordinal could never
+                    // produce a presign and would hold its pool's top-up guard
+                    // closed. Resetting to a fresh MPC buffer discards that; a
+                    // legitimate MPC placeholder keeps its buffered messages.
+                    // Mirrors `handle_mpc_request` and the NOA sign path.
+                    if !matches!(session.computation_type, SessionComputationType::MPC { .. }) {
+                        session.computation_type = SessionComputationType::MPC {
+                            messages_by_consensus_round: HashMap::new(),
+                        };
+                    }
                     if let SessionStatus::Active { request, .. } = &status {
                         session.set_request_diagnostic_metadata(request);
                     }
