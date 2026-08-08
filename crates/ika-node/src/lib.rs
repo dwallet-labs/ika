@@ -111,6 +111,34 @@ pub struct ValidatorComponents {
     dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 }
 
+/// Prometheus handles for the epoch-scoped validator components.
+///
+/// Built ONCE per process and reused, because these register into the
+/// process-wide registry while `construct_validator_components` runs again
+/// every time a node (re-)enters the committee — a fullnode promoted to
+/// validator, or a validator that dropped out of the active set and rejoined.
+/// Rebuilding them re-registers metric names the registry already holds,
+/// which is an error the constructors `unwrap`; the release profile aborts on
+/// panic, so it takes the node down at exactly the moment it is trying to
+/// rejoin. The metric names are process-scoped, not epoch-scoped, so there is
+/// nothing to rebuild per epoch in the first place.
+#[derive(Clone)]
+pub struct ValidatorComponentMetrics {
+    dwallet_checkpoint: Arc<DWalletCheckpointMetrics>,
+    system_checkpoint: Arc<SystemCheckpointMetrics>,
+    ika_tx_validator: Arc<IkaTxValidatorMetrics>,
+}
+
+impl ValidatorComponentMetrics {
+    fn new(registry: &Registry) -> Self {
+        Self {
+            dwallet_checkpoint: DWalletCheckpointMetrics::new(registry),
+            system_checkpoint: SystemCheckpointMetrics::new(registry),
+            ika_tx_validator: IkaTxValidatorMetrics::new(registry),
+        }
+    }
+}
+
 pub struct P2pComponents {
     p2p_network: Network,
     known_peers: HashMap<PeerId, String>,
@@ -706,6 +734,10 @@ impl IkaNode {
         );
 
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
+        // Registered once for the process; see `ValidatorComponentMetrics`.
+        let validator_component_metrics =
+            ValidatorComponentMetrics::new(&registry_service.default_registry());
+        let validator_component_metrics_for_reconfig = validator_component_metrics.clone();
 
         let epoch_store = AuthorityPerEpochStore::new(
             config.authority_name(),
@@ -1253,6 +1285,7 @@ impl IkaNode {
                 previous_epoch_last_dwallet_checkpoint_sequence_number,
                 previous_epoch_last_system_checkpoint_sequence_number,
                 dwallet_mpc_metrics.clone(),
+                validator_component_metrics.clone(),
                 sui_data_receivers.clone(),
                 noa_dwallet_finalized.clone(),
                 noa_system_finalized.clone(),
@@ -1351,6 +1384,7 @@ impl IkaNode {
                 node_copy,
                 sui_client_clone,
                 dwallet_mpc_metrics,
+                validator_component_metrics_for_reconfig,
                 sui_data_receivers.clone(),
             )
             .await;
@@ -1900,6 +1934,7 @@ impl IkaNode {
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        validator_component_metrics: ValidatorComponentMetrics,
         sui_data_receivers: SuiDataReceivers,
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
@@ -1941,12 +1976,11 @@ impl IkaNode {
             &registry_service.default_registry(),
         );
 
-        let dwallet_checkpoint_metrics =
-            DWalletCheckpointMetrics::new(&registry_service.default_registry());
-        let system_checkpoint_metrics =
-            SystemCheckpointMetrics::new(&registry_service.default_registry());
-        let ika_tx_validator_metrics =
-            IkaTxValidatorMetrics::new(&registry_service.default_registry());
+        let ValidatorComponentMetrics {
+            dwallet_checkpoint: dwallet_checkpoint_metrics,
+            system_checkpoint: system_checkpoint_metrics,
+            ika_tx_validator: ika_tx_validator_metrics,
+        } = validator_component_metrics;
         Self::start_epoch_specific_validator_components(
             &config,
             state.clone(),
@@ -2364,6 +2398,7 @@ impl IkaNode {
         self: Arc<Self>,
         sui_client: Arc<SuiConnectorClient>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        validator_component_metrics: ValidatorComponentMetrics,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<()> {
         loop {
@@ -3094,6 +3129,7 @@ impl IkaNode {
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
                             dwallet_mpc_metrics.clone(),
+                            validator_component_metrics.clone(),
                             sui_data_receivers.clone(),
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
