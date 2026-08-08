@@ -383,10 +383,22 @@ pub async fn build_sui_connector_stack(
     // Mirrored / peer-only currency: a changeset index the reader consults,
     // folded by a background `ChangesetReceiver` that pulls committee-signed
     // changesets from the relay. Direct nodes leave it `None` (their pusher-fed
-    // cache is already a complete, contiguous fold). The receiver backfills from
-    // the oldest committee-verifiable checkpoint — the anchor summary's seq + 1
-    // (it can't verify earlier); if the serving peer has pruned below that,
-    // currency stays dormant on those objects, a safe `Unknown` fallback.
+    // cache is already a complete, contiguous fold). The receiver backfills
+    // from the NEWEST committee-verifiable checkpoint — the highest retained
+    // transition summary's seq + 1.
+    //
+    // Newest, not oldest. The oldest retained summary is the epoch-0
+    // transition and that table is never pruned, so an oldest-anchored
+    // bootstrap asks a peer for history it pruned long ago. Nothing absorbs,
+    // the index stays empty, and because the cursor falls back to
+    // `bootstrap_from` precisely WHEN the index is empty, the next poll asks
+    // for the same unavailable checkpoint — forever. Currency never engages at
+    // all, rather than being dormant on some objects, and `check_currency`
+    // answers `Unknown` (accept) for everything.
+    //
+    // Anchoring recent also matches what the index keeps: entries below
+    // `CHANGESET_RETAIN_WINDOW` of the head are dropped, so a genesis-anchored
+    // fold would discard its own output as it produced it.
     const CHANGESET_PAGE_LIMIT: u32 = 64;
     const CHANGESET_POLL_INTERVAL: Duration = Duration::from_secs(2);
     // Keep currency for objects modified within this many checkpoints of the
@@ -405,8 +417,8 @@ pub async fn build_sui_connector_stack(
     let changeset_receiver = match (changeset_source, &changeset_index) {
         (Some(source), Some(index)) => {
             let bootstrap_from = perpetual
-                .oldest_sui_committee_summary()
-                .map_err(|e| SetupError::Transport(format!("oldest committee summary: {e}")))?
+                .newest_sui_committee_summary()
+                .map_err(|e| SetupError::Transport(format!("newest committee summary: {e}")))?
                 .map(|summary| (*summary.sequence_number()).saturating_add(1))
                 .unwrap_or(0);
             Some(ChangesetReceiver::new(

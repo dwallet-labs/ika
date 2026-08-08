@@ -479,6 +479,19 @@ impl AuthorityPerpetualTables {
         Ok(())
     }
 
+    /// The highest-epoch retained end-of-epoch summary, if any.
+    ///
+    /// The counterpart to [`Self::oldest_sui_committee_summary`]. The oldest is
+    /// the deepest checkpoint this node can committee-verify; the newest is the
+    /// most RECENT one it can, which is what a backfill that has to be served
+    /// by a peer needs — a peer only retains recent history.
+    pub fn newest_sui_committee_summary(&self) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
+        let Some(head_epoch) = self.highest_sui_committee_epoch()? else {
+            return Ok(None);
+        };
+        self.get_sui_committee_summary(head_epoch)
+    }
+
     pub fn get_sui_committee_summary(
         &self,
         sui_epoch: u64,
