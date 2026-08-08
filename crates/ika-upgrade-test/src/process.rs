@@ -9,7 +9,7 @@
 //! is persistent and survives `swap_binary`, which is what makes the on-disk
 //! compatibility assertion real.
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
