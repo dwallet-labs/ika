@@ -921,21 +921,61 @@ impl DWalletCheckpointAggregator {
         Ok(result)
     }
 
+    /// The next sequence to certify: this validator's own local progress,
+    /// floored at the previous epoch's last checkpoint.
+    ///
+    /// That floor is a lower BOUND, not merely a fallback for an empty store.
+    /// A validator that stops certifying before an epoch flips — a restart,
+    /// crash or partition straddling the boundary, or simply lagging in
+    /// consensus when the epoch's checkpoint tasks are aborted — enters the new
+    /// epoch with a local head below the floor. The new epoch's builder table
+    /// starts AT the floor, so asking for the stale local head requests a
+    /// sequence that table will never hold, and the aggregator returns empty on
+    /// every tick, for this epoch and every later one.
+    ///
+    /// Skipping the gap is correct rather than merely expedient: the floor is
+    /// set on chain from `last_processed_checkpoint_sequence_number`, so every
+    /// sequence at or below it has already landed on Sui and is submit-useless.
+    /// This is the same rationale as the pull-mode sync floor, which likewise
+    /// leaves a legitimate gap below its first post-floor sequence.
+    fn next_checkpoint_to_certify_from(
+        local_last_certified: Option<DWalletCheckpointSequenceNumber>,
+        previous_epoch_last_checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
+    ) -> DWalletCheckpointSequenceNumber {
+        let floor = previous_epoch_last_checkpoint_sequence_number + 1;
+        local_last_certified.map_or(floor, |sequence_number| (sequence_number + 1).max(floor))
+    }
+
     fn next_checkpoint_to_certify(&self) -> IkaResult<DWalletCheckpointSequenceNumber> {
-        let default_next_checkpoint_to_certify =
-            self.previous_epoch_last_checkpoint_sequence_number + 1;
-        debug!(
-            default_next_checkpoint_to_certify,
-            "Getting next dwallet checkpoint to certify",
-        );
-        Ok(self
+        let local_last_certified = self
             .tables
             .certified_checkpoints
             .reversed_safe_iter_with_bounds(None, None)?
             .next()
             .transpose()?
-            .map(|(seq, _)| seq + 1)
-            .unwrap_or(default_next_checkpoint_to_certify))
+            .map(|(seq, _)| seq);
+        let next_checkpoint_to_certify = Self::next_checkpoint_to_certify_from(
+            local_last_certified,
+            self.previous_epoch_last_checkpoint_sequence_number,
+        );
+        if local_last_certified
+            .is_some_and(|sequence_number| sequence_number + 1 < next_checkpoint_to_certify)
+        {
+            info!(
+                ?local_last_certified,
+                next_checkpoint_to_certify,
+                previous_epoch_last_checkpoint_sequence_number =
+                    self.previous_epoch_last_checkpoint_sequence_number,
+                "local certified dwallet checkpoint store trails the previous epoch's last \
+                 checkpoint; resuming at that floor and leaving the gap uncertified",
+            );
+        } else {
+            debug!(
+                next_checkpoint_to_certify,
+                "Getting next dwallet checkpoint to certify",
+            );
+        }
+        Ok(next_checkpoint_to_certify)
     }
 }
 
@@ -1178,5 +1218,60 @@ impl DWalletCheckpointServiceNotify for DWalletCheckpointService {
     fn notify_checkpoint(&self) -> IkaResult {
         self.notify_builder.notify_one();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A validator whose certified store is BELOW the previous epoch's last
+    /// checkpoint must resume at that floor. Before, the floor applied only
+    /// when the store was empty, so such a validator asked for a sequence the
+    /// new epoch's builder table never holds and certified nothing again.
+    #[test]
+    fn a_certified_store_behind_the_previous_epoch_resumes_at_the_floor() {
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(Some(470), 500),
+            501
+        );
+    }
+
+    #[test]
+    fn a_certified_store_ahead_of_the_floor_keeps_its_own_progress() {
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(Some(512), 500),
+            513
+        );
+    }
+
+    #[test]
+    fn a_certified_store_exactly_at_the_floor_moves_one_past_it() {
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(Some(500), 500),
+            501
+        );
+    }
+
+    #[test]
+    fn an_empty_certified_store_starts_at_the_floor() {
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(None, 500),
+            501
+        );
+    }
+
+    /// In the first epoch the chain's floor is still 0, so the local head
+    /// governs — flooring must not drag a validator backwards there.
+    #[test]
+    fn the_first_epoch_floor_of_zero_never_overrides_local_progress() {
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(Some(7), 0),
+            8
+        );
+        assert_eq!(
+            DWalletCheckpointAggregator::next_checkpoint_to_certify_from(None, 0),
+            1
+        );
     }
 }
