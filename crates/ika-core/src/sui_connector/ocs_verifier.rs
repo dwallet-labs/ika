@@ -55,6 +55,14 @@ pub enum OcsError {
          when epoch {requested} was expected; refusing to install it"
     )]
     RatchetEpochMismatch { requested: u64, returned: u64 },
+    #[error(
+        "the checkpoint archive could not be consulted for epoch {epoch}: {reason}. The epoch \
+         record is pruned upstream, so whether the proof chain can still be rebuilt is UNKNOWN \
+         until the archive answers — this is not a verdict that the chain is broken. \
+         Remediation: check the reachability and retention of the configured \
+         `sui_checkpoint_archive`. Retried."
+    )]
+    ArchiveUnavailable { epoch: u64, reason: String },
     #[error("ika error: {0}")]
     Ika(String),
 }
@@ -79,13 +87,17 @@ impl OcsError {
     /// ratchet) MUST stop and surface a fatal error on a non-retryable result
     /// rather than spin forever against an unhealable condition.
     pub fn is_retryable(&self) -> bool {
-        matches!(self, OcsError::Transport(_))
+        matches!(
+            self,
+            OcsError::Transport(_) | OcsError::ArchiveUnavailable { .. }
+        )
     }
 
     /// Bounded label for `OcsMetrics::ratchet_failures_total`.
     pub fn metric_reason(&self) -> &'static str {
         match self {
             OcsError::Transport(_) => "transport",
+            OcsError::ArchiveUnavailable { .. } => "archive_unavailable",
             OcsError::MissingCommittee(_) => "missing_committee",
             OcsError::BadCheckpointSig(..) => "bad_checkpoint_sig",
             OcsError::NotEndOfEpoch(_) => "not_end_of_epoch",
@@ -436,9 +448,10 @@ impl OcsVerifyingClient {
                 "ratchet: epoch boundary pruned upstream and the archive could not be consulted; \
                  reporting a retryable failure rather than a broken proof chain"
             );
-            return Err(OcsError::Transport(TransportError::Network(format!(
-                "checkpoint archive fallback for epoch {head} failed: {error}"
-            ))));
+            return Err(OcsError::ArchiveUnavailable {
+                epoch: head,
+                reason: error,
+            });
         }
         error!(
             head,
@@ -1212,6 +1225,14 @@ mod tests {
         assert!(
             !matches!(err, OcsError::ProofChainBroken { .. }),
             "a failed archive call is not proof that the chain is broken: {err:?}"
+        );
+        // Its own reason label: on call, an unreachable or misconfigured
+        // archive must be distinguishable from an ordinary Sui RPC blip,
+        // because only the former needs an operator to touch configuration.
+        assert_eq!(
+            err.metric_reason(),
+            "archive_unavailable",
+            "the retry loop must be attributable to the archive, got {err:?}"
         );
     }
 
