@@ -82,7 +82,13 @@ jobs:
           # self-heals when the branch reappears, and a MAIN dispatch failure
           # still fails the job loudly, which is the half that must never be
           # silent.
-          if ! gh api "repos/$GH_REPO/branches/$BRANCH" --silent 2>/dev/null; then
+          #
+          # The check must use the exact-ref endpoint (`git/ref/heads/...`):
+          # the "get a branch" endpoint (`branches/...`) fuzzy-resolves the
+          # name, so with no `dev` branch it happily returns `dev-v1.2.x`
+          # and the guard waves through a dispatch that then 422s with
+          # "No ref found for: dev".
+          if ! gh api "repos/$GH_REPO/git/ref/heads/$BRANCH" --silent 2>/dev/null; then
             echo "::notice::branch '$BRANCH' does not exist; skipping $SUITE dispatch"
             exit 0
           fi
