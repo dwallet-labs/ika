@@ -129,6 +129,20 @@ pub enum CancelConsensusCertificateReason {
     DkgFailed,
 }
 
+/// Whether a relayed joiner announcement was kept or discarded.
+///
+/// The distinction decides whether its consensus key is recorded as
+/// processed. The key is `(joiner, epoch, timestamp)` — the joiner's identity,
+/// not the relayer's — so recording it consumes that identity's one slot for
+/// the epoch. Only a copy we actually kept has earned that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelayedAnnouncementDisposition {
+    /// Accepted, or buffered for re-evaluation when a provider installs.
+    Retained,
+    /// Rejected on a verdict that re-evaluation cannot change.
+    Discarded,
+}
+
 pub enum ConsensusCertificateResult {
     /// The consensus message was ignored (e.g. because it has already been processed).
     Ignored,
@@ -2929,11 +2943,11 @@ impl AuthorityPerEpochStore {
     /// for the payload, so the joiner's Ed25519 consensus-key
     /// signature is verified against its next-epoch consensus pubkey
     /// (via the installed `JoinerPubkeyProvider`) before storing.
-    pub fn record_relayed_validator_mpc_data_announcement(
+    pub(crate) fn record_relayed_validator_mpc_data_announcement(
         &self,
         signed: &SignedValidatorMpcDataAnnouncement,
         blob: &[u8],
-    ) -> IkaResult {
+    ) -> IkaResult<RelayedAnnouncementDisposition> {
         // The blob is stored on every path that RETAINS the announcement —
         // accepted, or buffered for re-evaluation — because those paths need
         // the bytes later and consensus won't redeliver them. It is
@@ -2949,7 +2963,7 @@ impl AuthorityPerEpochStore {
             // redeliver.
             self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
             self.buffer_relayed_joiner_announcement(signed);
-            return Ok(());
+            return Ok(RelayedAnnouncementDisposition::Retained);
         };
         match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
             JoinerAnnouncementVerdict::Accept => {
@@ -2962,7 +2976,7 @@ impl AuthorityPerEpochStore {
                 // re-evaluates it.
                 self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
                 self.buffer_relayed_joiner_announcement(signed);
-                return Ok(());
+                return Ok(RelayedAnnouncementDisposition::Retained);
             }
             verdict @ (JoinerAnnouncementVerdict::InvalidSignature
             | JoinerAnnouncementVerdict::InconsistentEnvelope) => {
@@ -2972,12 +2986,13 @@ impl AuthorityPerEpochStore {
                     ?verdict,
                     authority = ?signed.announcement.validator,
                     "joiner mpc data announcement rejected — dropping without \
-                     persisting its blob"
+                     persisting its blob or consuming its consensus key"
                 );
-                return Ok(());
+                return Ok(RelayedAnnouncementDisposition::Discarded);
             }
         }
-        self.insert_validator_mpc_data_announcement(&signed.announcement)
+        self.insert_validator_mpc_data_announcement(&signed.announcement)?;
+        Ok(RelayedAnnouncementDisposition::Retained)
     }
 
     /// Buffers a relayed joiner announcement whose signature can't be
@@ -5619,8 +5634,26 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, blob),
                 ..
             }) => {
-                self.record_relayed_validator_mpc_data_announcement(signed, blob)?;
-                Ok(ConsensusCertificateResult::ConsensusMessage)
+                // A discarded copy must not consume the joiner's key. The key
+                // is `(joiner, epoch, timestamp)` and this message kind carries
+                // NO sender constraint — any committee member may relay for any
+                // joiner — while the joiner's signature can only be checked
+                // here, not at admission (the pubkey provider may not be
+                // installed yet). Recording a rejected copy as processed
+                // therefore let one member burn a joiner's slot with a
+                // corrupted duplicate: every honest relay of the genuine
+                // announcement shares that key and was dropped as already
+                // processed, and the joiner cannot detect it because its
+                // success signal is the relayer's accept, not consensus
+                // inclusion. `Ignored` leaves the key free for the real one.
+                match self.record_relayed_validator_mpc_data_announcement(signed, blob)? {
+                    RelayedAnnouncementDisposition::Retained => {
+                        Ok(ConsensusCertificateResult::ConsensusMessage)
+                    }
+                    RelayedAnnouncementDisposition::Discarded => {
+                        Ok(ConsensusCertificateResult::Ignored)
+                    }
+                }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),

@@ -227,7 +227,7 @@ mod tests {
         StaticJoinerPubkeyProvider, derive_mpc_data_blob, sign_validator_mpc_data_announcement,
     };
     use dwallet_rng::RootSeed;
-    use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey};
+    use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
     use fastcrypto::traits::{KeyPair as _, ToFromBytes};
     use ika_network::mpc_artifacts::{InMemoryBlobStore, mpc_data_blob_hash};
     use ika_types::committee::Committee;
@@ -352,6 +352,91 @@ mod tests {
             .expect("relay must resolve once the announcement is sequenced")
             .unwrap();
         assert_eq!(result, Ok(()));
+    }
+
+    /// A rejected relay must not consume the joiner's consensus key.
+    ///
+    /// The key is `(joiner, epoch, timestamp)` — the joiner's identity, not
+    /// the relayer's — and this message kind carries no sender constraint,
+    /// because any committee member may legitimately relay for any joiner.
+    /// The joiner's signature can only be checked when the record handler
+    /// runs, not at admission, since the pubkey provider may not be installed
+    /// yet. So if a rejected copy were recorded as processed, one member could
+    /// relay a corrupted duplicate first and every honest relay of the genuine
+    /// announcement — which shares that key — would be dropped as already
+    /// processed. The joiner cannot notice: its success signal is the
+    /// relayer's accept, not consensus inclusion.
+    #[tokio::test]
+    async fn a_rejected_relay_leaves_the_joiners_key_free_for_the_genuine_one() {
+        let (epoch_store, signed, blob, _relay) = relay_fixture();
+
+        // Same envelope — so the same consensus key — with a corrupted
+        // signature. This is what a censoring relayer would submit.
+        let mut corrupted = signed.clone();
+        let mut signature_bytes = corrupted.joiner_sig.as_ref().to_vec();
+        signature_bytes[0] ^= 0xFF;
+        corrupted.joiner_sig = Ed25519Signature::from_bytes(&signature_bytes)
+            .expect("a corrupted signature still decodes");
+
+        let key = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(
+            signed.clone(),
+            blob.clone(),
+        )
+        .key();
+        let sequenced_key = SequencedConsensusTransactionKey::External(key);
+
+        drive_commit(&epoch_store, corrupted, blob.clone(), 1).await;
+        assert!(
+            !epoch_store
+                .is_consensus_message_processed(&sequenced_key)
+                .unwrap(),
+            "a rejected copy must not burn the joiner's key"
+        );
+
+        // The genuine announcement, relayed after, must still land.
+        drive_commit(&epoch_store, signed.clone(), blob, 2).await;
+        assert!(
+            epoch_store
+                .is_consensus_message_processed(&sequenced_key)
+                .unwrap(),
+            "the genuine announcement must be processed, not skipped as a duplicate"
+        );
+        assert!(
+            epoch_store
+                .get_validator_mpc_data_announcement(&signed.announcement.validator)
+                .unwrap()
+                .is_some(),
+            "the joiner's announcement must be recorded"
+        );
+    }
+
+    /// Drive one relayed announcement through the real commit boundary.
+    async fn drive_commit(
+        epoch_store: &Arc<AuthorityPerEpochStore>,
+        signed: SignedValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+        round: u64,
+    ) {
+        let tx = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(signed, blob);
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![VerifiedSequencedConsensusTransaction::new_test(tx)],
+                &ExecutionIndicesWithStats {
+                    index: ExecutionIndices {
+                        last_committed_round: round,
+                        sub_dag_index: 0,
+                        transaction_index: 0,
+                    },
+                    hash: 0,
+                    stats: ConsensusStats::default(),
+                },
+                &None::<Arc<DWalletCheckpointService>>,
+                &None::<Arc<SystemCheckpointService>>,
+                &ConsensusCommitInfo::new_for_test(round, 1_000 * round, true),
+                &Arc::new(AuthorityMetrics::new(&Registry::new())),
+            )
+            .await
+            .unwrap();
     }
 
     /// If the announcement never lands, the relay must reject rather
