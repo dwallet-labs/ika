@@ -62,18 +62,20 @@ pub enum ReadyToFinalize {
     /// the deadline hasn't passed).
     NotYet,
     /// Emit: the next-epoch committee is published and every member is
-    /// covered — its blob locally validated, or its digest present in
-    /// the prior epoch's handoff cert (the freeze carries such members
-    /// forward, so a freeze triggered by these signals loses no one).
+    /// covered — its blob locally validated, or carried forward by the
+    /// freeze (in the prior epoch's handoff cert AND in the current
+    /// committee), so a freeze triggered by these signals loses no one.
     Ready,
     /// Emit because the epoch-clock deadline elapsed, but some
-    /// next-epoch members were neither locally validated nor covered
-    /// by the prior epoch's handoff cert. They will be absent from
-    /// this validator's `validated_peers`, the freeze cannot carry
-    /// them forward, and they risk being dropped from the frozen set /
-    /// next committee's class-groups map — i.e. a first-time joiner
-    /// whose blob never propagated (or a never-alive member). The
-    /// missing members are surfaced for an operator warning.
+    /// next-epoch members were neither locally validated nor carried
+    /// forward by the freeze. They will be absent from this validator's
+    /// `validated_peers`, the freeze cannot carry them forward, and they
+    /// risk being dropped from the frozen set / next committee's
+    /// class-groups map — a first-time joiner whose blob never
+    /// propagated, a never-alive member, or a member rejoining after a
+    /// gap (in the prior cert, but not in the current committee, so
+    /// carry-forward does not reach it). The missing members are
+    /// surfaced for an operator warning.
     ReadyViaDeadlineMissing(Vec<AuthorityName>),
 }
 
@@ -81,14 +83,24 @@ pub enum ReadyToFinalize {
 /// `MpcDataAnnouncementSender::ready_to_finalize`). Extracted so the
 /// joiner-inclusion timing rule is unit-testable without an epoch
 /// store. Emit once either the next-epoch committee is published and
-/// every one of its members is covered — locally validated, or listed
-/// in the prior epoch's handoff cert (`prior_cert_members`), which the
-/// freeze carries forward deterministically, so waiting for a fresh
-/// announcement from such a member buys nothing — or the epoch-clock
-/// deadline has passed (liveness backstop) — the latter reports the
-/// still-uncovered members so the caller can warn. Only uncovered
-/// members (first-time joiners still propagating, or members that have
-/// never announced in any epoch) can hold the gate open.
+/// every one of its members is covered — locally validated, or carried
+/// forward by the freeze, so waiting for a fresh announcement from it
+/// buys nothing — or the epoch-clock deadline has passed (liveness
+/// backstop) — the latter reports the still-uncovered members so the
+/// caller can warn.
+///
+/// Carry-forward coverage is `prior_cert_members ∩ current_members`,
+/// not `prior_cert_members` alone: `carry_forward_stable_mpc_data`
+/// re-freezes at the prior-cert digest only while ITERATING THE CURRENT
+/// COMMITTEE, so a name in the prior cert that has since left the
+/// committee is not carried forward. Exempting it here would stop the
+/// network waiting for a member the freeze then silently drops — which
+/// is reachable for a validator that sits out one epoch and is
+/// re-selected into the next, ordinary churn under the stake-based
+/// active set. Such a rejoiner must hold the gate exactly like a
+/// first-time joiner, bounded by the deadline. Members that are dark
+/// but still seated stay exempt, so the every-epoch-latency behaviour
+/// is unchanged.
 fn decide_ready_to_finalize(
     now_ms: u64,
     deadline_ms: u64,
@@ -97,13 +109,18 @@ fn decide_ready_to_finalize(
     next_members: &[AuthorityName],
     validated_peers: &[AuthorityName],
     prior_cert_members: &HashSet<AuthorityName>,
+    current_members: &HashSet<AuthorityName>,
 ) -> ReadyToFinalize {
     let validated: HashSet<&AuthorityName> = validated_peers.iter().collect();
     let next_published = next_committee_epoch == expected_next_epoch;
     let missing: Vec<AuthorityName> = if next_published {
         next_members
             .iter()
-            .filter(|name| !validated.contains(name) && !prior_cert_members.contains(name))
+            .filter(|name| {
+                let carried_forward =
+                    prior_cert_members.contains(name) && current_members.contains(name);
+                !validated.contains(name) && !carried_forward
+            })
             .copied()
             .collect()
     } else {
@@ -625,10 +642,11 @@ impl MpcDataAnnouncementSender {
         };
         let deadline =
             ready_signal_deadline_ms(first_commit_ts, epoch_start.epoch_duration_ms(), first_seen);
-        // Members covered by the prior epoch's handoff cert cannot be
-        // dropped by the freeze (carry-forward re-freezes them at the
-        // prior-cert digest), so they must not hold the gate. A read
-        // error degrades to "no coverage" — strictly the pre-carry-
+        // Members the freeze carries forward cannot be dropped by it, so
+        // they must not hold the gate. Coverage needs BOTH halves — a
+        // prior-cert digest to carry, and current-committee membership,
+        // which is the set `carry_forward_stable_mpc_data` iterates. A
+        // read error degrades to "no coverage" — strictly the pre-carry-
         // forward wait, never an early emit — and this read is
         // emit-timing only, so unlike the freeze-time read in
         // `freeze_mpc_data_if_first` it must NOT fail the caller.
@@ -644,6 +662,12 @@ impl MpcDataAnnouncementSender {
                     HashSet::new()
                 }
             };
+        let current_members: HashSet<AuthorityName> = epoch_store
+            .committee()
+            .voting_rights
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
         // Translate the Options at the pure-function boundary: an
         // unknown consensus clock (0) can never reach a real deadline,
         // and an absent deadline (u64::MAX) is never reached — both
@@ -657,6 +681,7 @@ impl MpcDataAnnouncementSender {
             &next_members,
             validated_peers,
             &prior_cert_members,
+            &current_members,
         )
     }
 
@@ -906,16 +931,26 @@ mod tests {
         let b = name(2);
         let joiner = name(3);
         let no_prior_cert = HashSet::new();
+        let current: HashSet<AuthorityName> = [a, b].into_iter().collect();
         // Before V_{e+1} is published (next epoch shows current=5,
         // not 6): not ready, even with everything validated.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b], &no_prior_cert),
+            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b], &no_prior_cert, &current),
             ReadyToFinalize::NotYet
         );
         // V_{e+1} published (epoch 6) but the joiner isn't validated
         // yet: not ready.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b], &no_prior_cert),
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, b, joiner],
+                &[a, b],
+                &no_prior_cert,
+                &current
+            ),
             ReadyToFinalize::NotYet
         );
         // V_{e+1} published AND all its members validated: ready.
@@ -927,7 +962,8 @@ mod tests {
                 6,
                 &[a, b, joiner],
                 &[a, b, joiner],
-                &no_prior_cert
+                &no_prior_cert,
+                &current
             ),
             ReadyToFinalize::Ready
         );
@@ -938,17 +974,36 @@ mod tests {
         let a = name(1);
         let joiner = name(3);
         let no_prior_cert = HashSet::new();
+        let current: HashSet<AuthorityName> = [a].into_iter().collect();
         // Past the deadline, V_{e+1} not yet published: emit via the
         // backstop (no members known to report missing).
         assert_eq!(
-            decide_ready_to_finalize(1000, 1000, 5, 6, &[a, joiner], &[a], &no_prior_cert),
+            decide_ready_to_finalize(
+                1000,
+                1000,
+                5,
+                6,
+                &[a, joiner],
+                &[a],
+                &no_prior_cert,
+                &current
+            ),
             ReadyToFinalize::ReadyViaDeadlineMissing(vec![])
         );
         // Past the deadline, V_{e+1} published but the joiner never
         // got validated: emit via the backstop AND report the joiner
         // as missing so the producer warns.
         assert_eq!(
-            decide_ready_to_finalize(2000, 1000, 6, 6, &[a, joiner], &[a], &no_prior_cert),
+            decide_ready_to_finalize(
+                2000,
+                1000,
+                6,
+                6,
+                &[a, joiner],
+                &[a],
+                &no_prior_cert,
+                &current
+            ),
             ReadyToFinalize::ReadyViaDeadlineMissing(vec![joiner])
         );
     }
@@ -966,17 +1021,105 @@ mod tests {
         let b = name(2);
         let down = name(3);
         let prior_cert: HashSet<AuthorityName> = [down].into_iter().collect();
+        // `down` is still SEATED, so carry-forward reaches it.
+        let current: HashSet<AuthorityName> = [a, b, down].into_iter().collect();
         // Well before the deadline (100 < 1000), `down` unvalidated but
-        // cert-covered: Ready.
+        // carried forward: Ready.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, down], &[a, b], &prior_cert),
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, b, down],
+                &[a, b],
+                &prior_cert,
+                &current
+            ),
             ReadyToFinalize::Ready
         );
         // Coverage requires publication regardless: same set, V_{e+1}
         // not yet published -> NotYet.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b, down], &[a, b], &prior_cert),
+            decide_ready_to_finalize(
+                100,
+                1000,
+                5,
+                6,
+                &[a, b, down],
+                &[a, b],
+                &prior_cert,
+                &current
+            ),
             ReadyToFinalize::NotYet
+        );
+    }
+
+    /// A next-epoch member that is in the prior epoch's handoff cert but
+    /// NOT in the current committee is not carried forward — the freeze
+    /// walks the current committee, so it never sees such a name — and so
+    /// it must hold the gate like a first-time joiner.
+    ///
+    /// This is the validator that sits out one epoch and is re-selected
+    /// into the next, which ordinary stake-based churn produces. Exempting
+    /// it on the strength of its prior-cert digest alone let the whole
+    /// committee stop waiting for its announcement, after which the freeze
+    /// dropped it: seated in the next epoch with full voting weight but no
+    /// class-groups entry, MPC-dead for that epoch, and silent — it lands
+    /// in neither the frozen nor the excluded set, so no metric or warning
+    /// names it.
+    #[test]
+    fn a_rejoiner_missing_from_the_current_committee_holds_the_gate() {
+        let a = name(1);
+        let b = name(2);
+        let rejoiner = name(3);
+        // The rejoiner announced in an earlier epoch, so it carries a
+        // prior-cert digest, but it is not seated in the current epoch.
+        let prior_cert: HashSet<AuthorityName> = [a, b, rejoiner].into_iter().collect();
+        let current: HashSet<AuthorityName> = [a, b].into_iter().collect();
+        // Before the deadline: the rejoiner still holds the gate, so the
+        // network keeps waiting for the announcement that gets it frozen.
+        assert_eq!(
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, b, rejoiner],
+                &[a, b],
+                &prior_cert,
+                &current
+            ),
+            ReadyToFinalize::NotYet
+        );
+        // Once it validates, the gate opens immediately.
+        assert_eq!(
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, b, rejoiner],
+                &[a, b, rejoiner],
+                &prior_cert,
+                &current
+            ),
+            ReadyToFinalize::Ready
+        );
+        // And if it never announces, the deadline still emits — naming it,
+        // where before it was exempted and therefore never reported.
+        assert_eq!(
+            decide_ready_to_finalize(
+                1000,
+                1000,
+                6,
+                6,
+                &[a, b, rejoiner],
+                &[a, b],
+                &prior_cert,
+                &current
+            ),
+            ReadyToFinalize::ReadyViaDeadlineMissing(vec![rejoiner])
         );
     }
 
@@ -990,14 +1133,33 @@ mod tests {
         let down = name(2);
         let never_alive = name(3);
         let prior_cert: HashSet<AuthorityName> = [down].into_iter().collect();
+        let current: HashSet<AuthorityName> = [a, down].into_iter().collect();
         // Before the deadline the uncovered member still holds the gate.
         assert_eq!(
-            decide_ready_to_finalize(100, 1000, 6, 6, &[a, down, never_alive], &[a], &prior_cert),
+            decide_ready_to_finalize(
+                100,
+                1000,
+                6,
+                6,
+                &[a, down, never_alive],
+                &[a],
+                &prior_cert,
+                &current
+            ),
             ReadyToFinalize::NotYet
         );
         // At the deadline, only the uncovered member is reported.
         assert_eq!(
-            decide_ready_to_finalize(1000, 1000, 6, 6, &[a, down, never_alive], &[a], &prior_cert),
+            decide_ready_to_finalize(
+                1000,
+                1000,
+                6,
+                6,
+                &[a, down, never_alive],
+                &[a],
+                &prior_cert,
+                &current
+            ),
             ReadyToFinalize::ReadyViaDeadlineMissing(vec![never_alive])
         );
     }
