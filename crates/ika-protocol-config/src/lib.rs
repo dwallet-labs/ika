@@ -804,7 +804,7 @@ impl ProtocolConfig {
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
         cfg.feature_flags.bls_checkpoints = true;
 
-        // Versions below MIN (= 6) are unreachable via `get_for_version` (it
+        // Versions below MIN (= 7) are unreachable via `get_for_version` (it
         // asserts `version >= MIN`), but their arms are kept as the readable
         // history of how each version changed the config — every supported
         // version's config is still built by replaying them from the start.

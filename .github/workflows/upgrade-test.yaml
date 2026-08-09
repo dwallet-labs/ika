@@ -12,16 +12,18 @@ name: Upgrade Test
 # `v128_rollout`, avoiding the full expensive matrix on unrelated changes.
 # (The v3/v4-era rehearsals — cross_binary, v118_*, v121_rollout — were
 # retired when protocol v3/v4 support was removed; v128_rollout is their
-# successor against the current v1.2.7 release.) Pick the scenario with
+# successor against the current v1.2.8 release.) Pick the scenario with
 # the `test` input:
 #
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
 #                  Needs only the current build. Fastest.
 #   workload     — full user DKG -> Presign -> Sign on-chain at genesis
-#                  protocol v6. Current build only.
+#                  protocol v7. Current build only.
 #   v128_rollout — the deployed-release compatibility gate, and with it the
-#                  strict-only dependency gate: boot the literal v1.2.7
-#                  release (deployed on mainnet AND testnet, protocol v6),
+#                  strict-only dependency gate: boot the literal v1.2.8
+#                  release (deployed on mainnet AND testnet, which run
+#                  protocol v7 — the only version this binary supports, so
+#                  the run genesises there),
 #                  upgrade exactly one validator to the current build,
 #                  converge two mixed aggregated STRICT-BOUND reshares with
 #                  zero malicious reports and per-authority output
@@ -32,22 +34,12 @@ name: Upgrade Test
 #                  gate and a separate strict-only one — but there is a single
 #                  scenario and a single harness target; the strict bound is a
 #                  property of the candidate binary, not a second topology.)
-#                  transition counterpart): boot the literal v1.2.7 release
-#                  at protocol v6, swap the whole committee to the current
-#                  build, and cross v6 -> v7 — the boundary where
-#                  AuthorityName stops being emitted zero-padded to 48 bytes
-#                  and starts being emitted as the raw 32-byte consensus key.
-#                  Asserts the upgrade actually activates (a silent stay-at-v6
-#                  would make it vacuous), the boundary reshare converges, the
-#                  committee keeps all 4 members, and the cross-epoch handoff
-#                  cert (signed padded, verified short) still verifies. Same
-#                  OLD defaults as v128_rollout.
 #   v128_churn   — v128_rollout's churn counterpart: full sequential swap
-#                  over the literal v1.2.7 committee, then a mirrored OCS
-#                  joiner folds into the reshared v1.2.7-origin key (4→5)
+#                  over the literal v1.2.8 committee, then a mirrored OCS
+#                  joiner folds into the reshared v1.2.8-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
 #                  defaults as v128_rollout.
-#   malicious_v128 — test-testing counterpart: honest literal-v1.2.7
+#   malicious_v128 — test-testing counterpart: honest literal-v1.2.8
 #                  committee + ONE current validator built with the
 #                  test-testing reconfiguration-message fault; honest
 #                  validators must convict it and reshare without it
@@ -71,7 +63,7 @@ name: Upgrade Test
 # worktree's rust-toolchain.toml). All binaries build with default features —
 # enforcement (enforce-minimum-cpu) is runtime-gated to validators on the ika
 # testnet/mainnet networks, so it is inert on the CI localnet (its ika
-# system object maps to Chain::Unknown), and v1.2.7 already carries the
+# system object maps to Chain::Unknown), and v1.2.8 already carries the
 # runtime gate.
 
 on:
@@ -490,7 +482,7 @@ jobs:
           echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
           git worktree add --force --detach "$WT" "$OLD_COMMIT"
           # Build at the OLD ref's own toolchain (rustup reads the worktree's
-          # rust-toolchain.toml). Default features: v1.2.7's
+          # rust-toolchain.toml). Default features: v1.2.8's
           # enforce-minimum-cpu is runtime-gated (inert on the CI localnet),
           # matching its production build.
           ( cd "$WT" && cargo build --release -p ika-node --bin "$OLD_BIN_NAME" )
