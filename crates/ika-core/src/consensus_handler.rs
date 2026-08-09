@@ -339,11 +339,12 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
                 let in_set = !processed_set.insert(key.clone());
                 // The LRU is a local fast path in front of the durable
                 // `is_consensus_message_processed` check, so declining to cache
-                // a key costs one DB read and nothing else. Two key variants
-                // embed their whole MPC payload, so admitting them budgets
-                // `PROCESSED_CACHE_CAP` entries times an unbounded per-entry
-                // size — a cap in name only. They are the ones least worth
-                // caching anyway: an MPC message or output is submitted once.
+                // a key costs one DB read and nothing else. The MPC-payload key
+                // variants (see `embeds_payload`) embed their whole payload, so
+                // admitting them budgets `PROCESSED_CACHE_CAP` entries times an
+                // unbounded per-entry size — a cap in name only. They are the
+                // ones least worth caching anyway: an MPC message or output is
+                // submitted once.
                 let in_cache = if key.embeds_payload() {
                     false
                 } else {

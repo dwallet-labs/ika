@@ -1178,3 +1178,72 @@ pub mod test_helpers {
         }
     }
 }
+
+#[cfg(test)]
+mod session_identifier_tests {
+    use super::*;
+
+    /// Build a `SessionIdentifier` with an arbitrary (type, digest, preimage)
+    /// triple, the way the wire can: `Deserialize` is derived, so nothing
+    /// forces the digest to actually commit to the other two fields.
+    fn wire_triple(
+        session_type: SessionType,
+        digest: [u8; 32],
+        preimage: [u8; 32],
+    ) -> SessionIdentifier {
+        #[derive(serde::Serialize)]
+        struct Raw {
+            session_type: SessionType,
+            session_identifier: [u8; 32],
+            session_identifier_preimage: [u8; 32],
+        }
+        let bytes = bcs::to_bytes(&Raw {
+            session_type,
+            session_identifier: digest,
+            session_identifier_preimage: preimage,
+        })
+        .unwrap();
+        bcs::from_bytes(&bytes).unwrap()
+    }
+
+    /// `Ord` must agree with the derived `Eq`: values that are `!=` must
+    /// never compare `Equal`. Before the #2000 fix, `cmp` looked only at
+    /// the digest, so two wire-crafted values sharing a digest but
+    /// differing in type or preimage broke the total-order contract that
+    /// `BTreeMap`, `sort` and `dedup` rely on.
+    #[test]
+    fn ord_agrees_with_eq_on_digest_collisions() {
+        let a = wire_triple(SessionType::User, [7; 32], [1; 32]);
+        let b = wire_triple(SessionType::User, [7; 32], [2; 32]);
+        let c = wire_triple(SessionType::System, [7; 32], [1; 32]);
+        // Guard the crafting itself against silent field-order drift: the
+        // digest and preimage are both `[u8; 32]`, so a swap of the two
+        // fields would deserialize transposed and turn this collision pair
+        // into a distinct-digest pair whose assertions pass vacuously. The
+        // `From<&SessionIdentifier>` accessor returns the digest field.
+        assert_eq!(
+            <[u8; 32]>::from(&a),
+            [7; 32],
+            "digest field mismatch — Raw layout drifted from SessionIdentifier"
+        );
+        assert_eq!(<[u8; 32]>::from(&b), [7; 32]);
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+        assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
+        // And Eq still implies Equal.
+        let a2 = wire_triple(SessionType::User, [7; 32], [1; 32]);
+        assert_eq!(a, a2);
+        assert_eq!(a.cmp(&a2), std::cmp::Ordering::Equal);
+    }
+
+    /// Digest-first: whenever digests differ — every honestly-constructed
+    /// pair, since the digest commits to the other fields — the order is
+    /// exactly the digest order, unchanged from before the fix.
+    #[test]
+    fn ordering_is_digest_first_for_distinct_digests() {
+        let low = wire_triple(SessionType::System, [1; 32], [9; 32]);
+        let high = wire_triple(SessionType::User, [2; 32], [0; 32]);
+        assert!(low < high, "digest order must dominate type and preimage");
+    }
+}
