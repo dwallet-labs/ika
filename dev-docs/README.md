@@ -39,7 +39,8 @@ them has a bug — determine which before changing either.
 - [`specs/checkpoint-sync-floor.md`](specs/checkpoint-sync-floor.md)
   — why pull-mode checkpoint sync starts from the on-chain processed
   cursor (a fresh-DB notifier can never fetch deep history from peers),
-  the cold-start deferral, and the gap-tolerant store invariants.
+  the cold-start deferral, why a validator's aggregator floors at the
+  previous epoch's last checkpoint, and the gap-tolerant store invariants.
 - [`specs/checkpoint-writer-observability.md`](specs/checkpoint-writer-observability.md)
   — the deliberate single-notifier write path, why a stalled writer
   blocks the epoch close, and the two stall signals (the notifier's

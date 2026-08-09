@@ -68,7 +68,10 @@ alongside `user_sessions_lag` and names the writer directly; the gate-stuck
 WARN carries the same field. Sustained positive writer lag while the close is
 blocked means: go fix the notifier, not the MPC pipeline. (Negative gauge
 values mean the local certified store trails the chain — local sync lag, a
-different problem.)
+different problem. On a VALIDATOR, a negative value that never recovers is
+its aggregator sitting below the epoch floor; see
+[`checkpoint-sync-floor.md`](checkpoint-sync-floor.md), which is where that
+resolves itself.)
 
 ## Key invariants
 
