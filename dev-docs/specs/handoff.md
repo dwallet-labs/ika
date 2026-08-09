@@ -177,17 +177,31 @@ next epoch inherits.
     on-chain protocol pubkey — a member that rotated its protocol key
     at the boundary signed under the old name, and current-name keying
     would silently drop its stake from the cert quorum.
-  - **Lossy membership read (and its sharp edge).** A prior-committee
-    member whose frozen snapshot `protocol_pubkey` bytes fail to parse
-    is SKIPPED rather than panicking the reader — but the skip is not
-    graceful degradation: the member is absent from `voting_rights`,
-    and verification hard-rejects any certificate carrying a weight-0
-    signer's signature. Since such a member's own node keeps signing,
-    its signature is in every aggregated cert, so every served cert
-    fails and bootstrap surfaces `Rejected`. The reader logs the
-    dropped ids so that outcome is attributable to the corrupt record
-    (near-unreachable trigger: the bytes are validated at
+  - **Lossy membership read.** A prior-committee member whose frozen
+    snapshot `protocol_pubkey` bytes fail to parse is SKIPPED rather
+    than panicking the reader. The member is then absent from
+    `voting_rights`, so its signature resolves to weight 0 and
+    verification skips that signature — costing its stake from the
+    achievable quorum, not the certificate. Bootstrap fails only if
+    enough members drop to leave the rest below quorum. The reader logs
+    the dropped ids so a near-quorum loss is attributable to the corrupt
+    records (near-unreachable trigger: the bytes are validated at
     registration; the pre-lossy behavior was a panic crash-loop).
+  - **Skipping a signer is safe, and the quorum check is the gate.** A
+    signature is skipped when the signer carries no weight in the
+    verifying committee, or when its consensus pubkey no longer
+    resolves. Neither can smuggle stake in — a skipped signature adds
+    zero — so the below-quorum check remains the fail-closed gate, and a
+    certificate verified against a wholly wrong committee accumulates
+    nothing and is rejected there. Rejecting such a signer outright
+    instead would make honest chain state fatal: a member that rotated
+    its consensus key at the boundary, or one absent from the committee
+    snapshot, has its signature in EVERY cert every honest peer serves,
+    so every candidate would fail and a node with no persisted prior
+    committee would shut itself down for the epoch. It would also let
+    any peer kill an otherwise-valid certificate by appending one junk
+    signer. A DUPLICATE signer is still fatal: it cannot arise from
+    honest chain state and would risk double-counting stake.
 
 ## Consuming the certificate
 
@@ -200,13 +214,16 @@ next epoch inherits.
      genuine trust-anchor mismatch or eclipse: **fail closed** — the
      node must never anchor on an unverified cert. A single bad peer
      cannot cause this (every peer is tried). Enforcement today: the
-     epoch-start bootstrap task logs `Rejected` at error and installs
-     nothing (it does NOT hard-halt the process; a refuse-participation
-     policy layers above it), and the prepare-then-start barrier simply
-     never becomes ready without a verified anchor — the node blocks
-     out of MPC participation. The one place that DOES halt the node is
-     the barrier's re-verification failure of a locally-PERSISTED cert
-     (local DB tampering/corruption — see step 2).
+     epoch-start bootstrap task logs at error and HALTS the process
+     (`fail_closed_shutdown`), rather than limping without a verified
+     anchor. The barrier's re-verification failure of a locally
+     PERSISTED cert (local DB tampering/corruption — see step 2) halts
+     the same way. Because this outcome is chain-derived and
+     deterministic, every node in the same position halts identically —
+     which is why verification skips a signature it cannot attribute
+     rather than rejecting the certificate over it (see above): a defect
+     that made honest chain state unverifiable would take out every
+     joiner at that epoch at once.
    - `Unavailable` (no peer served one) — benign propagation lag;
      retry.
    A validator that already holds the certificate re-verifies it before
