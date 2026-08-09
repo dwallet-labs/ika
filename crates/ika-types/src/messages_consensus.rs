@@ -144,14 +144,36 @@ impl ConsensusTransactionKey {
     /// digest or a small tuple.
     ///
     /// Most variants are a digest or an `(authority, u64)`-shaped tuple —
-    /// tens of bytes. Two carry their whole MPC payload, so anything that
-    /// budgets by ENTRY COUNT rather than by bytes is really budgeting
-    /// `count * unbounded`.
+    /// tens of bytes. Three carry their whole MPC payload (a message body,
+    /// an output's checkpoint-message kinds, or an internal output's
+    /// `Vec<u8>`s), so anything that budgets by ENTRY COUNT rather than by
+    /// bytes is really budgeting `count * unbounded`.
+    ///
+    /// The match is deliberately EXHAUSTIVE, no wildcard: a new variant
+    /// fails to compile until it is classified here, which is what keeps a
+    /// future payload-carrying key from silently re-entering the
+    /// count-budgeted dedup LRU. (`DWalletInternalMPCOutput` did exactly
+    /// that — it postdated the original two-variant list and was admitted
+    /// unbounded until this classification was made exhaustive.)
     pub fn embeds_payload(&self) -> bool {
-        matches!(
-            self,
-            Self::DWalletMPCMessage(..) | Self::DWalletMPCOutput(..)
-        )
+        match self {
+            Self::DWalletMPCMessage(..)
+            | Self::DWalletMPCOutput(..)
+            | Self::DWalletInternalMPCOutput(..) => true,
+            Self::DWalletCheckpointSignature(..)
+            | Self::CapabilityNotification(..)
+            | Self::EndOfPublish(..)
+            | Self::SystemCheckpointSignature(..)
+            | Self::IdleStatusUpdate(..)
+            | Self::SuiChainObservationUpdate(..)
+            | Self::GlobalPresignRequest(..)
+            | Self::NOAObservation(..)
+            | Self::ValidatorMpcDataAnnouncement(..)
+            | Self::RelayedValidatorMpcDataAnnouncement(..)
+            | Self::EpochMpcDataReadySignal(..)
+            | Self::EndOfPublishV2(..)
+            | Self::NOAPresignDemand(..) => false,
+        }
     }
 }
 
@@ -842,15 +864,26 @@ mod wire_format_tests {
 mod consensus_key_tests {
     use super::*;
     use crate::messages_dwallet_mpc::SessionType;
+    use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+    use sui_types::base_types::ObjectID;
 
-    /// The dedup LRU budgets by ENTRY COUNT, so any variant that embeds its
-    /// whole MPC payload must be excluded from it (#1997). This pins which
-    /// variants those are: if a new payload-carrying variant is added, it
-    /// must be added to `embeds_payload` — and to this test.
+    /// The dedup LRU budgets by ENTRY COUNT, so a key that embeds an
+    /// unbounded MPC payload must be kept out of it (#1997) — otherwise the
+    /// cap is `count * unbounded`. This pins which keys carry a payload.
+    ///
+    /// The point of `embeds_payload` being an exhaustive `match` is that a
+    /// new variant is a COMPILE error until classified, so this test does
+    /// not need to (and cannot) enumerate future variants — it locks the
+    /// three payload-carrying ones as `true` and a representative sample of
+    /// the digest/authority-shaped ones as `false`. `DWalletInternalMPCOutput`
+    /// is the one this PR corrected: it postdated the original two-variant
+    /// list and was silently admitted to the LRU until now.
     #[test]
-    fn payload_embedding_variants_are_exactly_the_two_mpc_ones() {
+    fn every_mpc_payload_key_is_excluded_from_the_dedup_lru() {
         let name = AuthorityName([9; 32]);
         let session = SessionIdentifier::new(SessionType::User, [0u8; 32]);
+
+        // The three payload-carrying keys.
         assert!(
             ConsensusTransactionKey::DWalletMPCMessage(name, session, vec![0u8; 64])
                 .embeds_payload(),
@@ -861,9 +894,33 @@ mod consensus_key_tests {
                 .embeds_payload(),
             "the MPC output variant carries its payload in the key"
         );
+        let internal_kind = DWalletInternalMPCOutputKind::InternalPresign {
+            output: vec![0u8; 64],
+            curve: DWalletCurve::Secp256k1,
+            signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+            session_sequence_number: 0,
+            dwallet_network_encryption_key_id: ObjectID::ZERO,
+        };
+        assert!(
+            ConsensusTransactionKey::DWalletInternalMPCOutput(
+                name,
+                session,
+                internal_kind,
+                vec![],
+            )
+            .embeds_payload(),
+            "the internal MPC output variant embeds unbounded Vec<u8> in its key"
+        );
+
+        // Representative non-payload keys: a digest, a small tuple, a bare
+        // authority. These must stay in the LRU.
         assert!(
             !ConsensusTransactionKey::NOAPresignDemand([0u8; 32]).embeds_payload(),
             "a digest-shaped key must not be classified as payload-embedding"
+        );
+        assert!(
+            !ConsensusTransactionKey::GlobalPresignRequest(name, 7).embeds_payload(),
+            "an (authority, u64) key must not be classified as payload-embedding"
         );
         assert!(
             !ConsensusTransactionKey::EndOfPublishV2(name).embeds_payload(),

@@ -1216,6 +1216,17 @@ mod session_identifier_tests {
         let a = wire_triple(SessionType::User, [7; 32], [1; 32]);
         let b = wire_triple(SessionType::User, [7; 32], [2; 32]);
         let c = wire_triple(SessionType::System, [7; 32], [1; 32]);
+        // Guard the crafting itself against silent field-order drift: the
+        // digest and preimage are both `[u8; 32]`, so a swap of the two
+        // fields would deserialize transposed and turn this collision pair
+        // into a distinct-digest pair whose assertions pass vacuously. The
+        // `From<&SessionIdentifier>` accessor returns the digest field.
+        assert_eq!(
+            <[u8; 32]>::from(&a),
+            [7; 32],
+            "digest field mismatch — Raw layout drifted from SessionIdentifier"
+        );
+        assert_eq!(<[u8; 32]>::from(&b), [7; 32]);
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
