@@ -837,3 +837,37 @@ mod wire_format_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod consensus_key_tests {
+    use super::*;
+    use crate::messages_dwallet_mpc::SessionType;
+
+    /// The dedup LRU budgets by ENTRY COUNT, so any variant that embeds its
+    /// whole MPC payload must be excluded from it (#1997). This pins which
+    /// variants those are: if a new payload-carrying variant is added, it
+    /// must be added to `embeds_payload` — and to this test.
+    #[test]
+    fn payload_embedding_variants_are_exactly_the_two_mpc_ones() {
+        let name = AuthorityName([9; 32]);
+        let session = SessionIdentifier::new(SessionType::User, [0u8; 32]);
+        assert!(
+            ConsensusTransactionKey::DWalletMPCMessage(name, session, vec![0u8; 64])
+                .embeds_payload(),
+            "the MPC message variant carries its payload in the key"
+        );
+        assert!(
+            ConsensusTransactionKey::DWalletMPCOutput(name, session, vec![], vec![])
+                .embeds_payload(),
+            "the MPC output variant carries its payload in the key"
+        );
+        assert!(
+            !ConsensusTransactionKey::NOAPresignDemand([0u8; 32]).embeds_payload(),
+            "a digest-shaped key must not be classified as payload-embedding"
+        );
+        assert!(
+            !ConsensusTransactionKey::EndOfPublishV2(name).embeds_payload(),
+            "an authority-shaped key must not be classified as payload-embedding"
+        );
+    }
+}

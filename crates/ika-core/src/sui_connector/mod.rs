@@ -526,6 +526,35 @@ const SWEEP_MIN_COIN_TOTAL: u64 = 1_000_000_000;
 /// 256 objects per transaction.
 const SWEEP_MAX_GAS_COINS: usize = 256;
 
+/// The sweep's go/no-go decision and split amount, extracted pure so the
+/// guards are unit-testable (the async sweep needs a signing client).
+///
+/// `Err` on: no coins listed; a listing AT or over the gas-payment cap —
+/// `>=`, not `>`, because `list_owned_gas_coins` truncates at the same cap,
+/// so a set of exactly that length may be a truncation of a larger holding
+/// while `coin_total` still counts every coin, and proceeding would smash a
+/// capped payment while splitting the full balance, aborting on chain
+/// instead of bailing here; and a total that does not exceed the sweep's
+/// own gas budget (splitting zero is churn, not funding).
+fn sweep_split_amount(gas_coin_count: usize, coin_total: u64) -> anyhow::Result<u64> {
+    if gas_coin_count == 0 {
+        anyhow::bail!("coin balance is {coin_total} MIST but no gas-coin objects were listed");
+    }
+    if gas_coin_count >= SWEEP_MAX_GAS_COINS {
+        // The subset's value is unknown, so a correct split amount can't be
+        // computed. This does not happen to a writer address in practice.
+        anyhow::bail!(
+            "{gas_coin_count} gas coins exceed the {SWEEP_MAX_GAS_COINS}-object gas payment cap; \
+             consolidate them manually",
+        );
+    }
+    let sweep_amount = coin_total.saturating_sub(SWEEP_GAS_BUDGET);
+    if sweep_amount == 0 {
+        anyhow::bail!("coin balance {coin_total} MIST does not exceed the sweep gas budget");
+    }
+    Ok(sweep_amount)
+}
+
 /// Deposit the notifier's gas-coin objects into its SIP-58 address balance.
 /// Returns the amount deposited (MIST). The sweep transaction uses ALL owned
 /// gas coins as its own gas payment (Sui merges them into the first), splits
@@ -539,27 +568,7 @@ async fn sweep_gas_coins_into_address_balance<C: SuiClientInner>(
     coin_total: u64,
 ) -> anyhow::Result<u64> {
     let gas_coins = sui_client.get_gas_objects(sui_address).await;
-    if gas_coins.is_empty() {
-        anyhow::bail!("coin balance is {coin_total} MIST but no gas-coin objects were listed");
-    }
-    if gas_coins.len() >= SWEEP_MAX_GAS_COINS {
-        // The subset's value is unknown, so a correct split amount can't be
-        // computed. This does not happen to a writer address in practice.
-        //
-        // `>=`, not `>`: the lister truncates at the same cap, so a returned
-        // set of exactly this length may be a truncation of a larger holding.
-        // `coin_total` still counts every coin, so proceeding would smash a
-        // 256-coin payment while splitting the full balance, and the
-        // SplitCoins would abort on chain instead of bailing here.
-        anyhow::bail!(
-            "{} gas coins exceed the {SWEEP_MAX_GAS_COINS}-object gas payment cap;              consolidate them manually",
-            gas_coins.len()
-        );
-    }
-    let sweep_amount = coin_total.saturating_sub(SWEEP_GAS_BUDGET);
-    if sweep_amount == 0 {
-        anyhow::bail!("coin balance {coin_total} MIST does not exceed the sweep gas budget");
-    }
+    let sweep_amount = sweep_split_amount(gas_coins.len(), coin_total)?;
     let computation_price = sui_client.get_reference_gas_price_until_success().await;
     let tx_data = sweep_transaction_data(sui_address, gas_coins, sweep_amount, computation_price)?;
     let signature = Signature::new_secure(
@@ -783,5 +792,37 @@ mod tests {
         let instant = std::time::Instant::now();
         retry_with_max_elapsed_time!(example_func_err(), max_elapsed_time).unwrap_err();
         assert!(instant.elapsed() < max_elapsed_time);
+    }
+
+    /// The sweep must refuse a coin listing AT the gas-payment cap, not just
+    /// over it: `list_owned_gas_coins` truncates at that same cap, so exactly
+    /// 256 coins may be a truncation of a larger holding while `coin_total`
+    /// counts everything — proceeding would split the full balance against a
+    /// capped payment and abort on chain instead of bailing client-side.
+    /// (#1996 review finding; the guard was `>` before.)
+    #[test]
+    fn sweep_refuses_a_listing_at_the_gas_payment_cap() {
+        let plenty = SWEEP_GAS_BUDGET + SWEEP_MIN_COIN_TOTAL;
+        let err = sweep_split_amount(SWEEP_MAX_GAS_COINS, plenty)
+            .expect_err("exactly at the cap may be a truncated listing");
+        assert!(format!("{err}").contains("consolidate them manually"));
+        assert!(sweep_split_amount(SWEEP_MAX_GAS_COINS + 40, plenty).is_err());
+        // One under the cap is a complete listing and sweeps normally.
+        assert_eq!(
+            sweep_split_amount(SWEEP_MAX_GAS_COINS - 1, plenty).unwrap(),
+            plenty - SWEEP_GAS_BUDGET
+        );
+    }
+
+    #[test]
+    fn sweep_refuses_no_coins_and_dust_totals() {
+        assert!(sweep_split_amount(0, SWEEP_GAS_BUDGET * 10).is_err());
+        // A total at or under the sweep's own gas budget splits nothing.
+        assert!(sweep_split_amount(3, SWEEP_GAS_BUDGET).is_err());
+        assert_eq!(
+            sweep_split_amount(3, SWEEP_GAS_BUDGET + 1).unwrap(),
+            1,
+            "everything above the sweep budget is deposited"
+        );
     }
 }
