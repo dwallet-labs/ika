@@ -25,7 +25,8 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
 };
 use ika_types::message::{DWalletCheckpointMessageKind, MakeDWalletUserSecretKeySharesPublicOutput};
-use ika_types::messages_dwallet_mpc::{
+use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef, NOAPresignDemandId};
+use ika_types::messages_dwallet_mpc::{ConsensusNOAPresignDemand,
     DWalletMPCOutput, DWalletMPCOutputReport, SessionIdentifier, SessionType,
 };
 use std::collections::HashSet;
@@ -1265,4 +1266,160 @@ async fn test_network_owned_address_sign_schnorrkel_substrate_vss() {
         DWalletHashScheme::Merlin,
     )
     .await;
+}
+
+/// A presign demand's signature algorithm is DERIVED from its identity, not
+/// taken from the announcement — so a byzantine announcer cannot choose which
+/// presign pool a demand draws from.
+///
+/// The consensus dedup key for a presign-demand announcement is the demand-id
+/// digest alone, so the first announcement sequenced for a demand supplies the
+/// payload fields for the whole network and the honest duplicates are dropped.
+/// A checkpoint demand id names its checkpoint kind, and the kind determines
+/// the algorithm, so the drain re-derives it and the announced value carries no
+/// authority.
+///
+/// Both pools are seeded with distinguishable bytes, so this asserts POSITIVELY
+/// which one was drawn from rather than inferring it from an empty pool: the
+/// assigned presign must be the derived pool's, while the announced pool is
+/// left untouched and full.
+#[tokio::test]
+#[cfg(test)]
+async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // A checkpoint demand names its kind, and the kind fixes the algorithm.
+    let demand_id = NOAPresignDemandId::Checkpoint {
+        tx_ref: NOACheckpointTxRef {
+            kind_name: NOACheckpointKindName::SuiDWallet,
+            sequence_number: 1,
+            tx_index: 0,
+            epoch: 1,
+        },
+        retry_round: 0,
+    };
+    let derived_algorithm = demand_id
+        .expected_signature_algorithm()
+        .expect("a checkpoint demand determines its own algorithm");
+    // Any algorithm the identity does NOT imply serves as the announced lie.
+    let announced_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+    assert_ne!(
+        derived_algorithm, announced_algorithm,
+        "the test needs the announced algorithm to differ from the derived one"
+    );
+
+    // Seed both pools with recognizable, distinct bytes.
+    const DERIVED_POOL_MARKER: u8 = 0xD1;
+    const ANNOUNCED_POOL_MARKER: u8 = 0xA9;
+    let target = 0usize;
+    for (algorithm, marker) in [
+        (derived_algorithm, DERIVED_POOL_MARKER),
+        (announced_algorithm, ANNOUNCED_POOL_MARKER),
+    ] {
+        test_state.epoch_stores[target]
+            .insert_presigns(
+                algorithm,
+                network_key_id,
+                0,
+                SessionIdentifier::new(SessionType::InternalPresign, [marker; 32]),
+                vec![vec![marker; 16]],
+            )
+            .expect("seed presign pool");
+    }
+
+    // A committee member announces the demand with the WRONG algorithm.
+    let byzantine_authority = test_state
+        .committee
+        .names()
+        .nth(1)
+        .copied()
+        .expect("committee has a second member");
+    // Every round gets a row on every validator, so the per-round streams have
+    // no gaps to skip; create this round's rows the way the harness does, then
+    // plant the demand in the target's row for it.
+    let round = test_state.consensus_round as u64;
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        round,
+    );
+    test_state.epoch_stores[target]
+        .round_to_noa_presign_demands
+        .lock()
+        .unwrap()
+        .entry(round)
+        .or_default()
+        .push(ConsensusNOAPresignDemand {
+            authority: byzantine_authority,
+            demand_id: demand_id.clone(),
+            signature_algorithm: announced_algorithm,
+            network_encryption_key_id: network_key_id,
+        });
+    test_state.consensus_round += 1;
+
+    // Drain it: the service walks rounds in order, so keep rounds flowing
+    // until it reaches the planted one and assigns.
+    const MAX_DRAIN_ROUNDS: usize = 20;
+    let digest = demand_id.digest();
+    let mut drain_rounds = 0usize;
+    loop {
+        test_state.dwallet_mpc_services[target]
+            .run_service_loop_iteration()
+            .await;
+        if test_state.epoch_stores[target]
+            .has_noa_assigned_presign(&digest)
+            .expect("read assignment")
+        {
+            break;
+        }
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        drain_rounds += 1;
+        assert!(
+            drain_rounds < MAX_DRAIN_ROUNDS,
+            "the demand was never assigned a presign within {MAX_DRAIN_ROUNDS} rounds"
+        );
+    }
+
+    let (_session_identifier, _blending_index, presign_bytes, assigned_key_id) = test_state
+        .epoch_stores[target]
+        .noa_assigned_presign(&digest)
+        .expect("read assignment")
+        .expect("assignment exists");
+
+    assert_eq!(
+        presign_bytes,
+        vec![DERIVED_POOL_MARKER; 16],
+        "the drain must draw from the pool its demand identity implies, not the announced one"
+    );
+    assert_eq!(
+        assigned_key_id, network_key_id,
+        "the announced network key is still authoritative — it is not derivable"
+    );
+    // The pool the announcement pointed at must be untouched.
+    assert_eq!(
+        test_state.epoch_stores[target]
+            .presign_pool_size(announced_algorithm, network_key_id)
+            .expect("pool size"),
+        1,
+        "nothing should have been drawn from the announced algorithm's pool"
+    );
+
+    info!(
+        ?derived_algorithm,
+        ?announced_algorithm,
+        "a mismatched presign-demand announcement drew from the derived pool"
+    );
 }

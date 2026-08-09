@@ -143,6 +143,31 @@ pub enum NOACheckpointKindName {
     SuiSystem,
 }
 
+impl NOACheckpointKindName {
+    /// The signature algorithm a demand for this checkpoint kind must use.
+    ///
+    /// Read from the same counterparty-chain constant the producer reads, so
+    /// the two cannot drift: the handler builds a request with
+    /// `<K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM` and a
+    /// demand id carrying `K::KIND_NAME`, and this maps the second back to the
+    /// first. The match is exhaustive, so a new checkpoint kind cannot be
+    /// added without deciding its answer here.
+    ///
+    /// This is what lets a consumer DERIVE the algorithm from the demand
+    /// identity instead of trusting the value an announcement carries
+    /// alongside it — see `NOAPresignDemandId::expected_signature_algorithm`.
+    pub fn signature_algorithm(self) -> DWalletSignatureAlgorithm {
+        match self {
+            Self::SuiDWallet => {
+                <<SuiDWalletCheckpoint as NOACheckpointKind>::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM
+            }
+            Self::SuiSystem => {
+                <<SuiSystemCheckpoint as NOACheckpointKind>::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM
+            }
+        }
+    }
+}
+
 /// Defines a kind of NOA-signed checkpoint (e.g., DWallet or System).
 pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     /// The type of individual messages within a checkpoint.
@@ -319,6 +344,28 @@ impl NOAPresignDemandId {
     pub fn digest(&self) -> [u8; 32] {
         keccak256_digest(&bcs::to_bytes(self).expect("NOAPresignDemandId is BCS-serializable"))
     }
+
+    /// The signature algorithm this demand must use, when the demand IDENTITY
+    /// determines it.
+    ///
+    /// The consensus dedup key for a presign-demand announcement is the digest
+    /// of this identity alone — deliberately, so several validators announcing
+    /// the same demand collapse into one transaction. The consequence is that
+    /// the first announcement sequenced for a demand supplies the payload
+    /// fields the drain then uses for everyone. Wherever a field is instead
+    /// derivable from the identity, deriving it removes the announcer's say in
+    /// the matter entirely, which is stronger than validating what it sent:
+    /// there is no divergent value left to prefer, and no honest demand can be
+    /// dropped for carrying one.
+    ///
+    /// `None` for a source whose identity does not determine the algorithm.
+    /// Such a demand has to keep taking the announced value.
+    pub fn expected_signature_algorithm(&self) -> Option<DWalletSignatureAlgorithm> {
+        match self {
+            Self::Checkpoint { tx_ref, .. } => Some(tx_ref.kind_name.signature_algorithm()),
+            Self::GrpcAttestation(_) => None,
+        }
+    }
 }
 
 /// A single validator's observation of a checkpoint tx's on-chain status.
@@ -345,6 +392,88 @@ mod tests {
     use super::*;
     use crate::message::DWalletCheckpointMessageKind;
     use crate::messages_system_checkpoints::SystemCheckpointMessageKind;
+
+    /// The algorithm a consumer DERIVES from a demand identity must equal the
+    /// one the producer puts in the request. The producer reads
+    /// `<K::Counterparty>::SIGNATURE_ALGORITHM` and stamps the demand id with
+    /// `K::KIND_NAME`; the consumer maps that name back. If the two ever
+    /// disagreed, deriving would hand honest demands the wrong presign pool —
+    /// the failure would look like a stuck NOA sign, not a wrong constant.
+    ///
+    /// Written generically over the kind so it pins the LINK between the two
+    /// constants rather than restating either.
+    fn assert_derived_matches_producer<K: NOACheckpointKind>() {
+        assert_eq!(
+            K::KIND_NAME.signature_algorithm(),
+            <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
+            "{} derives an algorithm its producer does not use",
+            K::KIND_NAME,
+        );
+    }
+
+    /// EVERY checkpoint kind belongs in this list. A new kind is forced to add
+    /// a `signature_algorithm` match arm by the compiler, but nothing forces it
+    /// to be asserted here — so add it when you add the arm.
+    #[test]
+    fn derived_signature_algorithm_matches_every_producer() {
+        assert_derived_matches_producer::<SuiDWalletCheckpoint>();
+        assert_derived_matches_producer::<SuiSystemCheckpoint>();
+    }
+
+    /// A checkpoint demand's identity determines its algorithm, so the drain
+    /// can derive it instead of trusting the announcement. A gRPC-attestation
+    /// demand's identity does not, so it must report that rather than guess.
+    #[test]
+    fn only_a_checkpoint_demand_determines_its_own_algorithm() {
+        let checkpoint = NOAPresignDemandId::Checkpoint {
+            tx_ref: NOACheckpointTxRef {
+                kind_name: NOACheckpointKindName::SuiDWallet,
+                sequence_number: 7,
+                tx_index: 0,
+                epoch: 3,
+            },
+            retry_round: 0,
+        };
+        assert_eq!(
+            checkpoint.expected_signature_algorithm(),
+            Some(NOACheckpointKindName::SuiDWallet.signature_algorithm()),
+        );
+        assert_eq!(
+            NOAPresignDemandId::GrpcAttestation([1u8; 32]).expected_signature_algorithm(),
+            None,
+            "a demand whose identity does not fix the algorithm must not claim one"
+        );
+    }
+
+    /// The retry round is not part of what fixes the algorithm: a per-tx retry
+    /// is a distinct demand (distinct id, distinct presign) for the same
+    /// checkpoint tx, and must still derive the same algorithm.
+    #[test]
+    fn a_retry_derives_the_same_algorithm_as_its_first_attempt() {
+        let tx_ref = NOACheckpointTxRef {
+            kind_name: NOACheckpointKindName::SuiSystem,
+            sequence_number: 11,
+            tx_index: 2,
+            epoch: 4,
+        };
+        let first = NOAPresignDemandId::Checkpoint {
+            tx_ref: tx_ref.clone(),
+            retry_round: 0,
+        };
+        let retry = NOAPresignDemandId::Checkpoint {
+            tx_ref,
+            retry_round: 3,
+        };
+        assert_ne!(
+            first.digest(),
+            retry.digest(),
+            "a retry is a distinct demand"
+        );
+        assert_eq!(
+            first.expected_signature_algorithm(),
+            retry.expected_signature_algorithm(),
+        );
+    }
 
     #[test]
     fn test_dwallet_build_tx_bytes_roundtrip() {

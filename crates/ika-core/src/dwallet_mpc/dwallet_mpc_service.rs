@@ -1750,9 +1750,45 @@ impl DWalletMPCService {
                     // already assigned) — drop; `Ok(None)` => pool momentarily
                     // empty — keep, preserving order across rounds until the
                     // presign is generated; `Err` => keep for retry.
+                    // Prefer the algorithm DERIVED from the demand identity
+                    // over the one the announcement carries. The consensus
+                    // dedup key is the demand-id digest alone, so the first
+                    // announcement sequenced for a demand supplies the payload
+                    // fields for the whole network and the honest duplicates
+                    // are dropped — an announcer could otherwise pick the
+                    // algorithm, and so the presign pool, for a demand whose id
+                    // it can compute from public checkpoint data.
+                    //
+                    // Deriving is stronger than checking-and-rejecting here:
+                    // rejecting would leave the demand unassigned, and since
+                    // the honest announcements were already deduplicated away,
+                    // its sign would never happen and the epoch could not
+                    // finalize its NOA checkpoints. Every validator derives the
+                    // same value from the same consensus-agreed identity, so
+                    // this stays network-uniform.
+                    //
+                    // The announced value still governs where the identity does
+                    // not determine one. `network_encryption_key_id` is NOT
+                    // derivable — it is frozen at announce time on purpose (see
+                    // above) — and remains as announced.
+                    let signature_algorithm = demand
+                        .demand_id
+                        .expected_signature_algorithm()
+                        .unwrap_or(demand.signature_algorithm);
+                    if signature_algorithm != demand.signature_algorithm {
+                        ika_types::report_invariant_violation!(
+                            "noa_presign_demand_signature_algorithm_mismatch",
+                            announcer=?demand.authority,
+                            announced=?demand.signature_algorithm,
+                            derived=?signature_algorithm,
+                            demand_id=?demand.demand_id,
+                            "NOA presign demand announced a signature algorithm its demand \
+                             identity does not imply; using the derived one"
+                        );
+                    }
                     match self.epoch_store.assign_noa_presign(
                         demand.demand_id_digest(),
-                        demand.signature_algorithm,
+                        signature_algorithm,
                         demand.network_encryption_key_id,
                     ) {
                         Ok(Some(_)) => false,
