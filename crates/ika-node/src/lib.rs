@@ -92,6 +92,7 @@ pub mod admin;
 mod handle;
 pub mod metrics;
 mod node_runner;
+mod reconfig_watchdog;
 mod validator_metrics;
 
 pub use node_runner::{NodeArgs, run_node, run_node_with_name};
@@ -2987,6 +2988,13 @@ impl IkaNode {
             }) = self.validator_components.lock().await.take()
             {
                 info!("Reconfiguring the validator.");
+                // Consensus subscriptions die in this window and only come
+                // back when the new epoch's components start, so a hang
+                // anywhere in it is a permanent, silent consensus-dead node.
+                let watchdog = reconfig_watchdog::ReconfigWatchdog::arm(
+                    self.metrics.reconfig_phase.clone(),
+                    next_epoch,
+                );
                 // Cancel the old dwallet checkpoint service & system checkpoint service tasks.
                 // Waiting for checkpoint builder to finish gracefully is not possible, because it
                 // may wait on transactions while consensus on peers have already shut down.
@@ -3018,9 +3026,11 @@ impl IkaNode {
                 }
                 info!("System checkpoint service was shut down");
 
+                watchdog.phase(reconfig_watchdog::phase::CONSENSUS_SHUTDOWN);
                 consensus_manager.shutdown().await;
                 info!("Consensus was shut down");
 
+                watchdog.phase(reconfig_watchdog::phase::RECONFIGURE_STATE);
                 let new_epoch_store = self
                     .reconfigure_state(
                         &cur_epoch_store,
@@ -3030,7 +3040,12 @@ impl IkaNode {
                     .await;
                 info!("Epoch store finished reconfiguration.");
 
+                watchdog.phase(reconfig_watchdog::phase::CONSENSUS_STORE_PRUNE);
                 consensus_store_pruner.prune(next_epoch).await;
+                // The prepare-then-start barrier below can legitimately
+                // block for minutes and carries its own gauge, retry counter
+                // and alert, so the watchdog's coverage ends here.
+                watchdog.disarm();
 
                 // Prepare-then-start barrier. Block here until the full
                 // verified handoff data for the epoch we are entering is
@@ -3093,6 +3108,14 @@ impl IkaNode {
                     None
                 }
             } else {
+                // No consensus to tear down here, but reconfigure_state
+                // crosses the same unbounded awaits; a fullnode parked in
+                // them silently stops following epochs.
+                let watchdog = reconfig_watchdog::ReconfigWatchdog::arm(
+                    self.metrics.reconfig_phase.clone(),
+                    next_epoch,
+                );
+                watchdog.phase(reconfig_watchdog::phase::RECONFIGURE_STATE);
                 let new_epoch_store = self
                     .reconfigure_state(
                         &cur_epoch_store,
@@ -3100,6 +3123,7 @@ impl IkaNode {
                         epoch_start_system_state,
                     )
                     .await;
+                watchdog.disarm();
 
                 let is_committee_member = self.state.is_validator(&new_epoch_store);
                 if is_committee_member && !self.mode.is_validator() {
