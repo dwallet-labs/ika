@@ -80,42 +80,35 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/ika-core/Cargo.toml"
-      # authority.rs holds the protocol-upgrade activation decision
-      # (capability tally / effective threshold); authority/** holds the
-      # per-epoch store — epoch-close timing, EndOfPublish accounting,
-      # reconfiguration state. Both are exactly what the mixed-binary
-      # scenarios assert, and were previously missing from this filter:
-      # the #1917 close-timing fix would have merged without v128_rollout
-      # ever running had it not been dispatched by hand.
-      - "crates/ika-core/src/authority.rs"
-      - "crates/ika-core/src/authority/**"
-      # consensus_handler.rs decides which sequenced transactions are
-      # processed at all (verification order, dedup admission) and
-      # messages_consensus.rs defines the consensus transaction/key types —
-      # whose BCS encoding is persisted and append-only. Both change what a
-      # mixed-binary committee agrees on, which is precisely what the
-      # rollout scenarios assert, and both were missing here for the same
-      # reason authority.rs once was.
-      - "crates/ika-core/src/consensus_handler.rs"
-      - "crates/ika-types/src/messages_consensus.rs"
-      # The whole p2p crate, not just state_sync and mpc_artifacts. This
-      # suite spawns REAL validator processes that reach each other over
-      # anemo: checkpoint sync, handoff-certificate and blob fetch at epoch
-      # entry, and peer discovery are all load-bearing for a cross-binary
-      # run. A per-subdirectory list would re-open this same gap the next
-      # time someone adds a module, which is how consensus_handler.rs and
-      # authority.rs both came to be missing. The cost is that unrelated p2p
-      # churn also triggers the suite; that is the cheaper mistake.
+      # Whole crates, not module lists. This suite spawns REAL validator
+      # processes that reach each other over anemo and swap binaries across
+      # an epoch: consensus admission and ordering, the per-epoch store and
+      # epoch-close accounting, checkpoint build/certify/sync, the
+      # cross-epoch handoff certificate, validator mpc_data announcements
+      # and the freeze, the chain reads at epoch entry, and every BCS type
+      # that crosses the wire between two binary versions — nearly all of
+      # `ika-core` and effectively all of `ika-types` are load-bearing here.
+      #
+      # A per-module list has now rotted three times. `authority.rs` was
+      # missing (the #1917 close-timing fix would have merged without this
+      # suite ever running had it not been dispatched by hand);
+      # `consensus_handler.rs` and `messages_consensus.rs` were missing for
+      # the same reason; then `handoff_cert.rs` — which one scenario
+      # explicitly asserts, "the cross-epoch handoff cert still verifies" —
+      # was missing because it was EXTRACTED out of `validator_metadata.rs`,
+      # which was itself never listed, along with `epoch_tasks/**` and
+      # `sui_connector/**`. Every one of those gaps was found by noticing
+      # after the fact that a merged or in-review change had never triggered
+      # the suite.
+      #
+      # The cost is that unrelated churn in these crates also triggers the
+      # suite. That is the cheaper mistake: a wasted run costs runner time,
+      # a missed run costs a cross-binary regression reaching a release.
+      - "crates/ika-core/src/**"
+      - "crates/ika-types/**"
       - "crates/ika-network/**"
-      - "crates/ika-core/src/dwallet_mpc/**"
-      - "crates/ika-core/src/dwallet_session_request.rs"
-      - "crates/ika-core/src/request_protocol_data.rs"
       - "crates/ika-node/Cargo.toml"
       - "crates/dwallet-mpc-*/**"
-      - "crates/ika-types/Cargo.toml"
-      - "crates/ika-types/src/crypto.rs"
-      - "crates/ika-types/src/message.rs"
-      - "crates/ika-types/src/messages_dwallet_mpc.rs"
       - "crates/ika-protocol-config/**"
       - "crates/ika-upgrade-test/**"
       - ".github/workflows/upgrade-test.yaml"
