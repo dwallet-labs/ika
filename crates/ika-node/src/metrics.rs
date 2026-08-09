@@ -37,6 +37,13 @@ pub struct IkaNodeMetrics {
     /// signal; a high `transport_error` rate explains slow ready-signal
     /// coverage.
     pub mpc_data_blob_fetch_total: IntCounterVec,
+
+    /// Sub-phase of the epoch-reconfiguration critical section while the
+    /// reconfig watchdog is armed (see `reconfig_watchdog::phase`); 0
+    /// outside it. Any nonzero value that persists is a node parked in the
+    /// teardown-to-restart window (#1864), and the value names the hanging
+    /// await.
+    pub reconfig_phase: IntGauge,
 }
 
 impl IkaNodeMetrics {
@@ -98,6 +105,13 @@ impl IkaNodeMetrics {
                 "ika_dwallet_mpc_data_blob_fetch_total",
                 "P2P mpc_data blob fetch outcomes",
                 &["result"],
+                registry,
+            )
+            .unwrap(),
+            reconfig_phase: register_int_gauge_with_registry!(
+                "ika_reconfig_phase",
+                "Sub-phase of the epoch-reconfiguration critical section while the reconfig \
+                 watchdog is armed; 0 outside it",
                 registry,
             )
             .unwrap(),
