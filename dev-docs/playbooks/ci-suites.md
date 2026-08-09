@@ -63,9 +63,15 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 `.github/workflows/upgrade-test.yaml` runs the out-of-process harness
 (`crates/ika-upgrade-test/`) — real, separately-compiled `ika-validator`
 child processes against an external `sui` localnet. Manual dispatch remains
-available. Pull requests that touch MPC, crypto dependencies, serialization,
-protocol configuration, the upgrade harness, or `Cargo.lock` automatically
-run the `v128_rollout` deployed-release gate rather than the entire matrix.
+available. Pull requests that touch `ika-core/src`, `ika-types`,
+`ika-network`, the MPC or crypto crates, protocol configuration, the upgrade
+harness, or `Cargo.lock` automatically run the `v128_rollout` deployed-release
+gate rather than the entire matrix. Those are whole-crate globs on purpose:
+the filter previously listed individual modules and silently stopped covering
+code three separate times as modules were added or split out — if you are
+adding a trigger for a module, widen to its crate instead. A change outside
+those crates that could still affect cross-binary behaviour needs a manual
+dispatch; the suite not appearing on a PR is not evidence that it passed.
 There is currently **no protocol-version transition gate**: `MIN` and `MAX`
 are both 7, so no boundary exists to cross. `v127_v7_upgrade` and the
 in-process `protocol_version_transition` cluster test were retired with the
@@ -191,7 +197,7 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v128_churn
 
 ### Scenario differences
 
-All scenarios genesis at `ProtocolVersion::MIN` (= MAX = 5) with one
+All scenarios genesis at `ProtocolVersion::MIN` (= MAX = 7) with one
 notifier + a validator committee:
 
 | Scenario | Binary topology | Primary invariant |
