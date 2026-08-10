@@ -106,6 +106,21 @@ pub struct DWalletMPCMetrics {
     /// The last process MPC consensus round.
     pub last_process_mpc_consensus_round: IntGauge,
 
+    /// 1 while the dwallet MPC service is in catch-up mode — its processing
+    /// cursor trails the consensus tip beyond the trap radius (issue #2023)
+    /// and new cryptographic computations for internal-presign and user
+    /// sessions are suppressed so the round backlog can drain at replay
+    /// speed — 0 otherwise. Refreshed once per service iteration.
+    pub(crate) catchup_mode: IntGauge,
+
+    /// Computation spawn decisions withheld by catch-up mode. Labels:
+    /// `session_type` (only the suppressible types — `user` /
+    /// `internal_presign` — ever appear). Incremented once per suppressed
+    /// session per service tick, so its RATE tracks how much would-be
+    /// computation the gate is currently shedding, and it going flat while
+    /// `catchup_mode` is 1 means nothing is left to suppress.
+    pub(crate) catchup_suppressed_computations_total: IntCounterVec,
+
     /// Internal presign pool size per (curve, signature_algorithm, key_role).
     ///
     /// The pool is keyed by `(signature_algorithm, network_key_id)`; to keep
@@ -549,6 +564,22 @@ impl DWalletMPCMetrics {
             last_process_mpc_consensus_round: register_int_gauge_with_registry!(
                 "ika_last_process_mpc_consensus_round",
                 "Last process mpc consensus round",
+                registry
+            )
+            .unwrap(),
+            catchup_mode: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_catchup_mode",
+                "1 while MPC round processing trails the consensus tip beyond the catch-up \
+                 threshold and new internal-presign/user computations are suppressed \
+                 (issue #2023), 0 otherwise",
+                registry
+            )
+            .unwrap(),
+            catchup_suppressed_computations_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_catchup_suppressed_computations_total",
+                "Cryptographic computation spawn decisions withheld by catch-up mode, \
+                 per session type",
+                &["session_type"],
                 registry
             )
             .unwrap(),

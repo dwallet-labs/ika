@@ -43,6 +43,7 @@ pub struct NetworkOwnedAddressSignOutput {
     pub hash_scheme: DWalletHashScheme,
 }
 
+mod catchup_gate;
 pub mod dwallet_mpc_service;
 mod mpc_diagnostics;
 pub mod mpc_manager;
