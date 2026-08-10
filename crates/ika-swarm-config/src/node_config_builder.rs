@@ -10,8 +10,9 @@ use fastcrypto::encoding::{Encoding, Hex};
 use fastcrypto::traits::KeyPair;
 use ika_config::node::{
     AuthorityKeyPairWithPath, AuthorityOverloadConfig, IkaIdentityOverride, KeyPairWithPath,
-    RootSeedWithPath, RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig,
-    SuiDataSource, default_end_of_epoch_broadcast_channel_capacity,
+    RootSeedWithPath, RunWithRange, StateArchiveConfig, SuiChainIdentifier,
+    SuiCheckpointArchiveConfig, SuiConnectorConfig, SuiDataSource,
+    default_end_of_epoch_broadcast_channel_capacity,
 };
 use std::path::PathBuf;
 use sui_types::base_types::ObjectID;
@@ -53,6 +54,14 @@ pub struct ValidatorConfigBuilder {
     /// `NodeConfig.sui_connector_config.sui_genesis`. When set, the validator
     /// genesis-bootstraps the OCS committee chain from it.
     sui_genesis: Option<PathBuf>,
+    /// Optional checkpoint-archive URL, pasted into
+    /// `NodeConfig.sui_connector_config.sui_checkpoint_archive`. Localnets
+    /// (`Custom` chain) resolve no default archive, so without this a gap
+    /// checkpoint the localnet fullnode prunes before the pusher fetches it
+    /// is lost permanently; pointing this at the fullnode's data-ingestion
+    /// dir (`file://…`) gives the pusher the same verified fallback the
+    /// public chains get from their public checkpoint stores.
+    sui_checkpoint_archive_url: Option<String>,
 }
 
 impl ValidatorConfigBuilder {
@@ -112,6 +121,11 @@ impl ValidatorConfigBuilder {
 
     pub fn with_sui_state_mirror_peers(mut self, peers: Vec<String>) -> Self {
         self.sui_state_mirror_peers_override = Some(peers);
+        self
+    }
+
+    pub fn with_sui_checkpoint_archive_url(mut self, url: String) -> Self {
+        self.sui_checkpoint_archive_url = Some(url);
         self
     }
 
@@ -189,7 +203,12 @@ impl ValidatorConfigBuilder {
                     .map(Into::into)
                     .collect(),
                 sui_genesis: self.sui_genesis.clone(),
-                sui_checkpoint_archive: None,
+                sui_checkpoint_archive: self.sui_checkpoint_archive_url.clone().map(|url| {
+                    SuiCheckpointArchiveConfig {
+                        url,
+                        options: vec![],
+                    }
+                }),
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 // Localnet (`Custom`): the freshly-published ids travel in the
                 // unsafe override — the only config-surface source on chains

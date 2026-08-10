@@ -77,6 +77,10 @@ pub struct ConfigBuilder<R = OsRng> {
     fullnode_supported_protocol_versions_config: Option<ProtocolVersionsConfig>,
     fullnode_run_with_range: Option<RunWithRange>,
     genesis_global_presign_config: GenesisGlobalPresignConfig,
+    /// Checkpoint-archive URL pasted into every validator's
+    /// `sui_checkpoint_archive` (see `ValidatorConfigBuilder`); on a localnet
+    /// this points at the Sui fullnode's data-ingestion dir (`file://…`).
+    sui_checkpoint_archive_url: Option<String>,
 }
 
 impl ConfigBuilder {
@@ -104,6 +108,7 @@ impl ConfigBuilder {
             fullnode_supported_protocol_versions_config: None,
             fullnode_run_with_range: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
+            sui_checkpoint_archive_url: None,
         }
     }
 
@@ -162,6 +167,11 @@ impl<R> ConfigBuilder<R> {
 
     pub fn with_epoch_duration(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    pub fn with_sui_checkpoint_archive_url(mut self, url: String) -> Self {
+        self.sui_checkpoint_archive_url = Some(url);
         self
     }
 
@@ -252,6 +262,7 @@ impl<R> ConfigBuilder<R> {
                 .fullnode_supported_protocol_versions_config,
             fullnode_run_with_range: self.fullnode_run_with_range,
             genesis_global_presign_config: self.genesis_global_presign_config,
+            sui_checkpoint_archive_url: self.sui_checkpoint_archive_url,
         }
     }
 }
@@ -381,6 +392,10 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
                 let mut builder = ValidatorConfigBuilder::new()
                     .with_config_directory(self.config_directory.clone())
                     .with_sui_genesis(sui_genesis_path.clone());
+
+                if let Some(archive_url) = &self.sui_checkpoint_archive_url {
+                    builder = builder.with_sui_checkpoint_archive_url(archive_url.clone());
+                }
 
                 if let Some(max_submit_position) = self.max_submit_position {
                     builder = builder.with_max_submit_position(max_submit_position);

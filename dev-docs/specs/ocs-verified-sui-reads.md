@@ -686,16 +686,47 @@ fetches them, and any checkpoint the folder never folds is a PERMANENT
 cache gap (an Ika object whose only mutation rode it — e.g. a
 `session_events` bag entry — never enters the cache; observed pinning
 epoch closes when the entry belonged to a session re-pulled across an
-epoch boundary). A full-checkpoint fetch failure must therefore neither
+epoch boundary, and again in issue #2018 where the lost entry was a live
+DKG request that sat inside the epoch's locked close set). A
+full-checkpoint fetch failure must therefore neither
 stall the scan (one unfetchable checkpoint would freeze the whole cache
 behind it) nor be skipped silently (the historical behavior, and the
 root cause above). Instead the scan continues and the failed seq becomes
 a **pending gap**, retried at the top of every tick and folded LATE when
 it materializes — out-of-order folding is safe because the cache is
 monotonic-by-version and its fold head is monotone-max, so a late fold
-can only fill gaps, never regress state. A gap that outlives a generous
-retry deadline is dropped with a loud warn (genuinely pruned upstream);
-gaps inside a far-behind fast-forward's sacrificed span go with it.
+can only fill gaps, never regress state. A gap the fullnode keeps
+refusing past a short grace (5 s) is fetched from the resolved
+**checkpoint archive** instead (the same object store the ratchet falls
+back to; the public stores retain *ordinary* checkpoints ~30 days, and a
+localnet points this at the Sui fullnode's `--data-ingestion-dir` via
+`ika start --sui-checkpoint-archive-url file://…`). Archive fetches are
+paced per gap, capped per tick, and bounded by a per-fetch timeout (the
+object-store client otherwise retries internally for up to 60 s, and an
+unbounded stall here would hold the scan cursor back while the fullnode
+prunes more — the fallback amplifying the loss it prevents). An
+archive-served checkpoint must pass verification STRICTLY beyond what
+the fullnode fold path applies before it may clear a gap — because the
+archive is the lower-trust source (a third-party HTTP store by default
+on public chains) and the fold path verifies nothing for a checkpoint
+with no Ika-typed outputs, a blob that folds vacuously would clear the
+gap silently and suppress the dropped-gap alarm: (1) the blob's
+committee-signed `sequence_number` must equal the requested seq (file
+naming is untrusted), (2) committee BLS on the summary, and (3) the
+artifacts-digest binding over the blob's ENTIRE object set — both
+unconditionally, so an emptied or mislabeled object set produces a tree
+root the committee never signed and is refused
+(`verify_archive_checkpoint` in `push_worker.rs`). The archive is thus
+an availability source, never a trust source; repairs are counted by
+`ika_ocs_pusher_gap_archive_repairs_total`. Only a gap that BOTH sources
+fail to serve until the generous retry deadline is dropped, with a loud
+warn and `ika_ocs_pusher_gap_dropped_total` (alert on any increase — each
+drop is a potential wedged epoch); gaps inside a far-behind
+fast-forward's sacrificed span go with it (counted in the same metric).
+The end-of-epoch retained store is written only after the fold's
+committee verification passes (`fold_checkpoint` verifies before
+`persist_end_of_epoch`), so no source — fullnode or archive — can
+overwrite a genuine retained entry with an unverified blob.
 Gaps are in-memory only — after a restart the on-chain
 uncompleted-session re-pull is the backstop.
 

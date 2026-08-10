@@ -90,6 +90,12 @@ pub struct SuiConnectorStack {
     /// spawns `.run()` once the anemo network is up (like the pusher). `None`
     /// on sui-state-direct.
     pub changeset_receiver: Option<ChangesetReceiver>,
+    /// The resolved checkpoint archive (explicit config, or the public chain
+    /// default), shared with the ratchet. The caller hands it to the
+    /// `IkaCheckpointPusher` as the verified fallback for gap checkpoints the
+    /// fullnode pruned before the pusher could fetch them. `None` when no
+    /// archive resolved (localnet without one configured).
+    pub checkpoint_archive: Option<Arc<dyn ika_sui_client::archive::CheckpointArchive>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -377,7 +383,7 @@ pub async fn build_sui_connector_stack(
         });
     let ratchet = Arc::new(
         OcsVerifyingClient::new(raw_for_ratchet, committees.clone(), metrics.clone())
-            .with_archive(archive),
+            .with_archive(archive.clone()),
     );
 
     // Mirrored / peer-only currency: a changeset index the reader consults,
@@ -529,6 +535,7 @@ pub async fn build_sui_connector_stack(
         state_cache,
         metrics,
         changeset_receiver,
+        checkpoint_archive: archive,
     })
 }
 

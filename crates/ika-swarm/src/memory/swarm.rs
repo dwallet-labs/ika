@@ -46,6 +46,7 @@ pub struct SwarmBuilder<R = OsRng> {
     fullnode_run_with_range: Option<RunWithRange>,
     max_submit_position: Option<usize>,
     submit_delay_step_override_millis: Option<u64>,
+    sui_checkpoint_archive_url: Option<String>,
 }
 
 impl SwarmBuilder {
@@ -65,6 +66,7 @@ impl SwarmBuilder {
             fullnode_run_with_range: None,
             max_submit_position: None,
             submit_delay_step_override_millis: None,
+            sui_checkpoint_archive_url: None,
         }
     }
 }
@@ -86,6 +88,7 @@ impl<R> SwarmBuilder<R> {
             fullnode_run_with_range: self.fullnode_run_with_range,
             max_submit_position: self.max_submit_position,
             submit_delay_step_override_millis: self.submit_delay_step_override_millis,
+            sui_checkpoint_archive_url: self.sui_checkpoint_archive_url,
         }
     }
 
@@ -124,6 +127,15 @@ impl<R> SwarmBuilder<R> {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Point every validator's `sui_checkpoint_archive` at a checkpoint store
+    /// (on a localnet, the Sui fullnode's data-ingestion dir as a `file://`
+    /// URL) so the checkpoint pusher can recover gap checkpoints the fullnode
+    /// prunes before the pusher fetches them.
+    pub fn with_sui_checkpoint_archive_url(mut self, url: String) -> Self {
+        self.sui_checkpoint_archive_url = Some(url);
         self
     }
 
@@ -238,6 +250,10 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
 
             if let Some(epoch_duration_ms) = self.epoch_duration_ms {
                 config_builder = config_builder.with_epoch_duration(epoch_duration_ms);
+            }
+
+            if let Some(archive_url) = self.sui_checkpoint_archive_url {
+                config_builder = config_builder.with_sui_checkpoint_archive_url(archive_url);
             }
 
             if let Some(protocol_version) = self.protocol_version {

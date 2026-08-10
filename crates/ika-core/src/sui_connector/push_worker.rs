@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ika_network::proof_provider::VerifiedObjectEntry;
+use ika_sui_client::archive::CheckpointArchive;
 use ika_sui_client::transport::SuiTransport;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
@@ -69,11 +70,30 @@ pub struct IkaCheckpointPusher {
     /// epoch forever). Gaps are retried every tick and folded LATE when
     /// they materialize — safe because the verified state cache is
     /// monotonic-by-version, so an out-of-order fold can only fill gaps,
-    /// never regress state. A gap that outlives the retry deadline is
-    /// dropped with a loud warn (genuinely pruned upstream). In-memory
-    /// only: gaps are lost on restart, where the on-chain uncompleted-
-    /// session re-pull is the backstop.
-    pending_gaps: BTreeMap<CheckpointSequenceNumber, Instant>,
+    /// never regress state. A gap the fullnode keeps refusing is fetched
+    /// from the checkpoint `archive` instead (same committee verification
+    /// at fold time); only a gap that BOTH sources fail to serve until the
+    /// retry deadline is dropped with a loud warn. In-memory only: gaps are
+    /// lost on restart, where the on-chain uncompleted-session re-pull is
+    /// the backstop.
+    pending_gaps: BTreeMap<CheckpointSequenceNumber, PendingGap>,
+    /// Verified-fallback source for gap checkpoints the fullnode pruned
+    /// before the pusher could fetch them. The public Sui checkpoint stores
+    /// retain ordinary checkpoints ~30 days — far beyond any fullnode
+    /// pruning window — and everything fetched is committee-verified at
+    /// fold time, so this is an availability source, never a trust source.
+    /// `None` when no archive resolved (a localnet without one configured):
+    /// gaps then behave as before — retried against the fullnode until the
+    /// deadline, then dropped.
+    archive: Option<Arc<dyn CheckpointArchive>>,
+}
+
+/// Retry state of one scanned-but-unfetchable checkpoint.
+struct PendingGap {
+    first_seen: Instant,
+    /// When the archive was last consulted for this gap, so archive fetches
+    /// are paced at `ARCHIVE_RETRY_INTERVAL` instead of every 250ms tick.
+    last_archive_attempt: Option<Instant>,
 }
 
 impl IkaCheckpointPusher {
@@ -85,6 +105,7 @@ impl IkaCheckpointPusher {
         poll_interval: Duration,
         cache: SharedVerifiedStateCache,
         committees: Arc<CommitteeStore>,
+        archive: Option<Arc<dyn CheckpointArchive>>,
     ) -> anyhow::Result<Self> {
         let mut ika_packages = HashSet::new();
         ika_packages.insert(packages.ika_package_id);
@@ -129,6 +150,7 @@ impl IkaCheckpointPusher {
             cache,
             committees,
             pending_gaps: BTreeMap::new(),
+            archive,
         })
     }
 
@@ -185,8 +207,16 @@ impl IkaCheckpointPusher {
             self.metrics.pusher_cursor_seq.set(new_cursor as i64);
             let _ = self.perpetual.put_sui_pusher_last_seq(new_cursor);
             // Gaps inside the sacrificed span go with it (covered by the
-            // fast-forward warn above).
+            // fast-forward warn above) — but each is still a permanent loss,
+            // so they count toward the drop alarm.
+            let gaps_before_sacrifice = self.pending_gaps.len();
             self.pending_gaps.retain(|&seq, _| seq > new_cursor);
+            let sacrificed = gaps_before_sacrifice - self.pending_gaps.len();
+            if sacrificed > 0 {
+                self.metrics
+                    .pusher_gap_dropped_total
+                    .inc_by(sacrificed as u64);
+            }
         }
 
         for seq in (self.cursor + 1)..=latest_seq {
@@ -206,7 +236,10 @@ impl IkaCheckpointPusher {
                         error = ?e,
                         "full-checkpoint fetch failed; queued as a pending gap"
                     );
-                    self.pending_gaps.entry(seq).or_insert_with(Instant::now);
+                    self.pending_gaps.entry(seq).or_insert_with(|| PendingGap {
+                        first_seen: Instant::now(),
+                        last_archive_attempt: None,
+                    });
                 }
             }
             self.cursor = seq;
@@ -230,14 +263,23 @@ impl IkaCheckpointPusher {
     /// into the local verified state cache that sui-state-direct consumers
     /// read cache-first. Shared by the in-order scan and the pending-gap
     /// retries (a late fold is version-safe — see `pending_gaps`).
+    ///
+    /// `build_entries` runs FIRST: it committee-verifies every end-of-epoch
+    /// or object-folding checkpoint, so the retained end-of-epoch store is
+    /// only ever written after the summary passed verification —
+    /// `persist_end_of_epoch` itself does not verify, and writing before
+    /// verifying would let a forged blob overwrite a genuine retained entry
+    /// (an availability, not forgery, hazard for the mirrored peers served
+    /// from that store — they re-verify — but a needless one).
     fn fold_checkpoint(
         &mut self,
         seq: CheckpointSequenceNumber,
         data: &CheckpointData,
     ) -> anyhow::Result<()> {
+        let entries = self.build_entries(data)?;
         self.capture_committee(data);
         self.persist_end_of_epoch(data, seq);
-        if let Some((summary, entries)) = self.build_entries(data)? {
+        if let Some((summary, entries)) = entries {
             self.cache.absorb_entries(&summary, &entries);
             self.metrics.pusher_pushed_total.inc();
         } else {
@@ -246,11 +288,50 @@ impl IkaCheckpointPusher {
         Ok(())
     }
 
+    /// Verification an archive-served checkpoint must pass BEFORE it may
+    /// clear a pending gap — strictly MORE than the fullnode fold path
+    /// applies, because the archive is the lower-trust source (on the public
+    /// chains it defaults to a third-party HTTP store) and `build_entries`
+    /// verifies nothing for a checkpoint with no Ika-typed outputs — a blob
+    /// that folds vacuously would silently clear the gap and suppress the
+    /// `pusher_gap_dropped_total` alarm this fallback exists to feed:
+    ///
+    /// 1. the blob IS the requested checkpoint: `summary.sequence_number ==
+    ///    seq` (the seq is inside the committee-signed summary, so a
+    ///    mislabeled genuine blob fails here);
+    /// 2. committee BLS on the summary, unconditionally;
+    /// 3. the artifacts-digest binding over the blob's ENTIRE object set,
+    ///    unconditionally — an emptied or altered object set produces a tree
+    ///    root the committee never signed, so "no Ika objects on this
+    ///    checkpoint" cannot be forged.
+    fn verify_archive_checkpoint(
+        &self,
+        seq: CheckpointSequenceNumber,
+        data: &CheckpointData,
+    ) -> anyhow::Result<()> {
+        let summary = &data.checkpoint_summary;
+        if *summary.sequence_number() != seq {
+            anyhow::bail!(
+                "archive served checkpoint {} for requested seq {seq}",
+                summary.sequence_number()
+            );
+        }
+        let artifacts = CheckpointArtifacts::from(data);
+        let tree = ModifiedObjectTree::new(&artifacts)
+            .map_err(|e| anyhow::anyhow!("ModifiedObjectTree over archive blob: {e}"))?;
+        self.verify_before_fold(summary, &tree, true)
+    }
+
     /// Retry every pending gap once. A gap that materializes is folded late
-    /// (version-safe) and cleared; one that keeps failing — fetch OR fold —
-    /// outlives the deadline and is dropped with a loud warn. Fold failures
-    /// stay pending rather than dropping immediately because they are not
-    /// all deterministic: `verify_before_fold` fails with MissingCommittee
+    /// (version-safe) and cleared; one the fullnode keeps refusing past
+    /// `ARCHIVE_FALLBACK_AFTER` is fetched from the checkpoint archive
+    /// instead (paced at `ARCHIVE_RETRY_INTERVAL`, capped per tick) and
+    /// folded through the same committee verification. Only a gap that BOTH
+    /// sources fail to serve until the deadline is dropped with a loud warn
+    /// and counted (`pusher_gap_dropped_total`) — a permanent cache gap
+    /// that can pin an epoch close (issue #2018). Fold failures stay
+    /// pending rather than dropping immediately because they are not all
+    /// deterministic: `verify_before_fold` fails with MissingCommittee
     /// while the checkpoint's epoch committee hasn't installed yet (follower
     /// lag at a Sui epoch boundary, or a restart near one) — exactly the
     /// transient the in-order scan path retries by pinning its cursor. A
@@ -260,12 +341,34 @@ impl IkaCheckpointPusher {
     /// a consumer's network fallback repairs them.
     async fn retry_pending_gaps(&mut self) {
         const GAP_RETRY_DEADLINE: Duration = Duration::from_secs(600);
+        // How long to give the fullnode alone before consulting the archive.
+        // Covers the common late-materialization case (contents certify
+        // seconds after the summary) without taxing the archive; a gap still
+        // missing after this is very likely pruned upstream, and a fast
+        // archive repair is what keeps the session's SDK-side wait (~600s)
+        // from expiring.
+        const ARCHIVE_FALLBACK_AFTER: Duration = Duration::from_secs(5);
+        const ARCHIVE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+        // Bound the archive fetches of one tick so a prune burst (hundreds of
+        // gaps at once under CI-grade load) rolls through the archive over a
+        // few ticks instead of hammering it — and so a hung archive can stall
+        // one tick by at most ATTEMPTS × FETCH_TIMEOUT (20s). The gap-retry
+        // loop runs BEFORE the head scan, so an unbounded stall here would
+        // hold the cursor back while the fullnode prunes more checkpoints —
+        // the fallback amplifying the very loss it exists to prevent.
+        const ARCHIVE_ATTEMPTS_PER_TICK: usize = 4;
+
+        let mut archive_attempts_this_tick = 0usize;
         let seqs: Vec<CheckpointSequenceNumber> = self.pending_gaps.keys().copied().collect();
         for seq in seqs {
-            let expired = self
+            let Some((first_seen, last_archive_attempt)) = self
                 .pending_gaps
                 .get(&seq)
-                .is_some_and(|since| since.elapsed() > GAP_RETRY_DEADLINE);
+                .map(|gap| (gap.first_seen, gap.last_archive_attempt))
+            else {
+                continue;
+            };
+            let expired = first_seen.elapsed() > GAP_RETRY_DEADLINE;
             match self.transport.get_full_checkpoint(seq).await {
                 Ok(data) => match self.fold_checkpoint(seq, &data) {
                     Ok(()) => {
@@ -274,6 +377,7 @@ impl IkaCheckpointPusher {
                     }
                     Err(e) if expired => {
                         self.pending_gaps.remove(&seq);
+                        self.metrics.pusher_gap_dropped_total.inc();
                         warn!(
                             seq,
                             error = ?e,
@@ -284,16 +388,103 @@ impl IkaCheckpointPusher {
                         warn!(seq, error = ?e, "gap checkpoint fetched but failed to fold — will retry");
                     }
                 },
-                Err(e) => {
+                Err(fullnode_error) => {
+                    let archive_due = self.archive.is_some()
+                        && first_seen.elapsed() > ARCHIVE_FALLBACK_AFTER
+                        && last_archive_attempt
+                            .is_none_or(|at| at.elapsed() > ARCHIVE_RETRY_INTERVAL)
+                        && archive_attempts_this_tick < ARCHIVE_ATTEMPTS_PER_TICK;
+                    if archive_due {
+                        archive_attempts_this_tick += 1;
+                        let first_attempt = last_archive_attempt.is_none();
+                        if self.try_archive_repair(seq, first_attempt, expired).await {
+                            continue;
+                        }
+                    }
                     if expired {
                         self.pending_gaps.remove(&seq);
+                        self.metrics.pusher_gap_dropped_total.inc();
                         warn!(
                             seq,
-                            error = ?e,
+                            error = ?fullnode_error,
+                            archive_configured = self.archive.is_some(),
                             "checkpoint never materialized within the gap retry deadline — dropping"
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Try to repair one pending gap from the checkpoint archive: fetch the
+    /// full checkpoint data, pass it through `verify_archive_checkpoint`
+    /// (seq binding + committee BLS + unconditional artifacts-digest
+    /// binding — see there for why the archive path verifies MORE than the
+    /// fullnode path), and fold it. Returns `true` when the gap was repaired
+    /// and removed. On any failure the gap stays pending (the caller applies
+    /// the deadline). The fetch is bounded by `ARCHIVE_FETCH_TIMEOUT`
+    /// because the underlying object-store client retries internally for up
+    /// to 60s on anything but NotFound (e.g. a truncated blob from a
+    /// mid-write fullnode crash) — unbounded, a hung archive would stall the
+    /// whole pusher loop.
+    async fn try_archive_repair(
+        &mut self,
+        seq: CheckpointSequenceNumber,
+        first_attempt: bool,
+        expired: bool,
+    ) -> bool {
+        const ARCHIVE_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+        let Some(archive) = self.archive.clone() else {
+            return false;
+        };
+        if let Some(gap) = self.pending_gaps.get_mut(&seq) {
+            gap.last_archive_attempt = Some(Instant::now());
+        }
+        let fetched = tokio::time::timeout(ARCHIVE_FETCH_TIMEOUT, async {
+            archive.fetch_checkpoint_data(seq).await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("archive fetch timed out after {ARCHIVE_FETCH_TIMEOUT:?}"))
+        .and_then(|fetch_result| fetch_result.map_err(anyhow::Error::from));
+        match fetched {
+            Ok(data) => {
+                if let Err(e) = self.verify_archive_checkpoint(seq, &data) {
+                    warn!(
+                        seq,
+                        error = %e,
+                        "archive served a checkpoint that failed verification — refusing it"
+                    );
+                    return false;
+                }
+                match self.fold_checkpoint(seq, &data) {
+                    Ok(()) => {
+                        info!(
+                            seq,
+                            "pruned checkpoint recovered from the archive and folded — gap repaired"
+                        );
+                        self.metrics.pusher_gap_archive_repairs_total.inc();
+                        self.pending_gaps.remove(&seq);
+                        true
+                    }
+                    Err(e) => {
+                        // Same transient-vs-deterministic ambiguity as the
+                        // fullnode fold path; the caller's deadline bounds it.
+                        warn!(seq, error = ?e, "archive checkpoint fetched but failed to fold — will retry");
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                // The first failure per gap warns so a misconfigured archive
+                // (a typo'd file:// path) is visible immediately at the
+                // default log level, not only after gaps start dropping at
+                // the 600s deadline.
+                if first_attempt || expired {
+                    warn!(seq, error = %e, "archive could not serve the gap checkpoint");
+                } else {
+                    debug!(seq, error = %e, "archive fetch for gap checkpoint failed; will retry");
+                }
+                false
             }
         }
     }
@@ -682,6 +873,18 @@ mod tests {
         }
     }
 
+    /// The artifacts commitment matching a checkpoint with no transactions
+    /// (the shape every helper below builds), so archive-path verification —
+    /// which binds the artifacts digest unconditionally — passes for honest
+    /// mock checkpoints.
+    fn empty_artifacts_commitment() -> CheckpointCommitment {
+        CheckpointCommitment::CheckpointArtifactsDigest(
+            CheckpointArtifacts::from_object_states(BTreeMap::new())
+                .digest()
+                .unwrap(),
+        )
+    }
+
     /// An end-of-epoch `CheckpointData` for the committee's epoch at `seq`,
     /// committee-signed and committing to the next epoch's committee (same
     /// members, epoch E+1). `verify_with_contents` passes because the summary's
@@ -700,7 +903,7 @@ mod tests {
             previous_digest: None,
             epoch_rolling_gas_cost_summary: GasCostSummary::default(),
             timestamp_ms: 0,
-            checkpoint_commitments: vec![],
+            checkpoint_commitments: vec![empty_artifacts_commitment()],
             end_of_epoch_data: Some(EndOfEpochData {
                 next_epoch_committee: committee.voting_rights.clone(),
                 next_epoch_protocol_version: ProtocolVersion::MIN,
@@ -744,7 +947,7 @@ mod tests {
             previous_digest: None,
             epoch_rolling_gas_cost_summary: GasCostSummary::default(),
             timestamp_ms: 0,
-            checkpoint_commitments: vec![],
+            checkpoint_commitments: vec![empty_artifacts_commitment()],
             end_of_epoch_data: None,
             version_specific_data: Vec::new(),
         };
@@ -788,6 +991,7 @@ mod tests {
             Duration::from_secs(2),
             cache,
             committees,
+            None,
         )
         .await
         .unwrap()
@@ -1041,6 +1245,239 @@ mod tests {
                 .is_some(),
             "a gap-repaired end-of-epoch checkpoint must be retained"
         );
+    }
+
+    /// A mock checkpoint archive serving full checkpoint data from memory,
+    /// for the pending-gap archive-fallback tests. The ratchet-facing methods
+    /// are never called by the pusher and panic loudly if they ever are.
+    struct MockCheckpointArchive {
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+    }
+
+    #[async_trait]
+    impl CheckpointArchive for MockCheckpointArchive {
+        async fn enumerate_end_of_epoch_seqs(
+            &self,
+        ) -> Result<Vec<CheckpointSequenceNumber>, ika_sui_client::archive::ArchiveError> {
+            unimplemented!()
+        }
+        async fn fetch_checkpoint(
+            &self,
+            _seq: CheckpointSequenceNumber,
+        ) -> Result<
+            (
+                CertifiedCheckpointSummary,
+                sui_types::messages_checkpoint::CheckpointContents,
+            ),
+            ika_sui_client::archive::ArchiveError,
+        > {
+            unimplemented!()
+        }
+        async fn fetch_checkpoint_data(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, ika_sui_client::archive::ArchiveError> {
+            self.checkpoints.get(&seq).cloned().ok_or_else(|| {
+                ika_sui_client::archive::ArchiveError::Fetch {
+                    url: "mock".into(),
+                    seq,
+                    source: anyhow::anyhow!("seq {seq} not in mock archive"),
+                }
+            })
+        }
+    }
+
+    /// A gap checkpoint the fullnode NEVER serves (pruned) is recovered from
+    /// the checkpoint archive once the local-materialization grace passes,
+    /// folded through the same committee verification (its committee capture
+    /// and end-of-epoch retention land), and counted as an archive repair —
+    /// instead of being dropped at the deadline (issue #2018).
+    #[tokio::test]
+    async fn pruned_gap_checkpoint_is_recovered_from_the_archive() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        // The fullnode advertises seq 100 but never serves its contents
+        // (pruned); only the archive has it — as an end-of-epoch checkpoint so
+        // the test can observe the fold's committee capture and retention.
+        let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
+        let latest = eoe.checkpoint_summary.clone();
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache,
+            metrics.clone(),
+        )
+        .await;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(100u64, eoe)]),
+        }));
+
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&100));
+
+        // Within the local-materialization grace the archive is NOT consulted
+        // yet — the fullnode alone is retried.
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&100));
+        assert_eq!(metrics.pusher_gap_archive_repairs_total.get(), 0);
+
+        // Age the gap past the grace; the next tick repairs it from the
+        // archive.
+        pusher.pending_gaps.get_mut(&100).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(6);
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(metrics.pusher_gap_archive_repairs_total.get(), 1);
+        assert_eq!(metrics.pusher_gap_dropped_total.get(), 0);
+        assert_eq!(committees.head_epoch(), 1);
+        assert!(
+            perpetual
+                .get_sui_end_of_epoch_checkpoint(100)
+                .unwrap()
+                .is_some(),
+            "an archive-repaired end-of-epoch checkpoint must be retained"
+        );
+    }
+
+    /// An archive blob whose committee-signed summary is for a DIFFERENT
+    /// sequence number than the one requested must NOT clear the gap.
+    /// Gap-clearance would otherwise trust the archive's file naming: a
+    /// mislabeled-but-genuine blob (or one substituted by a malicious
+    /// store) would "repair" the gap vacuously, the real checkpoint's
+    /// events would stay lost, and the dropped-gap alarm this fallback
+    /// feeds would be suppressed — the issue #2018 loss shape, silently.
+    #[tokio::test]
+    async fn archive_blob_for_a_different_seq_is_refused() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        let latest = plain_checkpoint(&committee, &keys, 100).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache,
+            metrics.clone(),
+        )
+        .await;
+        // The archive's entry FOR seq 100 is a genuine, correctly-signed
+        // end-of-epoch checkpoint — of seq 999.
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(100u64, end_of_epoch_checkpoint(&committee, &keys, 999))]),
+        }));
+
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&100));
+
+        pusher.pending_gaps.get_mut(&100).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(6);
+        pusher.advance().await.unwrap();
+
+        assert!(
+            pusher.pending_gaps.contains_key(&100),
+            "a wrong-seq archive blob must not clear the gap"
+        );
+        assert_eq!(metrics.pusher_gap_archive_repairs_total.get(), 0);
+        assert_eq!(
+            committees.head_epoch(),
+            0,
+            "the refused blob's committee transition must not install"
+        );
+    }
+
+    /// A gap that neither the fullnode nor the archive can serve is dropped
+    /// at the retry deadline and counted (`pusher_gap_dropped_total`) — the
+    /// loud permanent-loss signal — while a younger co-pending gap stays.
+    #[tokio::test]
+    async fn gap_missing_from_fullnode_and_archive_is_dropped_at_the_deadline() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        let latest = plain_checkpoint(&committee, &keys, 101).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache,
+            metrics.clone(),
+        )
+        .await;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::new(),
+        }));
+
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![100, 101]
+        );
+
+        // Age seq 100 past the retry deadline; seq 101 stays young.
+        pusher.pending_gaps.get_mut(&100).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(601);
+        pusher.advance().await.unwrap();
+
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![101],
+            "only the expired gap is dropped"
+        );
+        assert_eq!(metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(metrics.pusher_gap_archive_repairs_total.get(), 0);
     }
 
     /// The pusher resumes from its persisted cursor across a restart: once

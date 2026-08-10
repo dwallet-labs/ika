@@ -726,6 +726,20 @@ mod tests {
                 }
             })
         }
+        async fn fetch_checkpoint_data(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<
+            sui_types::full_checkpoint_content::CheckpointData,
+            ika_sui_client::archive::ArchiveError,
+        > {
+            // The ratchet tests never fetch full checkpoint data.
+            Err(ika_sui_client::archive::ArchiveError::Fetch {
+                url: "mock".into(),
+                seq,
+                source: anyhow::anyhow!("full checkpoint data not served by this mock"),
+            })
+        }
     }
 
     /// Build a mock archive holding the end-of-epoch checkpoint of epochs
