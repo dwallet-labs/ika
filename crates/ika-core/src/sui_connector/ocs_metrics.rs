@@ -67,6 +67,17 @@ pub struct OcsMetrics {
     pub pusher_pushed_total: IntCounter,
     pub pusher_skipped_irrelevant_total: IntCounter,
     pub pusher_fetch_failures_total: IntCounter,
+    /// Pending-gap checkpoints the fullnode never served (pruned) that were
+    /// recovered from the checkpoint archive and folded late. Non-zero means
+    /// the archive fallback is doing real work — the fullnode's pruning
+    /// watermark is outrunning the pusher.
+    pub pusher_gap_archive_repairs_total: IntCounter,
+    /// Pending-gap checkpoints dropped at the retry deadline — neither the
+    /// fullnode nor the archive (if any resolved) ever served them. Each drop
+    /// is a PERMANENT verified-cache gap: an Ika object whose only mutation
+    /// rode the checkpoint (e.g. a session_events bag entry) never enters the
+    /// cache, which can wedge an epoch close. Alert on any increase.
+    pub pusher_gap_dropped_total: IntCounter,
     /// Latency of the pre-fold committee verification the pusher runs before
     /// folding a checkpoint into the local cache (committee BLS on the summary +
     /// artifacts-digest binding). `_count` is the number of checkpoints
@@ -168,6 +179,18 @@ impl OcsMetrics {
             pusher_fetch_failures_total: register_int_counter_with_registry!(
                 "ika_ocs_pusher_fetch_failures_total",
                 "Number of get_full_checkpoint failures during the pusher walk",
+                registry,
+            )
+            .unwrap(),
+            pusher_gap_archive_repairs_total: register_int_counter_with_registry!(
+                "ika_ocs_pusher_gap_archive_repairs_total",
+                "Pending-gap checkpoints the fullnode pruned that were recovered from the checkpoint archive and folded late",
+                registry,
+            )
+            .unwrap(),
+            pusher_gap_dropped_total: register_int_counter_with_registry!(
+                "ika_ocs_pusher_gap_dropped_total",
+                "Pending-gap checkpoints dropped at the retry deadline (fullnode pruned them and no archive served them); each is a permanent verified-cache gap that can wedge an epoch close — alert on any increase",
                 registry,
             )
             .unwrap(),

@@ -423,6 +423,14 @@ pub struct DWalletMPCMetrics {
     /// nobody (us included) has seen quorum. Per-tick gauge.
     pub(crate) sessions_with_self_output_no_quorum: IntGauge,
 
+    /// The complement: user sessions Active well past any normal computation
+    /// latency with NO local output submitted — admitted but possibly never
+    /// computing. One such session inside the epoch's locked close set wedges
+    /// the epoch (issue #2018), so any sustained non-zero value is a stall
+    /// signal. Per-tick gauge; the manager also warns once a minute while
+    /// non-zero.
+    pub(crate) user_sessions_active_without_local_output: IntGauge,
+
     /// Per-completion: number of consensus rounds elapsed between this validator submitting
     /// its own output and 2/3 quorum being reached. Wide tails ≡ slow consensus, lots of
     /// retries. Observed once per session at the moment quorum is reached.
@@ -868,6 +876,12 @@ impl DWalletMPCMetrics {
             sessions_with_self_output_no_quorum: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_sessions_with_self_output_no_quorum",
                 "User sessions where this validator submitted an output but no quorum has been observed.",
+                registry,
+            )
+            .unwrap(),
+            user_sessions_active_without_local_output: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_user_sessions_active_without_local_output",
+                "User sessions Active past the stall threshold with no local output submitted (admitted but possibly never computing); sustained non-zero can wedge the epoch close — alert on it.",
                 registry,
             )
             .unwrap(),

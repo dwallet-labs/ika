@@ -141,16 +141,28 @@ four fixed; kept for the diagnostic shapes):
   pending-gap repair in `push_worker.rs`), and the dynamic-fields walk
   permanently dropped live-listed bag children whose defining checkpoint
   was pruned (fixed: the provider reports the skipped ids and the reader
-  resolves them from the committee-verified cache). Diagnosis, if the
-  shape recurs:
+  resolves them from the committee-verified cache). Issue #2018 showed
+  both recovery paths can still lose the race when pruning outruns them
+  (a throttled CI runner, `num_epochs_to_retain=0`): one lost DKG-request
+  entry inside the locked close set wedged the epoch. The pusher now has
+  a third layer — pending gaps the fullnode keeps refusing are fetched
+  from the checkpoint archive (public store on mainnet/testnet; the Sui
+  fullnode's data-ingestion dir on a localnet via `ika start
+  --sui-checkpoint-archive-url`) and folded through the same committee
+  verification. Diagnosis, if the shape recurs:
   ```bash
   grep -E "holding .*re-pulled next epoch" $L | tail -3   # the held session + its seq
   # then confirm that seq never returns (no completion, no re-pull):
   grep "session_sequence_number=<SEQ>" $L
-  # pusher losing checkpoints? (should be absent post-fix)
+  # pusher losing checkpoints? (only fires when the ARCHIVE also failed —
+  # check ika_ocs_pusher_gap_dropped_total / _gap_archive_repairs_total)
   grep -E "never materialized within the gap retry deadline" $L
+  grep -E "recovered from the archive and folded" $L
   # walk dropping children the cache can't serve either?
   grep -E "could not be resolved from the verified cache" $L
+  # a session admitted but never computing (the issue #2018 open shape —
+  # warned once a minute per validator while it persists):
+  grep -E "active without a local output past the stall" $L
   ```
   The end-to-end guards are `sim_user_flows_across_boundaries` and the
   presign-traffic sim tests (deterministic reproducers of the original

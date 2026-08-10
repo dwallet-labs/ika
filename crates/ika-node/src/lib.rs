@@ -808,6 +808,7 @@ impl IkaNode {
             sui_state_mirror_server,
             raw_transport_for_pushing,
             mut state_cache_opt,
+            archive_for_pushing,
         ) = {
             // Spread a built stack into the individually-wired component
             // slots the rest of boot threads around.
@@ -818,6 +819,7 @@ impl IkaNode {
                     stack.mirror_server,
                     stack.raw_transport_for_pushing,
                     Some(stack.state_cache),
+                    stack.checkpoint_archive,
                 )
             };
             if is_sui_state_direct {
@@ -870,7 +872,7 @@ impl IkaNode {
                     .expect("peer-only OCS stack built in the transport gate above");
                 unpack(stack)
             } else {
-                (None, None, None, None, None)
+                (None, None, None, None, None, None)
             }
         };
 
@@ -1112,6 +1114,11 @@ impl IkaNode {
                         std::time::Duration::from_millis(250),
                         cache_for_push.clone(),
                         committees_for_push.clone(),
+                        // Verified fallback for gap checkpoints the fullnode
+                        // prunes before the pusher fetches them (issue #2018):
+                        // the pusher re-fetches them from the archive and folds
+                        // them through the same committee verification.
+                        archive_for_pushing.clone(),
                     )
                     .await
                     {

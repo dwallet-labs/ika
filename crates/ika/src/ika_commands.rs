@@ -99,6 +99,18 @@ pub enum IkaCommand {
         #[clap(long)]
         epoch_duration_ms: Option<u64>,
 
+        /// Checkpoint-archive URL written into every validator's
+        /// `sui-checkpoint-archive` config (object-store layout:
+        /// `{seq}.binpb.zst` blobs). Point it at the Sui localnet fullnode's
+        /// data-ingestion dir (e.g. `file:///path/to/ingestion`, from
+        /// `sui start --data-ingestion-dir <path>`) so validators can recover
+        /// checkpoints the fullnode prunes before they fetch them; without it
+        /// a pruned-before-fetched checkpoint is lost permanently and can
+        /// wedge an epoch close. Only takes effect when validator configs are
+        /// (re)generated (`--force-reinitiation` or a fresh config dir).
+        #[clap(long, value_name = "URL")]
+        sui_checkpoint_archive_url: Option<String>,
+
         /// Start the network without a fullnode
         #[clap(long = "no-full-node")]
         no_full_node: bool,
@@ -227,6 +239,7 @@ impl IkaCommand {
                 sui_faucet_url,
                 no_full_node,
                 epoch_duration_ms,
+                sui_checkpoint_archive_url,
                 clean,
             } => {
                 // Clean persisted DB directories if requested
@@ -251,6 +264,7 @@ impl IkaCommand {
                             sui_fullnode_grpc_url,
                             sui_faucet_url,
                             no_full_node,
+                            sui_checkpoint_archive_url,
                         )
                         .await
                         {
@@ -369,6 +383,7 @@ async fn start(
     sui_fullnode_grpc_url: String,
     _sui_faucet_url: String,
     no_full_node: bool,
+    sui_checkpoint_archive_url: Option<String>,
 ) -> Result<(), anyhow::Error> {
     if force_reinitiation {
         ensure!(
@@ -415,6 +430,9 @@ async fn start(
             .join(IKA_NETWORK_CONFIG)
     };
     let mut swarm_builder = Swarm::builder();
+    if let Some(archive_url) = sui_checkpoint_archive_url {
+        swarm_builder = swarm_builder.with_sui_checkpoint_archive_url(archive_url);
+    }
     // If this is set, then no data will be persisted between runs, and a new initiation will be
     // generated each run.
     let ika_network_config_not_exists =

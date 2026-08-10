@@ -165,13 +165,18 @@ jobs:
 
       - name: Start Sui localnet
         run: |
-          # Native checkpoint cadence + epoch length. The OCS path is
-          # self-sufficient against this localnet's aggressive pruning
-          # (num_epochs_to_retain=0): committees come from the live
-          # SubscribeCheckpoints follower, and object reads fall back to the
-          # committee-verified local cache when an anchor's defining tx is
-          # pruned upstream — so no Sui-side slowdown is needed.
-          RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
+          # Native checkpoint cadence + epoch length. This localnet prunes
+          # aggressively (num_epochs_to_retain=0), and under a throttled
+          # runner the pruning watermark can outrun the validators' checkpoint
+          # pusher — losing a checkpoint (and any session-request event on it)
+          # permanently, which wedges the epoch close (issue #2018). The
+          # data-ingestion dir keeps every executed checkpoint as a file; the
+          # ika validators are pointed at it (--sui-checkpoint-archive-url
+          # below) as their verified fallback for pruned-before-fetched
+          # checkpoints. Committees still come from the live
+          # SubscribeCheckpoints follower.
+          RUST_LOG=error sui start --with-faucet --force-regenesis \
+            --data-ingestion-dir "$PWD/sui-ingestion" > sui-localnet.log 2>&1 &
           echo $! > sui-localnet.pid
           for i in $(seq 1 60); do
             if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
@@ -197,7 +202,8 @@ jobs:
           rm -rf ~/.ika Pub.localnet.toml
           RUST_LOG="${LOCALNET_RUST_LOG:-warn,ika=info,ika_node=info}" RUST_MIN_STACK=67108864 \
             ./target/release/ika start --force-reinitiation \
-            --epoch-duration-ms "$EPOCH_DURATION_MS" > ika-localnet.log 2>&1 &
+            --epoch-duration-ms "$EPOCH_DURATION_MS" \
+            --sui-checkpoint-archive-url "file://$PWD/sui-ingestion" > ika-localnet.log 2>&1 &
           echo $! > ika-localnet.pid
 
       - name: Wait for ika localnet readiness

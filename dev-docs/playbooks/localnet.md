@@ -10,7 +10,13 @@ For SDK integration tests, reproduction rigs, and manual poking.
 #    the network DKG but silently stalls reconfiguration — the failure
 #    appears one epoch later and nothing points back at the version.
 sui --version   # must match the mainnet-vX.Y.Z tag in root Cargo.toml
-sui start --with-faucet --force-regenesis > /tmp/sui.log 2>&1 &
+#    The data-ingestion dir doubles as a checkpoint archive for the ika
+#    validators (next step): the localnet fullnode prunes aggressively,
+#    and a checkpoint pruned before the validators' pusher fetches it is
+#    otherwise lost permanently — one lost session-request event can
+#    wedge an epoch close (issue #2018).
+sui start --with-faucet --force-regenesis \
+  --data-ingestion-dir /tmp/sui-ingestion > /tmp/sui.log 2>&1 &
 
 # 2. ika localnet on top (it expects the Sui RPC at 127.0.0.1:9000).
 #    5-minute epochs are the validated sweet spot: too long stalls the
@@ -18,6 +24,7 @@ sui start --with-faucet --force-regenesis > /tmp/sui.log 2>&1 &
 #    InvalidMPCPartyType (3/4 convergence).
 RUST_LOG="warn,ika=info,ika_node=info,ika_core=info" \
   ./target/release/ika start --force-reinitiation --epoch-duration-ms 300000 \
+  --sui-checkpoint-archive-url file:///tmp/sui-ingestion \
   > /tmp/ika.log 2>&1 &
 ```
 

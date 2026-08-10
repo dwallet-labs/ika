@@ -671,6 +671,9 @@ pub(crate) struct DWalletMPCManager {
     /// rate-limited because the service loop ticks every ~20ms and the
     /// refresh iterates every tracked session.
     last_observability_refresh: Option<Instant>,
+    /// When the stalled-user-session warn was last emitted, so a wedged
+    /// session logs once a minute instead of once per refresh.
+    last_stalled_session_log: Option<Instant>,
 
     /// NOA finalization observation votes: tx_ref → set of party IDs that observed finalization.
     noa_finalization_observations: HashMap<NOACheckpointTxRef, HashSet<PartyID>>,
@@ -866,6 +869,7 @@ impl DWalletMPCManager {
             previously_emitted_user_session_seqs: HashSet::new(),
             finalized_emitted_user_session_seqs: HashSet::new(),
             last_observability_refresh: None,
+            last_stalled_session_log: None,
             noa_finalization_observations: HashMap::new(),
             noa_failure_observations: HashMap::new(),
             finalized_tx_refs: HashSet::new(),
@@ -5208,6 +5212,15 @@ impl DWalletMPCManager {
         let mut age_bucket_counts: HashMap<(&str, &str), i64> = HashMap::new();
         let mut sessions_with_self_output_no_quorum = 0i64;
         let mut protocol_sessions_pending: HashMap<String, i64> = HashMap::new();
+        // "We never did our part" — the complement of
+        // `sessions_with_self_output_no_quorum`: a user session that has been
+        // Active well past any normal computation latency without this
+        // validator ever submitting a local output. A session admitted but
+        // never computed is invisible in the log stream (nothing fires after
+        // admission), and one such session wedged an epoch close in issue
+        // #2018 — so it gets a gauge AND a periodic warn.
+        const STALLED_USER_SESSION_THRESHOLD: Duration = Duration::from_secs(120);
+        let mut stalled_user_sessions: Vec<(Option<u64>, u64)> = Vec::new();
         for session in self.sessions.values() {
             *state_counts
                 .entry(session_state_label(&session.status))
@@ -5221,6 +5234,12 @@ impl DWalletMPCManager {
                 *age_bucket_counts
                     .entry((session_type_label(request.session_type), age_bucket))
                     .or_default() += 1;
+                if matches!(session.session_type, Some(SessionType::User))
+                    && session.self_output_consensus_round.is_none()
+                    && age >= STALLED_USER_SESSION_THRESHOLD
+                {
+                    stalled_user_sessions.push((session.session_sequence_number, age.as_secs()));
+                }
             }
             // "We did our part, the network didn't" — the single most useful
             // gauge for "are we stuck waiting on quorum from peers".
@@ -5477,6 +5496,33 @@ impl DWalletMPCManager {
         metrics
             .sessions_with_self_output_no_quorum
             .set(sessions_with_self_output_no_quorum);
+        metrics
+            .user_sessions_active_without_local_output
+            .set(stalled_user_sessions.len() as i64);
+        if !stalled_user_sessions.is_empty()
+            && self
+                .last_stalled_session_log
+                .is_none_or(|last| now.duration_since(last) >= STALLED_SESSION_LOG_INTERVAL)
+        {
+            self.last_stalled_session_log = Some(now);
+            stalled_user_sessions.sort();
+            let oldest_age_secs = stalled_user_sessions
+                .iter()
+                .map(|(_, age)| *age)
+                .max()
+                .unwrap_or(0);
+            stalled_user_sessions.truncate(8);
+            warn!(
+                count = metrics.user_sessions_active_without_local_output.get(),
+                oldest_age_secs,
+                sessions_seq_and_age = ?stalled_user_sessions,
+                threshold_secs = STALLED_USER_SESSION_THRESHOLD.as_secs(),
+                authority=?self.validator_name,
+                "user MPC session(s) active without a local output past the stall \
+                 threshold — admitted but possibly never computing; if it sits in \
+                 the epoch's locked close set this wedges the epoch (issue #2018)"
+            );
+        }
 
         // Sessions that left `self.sessions` since the previous tick get one
         // final emission flipping the state series to 0 and the round gauges
@@ -5531,6 +5577,11 @@ impl DWalletMPCManager {
 /// Minimum interval between observability-gauge refreshes; the caller (the
 /// dwallet MPC service loop) ticks every ~20ms, far faster than gauges need.
 const OBSERVABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Cadence of the stalled-user-session warn (see
+/// `refresh_observability_metrics`): a wedged session logs once a minute,
+/// not once per one-second refresh.
+const STALLED_SESSION_LOG_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const MAX_UNTRACKED_ANOMALIES: usize = 1024;
 
 fn session_state_label(status: &SessionStatus) -> &'static str {

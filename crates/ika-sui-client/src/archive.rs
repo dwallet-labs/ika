@@ -33,6 +33,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use object_store::ObjectStore;
 use sui_storage::object_store::util::{build_object_store, end_of_epoch_data, fetch_checkpoint};
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointContents, CheckpointSequenceNumber,
 };
@@ -74,6 +75,19 @@ pub trait CheckpointArchive: Send + Sync {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointContents), ArchiveError>;
+
+    /// Fetch a checkpoint by sequence number with its FULL contents —
+    /// transactions and output objects — as (still-unverified)
+    /// [`CheckpointData`]. Used by the checkpoint pusher to fold a checkpoint
+    /// its own fullnode pruned before it could fetch it; the caller runs the
+    /// same committee verification it applies to fullnode-served checkpoints
+    /// before trusting any of it. The public Sui checkpoint stores retain
+    /// ordinary checkpoints for ~30 days (far beyond a fullnode's pruning
+    /// window), and a local data-ingestion dir retains them until cleaned.
+    async fn fetch_checkpoint_data(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<CheckpointData, ArchiveError>;
 }
 
 /// A read-only client over a Sui checkpoint object store.
@@ -130,6 +144,21 @@ impl CheckpointArchive for SuiCheckpointArchive {
                     source,
                 })?;
         Ok((checkpoint.summary, checkpoint.contents))
+    }
+
+    async fn fetch_checkpoint_data(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<CheckpointData, ArchiveError> {
+        let checkpoint =
+            fetch_checkpoint(&self.store, seq)
+                .await
+                .map_err(|source| ArchiveError::Fetch {
+                    url: self.url.clone(),
+                    seq,
+                    source,
+                })?;
+        Ok(checkpoint.into())
     }
 }
 
