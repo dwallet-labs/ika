@@ -102,7 +102,7 @@ pub struct EpochMetrics {
     /// is `-1`, not 0. Re-seeded from the persisted anchor at epoch-store
     /// open, so a mid-epoch restart doesn't misreport a fresh countdown.
     /// Freeze-ETA estimate: `clamp_min(this + grace_rounds -
-    /// ika_consensus_last_committed_leader_round, 0)`.
+    /// ika_last_committed_leader_consensus_round, 0)`.
     pub dwallet_mpc_data_ready_quorum_round: IntGauge,
 
     /// The leader round of the latest consensus commit processed at the
@@ -112,7 +112,21 @@ pub struct EpochMetrics {
     /// consumed round, which lags this one). `-1` before the epoch's
     /// first commit; re-seeded from the persisted consensus stats at
     /// epoch-store open.
-    pub consensus_last_committed_leader_round: IntGauge,
+    ///
+    /// This is the commit CONSUMER's view, deliberately distinct from
+    /// consensus-core's own `last_committed_leader_round` ("committed to
+    /// store and sent to commit consumer" — the producer side, exported as
+    /// `consensus_ika_last_committed_leader_round`). The two coincide on a
+    /// healthy node and diverge exactly when ika's commit handler stalls
+    /// while Mysticeti keeps committing, which is the failure class this
+    /// gauge exists to expose.
+    ///
+    /// Until 1.2.x both sides published the identical name and the node
+    /// served that family twice, dropping a sample per scrape (ika #2022).
+    /// The names are now near-homonyms on purpose — same subject, different
+    /// observation point — and cannot collide, because ika's metrics live
+    /// under `ika_*` and the vendored registry no longer does.
+    pub last_committed_leader_consensus_round: IntGauge,
 
     /// How many consensus rounds the MPC service trails the consensus commit
     /// path by, sampled on every commit. Small and roughly constant in normal
@@ -331,8 +345,8 @@ impl EpochMetrics {
                 registry
             )
             .unwrap(),
-            consensus_last_committed_leader_round: register_int_gauge_with_registry!(
-                "ika_consensus_last_committed_leader_round",
+            last_committed_leader_consensus_round: register_int_gauge_with_registry!(
+                "ika_last_committed_leader_consensus_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
                 registry
@@ -434,5 +448,86 @@ impl EpochMetrics {
             .unwrap(),
         };
         Arc::new(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EpochMetrics;
+    use prometheus::Registry;
+
+    /// Register every ika-side metric struct that lands in the node's default
+    /// registry, the way `IkaNode::start_async` composes them, and return the
+    /// exported metric family names.
+    ///
+    /// NOTE: this is what the node actually SERVES, which is not the same as
+    /// what it registers. `gather()` omits a `*_vec` family that has no label
+    /// children yet, so a freshly built registry hides every labelled metric
+    /// That is the right domain for this test — an unobserved family is never
+    /// written to the endpoint and so cannot collide — but it means this layer
+    /// alone would not catch a new *labelled* violator.
+    /// `scripts/check-metric-names.sh` covers that: it extracts every
+    /// registered literal statically, vec or not. The two layers are
+    /// complementary, not redundant.
+    fn ika_side_metric_family_names() -> Vec<String> {
+        let registry = Registry::new();
+
+        // Held so nothing is dropped before `gather()`.
+        let _epoch = EpochMetrics::new(&registry);
+        let _authority = crate::authority::AuthorityMetrics::new(&registry);
+        let _consensus_manager = crate::consensus_manager::ConsensusManagerMetrics::new(&registry);
+        let _consensus_adapter = crate::consensus_adapter::ConsensusAdapterMetrics::new(&registry);
+        let _tx_validator = crate::consensus_validator::IkaTxValidatorMetrics::new(&registry);
+        let _mpc = crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics::new(&registry);
+        let _dwallet_checkpoint =
+            crate::dwallet_checkpoints::DWalletCheckpointMetrics::new(&registry);
+        let _system_checkpoint = crate::system_checkpoints::SystemCheckpointMetrics::new(&registry);
+        let _sui_connector = crate::sui_connector::metrics::SuiConnectorMetrics::new(&registry);
+        let _ocs = crate::sui_connector::ocs_metrics::OcsMetrics::new(&registry);
+
+        registry
+            .gather()
+            .into_iter()
+            .map(|family| family.name().to_string())
+            .collect()
+    }
+
+    /// ika owns `ika_*` and nothing else owns any of it; the vendored consensus
+    /// registry lives outside it (`consensus_ika_*`, see
+    /// `consensus_manager::ConsensusManager::start`). That makes the namespace
+    /// rule a bipartition with no lists on either side, and both halves are
+    /// properties of SOURCE — which name literals ika registers, and which
+    /// prefix each `Registry::new_custom` uses — so both are enforced by
+    /// `scripts/check-metric-names.sh` rather than here.
+    ///
+    /// A runtime prefix check is deliberately NOT duplicated in this module:
+    /// `gather()` also returns families registered by upstream types ika
+    /// merely instantiates (the `verifier_runtime_per_*_latency` set arrives
+    /// this way), which ika cannot rename and which the source rule rightly
+    /// does not cover. Asserting on them here would mean maintaining an
+    /// exception list of names we do not own — the exact failure mode this
+    /// design removed. What this module tests is what only a live registry can
+    /// show: that the gathered set has no duplicates, and that the #2022 pair
+    /// stays distinct.
+    /// Pinned regression for ika #2022: the two leader-round gauges must not
+    /// share a name. ika publishes the consumer-side round under `ika_*`;
+    /// consensus-core's producer-side gauge reaches the endpoint through the
+    /// vendored registry as `consensus_ika_last_committed_leader_round`, which
+    /// this registry never contains.
+    #[test]
+    fn the_two_leader_round_gauges_do_not_share_a_name() {
+        let names = ika_side_metric_family_names();
+        assert!(
+            names
+                .iter()
+                .any(|n| n == "ika_last_committed_leader_consensus_round"),
+            "ika's consumer-side leader-round gauge is missing"
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|n| n == "consensus_ika_last_committed_leader_round"),
+            "ika must not register consensus-core's producer-side gauge name"
+        );
     }
 }

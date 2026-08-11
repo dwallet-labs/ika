@@ -197,7 +197,20 @@ impl ConsensusManager {
             .find(|(_, a)| a.protocol_key == own_protocol_key)
             .expect("Own authority should be among the consensus authorities!");
 
-        let registry = Registry::new_custom(Some("ika_consensus".to_string()), None).unwrap();
+        // consensus-core's metrics are re-exported under this prefix, which
+        // must NOT start with `ika`: `ika_*` is ika's own namespace, and a
+        // shared prefix is exactly what let an upstream metric and an ika one
+        // collide in #2022. `RegistryService` merges the two registries at
+        // /metrics, prometheus's duplicate check is per-registry, and the
+        // prefix is applied at `gather()` — so the two names never meet
+        // anywhere the collision could be caught. Keeping the vendored
+        // namespace outside `ika_` makes the rule a clean bipartition: ika's
+        // metrics start with `ika_`, vendored ones never do, and neither side
+        // needs a list of the other's names. `consensus_ika_*` does sit inside
+        // sui's own `consensus_*` namespace, which is safe in a way this
+        // arrangement was not: sui will never register a metric named
+        // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
+        let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
 

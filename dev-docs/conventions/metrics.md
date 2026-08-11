@@ -19,10 +19,36 @@ parts:
   old→new table at the bottom of this file;
 - the **Mysticeti-internal metrics** (registered by upstream Sui's
   `consensus-core` crate, not by ika code) are prefixed via their
-  per-epoch registry's namespace — `Registry::new_custom(Some("ika_consensus"))`
-  in `consensus_manager/mod.rs` — so they export as `ika_consensus_*`
+  per-epoch registry's namespace — `Registry::new_custom(Some("consensus_ika"))`
+  in `consensus_manager/mod.rs` — so they export as `consensus_ika_*`
   without any upstream code change. Consequence: upstream Mysticeti
   Grafana dashboards need a prefix adjustment to be reused;
+
+  **`ika_` is ika's namespace and nothing else's.** The two sides live in
+  *different* registries that `RegistryService` merges at `/metrics`, and
+  the prefix is applied at `gather()` rather than at registration — so
+  prometheus's per-registry duplicate check never sees both names, and a
+  collision is silent: the endpoint serves the same family twice and the
+  scraper drops a sample per scrape ("duplicate sample for timestamp"),
+  halving one series with nothing failing. That is ika #2022, from back
+  when the vendored registry was prefixed `ika_consensus` and ika's own
+  commit-boundary gauge landed on upstream's `last_committed_leader_round`.
+
+  **The rule is a bipartition, so a collision is unrepresentable:**
+  1. every metric ika registers starts with `ika_`;
+  2. no re-export registry uses a prefix starting with `ika`.
+
+  Both are properties of source, and both are enforced statically by
+  `scripts/check-metric-names.sh`. Rule 2 needs no list of anyone's
+  names and self-extends: a vendored registry added later is caught
+  without anybody remembering to update anything — which was the failure
+  mode of every list-based version of this rule.
+
+  Note that `ika_consensus_*` **is** ika's to use — those are ika's own
+  consensus-handling metrics (`ika_consensus_handler_processed` and
+  friends), sitting alongside `ika_dwallet_*` and `ika_ocs_*`. They were
+  never badly named; the vendored registry was squatting in their
+  namespace, and it is the squatter that moved.
 - ~85 registered-but-never-set fork-residue metrics (tx-deny, zklogin,
   Move-verifier/execution, transaction-manager caches, random-beacon —
   subsystems ika does not run) were **deleted**, not renamed: they only
@@ -249,6 +275,7 @@ ika_archive_actions_read
 ika_archive_dwallet_checkpoints_read
 ika_archive_system_checkpoints_read
 ika_binary_max_protocol_version
+ika_last_committed_leader_consensus_round
 ika_configured_max_protocol_version
 ika_consensus_calculated_throughput
 ika_consensus_calculated_throughput_profile
@@ -260,7 +287,6 @@ ika_consensus_handler_num_low_scoring_authorities
 ika_consensus_handler_processed
 ika_consensus_handler_scores
 ika_consensus_handler_transaction_sizes
-ika_consensus_last_committed_leader_round
 ika_consensus_last_committed_timestamp_seconds
 ika_consensus_manager_shutdown_latency
 ika_consensus_manager_start_latency
