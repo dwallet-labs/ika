@@ -1122,6 +1122,15 @@ impl DWalletMPCService {
             panic!("failed to get last consensus round from DB");
         };
 
+        // Feed the catch-up gate (issue #2023) BEFORE draining: the tip just
+        // read is the head of the persisted per-round stream, and the cursor
+        // is where this service's processing stands — their distance is the
+        // backlog this iteration is about to drain. The gate this updates is
+        // consulted later in the iteration, at the computation spawn
+        // decision in `perform_cryptographic_computation`.
+        self.dwallet_mpc_manager
+            .observe_consensus_round_gap(last_consensus_round, self.last_read_consensus_round);
+
         while Some(last_consensus_round) > self.last_read_consensus_round {
             self.number_of_consensus_rounds += 1;
 

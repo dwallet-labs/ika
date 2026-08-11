@@ -3,6 +3,10 @@
 
 use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::dwallet_mpc::catchup_gate::{
+    CATCH_UP_ENTER_GAP_ROUNDS, CATCH_UP_EXIT_GAP_ROUNDS, CatchUpGate, CatchUpTransition,
+    computation_suppressible_during_catch_up,
+};
 use crate::dwallet_mpc::crytographic_computation::{
     ComputationId, ComputationRequest, CryptographicComputationsOrchestrator,
 };
@@ -343,6 +347,15 @@ pub(crate) struct DWalletMPCManager {
     /// next-epoch agreed set is delivered.
     pub(crate) next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
+
+    /// Catch-up gate (issue #2023): while the MPC processing cursor trails
+    /// the consensus tip beyond the trap radius, new cryptographic
+    /// computations for internal-presign and user sessions are withheld so
+    /// the round backlog drains at replay speed instead of being pinned
+    /// below tip rate by dead-on-arrival crypto. Fed once per service
+    /// iteration by [`Self::observe_consensus_round_gap`], consulted at the
+    /// spawn decision in [`Self::perform_cryptographic_computation`].
+    catchup_gate: CatchUpGate,
 
     /// The set of malicious actors that were agreed upon by a quorum of validators.
     /// This agreement is done synchronically, and thus is it safe to filter malicious actors.
@@ -816,6 +829,7 @@ impl DWalletMPCManager {
             current_epoch_keys_ingested: false,
             next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
+            catchup_gate: CatchUpGate::new(),
             malicious_actors: HashSet::new(),
             last_session_to_complete_in_current_epoch: 0,
             recognized_self_as_malicious: false,
@@ -3486,6 +3500,57 @@ impl DWalletMPCManager {
         self.sessions.insert(*session_identifier, new_session);
     }
 
+    /// Feed the catch-up gate (issue #2023) one observation of how far MPC
+    /// round processing trails the consensus tip.
+    ///
+    /// Called by the service once per service-loop iteration at the entry of
+    /// its round drain, with `tip_round` = the head of the persisted
+    /// per-round MPC stream (`last_dwallet_mpc_message_round`, the newest
+    /// consensus round available for this service to read — already in hand
+    /// there, so the gate costs no extra DB read) and `last_processed_round`
+    /// = the drain cursor before this iteration's drain. The drain always
+    /// runs to the tip it read, so this entry gap is exactly the backlog the
+    /// iteration is about to chew through — the live capture's oscillating
+    /// 545-7,346-round gap is this value. `None` cursor (nothing processed
+    /// yet, i.e. the first iteration after a restart) counts the full
+    /// backlog, which is precisely the mid-epoch-restart entry condition.
+    pub(crate) fn observe_consensus_round_gap(
+        &mut self,
+        tip_round: u64,
+        last_processed_round: Option<u64>,
+    ) {
+        let gap_rounds = tip_round.saturating_sub(last_processed_round.unwrap_or(0));
+        match self.catchup_gate.update(gap_rounds) {
+            CatchUpTransition::Entered => {
+                info!(
+                    gap_rounds,
+                    tip_round,
+                    ?last_processed_round,
+                    enter_threshold = CATCH_UP_ENTER_GAP_ROUNDS,
+                    exit_threshold = CATCH_UP_EXIT_GAP_ROUNDS,
+                    "MPC service entered catch-up mode: suppressing new internal-presign and \
+                     user-session computations until the consensus-round backlog drains \
+                     (issue #2023)"
+                );
+            }
+            CatchUpTransition::Exited => {
+                info!(
+                    gap_rounds,
+                    tip_round,
+                    ?last_processed_round,
+                    enter_threshold = CATCH_UP_ENTER_GAP_ROUNDS,
+                    exit_threshold = CATCH_UP_EXIT_GAP_ROUNDS,
+                    "MPC service exited catch-up mode: the consensus-round backlog drained, \
+                     resuming all cryptographic computations"
+                );
+            }
+            CatchUpTransition::Unchanged => {}
+        }
+        self.dwallet_mpc_metrics
+            .catchup_mode
+            .set(self.catchup_gate.is_catching_up() as i64);
+    }
+
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.
     /// If no local CPUs are available, computations will execute as CPUs are freed.
     ///
@@ -3508,6 +3573,10 @@ impl DWalletMPCManager {
         HashMap<ComputationId, DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>>,
         bool,
     ) {
+        let in_catch_up = self.catchup_gate.is_catching_up();
+        let mut catch_up_suppressed_user_sessions: u64 = 0;
+        let mut catch_up_suppressed_internal_presign_sessions: u64 = 0;
+
         let mut ready_to_advance_sessions: Vec<_> = self
             .sessions
             .values()
@@ -3541,6 +3610,24 @@ impl DWalletMPCManager {
                     return None;
                 }
 
+                // Catch-up gate (issue #2023): while the round-processing
+                // cursor trails the consensus tip beyond the trap radius,
+                // withhold NEW computations for the high-volume session
+                // types — computing them would chase sessions that already
+                // completed network-wide and pin the drain below tip rate.
+                // System-critical types are exempt (see
+                // `computation_suppressible_during_catch_up`); everything
+                // else about these sessions (message handling, quorum
+                // observation, terminal bookkeeping) continues unchanged,
+                // and the check is two cheap reads per session per tick.
+                if in_catch_up && computation_suppressible_during_catch_up(request.session_type) {
+                    match request.session_type {
+                        SessionType::User => catch_up_suppressed_user_sessions += 1,
+                        _ => catch_up_suppressed_internal_presign_sessions += 1,
+                    }
+                    return None;
+                }
+
                 // Local-readiness gate for network DKG / reconfig
                 // sessions under v4 off_chain mode. These sessions
                 // consume the frozen-set members' mpc_data blobs
@@ -3568,7 +3655,29 @@ impl DWalletMPCManager {
 
         ready_to_advance_sessions.sort_by_key(|&(_, request)| request);
 
-        let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
+        // Publish how much would-be computation the gate is shedding this
+        // tick (bulk `inc_by` — the per-session path stays two integer
+        // reads, no label lookups).
+        if catch_up_suppressed_user_sessions > 0 {
+            self.dwallet_mpc_metrics
+                .catchup_suppressed_computations_total
+                .with_label_values(&[session_type_label(SessionType::User)])
+                .inc_by(catch_up_suppressed_user_sessions);
+        }
+        if catch_up_suppressed_internal_presign_sessions > 0 {
+            self.dwallet_mpc_metrics
+                .catchup_suppressed_computations_total
+                .with_label_values(&[session_type_label(SessionType::InternalPresign)])
+                .inc_by(catch_up_suppressed_internal_presign_sessions);
+        }
+
+        // Suppressed sessions are still pending work: count them toward the
+        // idle computation so a catching-up validator never reports itself
+        // idle — an idle report would drive network-wide internal-presign
+        // idle-fill, minting MORE of exactly the load the gate is shedding.
+        let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len()
+            + (catch_up_suppressed_user_sessions + catch_up_suppressed_internal_presign_sessions)
+                as usize;
 
         // Collected inside the immutable-borrow iteration below, logged
         // (deduped per session) after it ends — a generation failure
