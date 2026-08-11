@@ -12,7 +12,9 @@ fi
 git apply ./scripts/simtest/config-patch
 
 root_dir=$(git rev-parse --show-toplevel)
-export SIMTEST_STATIC_INIT_MOVE=$root_dir"/examples/move/basics"
+# Must match scripts/simtest/cargo-simtest: ika has no examples/move/basics
+# (that is a Sui path), the no-dep warm-up stub lives in ika-test-cluster.
+export SIMTEST_STATIC_INIT_MOVE=$root_dir"/crates/ika-test-cluster/move-stub"
 
 MSIM_WATCHDOG_TIMEOUT_MS=60000 MSIM_TEST_SEED=1 cargo llvm-cov --ignore-run-fail --lcov --output-path lcov-simtest.info nextest --cargo-profile simulator
 
