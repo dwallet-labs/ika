@@ -200,7 +200,7 @@ which bytes* deterministic in consensus order.
   `ika_dwallet_mpc_data_freeze_grace_rounds` (the protocol-config grace),
   `ika_last_committed_leader_consensus_round` (the commit-boundary leader round
   the grace delta is measured against — NOT
-  `ika_consensus_last_committed_leader_round`, which is consensus-core's
+  `consensus_ika_last_committed_leader_round`, which is consensus-core's
   producer-side gauge), and
   `ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds` (the
   sender's emit-gate deadline, consensus-clock seconds, `-1` before the

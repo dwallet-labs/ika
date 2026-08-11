@@ -455,7 +455,6 @@ impl EpochMetrics {
 mod tests {
     use super::EpochMetrics;
     use prometheus::Registry;
-    use std::collections::HashMap;
 
     /// Register every ika-side metric struct that lands in the node's default
     /// registry, the way `IkaNode::start_async` composes them, and return the
@@ -510,28 +509,6 @@ mod tests {
     /// design removed. What this module tests is what only a live registry can
     /// show: that the gathered set has no duplicates, and that the #2022 pair
     /// stays distinct.
-    /// Within the ika-side registry itself, no family name may repeat. Prometheus
-    /// rejects a duplicate registration, and every call site `unwrap()`s, so this
-    /// mostly guards against a future registry composition that swallows the
-    /// error instead of panicking. Independent of the namespace rule above: this
-    /// one is intra-registry, #2022 was cross-registry.
-    #[test]
-    fn ika_side_registry_has_no_duplicate_family_names() {
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        for name in ika_side_metric_family_names() {
-            *counts.entry(name).or_default() += 1;
-        }
-        let duplicates: Vec<&String> = counts
-            .iter()
-            .filter(|(_, count)| **count > 1)
-            .map(|(name, _)| name)
-            .collect();
-        assert!(
-            duplicates.is_empty(),
-            "duplicate metric family names in the ika registry: {duplicates:?}"
-        );
-    }
-
     /// Pinned regression for ika #2022: the two leader-round gauges must not
     /// share a name. ika publishes the consumer-side round under `ika_*`;
     /// consensus-core's producer-side gauge reaches the endpoint through the

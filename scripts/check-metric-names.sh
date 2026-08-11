@@ -80,9 +80,12 @@ if violations:
 #
 # Matches after the first `#[cfg(test)]` in a file are skipped: test modules
 # build throwaway registries to exercise composition, and their prefixes never
-# reach a node's endpoint.
+# reach a node's endpoint. That heuristic is REPORTED, not silent — the summary
+# line prints how many were skipped, so a production registry that ever ends up
+# below a test module shows as a count change instead of vanishing.
 VENDORED_PREFIX = re.compile(r'new_custom\(\s*Some\(\s*"(?P<prefix>[a-z0-9_]+)"')
 vendored = {}
+test_scoped = 0
 for path in pathlib.Path("crates").rglob("*.rs"):
     text = path.read_text(errors="replace")
     cutoff = text.find("#[cfg(test)]")
@@ -90,6 +93,7 @@ for path in pathlib.Path("crates").rglob("*.rs"):
         cutoff = len(text)
     for m in VENDORED_PREFIX.finditer(text, 0, cutoff):
         vendored.setdefault(m.group("prefix"), set()).add(str(path))
+    test_scoped += len(VENDORED_PREFIX.findall(text[cutoff:]))
 
 ika_prefixed_registries = sorted(p for p in vendored if p.startswith("ika"))
 if ika_prefixed_registries:
@@ -118,7 +122,8 @@ if stale:
 
 print(
     f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped; "
-    f"{len(vendored)} prefixed registr{'y' if len(vendored) == 1 else 'ies'}, "
-    f"none under `ika`)"
+    f"{len(vendored)} prefixed registr{'y' if len(vendored) == 1 else 'ies'} "
+    f"({', '.join(sorted(vendored)) or 'none'}), none under `ika`; "
+    f"{test_scoped} test-scoped skipped)"
 )
 EOF
