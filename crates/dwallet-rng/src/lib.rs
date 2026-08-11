@@ -25,7 +25,7 @@ pub struct RootSeed([u8; RootSeed::SEED_LENGTH]);
 ///
 /// A derived `Debug` prints the full seed array, and this type is held —
 /// directly and behind wrappers — inside structs that are themselves `Debug`
-/// and get formatted wholesale (node config dumps, `?`-fielded tracing events,
+/// and get formatted wholesale (`NodeConfig` dumps, `?`-fielded tracing events,
 /// panic/error context). Redacting at the type covers every current and future
 /// holder at once, so no caller has to remember to skip the field.
 impl fmt::Debug for RootSeed {

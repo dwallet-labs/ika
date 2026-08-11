@@ -2237,7 +2237,7 @@ headers:
         let rendered = format!("{config:#?}");
         assert!(
             !rendered.contains("171"),
-            "a full node-config dump must not render the seed bytes"
+            "a rendered NodeConfig must not contain the seed bytes"
         );
 
         // Only `Debug` changed: serialization is untouched and still carries
