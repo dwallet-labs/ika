@@ -102,7 +102,7 @@ pub struct EpochMetrics {
     /// is `-1`, not 0. Re-seeded from the persisted anchor at epoch-store
     /// open, so a mid-epoch restart doesn't misreport a fresh countdown.
     /// Freeze-ETA estimate: `clamp_min(this + grace_rounds -
-    /// ika_commit_boundary_leader_round, 0)`.
+    /// ika_last_committed_leader_consensus_round, 0)`.
     pub dwallet_mpc_data_ready_quorum_round: IntGauge,
 
     /// The leader round of the latest consensus commit processed at the
@@ -129,7 +129,7 @@ pub struct EpochMetrics {
     /// twice, dropping a sample per scrape (ika #2022). Merely picking an
     /// unused `ika_consensus_*` name would only postpone the next
     /// collision to whenever upstream grows into it.
-    pub commit_boundary_leader_round: IntGauge,
+    pub last_committed_leader_consensus_round: IntGauge,
 
     /// How many consensus rounds the MPC service trails the consensus commit
     /// path by, sampled on every commit. Small and roughly constant in normal
@@ -348,8 +348,8 @@ impl EpochMetrics {
                 registry
             )
             .unwrap(),
-            commit_boundary_leader_round: register_int_gauge_with_registry!(
-                "ika_commit_boundary_leader_round",
+            last_committed_leader_consensus_round: register_int_gauge_with_registry!(
+                "ika_last_committed_leader_consensus_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
                 registry
@@ -632,7 +632,7 @@ mod tests {
         assert!(
             names
                 .iter()
-                .any(|n| n == "ika_commit_boundary_leader_round"),
+                .any(|n| n == "ika_last_committed_leader_consensus_round"),
             "the commit-boundary leader-round gauge is missing"
         );
     }
