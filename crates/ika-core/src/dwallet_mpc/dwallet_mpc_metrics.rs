@@ -113,6 +113,19 @@ pub struct DWalletMPCMetrics {
     /// speed — 0 otherwise. Refreshed once per service iteration.
     pub(crate) catchup_mode: IntGauge,
 
+    /// How far MPC round processing trails the consensus tip, in consensus
+    /// rounds, as of the most recent service iteration.
+    ///
+    /// `catchup_mode` says whether the gate is engaged; this says whether a
+    /// gated validator is *draining or stuck*. The gate's log lines only fire
+    /// on the enter/exit transitions, so between them — which is the entire
+    /// duration of a catch-up, potentially hours — there is otherwise no
+    /// signal at all. This gauge is refreshed on every observation, so its
+    /// slope answers the operational question directly: falling means the
+    /// backlog is draining and the validator will return on its own, flat or
+    /// rising means it is trapped and needs intervention.
+    pub(crate) catchup_gap_rounds: IntGauge,
+
     /// Computation spawn decisions withheld by catch-up mode. Labels:
     /// `session_type` (only the suppressible types — `user` /
     /// `internal_presign` — ever appear). Incremented once per suppressed
@@ -572,6 +585,14 @@ impl DWalletMPCMetrics {
                 "1 while MPC round processing trails the consensus tip beyond the catch-up \
                  threshold and new internal-presign/user computations are suppressed \
                  (issue #2023), 0 otherwise",
+                registry
+            )
+            .unwrap(),
+            catchup_gap_rounds: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_catchup_gap_rounds",
+                "How far MPC round processing trails the consensus tip, in consensus rounds, \
+                 as of the most recent service iteration; answers whether a catch-up-gated \
+                 validator is draining or stuck (issue #2023)",
                 registry
             )
             .unwrap(),

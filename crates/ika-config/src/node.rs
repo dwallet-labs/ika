@@ -2185,6 +2185,84 @@ headers:
         }
     }
 
+    /// `RootSeedWithPath` reaches the seed bytes through two independent
+    /// fields — the `InPlace` location variant and the `OnceCell` cache — and
+    /// both render whenever the wrapper (or anything holding it, up to a whole
+    /// `NodeConfig`) is formatted with `{:?}`/`{:#?}`. `RootSeed`'s
+    /// hand-written `Debug` redacts at the type, which is what closes both
+    /// paths at once and covers any future holder; this pins that.
+    ///
+    /// `RootSeedWithPath::new` populates the cache eagerly, so both fields
+    /// carry the marker here — the strictest case.
+    #[test]
+    fn root_seed_debug_redacts_the_seed_and_stays_useful() {
+        // 0xAB renders as `171` under the derived array `Debug`; searching for
+        // both that and the hex spelling catches either formatting.
+        let marker = [0xABu8; 32];
+        let wrapper = RootSeedWithPath::new(RootSeed::new(marker));
+
+        for rendered in [format!("{wrapper:?}"), format!("{wrapper:#?}")] {
+            assert!(
+                !rendered.contains("171"),
+                "the seed bytes must not render in decimal: {rendered}"
+            );
+            assert!(
+                !rendered.to_lowercase().contains("ab, ab"),
+                "the seed bytes must not render in hex: {rendered}"
+            );
+            assert!(
+                rendered.contains("REDACTED"),
+                "the redaction marker must be visible: {rendered}"
+            );
+            // Still useful for debugging: the wrapper, the location variant
+            // and the field names all survive.
+            for expected in [
+                "RootSeedWithPath",
+                "location",
+                "InPlace",
+                "seed",
+                "RootSeed",
+            ] {
+                assert!(
+                    rendered.contains(expected),
+                    "`{expected}` must survive redaction so the dump stays readable: {rendered}"
+                );
+            }
+        }
+
+        // A whole `NodeConfig` dump is the shape that actually gets formatted
+        // in practice; it must be redacted too.
+        let mut config = config_for_mode(NodeMode::Validator);
+        config.root_seed_key_pair = Some(RootSeedWithPath::new(RootSeed::new(marker)));
+        let rendered = format!("{config:#?}");
+        assert!(
+            !rendered.contains("171"),
+            "a full node-config dump must not render the seed bytes"
+        );
+
+        // Only `Debug` changed: serialization is untouched and still carries
+        // the real bytes, so a config file round-trips byte-identically.
+        let wrapper = RootSeedWithPath::new(RootSeed::new(marker));
+        let yaml = serde_yaml::to_string(&wrapper).expect("the seed must serialize");
+        assert_eq!(
+            yaml.matches("171").count(),
+            marker.len(),
+            "serialization must still emit every seed byte: {yaml}"
+        );
+        let round_trip: RootSeedWithPath =
+            serde_yaml::from_str(&yaml).expect("the serialized seed must deserialize");
+        assert_eq!(
+            round_trip.root_seed(),
+            &RootSeed::new(marker),
+            "the seed must survive a serialization round-trip unchanged"
+        );
+        assert_eq!(
+            serde_yaml::to_string(&round_trip).expect("re-serialize"),
+            yaml,
+            "the serialized form must be byte-identical across a round-trip"
+        );
+    }
+
     /// The compiled-in `ika_system_package_id` must be the ORIGINAL (defining)
     /// system package, not a later upgrade. Every consumer of this field
     /// matches Sui type tags (event filters, the system object's own type, the

@@ -14,7 +14,7 @@
 //! entry — the exact signal a mid-epoch restart replay produces.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
-use crate::dwallet_mpc::catchup_gate::CATCH_UP_ENTER_GAP_ROUNDS;
+use crate::dwallet_mpc::catchup_gate::{CATCH_UP_ENTER_GAP_ROUNDS, CATCH_UP_EXIT_GAP_ROUNDS};
 use crate::dwallet_mpc::dwallet_mpc_metrics::session_type_label;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
@@ -90,6 +90,80 @@ fn active_suppressible_session_count(service: &DWalletMPCService) -> usize {
                 )
         })
         .count()
+}
+
+/// The catch-up gap gauge must follow EVERY observation, not just the
+/// enter/exit transitions.
+///
+/// That is the whole point of the metric: the gate logs only on transitions,
+/// so during a long catch-up (the production case is hours) the transitions
+/// have already happened and nothing further is emitted. A gauge that only
+/// updated on transitions would freeze at the entry gap and report a draining
+/// validator as indistinguishable from a stuck one.
+///
+/// Driven by feeding the manager gap observations directly, so the assertion
+/// is about the gauge and nothing else — the end-to-end path through the
+/// service loop is covered by the test below.
+#[tokio::test]
+#[cfg(test)]
+async fn test_catchup_gap_gauge_tracks_every_observation() {
+    let _guard = utils::create_test_protocol_config_guard();
+    let mut test_state = build_test_state(1);
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager_mut();
+    let gap_gauge = manager.dwallet_mpc_metrics.catchup_gap_rounds.clone();
+    let mode_gauge = manager.dwallet_mpc_metrics.catchup_mode.clone();
+
+    // Below the enter threshold: no transition, but the gap is still reported.
+    manager.observe_consensus_round_gap(1_200, Some(200));
+    assert_eq!(mode_gauge.get(), 0, "no transition: the gate stays out");
+    assert_eq!(gap_gauge.get(), 1_000);
+
+    // Still no transition, different gap — the gauge must move anyway.
+    manager.observe_consensus_round_gap(1_500, Some(200));
+    assert_eq!(mode_gauge.get(), 0, "still no transition");
+    assert_eq!(
+        gap_gauge.get(),
+        1_300,
+        "the gauge must track a non-transition update"
+    );
+
+    // Enter catch-up.
+    let entry_gap = CATCH_UP_ENTER_GAP_ROUNDS + 3_000;
+    manager.observe_consensus_round_gap(entry_gap, None);
+    assert_eq!(mode_gauge.get(), 1);
+    assert_eq!(gap_gauge.get(), entry_gap as i64);
+
+    // The draining span: every one of these is inside the hysteresis band, so
+    // the gate never transitions and never logs — the gauge is the only
+    // signal that the backlog is shrinking.
+    let mut previous = gap_gauge.get();
+    for gap in [
+        CATCH_UP_ENTER_GAP_ROUNDS,
+        CATCH_UP_ENTER_GAP_ROUNDS / 2,
+        CATCH_UP_EXIT_GAP_ROUNDS + 1,
+    ] {
+        manager.observe_consensus_round_gap(gap, Some(0));
+        assert_eq!(
+            mode_gauge.get(),
+            1,
+            "gap {gap} is inside the hysteresis band: still no transition"
+        );
+        assert_eq!(
+            gap_gauge.get(),
+            gap as i64,
+            "the gauge must follow the gap while the gate holds its state"
+        );
+        assert!(
+            gap_gauge.get() < previous,
+            "a draining backlog must show as a falling gauge"
+        );
+        previous = gap_gauge.get();
+    }
+
+    // And it reaches zero when the cursor catches the tip.
+    manager.observe_consensus_round_gap(9_000, Some(9_000));
+    assert_eq!(mode_gauge.get(), 0, "a zero gap exits catch-up");
+    assert_eq!(gap_gauge.get(), 0);
 }
 
 /// End-to-end exercise of the catch-up gate against the real service loop:

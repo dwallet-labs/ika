@@ -6,14 +6,33 @@ use merlin::Transcript;
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use zeroize::ZeroizeOnDrop;
 
 /// The Root Seed for this validator, used to deterministically derive purpose-specific child seeds
 /// for all cryptographically-secure random generation operations.
 ///
 /// SECURITY NOTICE: *MUST BE KEPT PRIVATE*.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ZeroizeOnDrop)]
+///
+/// `Debug` is hand-written (see below) rather than derived, so the seed bytes
+/// never render in debug output. Every other trait here is derived as before —
+/// in particular `Serialize`/`Deserialize` still carry the real bytes, which is
+/// what config round-tripping depends on.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ZeroizeOnDrop)]
 pub struct RootSeed([u8; RootSeed::SEED_LENGTH]);
+
+/// Render the root seed without its bytes.
+///
+/// A derived `Debug` prints the full seed array, and this type is held —
+/// directly and behind wrappers — inside structs that are themselves `Debug`
+/// and get formatted wholesale (node config dumps, `?`-fielded tracing events,
+/// panic/error context). Redacting at the type covers every current and future
+/// holder at once, so no caller has to remember to skip the field.
+impl fmt::Debug for RootSeed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("RootSeed").field(&"[REDACTED]").finish()
+    }
+}
 
 impl RootSeed {
     pub const SEED_LENGTH: usize = 32;
@@ -330,6 +349,53 @@ impl CryptoRng for ZeroRng {}
 /// **NEVER** use this RNG in any context where randomness is expected to provide security.
 /// See the [`ZeroRng`] type documentation for details on the intended use case.
 impl CsRng for ZeroRng {}
+
+#[cfg(test)]
+mod root_seed_tests {
+    use super::*;
+
+    /// The seed bytes must not appear in `Debug` output, in either the compact
+    /// or the alternate (`{:#?}`) form, while the type name still shows so the
+    /// rendering stays useful for debugging.
+    #[test]
+    fn debug_does_not_render_the_seed_bytes() {
+        // A marker whose decimal (`171`) and hex (`ab`) renderings are both
+        // easy to search for in the formatted output.
+        let seed = RootSeed::new([0xAB; RootSeed::SEED_LENGTH]);
+
+        for rendered in [format!("{seed:?}"), format!("{seed:#?}")] {
+            assert!(
+                !rendered.contains("171"),
+                "seed bytes must not render in decimal: {rendered}"
+            );
+            assert!(
+                !rendered.to_lowercase().contains("ab, ab"),
+                "seed bytes must not render in hex: {rendered}"
+            );
+            assert!(
+                rendered.contains("RootSeed"),
+                "the type name must survive redaction: {rendered}"
+            );
+            assert!(
+                rendered.contains("REDACTED"),
+                "the redaction marker must be visible: {rendered}"
+            );
+        }
+    }
+
+    /// Redaction is a `Debug`-only change: the value itself is untouched, so
+    /// derivation stays deterministic and equality still compares the bytes.
+    #[test]
+    fn redaction_does_not_change_the_value() {
+        let seed = RootSeed::new([0xAB; RootSeed::SEED_LENGTH]);
+        assert_eq!(seed, RootSeed::new([0xAB; RootSeed::SEED_LENGTH]));
+        assert_ne!(seed, RootSeed::new([0xCD; RootSeed::SEED_LENGTH]));
+        assert_eq!(
+            seed.class_groups_decryption_key_seed(),
+            RootSeed::new([0xAB; RootSeed::SEED_LENGTH]).class_groups_decryption_key_seed()
+        );
+    }
+}
 
 #[cfg(test)]
 mod zero_rng_tests {
