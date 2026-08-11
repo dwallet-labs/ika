@@ -3549,6 +3549,14 @@ impl DWalletMPCManager {
         self.dwallet_mpc_metrics
             .catchup_mode
             .set(self.catchup_gate.is_catching_up() as i64);
+        // Exported on EVERY observation, not just on a transition: the logs
+        // above only fire when the gate flips, so the whole span in between —
+        // which is the entire catch-up — would otherwise show no progress
+        // signal at all. The gauge's slope is what says whether the backlog is
+        // draining or the validator is stuck.
+        self.dwallet_mpc_metrics
+            .catchup_gap_rounds
+            .set(i64::try_from(gap_rounds).unwrap_or(i64::MAX));
     }
 
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.

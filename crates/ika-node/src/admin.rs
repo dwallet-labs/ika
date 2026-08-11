@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::IkaNode;
+use crate::bind_retry::{BIND_ATTEMPTS, BIND_RETRY_INTERVAL, bind_with_retry};
 use axum::{
     Router,
     extract::{Query, State},
@@ -14,9 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use telemetry_subscribers::TracingHandle;
-use tokio::net::TcpListener;
-use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 // Example commands:
 //
@@ -59,12 +58,11 @@ const CLEAR_BUFFER_STAKE_ROUTE: &str = "/clear-override-buffer-stake";
 const CAPABILITIES: &str = "/capabilities";
 const NODE_CONFIG: &str = "/node-config";
 
-/// How long to wait between admin-server bind attempts.
-const BIND_RETRY_INTERVAL: Duration = Duration::from_secs(5);
-/// How many times to attempt the bind before giving up on the admin server.
-/// Together with the interval this keeps trying for ~2 minutes, comfortably
-/// past the ~60s a socket spends in `TIME_WAIT` after a restart.
-const BIND_ATTEMPTS: u32 = 25;
+/// Stand-in for the current log filter when the tracing handle can't report
+/// it. Only ever used for the "starting admin server" log line, so an
+/// unreadable filter must not stop the admin server from coming up (matching
+/// sui-node's tolerant handling of the same call).
+const UNKNOWN_LOG_FILTER: &str = "log filter not available";
 
 struct AppState {
     node: Arc<IkaNode>,
@@ -72,7 +70,10 @@ struct AppState {
 }
 
 pub async fn run_admin_server(node: Arc<IkaNode>, port: u16, tracing_handle: TracingHandle) {
-    let filter = tracing_handle.get_log().unwrap();
+    let filter = tracing_handle
+        .get_log()
+        .ok()
+        .unwrap_or_else(|| UNKNOWN_LOG_FILTER.to_string());
 
     let app_state = AppState {
         node,
@@ -116,17 +117,16 @@ pub async fn run_admin_server(node: Arc<IkaNode>, port: u16, tracing_handle: Tra
 /// racing its own port through `TIME_WAIT` — into node death at boot. A node
 /// without an admin endpoint is strictly healthier than a dead node.
 ///
-/// The retries are bounded so a genuinely misconfigured duplicate port ends
-/// in a single loud give-up rather than an unbounded background loop; each
-/// attempt warns with the address, so that misconfiguration is visible
-/// immediately either way.
+/// The retry policy lives in [`crate::bind_retry`], shared with the metrics
+/// server, which has the same "must not kill the node" property.
 async fn serve_admin(
     app: Router,
     socket_address: SocketAddr,
     attempts: u32,
     retry_interval: Duration,
 ) {
-    let Some(listener) = bind_with_retry(socket_address, attempts, retry_interval).await else {
+    let Some(listener) = bind_with_retry("admin", socket_address, attempts, retry_interval).await
+    else {
         error!(
             address =% socket_address,
             "gave up binding the admin server; the node continues without the admin endpoint"
@@ -145,31 +145,6 @@ async fn serve_admin(
             "admin server stopped; the node continues without the admin endpoint"
         );
     }
-}
-
-/// Bind the admin listener, retrying `attempts` times at `retry_interval`.
-/// `None` once the attempts are exhausted.
-async fn bind_with_retry(
-    socket_address: SocketAddr,
-    attempts: u32,
-    retry_interval: Duration,
-) -> Option<TcpListener> {
-    for attempt in 1..=attempts {
-        match TcpListener::bind(&socket_address).await {
-            Ok(listener) => return Some(listener),
-            Err(err) => warn!(
-                address =% socket_address,
-                attempt,
-                attempts,
-                error =? err,
-                "failed to bind the admin server, retrying"
-            ),
-        }
-        if attempt < attempts {
-            sleep(retry_interval).await;
-        }
-    }
-    None
 }
 
 #[derive(Deserialize)]
@@ -338,23 +313,14 @@ async fn set_override_protocol_upgrade_buffer_stake(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
-    use tokio::time::timeout;
+    use crate::bind_retry::test_support::squatted_port;
+    use tokio::time::{sleep, timeout};
 
     /// A stand-in for the real admin router: `serve_admin` only ever sees an
     /// already-stateless `Router`, so the routes it carries are irrelevant to
     /// the bind path under test.
     fn test_router() -> Router {
         Router::new().route("/ping", get(|| async { "pong" }))
-    }
-
-    /// A listener squatting on an ephemeral port, plus that port's address.
-    async fn squatted_port() -> (TcpListener, SocketAddr) {
-        let squatter = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .await
-            .expect("bind a squatter on an ephemeral port");
-        let address = squatter.local_addr().expect("squatter local address");
-        (squatter, address)
     }
 
     async fn get_ping(address: SocketAddr) -> Option<String> {
@@ -412,22 +378,5 @@ mod tests {
         assert_eq!(body, "pong");
 
         server.abort();
-    }
-
-    /// The retry budget is a bound, not a loop: a duplicate port that is
-    /// never released ends in one give-up after the configured attempts.
-    #[tokio::test]
-    async fn the_bind_retry_is_bounded() {
-        let (_squatter, address) = squatted_port().await;
-
-        let started = Instant::now();
-        assert!(
-            bind_with_retry(address, 4, Duration::from_millis(50))
-                .await
-                .is_none()
-        );
-        // Four attempts are three sleeps; no sleep is wasted after the last.
-        assert!(started.elapsed() >= Duration::from_millis(150));
-        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
