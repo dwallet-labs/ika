@@ -461,9 +461,11 @@ impl ConsensusAdapter {
         // In addition to that, within_alive_epoch ensures that all pending consensus
         // adapter tasks are stopped before reconfiguration can proceed.
         //
-        // This is essential because narwhal workers reuse same ports when narwhal restarts,
-        // this means we might be sending transactions from previous epochs to narwhal of
-        // new epoch if we have not had this barrier.
+        // This is essential because after epoch change this validator may exit the committee and
+        // become a fullnode, at which point it can no longer submit to consensus. The consensus
+        // instance itself is also shut down and restarted across the boundary, so without this
+        // barrier an in-flight submission from the previous epoch could land in the new epoch's
+        // instance.
         epoch_store
             .within_alive_epoch(self.submit_and_wait_inner(transactions, &epoch_store))
             .await
