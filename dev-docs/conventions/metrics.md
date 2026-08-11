@@ -23,6 +23,21 @@ parts:
   in `consensus_manager/mod.rs` — so they export as `ika_consensus_*`
   without any upstream code change. Consequence: upstream Mysticeti
   Grafana dashboards need a prefix adjustment to be reused;
+
+  **`ika_consensus_*` is a SHARED namespace, and the collision is
+  silent.** That namespace holds both these upstream-owned names and a
+  dozen ika-native Sui-lineage names, and the two live in *different*
+  registries that `RegistryService` merges at the `/metrics` endpoint.
+  Prometheus's per-registry duplicate check therefore never fires — the
+  endpoint just serves the same family name twice and the scraper drops
+  a sample per scrape ("duplicate sample for timestamp"), silently
+  halving one series. This happened with
+  `ika_consensus_last_committed_leader_round` (ika #2022). Before naming
+  an ika-native metric `ika_consensus_<x>`, confirm upstream
+  `consensus-core` has no metric named `<x>`; the
+  `ika_consensus_namespace_does_not_collide_with_consensus_core` test in
+  `crates/ika-core/src/epoch/epoch_metrics.rs` enforces this against a
+  checked-in snapshot of upstream's names.
 - ~85 registered-but-never-set fork-residue metrics (tx-deny, zklogin,
   Move-verifier/execution, transaction-manager caches, random-beacon —
   subsystems ika does not run) were **deleted**, not renamed: they only
@@ -252,6 +267,7 @@ ika_binary_max_protocol_version
 ika_configured_max_protocol_version
 ika_consensus_calculated_throughput
 ika_consensus_calculated_throughput_profile
+ika_consensus_commit_boundary_leader_round
 ika_consensus_committed_messages
 ika_consensus_committed_subdags
 ika_consensus_committed_user_transactions
@@ -260,7 +276,6 @@ ika_consensus_handler_num_low_scoring_authorities
 ika_consensus_handler_processed
 ika_consensus_handler_scores
 ika_consensus_handler_transaction_sizes
-ika_consensus_last_committed_leader_round
 ika_consensus_last_committed_timestamp_seconds
 ika_consensus_manager_shutdown_latency
 ika_consensus_manager_start_latency

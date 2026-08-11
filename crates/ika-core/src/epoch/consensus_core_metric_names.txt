@@ -1,0 +1,147 @@
+# Snapshot of every prometheus metric name registered by upstream Sui's
+# `consensus-core` crate (mainnet-v1.76.1), from consensus/core/src/metrics.rs
+# and consensus/core/src/network/metrics.rs.
+#
+# WHY: ika starts consensus-core with a namespaced registry —
+# `Registry::new_custom(Some("ika_consensus"))` in consensus_manager/mod.rs —
+# so every name below is exported as `ika_consensus_<name>`. ika ALSO registers
+# its own `ika_consensus_*` names into a different registry, and RegistryService
+# merges both at the /metrics endpoint. A name present on both sides is served
+# twice and Prometheus drops one sample per scrape (ika #2022).
+#
+# USED BY: the `ika_consensus_namespace_does_not_collide_with_consensus_core`
+# test in crates/ika-core/src/epoch/epoch_metrics.rs.
+#
+# REGENERATE after a Sui bump (from the consensus/core/src dir of the pinned
+# sui checkout):
+#   python3 -c 'import pathlib,re;M=re.compile(r"register_[a-z_]+_with_registry!\s*\(\s*\"([a-z0-9_]+)\"",re.S);print("\n".join(sorted({m.group(1) for p in pathlib.Path(".").rglob("*.rs") for m in M.finditer(p.read_text(errors="replace"))})))'
+#
+# A stale snapshot only WEAKENS this test (fewer upstream names checked); it can
+# never make it fail spuriously.
+accepted_block_time_drift_ms
+accepted_blocks
+ancestor_state_change_by_authority
+authority_index
+block_commit_latency
+block_manager_gc_unsuspended_blocks
+block_manager_gced_blocks
+block_manager_missing_ancestors
+block_manager_missing_ancestors_by_authority
+block_manager_missing_blocks
+block_manager_missing_blocks_by_authority
+block_manager_skipped_blocks
+block_manager_suspended_blocks
+block_proposal_interval
+block_proposal_leader_wait_count
+block_proposal_leader_wait_ms
+block_receive_delay
+block_suspensions
+block_timestamp_drift_ms
+block_unsuspensions
+blocks_per_commit_count
+blocks_pruned_on_commit
+certifier_accepted_transactions
+certifier_block_latency
+certifier_gc_round
+certifier_missing_ancestor_during_certification
+certifier_output_blocks
+certifier_own_reject_votes
+certifier_rejected_transactions
+commit_observer_last_recovered_commit_index
+commit_round_advancement_interval
+commit_sync_fetch_commits_handler_uncertified_skipped
+commit_sync_fetch_loop_latency
+commit_sync_fetch_missing_blocks
+commit_sync_fetch_once_errors
+commit_sync_fetch_once_latency
+commit_sync_fetched_blocks
+commit_sync_fetched_commits
+commit_sync_fetched_index
+commit_sync_gap_on_processing
+commit_sync_highest_fetched_index
+commit_sync_inflight_fetches
+commit_sync_local_index
+commit_sync_pending_fetches
+commit_sync_quorum_index
+commit_sync_total_fetched_blocks_size
+committed_leaders_total
+core_add_blocks_batch_size
+core_check_block_refs_batch_size
+core_lock_dequeued
+core_lock_enqueued
+core_skipped_proposals
+dag_state_recent_blocks
+dag_state_recent_refs
+dag_state_store_read_count
+dag_state_store_write_count
+excluded_proposal_ancestors_count_by_authority
+fetch_blocks_scheduler_inflight
+finalizer_buffered_commits
+finalizer_output_commits
+finalizer_reject_votes
+finalizer_round_delay
+finalizer_skipped_voting_blocks
+finalizer_transaction_status
+handler_received_block_missing_ancestors
+highest_accepted_authority_round
+highest_accepted_round
+highest_verified_authority_round
+included_excluded_proposal_ancestors_count_by_authority
+invalid_blocks
+last_commit_index
+last_commit_time_diff
+last_committed_authority_round
+last_committed_leader_round
+last_decided_leader_round
+last_known_own_block_round
+leader_timeout_total
+lowest_verified_authority_round
+missing_blocks_after_fetch_total
+missing_blocks_total
+network_excluded_ancestors_count_by_authority
+network_excluded_ancestors_sent_to_fetch
+network_received_excluded_ancestors_from_authority
+network_type
+num_of_bad_nodes
+proposed_block_ancestors
+proposed_block_ancestors_depth
+proposed_block_ancestors_timestamp_drift_ms
+proposed_block_size
+proposed_block_transactions
+proposed_blocks
+protocol_version
+quorum_receive_latency
+rejected_blocks
+reputation_scores
+round_prober_request_errors
+round_tracker_accepted_quorum_round_gaps
+round_tracker_current_accepted_round_gaps
+round_tracker_current_received_round_gaps
+round_tracker_last_propagation_delay
+round_tracker_low_accepted_quorum_round
+round_tracker_low_received_quorum_round
+round_tracker_propagation_delays
+round_tracker_received_quorum_round_gaps
+scope_processing_time
+smart_selection_wait
+sub_dags_per_commit_count
+subscribed_blocks
+subscribed_by
+subscribed_to
+subscriber_connection_attempts
+suspended_block_time
+sync_last_known_own_block_retries
+synchronizer_current_missing_blocks_by_authority
+synchronizer_fetch_failures
+synchronizer_fetched_blocks_by_authority
+synchronizer_fetched_blocks_by_peer
+synchronizer_missing_blocks_by_authority
+synchronizer_process_fetched_failures
+synchronizer_skipped_fetch_requests
+tcp_socket_recv_buffer_max_size
+tcp_socket_recv_buffer_size
+tcp_socket_send_buffer_max_size
+tcp_socket_send_buffer_size
+threshold_clock_round
+uptime
+verified_blocks

@@ -2471,7 +2471,7 @@ impl AuthorityPerEpochStore {
             .get_last_consensus_stats()?
             .map(|stats| stats.index.last_committed_round);
         metrics
-            .consensus_last_committed_leader_round
+            .consensus_commit_boundary_leader_round
             .set(last_committed_leader_round.map_or(-1, |round| round as i64));
         // Ready-signal deadline: restore the persisted 3/4-epoch backstop
         // anchor. The publication-grace term is deliberately absent here —
@@ -5054,7 +5054,7 @@ impl AuthorityPerEpochStore {
         // `ika_last_process_mpc_consensus_round`, the MPC service's consumed
         // round, which lags this one).
         self.metrics
-            .consensus_last_committed_leader_round
+            .consensus_commit_boundary_leader_round
             .set(consensus_commit_info.round as i64);
         self.metrics
             .consensus_last_committed_timestamp_seconds
@@ -8417,7 +8417,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_consensus_commit_boundary_leader_round"),
             -1
         );
         assert_eq!(
@@ -8474,7 +8474,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_consensus_commit_boundary_leader_round"),
             100
         );
         assert_eq!(
@@ -8504,7 +8504,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_consensus_commit_boundary_leader_round"),
             (100 + grace - 1) as i64
         );
         assert_eq!(
@@ -8628,7 +8628,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_consensus_commit_boundary_leader_round"),
             100
         );
         assert_eq!(
@@ -8764,7 +8764,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_consensus_commit_boundary_leader_round"),
             -1
         );
         assert_eq!(

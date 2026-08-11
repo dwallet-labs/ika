@@ -59,11 +59,46 @@ if violations:
     )
     sys.exit(1)
 
+# ika starts consensus-core with `Registry::new_custom(Some("ika_consensus"))`
+# (consensus_manager/mod.rs), so every upstream consensus-core metric is
+# exported as `ika_consensus_<name>`. RegistryService merges that registry with
+# ika's own at the /metrics endpoint, and prometheus's per-registry duplicate
+# check cannot see across registries: a name registered on BOTH sides is served
+# twice and the scraper drops one sample per scrape (ika #2022).
+upstream_path = pathlib.Path("crates/ika-core/src/epoch/consensus_core_metric_names.txt")
+upstream = {
+    line.strip()
+    for line in upstream_path.read_text().splitlines()
+    if line.strip() and not line.startswith("#")
+}
+
+collisions = sorted(
+    n for n in names if n.startswith("ika_consensus_") and n[len("ika_consensus_"):] in upstream
+)
+if collisions:
+    print(
+        "ERROR: these ika-registered metrics collide with upstream consensus-core\n"
+        "metrics exported through the `ika_consensus` registry namespace, so the\n"
+        "node publishes each name TWICE and Prometheus drops a sample per scrape:",
+        file=sys.stderr,
+    )
+    for c in collisions:
+        print(f"  {c}", file=sys.stderr)
+    print(
+        f"Rename the ika-side metric out of the colliding name (see ika #2022 and\n"
+        f"dev-docs/conventions/metrics.md). Upstream names: {upstream_path}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 stale = sorted(a for a in allowlist if a not in names)
 if stale:
     print("NOTE: allowlist entries no longer registered (consider pruning):", file=sys.stderr)
     for s in stale:
         print(f"  {s}", file=sys.stderr)
 
-print(f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped)")
+print(
+    f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped; "
+    f"{len(upstream)} upstream consensus-core names checked for collisions)"
+)
 EOF

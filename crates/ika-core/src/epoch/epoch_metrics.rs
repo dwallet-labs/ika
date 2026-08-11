@@ -102,7 +102,7 @@ pub struct EpochMetrics {
     /// is `-1`, not 0. Re-seeded from the persisted anchor at epoch-store
     /// open, so a mid-epoch restart doesn't misreport a fresh countdown.
     /// Freeze-ETA estimate: `clamp_min(this + grace_rounds -
-    /// ika_consensus_last_committed_leader_round, 0)`.
+    /// ika_consensus_commit_boundary_leader_round, 0)`.
     pub dwallet_mpc_data_ready_quorum_round: IntGauge,
 
     /// The leader round of the latest consensus commit processed at the
@@ -112,7 +112,17 @@ pub struct EpochMetrics {
     /// consumed round, which lags this one). `-1` before the epoch's
     /// first commit; re-seeded from the persisted consensus stats at
     /// epoch-store open.
-    pub consensus_last_committed_leader_round: IntGauge,
+    ///
+    /// This is the commit CONSUMER's view, deliberately distinct from
+    /// consensus-core's `ika_consensus_last_committed_leader_round`
+    /// ("committed to store and sent to commit consumer" — the producer
+    /// side). The two coincide on a healthy node and diverge exactly when
+    /// ika's commit handler stalls while Mysticeti keeps committing, which
+    /// is the failure class this gauge exists to expose. Until 1.2.x it was
+    /// registered under consensus-core's own name and the node published
+    /// the name twice, so Prometheus dropped one sample per scrape
+    /// (ika #2022) — hence `commit_boundary`, not `last_committed`.
+    pub consensus_commit_boundary_leader_round: IntGauge,
 
     /// How many consensus rounds the MPC service trails the consensus commit
     /// path by, sampled on every commit. Small and roughly constant in normal
@@ -331,8 +341,8 @@ impl EpochMetrics {
                 registry
             )
             .unwrap(),
-            consensus_last_committed_leader_round: register_int_gauge_with_registry!(
-                "ika_consensus_last_committed_leader_round",
+            consensus_commit_boundary_leader_round: register_int_gauge_with_registry!(
+                "ika_consensus_commit_boundary_leader_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
                 registry
@@ -434,5 +444,131 @@ impl EpochMetrics {
             .unwrap(),
         };
         Arc::new(this)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EpochMetrics;
+    use prometheus::Registry;
+    use std::collections::{BTreeSet, HashMap};
+
+    /// Every metric name upstream Sui's `consensus-core` registers. ika starts
+    /// consensus with `Registry::new_custom(Some("ika_consensus"))`
+    /// (`consensus_manager/mod.rs`), so each of these is exported as
+    /// `ika_consensus_<name>`. See the file header for how to regenerate.
+    const CONSENSUS_CORE_METRIC_NAMES: &str = include_str!("consensus_core_metric_names.txt");
+
+    fn consensus_core_names() -> BTreeSet<&'static str> {
+        CONSENSUS_CORE_METRIC_NAMES
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect()
+    }
+
+    /// Register every ika-side metric struct that lands in the node's default
+    /// registry, the way `IkaNode::start_async` composes them, and return the
+    /// exported metric family names.
+    fn ika_side_metric_family_names() -> Vec<String> {
+        let registry = Registry::new();
+
+        // Held so nothing is dropped before `gather()`.
+        let _epoch = EpochMetrics::new(&registry);
+        let _authority = crate::authority::AuthorityMetrics::new(&registry);
+        let _consensus_manager = crate::consensus_manager::ConsensusManagerMetrics::new(&registry);
+        let _consensus_adapter = crate::consensus_adapter::ConsensusAdapterMetrics::new(&registry);
+        let _tx_validator = crate::consensus_validator::IkaTxValidatorMetrics::new(&registry);
+        let _mpc = crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics::new(&registry);
+        let _dwallet_checkpoint =
+            crate::dwallet_checkpoints::DWalletCheckpointMetrics::new(&registry);
+        let _system_checkpoint = crate::system_checkpoints::SystemCheckpointMetrics::new(&registry);
+        let _sui_connector = crate::sui_connector::metrics::SuiConnectorMetrics::new(&registry);
+        let _ocs = crate::sui_connector::ocs_metrics::OcsMetrics::new(&registry);
+
+        registry
+            .gather()
+            .into_iter()
+            .map(|family| family.name().to_string())
+            .collect()
+    }
+
+    /// The `/metrics` endpoint merges several registries (`RegistryService`),
+    /// so prometheus's own per-registry duplicate check cannot see a collision
+    /// between an ika-registered `ika_consensus_*` name and an upstream
+    /// consensus-core metric exported through the `ika_consensus` namespace.
+    /// The endpoint just serves the family name twice and Prometheus drops one
+    /// sample per scrape ("duplicate sample for timestamp"), silently halving
+    /// one of the two series — ika #2022.
+    ///
+    /// This is deliberately GENERIC: it fails for ANY ika metric that collides
+    /// with ANY upstream consensus-core name, not just the one from #2022.
+    #[test]
+    fn ika_consensus_namespace_does_not_collide_with_consensus_core() {
+        let upstream = consensus_core_names();
+        assert!(
+            upstream.contains("last_committed_leader_round"),
+            "consensus-core name snapshot looks empty/malformed - check \
+             consensus_core_metric_names.txt"
+        );
+
+        let collisions: Vec<String> = ika_side_metric_family_names()
+            .into_iter()
+            .filter(|name| {
+                name.strip_prefix("ika_consensus_")
+                    .is_some_and(|suffix| upstream.contains(suffix))
+            })
+            .collect();
+
+        assert!(
+            collisions.is_empty(),
+            "these ika-registered metrics collide with upstream consensus-core \
+             metrics exported through the `ika_consensus` registry namespace, so \
+             the node publishes each name TWICE and Prometheus drops a sample per \
+             scrape (ika #2022): {collisions:?}\n\
+             Rename the ika-side metric (see dev-docs/conventions/metrics.md)."
+        );
+    }
+
+    /// Within the ika-side registry itself, no family name may repeat. Prometheus
+    /// rejects a duplicate registration, and every call site `unwrap()`s, so this
+    /// mostly guards against a future registry composition that swallows the
+    /// error instead of panicking.
+    #[test]
+    fn ika_side_registry_has_no_duplicate_family_names() {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for name in ika_side_metric_family_names() {
+            *counts.entry(name).or_default() += 1;
+        }
+        let duplicates: Vec<&String> = counts
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            duplicates.is_empty(),
+            "duplicate metric family names in the ika registry: {duplicates:?}"
+        );
+    }
+
+    /// Pinned regression for ika #2022: the commit-boundary gauge must not sit
+    /// on consensus-core's `last_committed_leader_round` name.
+    #[test]
+    fn commit_boundary_gauge_is_not_named_after_the_consensus_core_gauge() {
+        let names = ika_side_metric_family_names();
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "ika_consensus_last_committed_leader_round"),
+            "ika must not register `ika_consensus_last_committed_leader_round` - \
+             that is consensus-core's producer-side gauge, re-exported through the \
+             `ika_consensus` namespace (ika #2022)"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "ika_consensus_commit_boundary_leader_round"),
+            "the commit-boundary leader-round gauge is missing"
+        );
     }
 }
