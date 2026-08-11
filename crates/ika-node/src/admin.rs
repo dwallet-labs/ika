@@ -12,8 +12,11 @@ use humantime::parse_duration;
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 use telemetry_subscribers::TracingHandle;
-use tracing::info;
+use tokio::net::TcpListener;
+use tokio::time::sleep;
+use tracing::{error, info, warn};
 
 // Example commands:
 //
@@ -56,6 +59,13 @@ const CLEAR_BUFFER_STAKE_ROUTE: &str = "/clear-override-buffer-stake";
 const CAPABILITIES: &str = "/capabilities";
 const NODE_CONFIG: &str = "/node-config";
 
+/// How long to wait between admin-server bind attempts.
+const BIND_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// How many times to attempt the bind before giving up on the admin server.
+/// Together with the interval this keeps trying for ~2 minutes, comfortably
+/// past the ~60s a socket spends in `TIME_WAIT` after a restart.
+const BIND_ATTEMPTS: u32 = 25;
+
 struct AppState {
     node: Arc<IkaNode>,
     tracing_handle: TracingHandle,
@@ -93,15 +103,73 @@ pub async fn run_admin_server(node: Arc<IkaNode>, port: u16, tracing_handle: Tra
         "starting admin server"
     );
 
-    let listener = tokio::net::TcpListener::bind(&socket_address)
-        .await
-        .unwrap();
-    axum::serve(
+    serve_admin(app, socket_address, BIND_ATTEMPTS, BIND_RETRY_INTERVAL).await;
+}
+
+/// Serve `app` on `socket_address`, riding out a transient bind failure and
+/// then giving up quietly — never panicking.
+///
+/// The admin endpoint is an operational convenience, not a correctness
+/// component, and losing it is the entire cost of a failure here. Since
+/// panics kill the process by default, an `unwrap` on this bind turned a
+/// transient `AddrInUse` — a port race on a shared CI runner, or a restart
+/// racing its own port through `TIME_WAIT` — into node death at boot. A node
+/// without an admin endpoint is strictly healthier than a dead node.
+///
+/// The retries are bounded so a genuinely misconfigured duplicate port ends
+/// in a single loud give-up rather than an unbounded background loop; each
+/// attempt warns with the address, so that misconfiguration is visible
+/// immediately either way.
+async fn serve_admin(
+    app: Router,
+    socket_address: SocketAddr,
+    attempts: u32,
+    retry_interval: Duration,
+) {
+    let Some(listener) = bind_with_retry(socket_address, attempts, retry_interval).await else {
+        error!(
+            address =% socket_address,
+            "gave up binding the admin server; the node continues without the admin endpoint"
+        );
+        return;
+    };
+    if let Err(err) = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
-    .unwrap();
+    {
+        error!(
+            address =% socket_address,
+            error =? err,
+            "admin server stopped; the node continues without the admin endpoint"
+        );
+    }
+}
+
+/// Bind the admin listener, retrying `attempts` times at `retry_interval`.
+/// `None` once the attempts are exhausted.
+async fn bind_with_retry(
+    socket_address: SocketAddr,
+    attempts: u32,
+    retry_interval: Duration,
+) -> Option<TcpListener> {
+    for attempt in 1..=attempts {
+        match TcpListener::bind(&socket_address).await {
+            Ok(listener) => return Some(listener),
+            Err(err) => warn!(
+                address =% socket_address,
+                attempt,
+                attempts,
+                error =? err,
+                "failed to bind the admin server, retrying"
+            ),
+        }
+        if attempt < attempts {
+            sleep(retry_interval).await;
+        }
+    }
+    None
 }
 
 #[derive(Deserialize)]
@@ -264,5 +332,102 @@ async fn set_override_protocol_upgrade_buffer_stake(
             format!("protocol upgrade buffer stake set to '{buffer_bps}'\n"),
         ),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+    use tokio::time::timeout;
+
+    /// A stand-in for the real admin router: `serve_admin` only ever sees an
+    /// already-stateless `Router`, so the routes it carries are irrelevant to
+    /// the bind path under test.
+    fn test_router() -> Router {
+        Router::new().route("/ping", get(|| async { "pong" }))
+    }
+
+    /// A listener squatting on an ephemeral port, plus that port's address.
+    async fn squatted_port() -> (TcpListener, SocketAddr) {
+        let squatter = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .await
+            .expect("bind a squatter on an ephemeral port");
+        let address = squatter.local_addr().expect("squatter local address");
+        (squatter, address)
+    }
+
+    async fn get_ping(address: SocketAddr) -> Option<String> {
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}/ping"))
+            .send()
+            .await
+            .ok()?;
+        response.text().await.ok()
+    }
+
+    /// The node-side failure this guards: another process holds the admin
+    /// port, and the node dies at boot because the bind panicked on a runtime
+    /// where panics are fatal. `serve_admin` must exhaust its retries and
+    /// return normally instead — the node runs on, minus the admin endpoint.
+    #[tokio::test]
+    async fn a_squatted_admin_port_does_not_take_the_node_down() {
+        let (_squatter, address) = squatted_port().await;
+
+        timeout(
+            Duration::from_secs(30),
+            serve_admin(test_router(), address, 3, Duration::from_millis(50)),
+        )
+        .await
+        .expect("a permanently squatted admin port must be given up on, not waited on forever");
+    }
+
+    /// The retries ride out a transient squatter: once the port is released
+    /// the admin server comes up on its own, with no node restart.
+    #[tokio::test]
+    async fn the_admin_server_comes_up_once_the_port_is_released() {
+        let (squatter, address) = squatted_port().await;
+
+        let server = tokio::spawn(serve_admin(
+            test_router(),
+            address,
+            600,
+            Duration::from_millis(50),
+        ));
+
+        // Let the first attempts fail against the squatter before it lets go.
+        sleep(Duration::from_millis(120)).await;
+        drop(squatter);
+
+        let body = timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(body) = get_ping(address).await {
+                    return body;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the admin server must come up once the port is released");
+        assert_eq!(body, "pong");
+
+        server.abort();
+    }
+
+    /// The retry budget is a bound, not a loop: a duplicate port that is
+    /// never released ends in one give-up after the configured attempts.
+    #[tokio::test]
+    async fn the_bind_retry_is_bounded() {
+        let (_squatter, address) = squatted_port().await;
+
+        let started = Instant::now();
+        assert!(
+            bind_with_retry(address, 4, Duration::from_millis(50))
+                .await
+                .is_none()
+        );
+        // Four attempts are three sleeps; no sleep is wasted after the last.
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
