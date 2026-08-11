@@ -59,36 +59,76 @@ if violations:
     )
     sys.exit(1)
 
-# ika starts consensus-core with `Registry::new_custom(Some("ika_consensus"))`
-# (consensus_manager/mod.rs), so every upstream consensus-core metric is
-# exported as `ika_consensus_<name>`. RegistryService merges that registry with
-# ika's own at the /metrics endpoint, and prometheus's per-registry duplicate
-# check cannot see across registries: a name registered on BOTH sides is served
-# twice and the scraper drops one sample per scrape (ika #2022).
-upstream_path = pathlib.Path("crates/ika-core/src/epoch/consensus_core_metric_names.txt")
-upstream = {
-    line.strip()
-    for line in upstream_path.read_text().splitlines()
-    if line.strip() and not line.startswith("#")
+# `ika_consensus_*` is NOT ika's namespace. consensus_manager/mod.rs starts
+# consensus-core with `Registry::new_custom(Some("ika_consensus"))`, so every
+# metric upstream registers is exported under that prefix, and upstream may add
+# any name at any time. RegistryService merges that registry with ika's own at
+# /metrics, and prometheus's duplicate check is per-registry, so a name present
+# on both sides is silently served twice and the scraper drops a sample per
+# scrape (ika #2022). The rule is structural: ika registers nothing in there.
+#
+# THIS LIST ONLY EVER SHRINKS. It enumerates OUR OWN pre-existing names, which
+# we control and which are stable — it does NOT mirror anything upstream, so
+# there is nothing to regenerate on a Sui bump. Adding an entry means putting a
+# NEW ika metric into a namespace that is not ours; pick a name outside
+# `ika_consensus_*` instead. Deleting an entry, as each metric migrates out, is
+# the only edit this list should ever see.
+#
+# Keep in sync with LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS in
+# crates/ika-core/src/epoch/epoch_metrics.rs (the runtime half of this rule).
+LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS = {
+    # crates/ika-core/src/authority.rs (AuthorityMetrics)
+    "ika_consensus_calculated_throughput",
+    "ika_consensus_calculated_throughput_profile",
+    "ika_consensus_committed_messages",
+    "ika_consensus_committed_subdags",
+    "ika_consensus_committed_user_transactions",
+    "ika_consensus_handler_cancelled_transactions",
+    "ika_consensus_handler_num_low_scoring_authorities",
+    "ika_consensus_handler_processed",
+    "ika_consensus_handler_scores",
+    "ika_consensus_handler_transaction_sizes",
+    # crates/ika-core/src/consensus_manager/mod.rs (ConsensusManagerMetrics)
+    "ika_consensus_manager_shutdown_latency",
+    "ika_consensus_manager_start_latency",
+    # crates/ika-core/src/epoch/epoch_metrics.rs (EpochMetrics)
+    "ika_consensus_last_committed_timestamp_seconds",
 }
 
-collisions = sorted(
-    n for n in names if n.startswith("ika_consensus_") and n[len("ika_consensus_"):] in upstream
+namespace_violations = sorted(
+    n
+    for n in names
+    if n.startswith("ika_consensus_") and n not in LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS
 )
-if collisions:
+if namespace_violations:
     print(
-        "ERROR: these ika-registered metrics collide with upstream consensus-core\n"
-        "metrics exported through the `ika_consensus` registry namespace, so the\n"
-        "node publishes each name TWICE and Prometheus drops a sample per scrape:",
+        "ERROR: these ika metrics are registered inside `ika_consensus_*`, the\n"
+        "namespace ika hands to consensus-core, so upstream may collide with them\n"
+        "at any time and the node would publish each name TWICE, dropping a sample\n"
+        "per scrape (ika #2022):",
         file=sys.stderr,
     )
-    for c in collisions:
-        print(f"  {c}", file=sys.stderr)
+    for v in namespace_violations:
+        print(f"  {v}", file=sys.stderr)
     print(
-        f"Rename the ika-side metric out of the colliding name (see ika #2022 and\n"
-        f"dev-docs/conventions/metrics.md). Upstream names: {upstream_path}",
+        "Give the metric a name outside `ika_consensus_*`. Do NOT add it to\n"
+        "LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS — that list only shrinks.\n"
+        "Convention: dev-docs/conventions/metrics.md",
         file=sys.stderr,
     )
+    sys.exit(1)
+
+stale_namespace = sorted(
+    a for a in LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS if a not in names
+)
+if stale_namespace:
+    print(
+        "ERROR: LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS lists metrics that are no\n"
+        "longer registered — delete them, the list only shrinks:",
+        file=sys.stderr,
+    )
+    for s in stale_namespace:
+        print(f"  {s}", file=sys.stderr)
     sys.exit(1)
 
 stale = sorted(a for a in allowlist if a not in names)
@@ -99,6 +139,7 @@ if stale:
 
 print(
     f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped; "
-    f"{len(upstream)} upstream consensus-core names checked for collisions)"
+    f"{len(LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS)} legacy `ika_consensus_*` names "
+    f"remaining to migrate)"
 )
 EOF

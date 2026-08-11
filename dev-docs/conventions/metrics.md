@@ -24,20 +24,29 @@ parts:
   without any upstream code change. Consequence: upstream Mysticeti
   Grafana dashboards need a prefix adjustment to be reused;
 
-  **`ika_consensus_*` is a SHARED namespace, and the collision is
-  silent.** That namespace holds both these upstream-owned names and a
-  dozen ika-native Sui-lineage names, and the two live in *different*
-  registries that `RegistryService` merges at the `/metrics` endpoint.
-  Prometheus's per-registry duplicate check therefore never fires — the
-  endpoint just serves the same family name twice and the scraper drops
-  a sample per scrape ("duplicate sample for timestamp"), silently
-  halving one series. This happened with
-  `ika_consensus_last_committed_leader_round` (ika #2022). Before naming
-  an ika-native metric `ika_consensus_<x>`, confirm upstream
-  `consensus-core` has no metric named `<x>`; the
-  `ika_consensus_namespace_does_not_collide_with_consensus_core` test in
-  `crates/ika-core/src/epoch/epoch_metrics.rs` enforces this against a
-  checked-in snapshot of upstream's names.
+  **`ika_consensus_*` therefore belongs to upstream, and ika must not
+  register anything in it.** Upstream can add a metric of any name at
+  any time, and the failure is silent: the upstream names and ika's own
+  live in *different* registries that `RegistryService` merges at the
+  `/metrics` endpoint, so prometheus's per-registry duplicate check never
+  fires. The endpoint just serves the same family name twice and the
+  scraper drops a sample per scrape ("duplicate sample for timestamp"),
+  silently halving one series. That is ika #2022, where ika's
+  commit-boundary gauge sat on upstream's own
+  `last_committed_leader_round`.
+
+  **Rule: a new ika metric never starts with `ika_consensus_`.** Picking
+  an `ika_consensus_*` name that upstream merely does not use *today*
+  is not good enough — that is precisely the property the #2022 name had
+  until upstream grew into it. Enforced in two layers, both keyed on a
+  short list of pre-existing violators that only ever SHRINKS:
+  `LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS` in
+  `crates/ika-core/src/epoch/epoch_metrics.rs` (runtime, over the composed
+  registry) and the same list in `scripts/check-metric-names.sh` (static,
+  over every registered literal). Those lists enumerate *our own* names —
+  there is nothing upstream to mirror or regenerate. The 13 remaining
+  entries are tracked for migration; each move needs a matching downstream
+  dashboard/alert update, so they are deliberately left in place for now.
 - ~85 registered-but-never-set fork-residue metrics (tx-deny, zklogin,
   Move-verifier/execution, transaction-manager caches, random-beacon —
   subsystems ika does not run) were **deleted**, not renamed: they only
@@ -264,10 +273,10 @@ ika_archive_actions_read
 ika_archive_dwallet_checkpoints_read
 ika_archive_system_checkpoints_read
 ika_binary_max_protocol_version
+ika_commit_boundary_leader_round
 ika_configured_max_protocol_version
 ika_consensus_calculated_throughput
 ika_consensus_calculated_throughput_profile
-ika_consensus_commit_boundary_leader_round
 ika_consensus_committed_messages
 ika_consensus_committed_subdags
 ika_consensus_committed_user_transactions

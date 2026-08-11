@@ -102,7 +102,7 @@ pub struct EpochMetrics {
     /// is `-1`, not 0. Re-seeded from the persisted anchor at epoch-store
     /// open, so a mid-epoch restart doesn't misreport a fresh countdown.
     /// Freeze-ETA estimate: `clamp_min(this + grace_rounds -
-    /// ika_consensus_commit_boundary_leader_round, 0)`.
+    /// ika_commit_boundary_leader_round, 0)`.
     pub dwallet_mpc_data_ready_quorum_round: IntGauge,
 
     /// The leader round of the latest consensus commit processed at the
@@ -118,11 +118,18 @@ pub struct EpochMetrics {
     /// ("committed to store and sent to commit consumer" — the producer
     /// side). The two coincide on a healthy node and diverge exactly when
     /// ika's commit handler stalls while Mysticeti keeps committing, which
-    /// is the failure class this gauge exists to expose. Until 1.2.x it was
-    /// registered under consensus-core's own name and the node published
-    /// the name twice, so Prometheus dropped one sample per scrape
-    /// (ika #2022) — hence `commit_boundary`, not `last_committed`.
-    pub consensus_commit_boundary_leader_round: IntGauge,
+    /// is the failure class this gauge exists to expose.
+    ///
+    /// Deliberately NOT named `ika_consensus_*`: that prefix is the
+    /// namespace of the registry ika hands to consensus-core
+    /// (`Registry::new_custom(Some("ika_consensus"))` in
+    /// `consensus_manager/mod.rs`), so every name in it is upstream's to
+    /// claim. Until 1.2.x this gauge sat on upstream's own
+    /// `last_committed_leader_round` and the node published that family
+    /// twice, dropping a sample per scrape (ika #2022). Merely picking an
+    /// unused `ika_consensus_*` name would only postpone the next
+    /// collision to whenever upstream grows into it.
+    pub commit_boundary_leader_round: IntGauge,
 
     /// How many consensus rounds the MPC service trails the consensus commit
     /// path by, sampled on every commit. Small and roughly constant in normal
@@ -341,8 +348,8 @@ impl EpochMetrics {
                 registry
             )
             .unwrap(),
-            consensus_commit_boundary_leader_round: register_int_gauge_with_registry!(
-                "ika_consensus_commit_boundary_leader_round",
+            commit_boundary_leader_round: register_int_gauge_with_registry!(
+                "ika_commit_boundary_leader_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
                 registry
@@ -453,23 +460,52 @@ mod tests {
     use prometheus::Registry;
     use std::collections::{BTreeSet, HashMap};
 
-    /// Every metric name upstream Sui's `consensus-core` registers. ika starts
-    /// consensus with `Registry::new_custom(Some("ika_consensus"))`
-    /// (`consensus_manager/mod.rs`), so each of these is exported as
-    /// `ika_consensus_<name>`. See the file header for how to regenerate.
-    const CONSENSUS_CORE_METRIC_NAMES: &str = include_str!("consensus_core_metric_names.txt");
-
-    fn consensus_core_names() -> BTreeSet<&'static str> {
-        CONSENSUS_CORE_METRIC_NAMES
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect()
-    }
+    /// ika-side metrics that still sit inside consensus-core's
+    /// `ika_consensus_*` namespace. Every one predates this rule; the
+    /// migration is tracked separately, because moving them means downstream
+    /// dashboard and alert churn.
+    ///
+    /// THIS LIST ONLY EVER SHRINKS. It enumerates OUR OWN metric names, which
+    /// we control and which are stable — it is NOT a mirror of anything
+    /// upstream, so there is nothing here to "regenerate" or refresh on a Sui
+    /// bump. Adding an entry means putting a NEW ika metric into a namespace
+    /// that is not ours; do not do it, pick a name outside `ika_consensus_*`
+    /// instead. Deleting an entry (because the metric moved out) is the only
+    /// edit this list should ever see, and needs no other change.
+    /// Sorted, so that deleting a migrated entry is a clean one-line diff.
+    /// Trailing marker = where it is registered:
+    ///   [a] crates/ika-core/src/authority.rs             (AuthorityMetrics)
+    ///   [c] crates/ika-core/src/consensus_manager/mod.rs (ConsensusManagerMetrics)
+    ///   [e] crates/ika-core/src/epoch/epoch_metrics.rs   (EpochMetrics)
+    const LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS: &[&str] = &[
+        "ika_consensus_calculated_throughput",               // [a]
+        "ika_consensus_calculated_throughput_profile",       // [a]
+        "ika_consensus_committed_messages",                  // [a]
+        "ika_consensus_committed_subdags",                   // [a]
+        "ika_consensus_committed_user_transactions",         // [a]
+        "ika_consensus_handler_cancelled_transactions",      // [a]
+        "ika_consensus_handler_num_low_scoring_authorities", // [a]
+        "ika_consensus_handler_processed",                   // [a]
+        "ika_consensus_handler_scores",                      // [a]
+        "ika_consensus_handler_transaction_sizes",           // [a]
+        "ika_consensus_last_committed_timestamp_seconds",    // [e]
+        "ika_consensus_manager_shutdown_latency",            // [c]
+        "ika_consensus_manager_start_latency",               // [c]
+    ];
 
     /// Register every ika-side metric struct that lands in the node's default
     /// registry, the way `IkaNode::start_async` composes them, and return the
     /// exported metric family names.
+    ///
+    /// NOTE: this is what the node actually SERVES, which is not the same as
+    /// what it registers. `gather()` omits a `*_vec` family that has no label
+    /// children yet, so a freshly built registry hides every labelled metric
+    /// (6 of the 13 legacy `ika_consensus_*` names are vecs). That is the right
+    /// domain for this test — an unobserved family is never written to the
+    /// endpoint and so cannot collide — but it means this layer alone would not
+    /// catch a new *labelled* violator. `scripts/check-metric-names.sh` covers
+    /// that: it extracts every registered literal statically, vec or not. The
+    /// two layers are complementary, not redundant.
     fn ika_side_metric_family_names() -> Vec<String> {
         let registry = Registry::new();
 
@@ -493,47 +529,77 @@ mod tests {
             .collect()
     }
 
-    /// The `/metrics` endpoint merges several registries (`RegistryService`),
-    /// so prometheus's own per-registry duplicate check cannot see a collision
-    /// between an ika-registered `ika_consensus_*` name and an upstream
-    /// consensus-core metric exported through the `ika_consensus` namespace.
-    /// The endpoint just serves the family name twice and Prometheus drops one
-    /// sample per scrape ("duplicate sample for timestamp"), silently halving
-    /// one of the two series — ika #2022.
+    /// `ika_consensus_*` is not ika's namespace to use. `consensus_manager`
+    /// starts consensus-core with `Registry::new_custom(Some("ika_consensus"))`,
+    /// so every metric upstream registers is exported under that prefix and
+    /// upstream may add any name it likes at any time. `RegistryService` merges
+    /// that registry with ika's own at `/metrics`, and prometheus's duplicate
+    /// check is per-registry, so a name present on both sides is silently
+    /// served twice and the scraper drops a sample per scrape — ika #2022.
     ///
-    /// This is deliberately GENERIC: it fails for ANY ika metric that collides
-    /// with ANY upstream consensus-core name, not just the one from #2022.
+    /// The rule is therefore structural: ika registers NOTHING under
+    /// `ika_consensus_*`. Checking ika's names against a snapshot of upstream's
+    /// current names would not do — such a snapshot is stale the moment
+    /// upstream adds a metric, which is exactly how #2022 happened.
     #[test]
-    fn ika_consensus_namespace_does_not_collide_with_consensus_core() {
-        let upstream = consensus_core_names();
-        assert!(
-            upstream.contains("last_committed_leader_round"),
-            "consensus-core name snapshot looks empty/malformed - check \
-             consensus_core_metric_names.txt"
-        );
+    fn ika_metrics_stay_out_of_the_consensus_core_namespace() {
+        let legacy: BTreeSet<&str> = LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS
+            .iter()
+            .copied()
+            .collect();
 
-        let collisions: Vec<String> = ika_side_metric_family_names()
+        let violations: Vec<String> = ika_side_metric_family_names()
             .into_iter()
-            .filter(|name| {
-                name.strip_prefix("ika_consensus_")
-                    .is_some_and(|suffix| upstream.contains(suffix))
-            })
+            .filter(|name| name.starts_with("ika_consensus_") && !legacy.contains(name.as_str()))
             .collect();
 
         assert!(
-            collisions.is_empty(),
-            "these ika-registered metrics collide with upstream consensus-core \
-             metrics exported through the `ika_consensus` registry namespace, so \
-             the node publishes each name TWICE and Prometheus drops a sample per \
-             scrape (ika #2022): {collisions:?}\n\
-             Rename the ika-side metric (see dev-docs/conventions/metrics.md)."
+            violations.is_empty(),
+            "these ika metrics are registered inside `ika_consensus_*`, the namespace \
+             ika hands to consensus-core, so upstream may collide with them at any \
+             time and the node would publish each name TWICE (ika #2022): \
+             {violations:?}\n\
+             Give the metric a name outside `ika_consensus_*` (see \
+             dev-docs/conventions/metrics.md). Do NOT add it to \
+             LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS - that list only shrinks."
+        );
+    }
+
+    /// The allowlist must stay sorted and duplicate-free so that removing an
+    /// entry, as each legacy metric migrates out, stays a clean one-line diff.
+    /// The "entry no longer names a registered metric" check deliberately lives
+    /// in `scripts/check-metric-names.sh` instead: it extracts names statically
+    /// and therefore sees the labelled metrics that `gather()` hides here.
+    #[test]
+    fn legacy_consensus_namespace_allowlist_is_sorted_and_unique() {
+        let mut sorted = LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(
+            LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS,
+            &sorted[..],
+            "keep LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS sorted"
+        );
+
+        let unique: BTreeSet<&&str> = LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS.iter().collect();
+        assert_eq!(
+            unique.len(),
+            LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS.len(),
+            "duplicate entry in LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS"
+        );
+
+        assert!(
+            LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS
+                .iter()
+                .all(|name| name.starts_with("ika_consensus_")),
+            "LEGACY_IKA_CONSENSUS_NAMESPACE_METRICS is only for `ika_consensus_*` names"
         );
     }
 
     /// Within the ika-side registry itself, no family name may repeat. Prometheus
     /// rejects a duplicate registration, and every call site `unwrap()`s, so this
     /// mostly guards against a future registry composition that swallows the
-    /// error instead of panicking.
+    /// error instead of panicking. Independent of the namespace rule above: this
+    /// one is intra-registry, #2022 was cross-registry.
     #[test]
     fn ika_side_registry_has_no_duplicate_family_names() {
         let mut counts: HashMap<String, usize> = HashMap::new();
@@ -551,10 +617,9 @@ mod tests {
         );
     }
 
-    /// Pinned regression for ika #2022: the commit-boundary gauge must not sit
-    /// on consensus-core's `last_committed_leader_round` name.
+    /// Pinned regression for ika #2022.
     #[test]
-    fn commit_boundary_gauge_is_not_named_after_the_consensus_core_gauge() {
+    fn commit_boundary_gauge_is_outside_the_consensus_core_namespace() {
         let names = ika_side_metric_family_names();
         assert!(
             !names
@@ -567,7 +632,7 @@ mod tests {
         assert!(
             names
                 .iter()
-                .any(|name| name == "ika_consensus_commit_boundary_leader_round"),
+                .any(|n| n == "ika_commit_boundary_leader_round"),
             "the commit-boundary leader-round gauge is missing"
         );
     }
