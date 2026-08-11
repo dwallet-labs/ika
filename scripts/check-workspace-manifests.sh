@@ -7,8 +7,8 @@
 # auto-includes — is simply never built. It rots invisibly: `ika-cluster-test`
 # came to inherit eleven workspace dependencies that do not exist
 # (`ika-indexer`, `ika-faucet`, `ika-graphql-rpc`, …) and `ika-sdk` came to
-# import `ika_types` modules that had been removed, and neither ever failed a
-# build, because neither was in one.
+# import `ika_types` modules that had been removed. Neither ever failed a
+# build, because neither was in one; both are now deleted.
 #
 # Membership is taken from `cargo metadata`, not by parsing `members`, so
 # cargo's own resolution rules are the authority — in particular the
