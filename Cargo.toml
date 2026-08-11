@@ -3,6 +3,15 @@ resolver = "3"
 
 exclude = [
     "sdk/ika-wasm",
+    # Fork residue: a renamed copy of `sui-sdk` that imports `ika_types`
+    # modules ika never had (`balance`, `base_types`, `transaction`, …), so it
+    # has not compiled in a long time. Excluded rather than deleted because
+    # dev-docs/conventions/dead-code-cleanup.md classes `ika-sdk` as
+    # `api_change`: removing a public surface is an owner decision, not
+    # cleanup. Named here so its status is deliberate rather than accidental —
+    # scripts/check-workspace-manifests.sh requires every crate to be either
+    # built or explicitly excluded.
+    "crates/ika-sdk",
 ]
 
 members = [
