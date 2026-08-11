@@ -1,22 +1,23 @@
 diff --git a/.cargo/config.toml b/.cargo/config.toml
-index ec2c459490..55985cbe9f 100644
+index 24580cbecc..d9860d9fde 100644
 --- a/.cargo/config.toml
 +++ b/.cargo/config.toml
-@@ -25,4 +25,4 @@ move-clippy = [
+@@ -27,7 +27,7 @@ move-clippy = [
  ]
-
+ 
  [build]
 -rustflags = ["-C", "force-frame-pointers=yes", "-C", "force-unwind-tables=yes"]
 +rustflags = ["-C", "force-frame-pointers=yes", "-C", "force-unwind-tables=yes", "--cfg", "msim"]
+ 
+ # Workaround for a known WebAssembly stack size limitation.
+ # The network DKG public output is too large to deserialize directly in the default WASM memory configuration,
 diff --git a/Cargo.toml b/Cargo.toml
-index c0829bc1b6..4007f97d66 100644
+index 20f92df9df..0d76a5c962 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -682,5 +682,7 @@ field_names = "0.2.0"
- semver = "1.0.16"
- spinners = "4.1.0"
- include_dir = "0.7.3"
-
- [patch.crates-io]
+@@ -374,3 +374,5 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
+ async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+ async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+ async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 +tokio = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6" }
 +futures-timer = { git = "https://github.com/MystenLabs/mysten-sim.git", rev = "2c2ec3ffbc1e559c575dc7de1ff2498d1f6700f6" }
