@@ -48,7 +48,7 @@ use ika_network::sui_state_mirror::{
 };
 use ika_sui_client::genesis::load_and_verify_sui_genesis;
 use ika_sui_client::grpc::SuiGrpcClient;
-use ika_sui_client::transport::SuiTransport;
+use ika_sui_client::transport::{SuiTransport, TransportError};
 use tracing::{info, warn};
 use typed_store::TypedStoreError;
 
@@ -569,15 +569,47 @@ pub fn configured_mirror_peer_ids(cfg: &SuiConnectorConfig) -> Vec<PeerId> {
 }
 
 async fn probe_artifacts_digest(transport: &Arc<dyn SuiTransport>) -> Result<(), SetupError> {
-    let summary = transport
-        .get_latest_checkpoint()
-        .await
-        .map_err(|e| SetupError::Transport(format!("probe latest checkpoint: {e}")))?;
+    // The probe needs checkpoint CONTENT to inspect the digest, and content
+    // reads go through the fullnode's availability window — which a fullnode
+    // pruning AT head can empty, NotFounding its OWN latest for extended
+    // stretches (measured: 36 minutes on a localnet). A NotFound therefore
+    // says nothing about the chain's capability, only about availability
+    // right now — skip the probe instead of failing the boot; the verifier
+    // stack downstream consumes artifacts digests per checkpoint and still
+    // fails loudly on a chain that truly lacks them. A missing digest on a
+    // FETCHED checkpoint stays a definitive, fatal answer.
+    let summary = match transport.get_latest_checkpoint().await {
+        Ok(summary) => summary,
+        Err(TransportError::NotFound(reason)) => {
+            warn!(
+                reason,
+                "artifacts-digest probe skipped: latest checkpoint unavailable                  (fullnode pruning at head); the verifier stack still enforces                  digests per checkpoint"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(SetupError::Transport(format!(
+                "probe latest checkpoint: {e}"
+            )));
+        }
+    };
     let seq = *summary.sequence_number();
-    let data = transport
-        .get_full_checkpoint(seq)
-        .await
-        .map_err(|e| SetupError::Transport(format!("probe full checkpoint {seq}: {e}")))?;
+    let data = match transport.get_full_checkpoint(seq).await {
+        Ok(data) => data,
+        Err(TransportError::NotFound(reason)) => {
+            warn!(
+                seq,
+                reason,
+                "artifacts-digest probe skipped: checkpoint pruned between                  the latest read and the content fetch"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(SetupError::Transport(format!(
+                "probe full checkpoint {seq}: {e}"
+            )));
+        }
+    };
     if data
         .checkpoint_summary
         .checkpoint_artifacts_digest()
@@ -596,9 +628,137 @@ async fn probe_artifacts_digest(transport: &Arc<dyn SuiTransport>) -> Result<(),
 mod tests {
     use super::*;
 
+    use async_trait::async_trait;
     use ika_config::node::{SuiChainIdentifier, SuiDataSource};
-    use sui_types::base_types::ObjectID;
+    use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction};
+    use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
     use sui_types::committee::Committee;
+    use sui_types::digests::CheckpointDigest;
+    use sui_types::full_checkpoint_content::CheckpointData;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CertifiedCheckpointSummary, CheckpointContents, CheckpointSequenceNumber, CheckpointSummary,
+    };
+    use sui_types::object::Object;
+
+    /// A transport whose content reads behave like a fullnode pruning AT
+    /// head: the latest summary (when `latest` is `None`) and every full
+    /// checkpoint NotFound. Replays the boot failure where a validator
+    /// restarting inside such a window died on the artifacts-digest probe.
+    struct PrunedAtHeadStub {
+        latest: Option<CertifiedCheckpointSummary>,
+    }
+
+    #[async_trait]
+    impl SuiTransport for PrunedAtHeadStub {
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            self.latest
+                .clone()
+                .ok_or_else(|| TransportError::NotFound("Checkpoint 28166 not found".into()))
+        }
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            Err(TransportError::NotFound(format!(
+                "Checkpoint {seq} not found"
+            )))
+        }
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unimplemented!()
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_committee(
+            &self,
+            _epoch: Option<u64>,
+        ) -> Result<sui_types::committee::Committee, TransportError> {
+            unimplemented!()
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _digest: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object_with_version(
+            &self,
+            _id: ObjectID,
+            _version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_get_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<Vec<Object>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _parent: ObjectID,
+            _page_size: Option<u32>,
+            _page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unimplemented!()
+        }
+    }
+
+    /// The exact run-19 boot failure: latest itself NotFounds. The probe
+    /// must skip (transient availability), not abort the boot.
+    #[tokio::test]
+    async fn artifacts_probe_skips_when_latest_is_pruned_at_head() {
+        let transport: Arc<dyn SuiTransport> = Arc::new(PrunedAtHeadStub { latest: None });
+        probe_artifacts_digest(&transport)
+            .await
+            .expect("a pruned-at-head latest must not fail the boot probe");
+    }
+
+    /// The latest summary reads fine but its content is pruned before the
+    /// full fetch — same verdict: skip, never abort.
+    #[tokio::test]
+    async fn artifacts_probe_skips_when_content_pruned_between_reads() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: 28166,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let latest =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, &keys, &committee);
+        let transport: Arc<dyn SuiTransport> = Arc::new(PrunedAtHeadStub {
+            latest: Some(latest),
+        });
+        probe_artifacts_digest(&transport)
+            .await
+            .expect("content pruned between reads must not fail the boot probe");
+    }
 
     /// Minimal `SuiConnectorConfig` for `resolve_bootstrap_plan`: only the
     /// genesis / chain-identifier fields it reads matter; the rest are filler.

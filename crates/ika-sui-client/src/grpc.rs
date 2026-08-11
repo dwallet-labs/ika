@@ -258,7 +258,13 @@ impl SuiTransport for SuiGrpcClient {
     // -- checkpoints ------------------------------------------------------------------------
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         let mut rpc = self.rpc.clone();
-        rpc.get_latest_checkpoint().await.map_err(Self::rpc_err)
+        // NotFound must stay distinguishable: a fullnode pruning AT head
+        // empties the availability window and NotFounds its OWN latest, and
+        // callers (the boot artifacts-digest probe) treat that transient
+        // state differently from a real transport failure.
+        rpc.get_latest_checkpoint()
+            .await
+            .map_err(Self::rpc_status_err)
     }
 
     async fn get_full_checkpoint(
