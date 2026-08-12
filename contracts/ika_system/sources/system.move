@@ -507,6 +507,21 @@ public fun next_epoch_active_committee(self: &System): Option<BlsCommittee> {
     self.inner().next_epoch_active_committee()
 }
 
+/// Returns true if `validator_id` is in the current active committee or
+/// the next epoch's active committee. Equivalent to
+/// `active_committee().contains(&id) || next_epoch_active_committee().map(|c|
+/// c.contains(&id)).unwrap_or(false)` but returns just the boolean rather
+/// than copying the full `BlsCommittee` structures.
+///
+/// Useful for integrations that need to detect when a validator has
+/// rotated out of both committees and select the correct withdrawal path
+/// (the one-step inactive-validator branch in
+/// `validator::withdraw_stake`) instead of the two-epoch cooldown that
+/// would otherwise abort with `EWithdrawDirectly`.
+public fun is_in_committees(self: &System, validator_id: ID): bool {
+    self.inner().is_in_committees(validator_id)
+}
+
 /// Locks the committee of the next epoch to allow starting the reconfiguration process.
 public fun initiate_mid_epoch_reconfiguration(self: &mut System, clock: &Clock) {
     self.inner_mut().initiate_mid_epoch_reconfiguration(clock);

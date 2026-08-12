@@ -743,6 +743,10 @@ public(package) fun next_epoch_active_committee(self: &SystemInner): Option<BlsC
     self.validator_set.next_epoch_active_committee()
 }
 
+public(package) fun is_in_committees(self: &SystemInner, validator_id: ID): bool {
+    self.validator_set.is_in_committees(validator_id)
+}
+
 public(package) fun verify_validator_cap(
     self: &SystemInner,
     cap: &ValidatorCap,
