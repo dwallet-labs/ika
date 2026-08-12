@@ -28,7 +28,7 @@ members = [
     "crates/ika-upgrade-test",
 ]
 [workspace.package]
-# This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
+# This version string will be inherited by ika-core, ika-node, ika-tools, and ika crates.
 version = "1.3.0"
 
 [profile.release]
@@ -311,7 +311,6 @@ shared-crypto = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.7
 sui = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 sui-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 sui-faucet = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
-sui-graphql-rpc = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 sui-indexer = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 sui-json = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 sui-keys = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
@@ -341,8 +340,6 @@ telemetry-subscribers = { git = "https://github.com/MystenLabs/sui", tag = "main
 test-cluster = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 typed-store = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 typed-store-error = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
-
-sui-execution = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 
 consensus-config = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }
 consensus-core = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.76.1" }

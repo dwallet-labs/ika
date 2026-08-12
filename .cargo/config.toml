@@ -9,8 +9,6 @@ xclippy = [
     "-Wclippy::disallowed_methods",
     "-Aclippy::unnecessary_get_then_check",
 ]
-xlint = "run --package x --bin x -- lint"
-xtest = "run --package x --bin x -- external-crates-tests"
 
 # Configuration specifically for running clippy on `external-crates/move/`.
 # Some of these allows are to avoid code churn; others are filed as issues on the `ika` repo now.

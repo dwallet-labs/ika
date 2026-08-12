@@ -23,7 +23,7 @@ first is mechanical:
   external contract: private helpers, dead islands (items used only by other
   dead items), orphaned/commented code, genuinely-unused deps.
 - **api_change** — `pub` item with no internal refs but part of a public
-  surface (`thiserror` error-enum variants, `ika-sdk` / `ika-types` API).
+  surface (`thiserror` error-enum variants, the `ika-types` API).
   Removal is an API decision, not cleanup.
 - **parity_keep** — unused but mirrors upstream Sui to keep rebasing cheap
   (`consensus_adapter` submission-position logic, `ika-swarm-config`

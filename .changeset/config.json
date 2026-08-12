@@ -8,17 +8,7 @@
 	"baseBranch": "main",
 	"updateInternalDependencies": "minor",
 	"privatePackages": false,
-	"ignore": [
-		"ika-wallet",
-		"@mysten/core",
-		"sponsored-transactions",
-		"kiosk-demo",
-		"kiosk-cli",
-		"@mysten/sdk-docs",
-		"mev-bot",
-		"escrow-api-demo",
-		"trading-frontend-demo"
-	],
+	"ignore": [],
 	"___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
 		"onlyUpdatePeerDependentsWhenOutOfRange": true
 	}
