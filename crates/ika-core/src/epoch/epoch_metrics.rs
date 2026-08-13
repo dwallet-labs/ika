@@ -146,6 +146,27 @@ pub struct EpochMetrics {
     /// a legitimate value.
     pub mpc_consensus_round_lag: IntGauge,
 
+    /// `1` while this node judges its own MPC subsystem to have stopped
+    /// contributing — the condition behind the loud log, which fires only on
+    /// transition and so cannot be alerted on continuously.
+    ///
+    /// This, not a threshold on `mpc_consensus_round_lag`, is the alert
+    /// target: a validator restarted mid-epoch replays every round of the
+    /// epoch so far, and that raw lag legitimately exceeds any stall threshold
+    /// while the node is recovering normally (ika #2036). The gauge already
+    /// accounts for the catch-up the MPC service reports.
+    pub mpc_stopped_contributing_condition_active: IntGauge,
+
+    /// `1` while the MPC service is reporting a catch-up whose consensus-round
+    /// gap has stopped closing.
+    ///
+    /// The complement of the gauge above: a reported catch-up holds the
+    /// stopped-contributing condition, so this is what distinguishes a backlog
+    /// being drained (healthy, no action, watch
+    /// `ika_dwallet_mpc_catchup_gap_rounds` fall) from one that has stopped
+    /// draining (this node will not come back on its own).
+    pub mpc_catch_up_stuck_condition_active: IntGauge,
+
     /// Consensus timestamp (unix seconds) of the latest commit processed at
     /// the Ika commit boundary. Zero until this process handles its first
     /// commit; metric collection never mutates it.
@@ -355,6 +376,18 @@ impl EpochMetrics {
             mpc_consensus_round_lag: register_int_gauge_with_registry!(
                 "ika_mpc_consensus_round_lag",
                 "Consensus rounds the MPC service trails the consensus commit path by; unbounded growth means MPC has stopped while consensus keeps running (-1 before the MPC service reports its first round)",
+                registry,
+            )
+            .unwrap(),
+            mpc_stopped_contributing_condition_active: register_int_gauge_with_registry!(
+                "ika_mpc_stopped_contributing_condition_active",
+                "1 while this node judges its MPC subsystem to have stopped contributing; alert on this rather than on a threshold over ika_mpc_consensus_round_lag, which a healthy mid-epoch restart legitimately exceeds while it replays",
+                registry,
+            )
+            .unwrap(),
+            mpc_catch_up_stuck_condition_active: register_int_gauge_with_registry!(
+                "ika_mpc_catch_up_stuck_condition_active",
+                "1 while the MPC service reports a catch-up whose consensus-round gap has stopped closing (a drain that is still closing its gap is healthy and sets this to 0)",
                 registry,
             )
             .unwrap(),

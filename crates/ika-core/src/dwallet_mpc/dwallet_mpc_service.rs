@@ -1980,9 +1980,15 @@ impl DWalletMPCService {
                 .set(consensus_round as i64);
             // Publish progress for the consensus-path stall detector. It has to
             // live over there: every way this service stops also stops any
-            // check placed inside it.
-            self.epoch_store
-                .record_mpc_consumed_consensus_round(consensus_round);
+            // check placed inside it. The catch-up gate state travels with the
+            // round because from the commit path a restart's replay backlog and
+            // a service that never started look identical — and it travels on
+            // EVERY consumed round because over there it is a lease, held only
+            // while this loop keeps renewing it.
+            self.epoch_store.record_mpc_consumed_consensus_round(
+                consensus_round,
+                self.dwallet_mpc_manager.is_catching_up(),
+            );
             tokio::task::yield_now().await;
         }
     }

@@ -235,6 +235,18 @@ construction; divergence = determinism bug).
   standalone WILL fire under 4-way CI contention; the failure mode worth
   hunting is "never", not "slow". Before tightening, check whether the
   thing eventually happened after the budget expired.
+- **A validator that trails consensus is draining or dead, and the
+  difference is whether the gap falls.** A restart replays the epoch's
+  rounds from 0, so a huge `ika_mpc_consensus_round_lag` right after one
+  is expected, not a stall — the MPC service says so itself
+  (`MPC service entered catch-up mode`), and
+  `ika_dwallet_mpc_catchup_gap_rounds` falls fast while it drains
+  (~40x the tip rate, with computation suppressed). What to act on is
+  `ika_mpc_stopped_contributing_condition_active == 1` (nothing is
+  draining and MPC has stopped: `MPC subsystem has stopped keeping up
+  with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`
+  (draining, but the gap stopped falling). Restarting a validator that
+  is mid-drain only discards its progress and replays it.
 - **The log's absence of a line is only meaningful at the right
   RUST_LOG.** Several load-bearing lines are debug-level; at info, do
   not conclude "X never happened" for a debug-level X.

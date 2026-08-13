@@ -17,6 +17,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
@@ -113,6 +114,70 @@ pub const EPOCH_DB_PREFIX: &str = "epoch_";
 /// catching up closes the gap; a stopped one only grows it.
 const MPC_LAG_ALARM_ROUNDS: u64 = 50_000;
 
+/// How recent an MPC progress report must be for its catch-up flag to hold the
+/// stopped-contributing alarm.
+///
+/// The hold is a LEASE the MPC service renews, never a flag it can leave set:
+/// the service publishes a report for every consensus round it consumes, so a
+/// service genuinely draining a backlog renews this hundreds to thousands of
+/// times a second, and one that stopped renews never. An expiry-free flag would
+/// hand the stall its perfect hiding place — the deliberate service-loop
+/// `break` on self-recognised maliciousness is reachable during the
+/// post-restart replay window, and would otherwise latch the suppression for
+/// the life of the process.
+///
+/// A minute is ~3,000 service-loop iterations (the loop sleeps 20ms between
+/// them) and orders of magnitude beyond the per-round drain interval a
+/// catching-up validator sustains (~1-2k rounds a second in production), so
+/// nothing short of the service actually stopping expires it — the bound is
+/// generous in the direction where being wrong reintroduces the false alarm
+/// this exists to remove. It is still 1/60th of the time scale
+/// `MPC_LAG_ALARM_ROUNDS` encodes (~an hour of round production), so a service
+/// that dies mid-catch-up is reported within a minute rather than never.
+const MPC_CATCH_UP_REPORT_FRESHNESS: Duration = Duration::from_secs(60);
+
+/// How long a reported catch-up may run without its lag reaching a new low
+/// before the drain is called stuck.
+///
+/// While the service keeps reporting a catch-up the stopped-contributing alarm
+/// is held, so this is the only line left that can say the validator is not on
+/// its way back. The bound is generous on purpose: the largest backlog seen in
+/// production (~640k rounds, a mid-epoch restart replaying the epoch) drained
+/// COMPLETELY in five to ten minutes — with computation withheld the drain runs
+/// at ~1-2k rounds/s against a ~19.5 rounds/s tip. A drain running at a
+/// hundredth of that still reaches a new low every few commits, so a quarter
+/// hour without one is not a slow drain — it is a drain that stopped.
+const MPC_CATCH_UP_STUCK_DRAIN: Duration = Duration::from_secs(15 * 60);
+
+/// What the MPC service publishes for the consensus-path stall detector: the
+/// round it has finished consuming, whether its catch-up gate was engaged when
+/// it finished, and when it said so.
+///
+/// One immutable value behind a single `ArcSwapOption` rather than three
+/// separate atomics, so the consensus path always weighs a round against the
+/// gate state and the timestamp that were true *together*. Torn across atomics
+/// these would pair a fresh timestamp with a stale gate flag, which is the
+/// exact combination that decides whether the alarm is held.
+#[derive(Debug, Clone, Copy)]
+struct MpcServiceProgress {
+    consumed_round: Round,
+    catching_up: bool,
+    observed_at: Instant,
+}
+
+/// Consensus-side view of the catch-up currently being reported: the smallest
+/// lag seen since it started and when that low was reached.
+///
+/// The MINIMUM rather than the previous sample, because the tip keeps advancing
+/// while the cursor chases it: a drain closing the gap fast still produces
+/// individual samples that tick upwards, and comparing consecutive samples
+/// would read those as a stall.
+#[derive(Debug, Clone, Copy)]
+struct CatchUpDrainProgress {
+    lowest_lag_rounds: u64,
+    lowest_lag_at: Instant,
+}
+
 /// What a single MPC-lag sample changed, so the loud log fires on transition
 /// rather than on every consensus commit. Returned rather than kept private so
 /// the latching is directly testable — the state flag alone cannot distinguish
@@ -122,6 +187,24 @@ enum MpcLagTransition {
     Raised,
     Cleared,
     Unchanged,
+}
+
+/// What one MPC-lag sample changed, per alarm: `stopped_contributing` is an MPC
+/// service that is no longer consuming rounds at all, `stuck_drain` a reported
+/// catch-up that has stopped closing its gap. Two alarms rather than one
+/// because the first is deliberately held in exactly the situation that makes
+/// the second the only remaining signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MpcLagReport {
+    stopped_contributing: MpcLagTransition,
+    stuck_drain: MpcLagTransition,
+}
+
+impl MpcLagReport {
+    const UNCHANGED: Self = Self {
+        stopped_contributing: MpcLagTransition::Unchanged,
+        stuck_drain: MpcLagTransition::Unchanged,
+    };
 }
 
 pub enum CancelConsensusCertificateReason {
@@ -279,7 +362,8 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
 
-    /// Publishes the consensus round the MPC service has finished consuming.
+    /// Publishes the consensus round the MPC service has finished consuming,
+    /// and whether its catch-up gate was engaged when it finished.
     ///
     /// The MPC service cannot report its own stall: every path that stops it
     /// also stops the code that would notice — most starkly the deliberate
@@ -288,7 +372,16 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// So the MPC side only publishes its progress here, and the CONSENSUS
     /// commit path — which is still alive in exactly the cases that matter —
     /// does the comparing.
-    fn record_mpc_consumed_consensus_round(&self, round: Round);
+    ///
+    /// The gate state rides along because the consensus path cannot otherwise
+    /// tell a stopped service from one deliberately draining a replay backlog:
+    /// consensus rounds restart at zero each epoch and a restart's fresh epoch
+    /// store starts its cursor there too, so from the commit path a mid-epoch
+    /// restart looks exactly like a service that never started. `catching_up`
+    /// must be sampled from the gate itself, not from the gate's metric — a
+    /// gauge published by the service loop latches at its last value when that
+    /// loop dies, which is the one case the detector exists for.
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool);
 
     fn next_dwallet_mpc_message(
         &self,
@@ -590,9 +683,13 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             .insert(&checkpoint.height(), &checkpoint)?)
     }
 
-    fn record_mpc_consumed_consensus_round(&self, round: Round) {
-        self.mpc_consumed_consensus_round
-            .store(round, std::sync::atomic::Ordering::Relaxed);
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
+        self.mpc_service_progress
+            .store(Some(Arc::new(MpcServiceProgress {
+                consumed_round: round,
+                catching_up,
+                observed_at: Instant::now(),
+            })));
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
@@ -1030,16 +1127,27 @@ pub struct AuthorityPerEpochStore {
     pending_handoff_signatures:
         parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
 
-    /// Consensus round the MPC service last finished consuming, published by
-    /// the service itself. Compared against the commit round on the consensus
-    /// path to detect an MPC subsystem that has stopped while consensus keeps
-    /// running — see `record_mpc_consumed_consensus_round`. `0` until the
-    /// service reports its first round.
-    mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+    /// Latest progress report from the MPC service — the round it finished
+    /// consuming, its catch-up gate state, and when it published them.
+    /// Compared against the commit round on the consensus path to detect an MPC
+    /// subsystem that has stopped while consensus keeps running — see
+    /// `record_mpc_consumed_consensus_round`. `None` until the service reports
+    /// for the first time.
+    mpc_service_progress: ArcSwapOption<MpcServiceProgress>,
 
     /// Whether the MPC-lag alarm is currently raised, so the loud log fires on
     /// transition instead of on every consensus commit.
     mpc_lag_alarm_active: std::sync::atomic::AtomicBool,
+
+    /// Drain progress of the catch-up the MPC service is currently reporting,
+    /// or `None` when it is reporting none. Cleared when the reported catch-up
+    /// ends, so every catch-up is judged on its own drain rather than on the
+    /// low-water mark of an earlier one.
+    mpc_catch_up_drain: Mutex<Option<CatchUpDrainProgress>>,
+
+    /// Whether the stuck-drain alarm is currently raised; latched for the same
+    /// reason as `mpc_lag_alarm_active`.
+    mpc_catch_up_stuck_alarm_active: AtomicBool,
 
     /// Pending `handoff_signatures` row mutations, waiting to be folded into
     /// the next `ConsensusCommitOutput`. `Some(signature)` is an upsert,
@@ -2531,8 +2639,10 @@ impl AuthorityPerEpochStore {
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
-            mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            mpc_service_progress: ArcSwapOption::empty(),
             mpc_lag_alarm_active: std::sync::atomic::AtomicBool::new(false),
+            mpc_catch_up_drain: Mutex::new(None),
+            mpc_catch_up_stuck_alarm_active: AtomicBool::new(false),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
             staged_handoff_signature_rows: parking_lot::Mutex::new(BTreeMap::new()),
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
@@ -3589,27 +3699,123 @@ impl AuthorityPerEpochStore {
     /// production at observed testnet rates; the two production incidents this
     /// exists for sat far past it for many hours.
     ///
+    /// Generous is not enough on its own, though: a gap the MPC service is
+    /// itself reporting as a catch-up drain is explained, not unambiguous. A
+    /// mid-epoch restart replays every round of the epoch so far, so past the
+    /// first three quarters of an hour of a 24h epoch that replay alone exceeds
+    /// the threshold and the alarm fires on every restart of a perfectly
+    /// healthy validator — telling its operator to restart it again and discard
+    /// the drain. So a reported catch-up holds this alarm, but only for as long
+    /// as the service keeps renewing that report
+    /// (`MPC_CATCH_UP_REPORT_FRESHNESS`): a service that stops mid-catch-up
+    /// alarms like any other stopped service, and a drain that stops closing
+    /// its gap raises `stuck_drain` instead. Nothing goes quiet.
+    ///
     /// Logged on TRANSITION only, not per commit: this runs on every consensus
     /// commit, so an unconditional log would emit thousands of lines an hour
-    /// and bury itself. The gauge carries the continuous signal.
-    fn report_mpc_consensus_round_lag(&self, commit_round: Round) -> MpcLagTransition {
-        let consumed = self
-            .mpc_consumed_consensus_round
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if consumed == 0 {
+    /// and bury itself. The gauges carry the continuous signal.
+    fn report_mpc_consensus_round_lag(&self, commit_round: Round) -> MpcLagReport {
+        let Some(progress) = self.mpc_service_progress.load_full() else {
             // The MPC service has not reported a round yet (fresh epoch store,
-            // still replaying). Round 0 is legitimate, so the gauge carries a
-            // sentinel rather than a plausible-looking 0.
+            // still replaying). Round 0 is a legitimate round to have consumed,
+            // so the gauge carries a sentinel rather than a plausible-looking 0.
+            // The condition gauges are reset here too: the metrics registry is
+            // process-wide while the alarm latches are per-epoch-store, so
+            // without this an epoch that ended with a condition raised would
+            // keep exporting 1 through the next epoch's sentinel window and
+            // then drop to 0 without a Cleared log.
             self.metrics.mpc_consensus_round_lag.set(-1);
-            return MpcLagTransition::Unchanged;
-        }
-        let lag = commit_round.saturating_sub(consumed);
+            self.metrics
+                .mpc_stopped_contributing_condition_active
+                .set(0);
+            self.metrics.mpc_catch_up_stuck_condition_active.set(0);
+            return MpcLagReport::UNCHANGED;
+        };
+        let lag = commit_round.saturating_sub(progress.consumed_round);
         self.metrics.mpc_consensus_round_lag.set(lag as i64);
 
-        let alarming = lag >= MPC_LAG_ALARM_ROUNDS;
+        let report_age = progress.observed_at.elapsed();
+        let draining = progress.catching_up && report_age < MPC_CATCH_UP_REPORT_FRESHNESS;
+        let stuck_drain = self.report_catch_up_drain_progress(lag, draining, commit_round);
+
+        let alarming = lag >= MPC_LAG_ALARM_ROUNDS && !draining;
+        let was_alarming = self.mpc_lag_alarm_active.swap(alarming, Ordering::Relaxed);
+        self.metrics
+            .mpc_stopped_contributing_condition_active
+            .set(alarming as i64);
+        let stopped_contributing = match (was_alarming, alarming) {
+            (false, true) => MpcLagTransition::Raised,
+            (true, false) => MpcLagTransition::Cleared,
+            _ => MpcLagTransition::Unchanged,
+        };
+        match stopped_contributing {
+            MpcLagTransition::Raised => error!(
+                lag_rounds = lag,
+                commit_round,
+                mpc_consumed_round = progress.consumed_round,
+                mpc_catching_up = progress.catching_up,
+                report_age_secs = report_age.as_secs(),
+                "MPC subsystem has stopped keeping up with consensus: this validator is \
+                 following consensus normally but is no longer contributing MPC work. No live \
+                 catch-up explains the gap — a validator draining a post-restart backlog keeps \
+                 reporting one, and its ika_dwallet_mpc_catchup_gap_rounds falls while it does. \
+                 It will not recover on its own in every known case — check for an earlier fatal \
+                 in the dWallet MPC service, and restart the node if none explains it"
+            ),
+            MpcLagTransition::Cleared => info!(
+                lag_rounds = lag,
+                "MPC subsystem has caught back up with consensus"
+            ),
+            MpcLagTransition::Unchanged => {}
+        }
+        MpcLagReport {
+            stopped_contributing,
+            stuck_drain,
+        }
+    }
+
+    /// Follows the drain of the catch-up the MPC service is reporting, and
+    /// escalates once it has stopped draining.
+    ///
+    /// `draining` is true only while a live catch-up report is holding the
+    /// stopped-contributing alarm, which is exactly when this is the sole
+    /// remaining signal. False ends the tracking: the catch-up either finished
+    /// (the gate disengaged) or the service stopped reporting it, and the
+    /// stopped-contributing alarm covers the second.
+    fn report_catch_up_drain_progress(
+        &self,
+        lag: u64,
+        draining: bool,
+        commit_round: Round,
+    ) -> MpcLagTransition {
+        let stalled_for = if draining {
+            let now = Instant::now();
+            let mut drain = self.mpc_catch_up_drain.lock();
+            let progress = drain.get_or_insert(CatchUpDrainProgress {
+                lowest_lag_rounds: lag,
+                lowest_lag_at: now,
+            });
+            if lag < progress.lowest_lag_rounds {
+                // A new low: the backlog is still shrinking, so the drain is
+                // healthy however long it has been running.
+                *progress = CatchUpDrainProgress {
+                    lowest_lag_rounds: lag,
+                    lowest_lag_at: now,
+                };
+            }
+            now.saturating_duration_since(progress.lowest_lag_at)
+        } else {
+            *self.mpc_catch_up_drain.lock() = None;
+            Duration::ZERO
+        };
+
+        let alarming = stalled_for >= MPC_CATCH_UP_STUCK_DRAIN;
         let was_alarming = self
-            .mpc_lag_alarm_active
-            .swap(alarming, std::sync::atomic::Ordering::Relaxed);
+            .mpc_catch_up_stuck_alarm_active
+            .swap(alarming, Ordering::Relaxed);
+        self.metrics
+            .mpc_catch_up_stuck_condition_active
+            .set(alarming as i64);
         let transition = match (was_alarming, alarming) {
             (false, true) => MpcLagTransition::Raised,
             (true, false) => MpcLagTransition::Cleared,
@@ -3619,15 +3825,18 @@ impl AuthorityPerEpochStore {
             MpcLagTransition::Raised => error!(
                 lag_rounds = lag,
                 commit_round,
-                mpc_consumed_round = consumed,
-                "MPC subsystem has stopped keeping up with consensus: this validator is \
-                 following consensus normally but is no longer contributing MPC work. It will \
-                 not recover on its own in every known case — check for an earlier fatal in \
-                 the dWallet MPC service, and restart the node if none explains it"
+                stalled_for_secs = stalled_for.as_secs(),
+                "MPC catch-up backlog has stopped draining: the MPC service is still reporting \
+                 progress and its catch-up gate is still engaged, but the consensus-round gap \
+                 has not reached a new low for the whole window above, so this validator is not \
+                 on its way back to contributing MPC work. Watch \
+                 ika_dwallet_mpc_catchup_gap_rounds: while that gap falls the drain is healthy \
+                 and needs no action; this line means it stopped falling. A restart does not \
+                 help — it discards the drain's progress and replays it"
             ),
             MpcLagTransition::Cleared => info!(
                 lag_rounds = lag,
-                "MPC subsystem has caught back up with consensus"
+                "MPC catch-up backlog is draining again, or the catch-up it was stuck in ended"
             ),
             MpcLagTransition::Unchanged => {}
         }
@@ -6538,6 +6747,7 @@ impl From<LockDetails> for LockDetailsWrapper {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use tokio::time::advance;
 
     /// `next_round_row` must return the first row STRICTLY after the anchor —
     /// including when the anchor row itself is ABSENT from the table. The
@@ -6639,8 +6849,9 @@ mod tests {
     /// subsystem has stopped while consensus keeps running. Both production
     /// incidents this exists for (#1978, #1980) were invisible to their
     /// operators and diagnosable only from a fleet-wide view they do not have.
-    #[tokio::test]
-    async fn mpc_lag_is_reported_and_alarms_only_once_stopped() {
+    /// An epoch store for the MPC-lag detector tests. The tempdir comes back
+    /// with it because RocksDB needs its path to outlive the store.
+    fn mpc_lag_test_epoch_store() -> (Arc<AuthorityPerEpochStore>, tempfile::TempDir) {
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
@@ -6656,6 +6867,12 @@ mod tests {
             IkaNetworkConfig::new_for_testing(),
         )
         .unwrap();
+        (epoch_store, dir)
+    }
+
+    #[tokio::test]
+    async fn mpc_lag_is_reported_and_alarms_only_once_stopped() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
         let lag = || epoch_store.metrics.mpc_consensus_round_lag.get();
 
         // Before the MPC service reports anything the gauge must NOT read 0 —
@@ -6664,8 +6881,8 @@ mod tests {
         epoch_store.report_mpc_consensus_round_lag(1_000);
         assert_eq!(lag(), -1, "no MPC report yet must be a sentinel, not 0");
 
-        // Healthy: the service trails the commit path slightly.
-        epoch_store.record_mpc_consumed_consensus_round(990);
+        // Healthy: the service trails the commit path slightly, no catch-up.
+        epoch_store.record_mpc_consumed_consensus_round(990, false);
         epoch_store.report_mpc_consensus_round_lag(1_000);
         assert_eq!(lag(), 10);
         assert!(
@@ -6675,7 +6892,8 @@ mod tests {
             "an ordinary trailing distance must not alarm"
         );
 
-        // Stopped: consensus advances, MPC does not.
+        // Stopped: consensus advances, MPC does not. With no catch-up reported
+        // this is the unchanged pre-#2036 behavior.
         epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
         assert_eq!(lag(), MPC_LAG_ALARM_ROUNDS as i64);
         assert!(
@@ -6686,7 +6904,7 @@ mod tests {
         );
 
         // Recovery clears it, so a restart that fixes the node is visible too.
-        epoch_store.record_mpc_consumed_consensus_round(990 + MPC_LAG_ALARM_ROUNDS);
+        epoch_store.record_mpc_consumed_consensus_round(990 + MPC_LAG_ALARM_ROUNDS, false);
         epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
         assert_eq!(lag(), 0);
         assert!(
@@ -6697,34 +6915,223 @@ mod tests {
         );
     }
 
+    /// A validator restarted mid-epoch replays every round of the epoch so far,
+    /// and consensus rounds restart at 0 each epoch — so past roughly the first
+    /// three quarters of an hour of a 24h epoch, the replay gap alone exceeds
+    /// `MPC_LAG_ALARM_ROUNDS` and the ERROR was arithmetically guaranteed on
+    /// every restart (ika #2036, seen on all six production validators). Its
+    /// advice — restart the node — would have discarded the drain and replayed
+    /// it. A catch-up the MPC service is actively reporting must hold the alarm,
+    /// however large the gap and however long the drain runs.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn mpc_lag_alarm_is_held_while_the_service_reports_a_live_catch_up() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+
+        epoch_store.record_mpc_consumed_consensus_round(1, true);
+        let commit_round = 10 * MPC_LAG_ALARM_ROUNDS;
+        let report = epoch_store.report_mpc_consensus_round_lag(commit_round);
+        assert_eq!(
+            report.stopped_contributing,
+            MpcLagTransition::Unchanged,
+            "a reported catch-up must hold the alarm at ten times the threshold"
+        );
+        assert!(!epoch_store.mpc_lag_alarm_active.load(Ordering::Relaxed));
+        // Held, not hidden: the gauge still carries the real distance.
+        assert_eq!(
+            epoch_store.metrics.mpc_consensus_round_lag.get(),
+            (commit_round - 1) as i64
+        );
+
+        // Twenty minutes of an actual drain — the cursor closing on the tip far
+        // faster than the tip advances, which is what a suppressed-computation
+        // catch-up does (~1-2k rounds/s against a ~19.5 rounds/s tip in
+        // production). Longer than the stuck-drain bound on purpose: a drain
+        // that keeps making progress must raise neither alarm however long it
+        // runs.
+        for minute in 1..=20u64 {
+            advance(Duration::from_secs(60)).await;
+            epoch_store.record_mpc_consumed_consensus_round(minute * 40_000, true);
+            assert_eq!(
+                epoch_store.report_mpc_consensus_round_lag(commit_round + minute * 1_000),
+                MpcLagReport::UNCHANGED,
+                "minute {minute} of a healthy drain must stay silent"
+            );
+        }
+
+        // The drain finishes and the gate disengages: the ordinary path is back,
+        // with no alarm ever having fired.
+        epoch_store.record_mpc_consumed_consensus_round(commit_round + 20_000, false);
+        assert_eq!(
+            epoch_store.report_mpc_consensus_round_lag(commit_round + 20_000),
+            MpcLagReport::UNCHANGED
+        );
+    }
+
+    /// The hold is a lease the MPC service renews, not a flag it can leave set.
+    /// The service-loop `break` on self-recognised maliciousness is reachable
+    /// during the post-restart replay window, so a catch-up flag with no expiry
+    /// would hide that stall for the life of the process — which is why the
+    /// gate state is published on every consumed round and read with a
+    /// freshness bound, and why it is sampled from the gate rather than from
+    /// the gate's metric.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn mpc_lag_alarm_raises_when_the_catch_up_report_goes_stale() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        let commit_round = MPC_LAG_ALARM_ROUNDS + 1;
+
+        epoch_store.record_mpc_consumed_consensus_round(1, true);
+        advance(MPC_CATCH_UP_REPORT_FRESHNESS - Duration::from_secs(1)).await;
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(commit_round)
+                .stopped_contributing,
+            MpcLagTransition::Unchanged,
+            "a report still inside the freshness window holds the alarm"
+        );
+
+        // The service stops here: nothing renews the report.
+        advance(Duration::from_secs(2)).await;
+        let report = epoch_store.report_mpc_consensus_round_lag(commit_round);
+        assert_eq!(
+            report.stopped_contributing,
+            MpcLagTransition::Raised,
+            "a catch-up nobody is renewing IS the stall case, and must alarm"
+        );
+        assert_eq!(
+            report.stuck_drain,
+            MpcLagTransition::Unchanged,
+            "the stuck-drain alarm is for a live drain; a dead service is the other alarm"
+        );
+
+        // The service comes back and resumes draining: the alarm clears once.
+        epoch_store.record_mpc_consumed_consensus_round(commit_round, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(commit_round)
+                .stopped_contributing,
+            MpcLagTransition::Cleared
+        );
+    }
+
+    /// Holding the stopped-contributing alarm for a reported catch-up leaves a
+    /// gap only a second alarm can cover: a drain that has stopped draining.
+    /// The bound is generous — production backlogs of ~640k rounds drain
+    /// completely in five to ten minutes — so a quarter hour without the gap
+    /// reaching a new low means the validator is not coming back on its own.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn stuck_catch_up_drain_raises_while_the_lag_alarm_is_held() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        // A gap that stays exactly the same size: the cursor advances at the
+        // tip rate, so rounds keep being consumed (the report stays fresh) and
+        // the backlog never shrinks.
+        let held_lag = MPC_LAG_ALARM_ROUNDS + 1;
+        let sample = |minute: u64| {
+            epoch_store.record_mpc_consumed_consensus_round(1_000 * minute, true);
+            epoch_store.report_mpc_consensus_round_lag(1_000 * minute + held_lag)
+        };
+
+        let mut reports = Vec::new();
+        for minute in 1..=20u64 {
+            reports.push(sample(minute));
+            advance(Duration::from_secs(60)).await;
+        }
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.stopped_contributing == MpcLagTransition::Unchanged),
+            "the stopped-contributing alarm stays held throughout: the service IS reporting"
+        );
+        // The tracker starts at the first sample, so the window closes on the
+        // sample a full `MPC_CATCH_UP_STUCK_DRAIN` later — minute 16 of a
+        // fifteen-minute bound sampled once a minute.
+        let stuck: Vec<_> = reports.iter().map(|report| report.stuck_drain).collect();
+        assert_eq!(
+            stuck[15],
+            MpcLagTransition::Raised,
+            "a drain stuck past the bound must be reported: {stuck:?}"
+        );
+        assert_eq!(
+            stuck
+                .iter()
+                .filter(|transition| **transition == MpcLagTransition::Raised)
+                .count(),
+            1,
+            "the stuck-drain alarm must latch like the one it complements: {stuck:?}"
+        );
+        assert!(
+            stuck[..15]
+                .iter()
+                .all(|transition| *transition == MpcLagTransition::Unchanged),
+            "nothing may fire before the bound elapses: {stuck:?}"
+        );
+
+        // The drain gets moving again: a new low clears the alarm, once, and
+        // the cleared alarm stays quiet while the drain holds that new low.
+        epoch_store.record_mpc_consumed_consensus_round(1_000 * 21 + held_lag, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(1_000 * 21 + held_lag)
+                .stuck_drain,
+            MpcLagTransition::Cleared
+        );
+        advance(Duration::from_secs(60)).await;
+        epoch_store.record_mpc_consumed_consensus_round(1_000 * 22 + held_lag, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(1_000 * 22 + held_lag)
+                .stuck_drain,
+            MpcLagTransition::Unchanged,
+            "a cleared alarm must not re-fire without a new stall"
+        );
+    }
+
+    /// A gap that wobbles upward between samples is still a draining gap. The
+    /// tip keeps advancing while the cursor chases it, so a healthy catch-up
+    /// produces individual samples that tick up; across five hours of them,
+    /// with the gap closing on balance, neither alarm may fire. Tracking the
+    /// low-water mark is what makes that hold without a smoothing window — any
+    /// new low restarts the clock, whatever the samples did in between.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_drain_that_keeps_reaching_new_lows_never_raises() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        let mut lag = 400_000;
+
+        for step in 1..=60u64 {
+            // Two steps forward, one back, hours in total: no window of
+            // `MPC_CATCH_UP_STUCK_DRAIN` ever passes without a new low.
+            lag = if step % 3 == 0 {
+                lag + 3_000
+            } else {
+                lag - 5_000
+            };
+            epoch_store.record_mpc_consumed_consensus_round(step * 10_000, true);
+            assert_eq!(
+                epoch_store.report_mpc_consensus_round_lag(step * 10_000 + lag),
+                MpcLagReport::UNCHANGED,
+                "step {step} of a jittery but progressing drain must stay silent"
+            );
+            advance(Duration::from_secs(5 * 60)).await;
+        }
+    }
+
     /// The alarm latches, so the loud line fires on transition rather than on
     /// every consensus commit — this runs per commit, and an unconditional log
     /// would emit thousands of lines an hour and bury itself.
     #[tokio::test]
     async fn mpc_lag_alarm_does_not_re_fire_while_it_stays_raised() {
-        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
-        let committee = Arc::new(committee);
-        let names: Vec<AuthorityName> = committee.names().copied().collect();
-        let dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee,
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
 
-        epoch_store.record_mpc_consumed_consensus_round(1);
+        epoch_store.record_mpc_consumed_consensus_round(1, false);
         // A sustained stall across many commits must announce itself exactly
         // once. This asserts the LOGGING decision, not the flag: the flag ends
         // up `true` either way, so observing it cannot tell a latched alarm
         // from one that re-fires on every commit.
         let transitions: Vec<_> = (1..=5)
-            .map(|i| epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + i))
+            .map(|i| {
+                epoch_store
+                    .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + i)
+                    .stopped_contributing
+            })
             .collect();
         assert_eq!(
             transitions,
@@ -6745,13 +7152,17 @@ mod tests {
         );
 
         // Recovery announces itself once too, then goes quiet.
-        epoch_store.record_mpc_consumed_consensus_round(MPC_LAG_ALARM_ROUNDS + 5);
+        epoch_store.record_mpc_consumed_consensus_round(MPC_LAG_ALARM_ROUNDS + 5, false);
         assert_eq!(
-            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            epoch_store
+                .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5)
+                .stopped_contributing,
             MpcLagTransition::Cleared
         );
         assert_eq!(
-            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            epoch_store
+                .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5)
+                .stopped_contributing,
             MpcLagTransition::Unchanged
         );
     }
