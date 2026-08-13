@@ -376,13 +376,8 @@ impl IkaCheckpointPusher {
         const FULLNODE_ATTEMPTS_PER_TICK: usize = 64;
 
         let mut archive_attempts_this_tick = 0usize;
-        let mut fullnode_attempts_this_tick = 0usize;
         let seqs: Vec<CheckpointSequenceNumber> = self.pending_gaps.keys().copied().collect();
-        for seq in seqs {
-            if fullnode_attempts_this_tick >= FULLNODE_ATTEMPTS_PER_TICK {
-                break;
-            }
-            fullnode_attempts_this_tick += 1;
+        for seq in seqs.into_iter().take(FULLNODE_ATTEMPTS_PER_TICK) {
             let Some((first_seen, last_archive_attempt)) = self
                 .pending_gaps
                 .get(&seq)
