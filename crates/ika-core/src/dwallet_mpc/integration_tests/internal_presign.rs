@@ -625,9 +625,10 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
                     curve: DWalletCurve::Curve25519,
                     signature_algorithm: noa_sign_algorithm,
                     hash_scheme: noa_sign_hash_scheme,
-                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                        ika_types::crypto::keccak256_digest(&message),
-                    ),
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                        session_identifier: ika_types::crypto::keccak256_digest(&message),
+                        signature_algorithm: noa_sign_algorithm,
+                    },
                 })
                 .await
                 .expect("failed to send network-owned-address sign request");

@@ -846,9 +846,10 @@ mod wire_format_tests {
             tag(&ConsensusTransactionKind::NOAPresignDemand(
                 ConsensusNOAPresignDemand {
                     authority: AuthorityName::default(),
-                    demand_id: crate::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                        [0u8; 32],
-                    ),
+                    demand_id: crate::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                        session_identifier: [0u8; 32],
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+                    },
                     signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     network_encryption_key_id: ObjectID::ZERO,
                 }

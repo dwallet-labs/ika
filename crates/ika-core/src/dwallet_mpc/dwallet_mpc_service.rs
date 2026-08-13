@@ -1780,10 +1780,7 @@ impl DWalletMPCService {
                     // not determine one. `network_encryption_key_id` is NOT
                     // derivable — it is frozen at announce time on purpose (see
                     // above) — and remains as announced.
-                    let signature_algorithm = demand
-                        .demand_id
-                        .expected_signature_algorithm()
-                        .unwrap_or(demand.signature_algorithm);
+                    let signature_algorithm = demand.demand_id.expected_signature_algorithm();
                     if signature_algorithm != demand.signature_algorithm {
                         ika_types::report_invariant_violation!(
                             "noa_presign_demand_signature_algorithm_mismatch",

@@ -145,9 +145,10 @@ async fn network_owned_address_sign_flow(
                 curve,
                 signature_algorithm,
                 hash_scheme,
-                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                    ika_types::crypto::keccak256_digest(&test_message),
-                ),
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                    session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                    signature_algorithm,
+                },
             })
             .await
             .expect("failed to send network-owned-address sign request");
@@ -488,9 +489,10 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
                     curve: DWalletCurve::Curve25519,
                     signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
                     hash_scheme: DWalletHashScheme::SHA512,
-                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                        ika_types::crypto::keccak256_digest(&message),
-                    ),
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                        session_identifier: ika_types::crypto::keccak256_digest(&message),
+                        signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
+                    },
                 })
                 .await
                 .expect("failed to send sign request");
@@ -710,9 +712,10 @@ async fn test_presign_assignment_is_consensus_ordered_not_local() {
                     curve,
                     signature_algorithm,
                     hash_scheme,
-                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                        ika_types::crypto::keccak256_digest(message),
-                    ),
+                    demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                        session_identifier: ika_types::crypto::keccak256_digest(message),
+                        signature_algorithm,
+                    },
                 })
                 .await
                 .expect("failed to send network-owned-address sign request");
@@ -739,13 +742,15 @@ async fn test_presign_assignment_is_consensus_ordered_not_local() {
     // Direct proof of cross-validator agreement: the presign assigned to each
     // demand is IDENTICAL on validators that received the demands in OPPOSITE
     // local order (0 saw [M1,M2]; 2 saw [M2,M1]).
-    let digest_one = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-        ika_types::crypto::keccak256_digest(&message_one),
-    )
+    let digest_one = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+        session_identifier: ika_types::crypto::keccak256_digest(&message_one),
+        signature_algorithm,
+    }
     .digest();
-    let digest_two = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-        ika_types::crypto::keccak256_digest(&message_two),
-    )
+    let digest_two = ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+        session_identifier: ika_types::crypto::keccak256_digest(&message_two),
+        signature_algorithm,
+    }
     .digest();
 
     let assigned_one_v0 = test_state.epoch_stores[0]
@@ -847,9 +852,10 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
                 curve,
                 signature_algorithm,
                 hash_scheme,
-                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                    ika_types::crypto::keccak256_digest(&test_message),
-                ),
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                    session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                    signature_algorithm,
+                },
             })
             .await
             .expect("failed to send early network-owned-address sign request");
@@ -912,9 +918,10 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
                 curve,
                 signature_algorithm,
                 hash_scheme,
-                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                    ika_types::crypto::keccak256_digest(&test_message),
-                ),
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                    session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                    signature_algorithm,
+                },
             })
             .await
             .expect("failed to send late network-owned-address sign request");
@@ -988,9 +995,10 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
             curve,
             signature_algorithm,
             hash_scheme,
-            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                ika_types::crypto::keccak256_digest(&test_message),
-            ),
+            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                signature_algorithm,
+            },
         })
         .await
         .expect("failed to send id-source sign request");
@@ -1089,9 +1097,10 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
             curve,
             signature_algorithm,
             hash_scheme,
-            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                ika_types::crypto::keccak256_digest(&test_message),
-            ),
+            demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                signature_algorithm,
+            },
         })
         .await
         .expect("failed to send target sign request");
@@ -1186,9 +1195,10 @@ async fn network_owned_address_vss_sign_flow(
                 curve,
                 signature_algorithm,
                 hash_scheme,
-                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation(
-                    ika_types::crypto::keccak256_digest(&test_message),
-                ),
+                demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
+                    session_identifier: ika_types::crypto::keccak256_digest(&test_message),
+                    signature_algorithm,
+                },
             })
             .await
             .expect("failed to send network-owned-address VSS sign request");
@@ -1304,9 +1314,7 @@ async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() 
         },
         retry_round: 0,
     };
-    let derived_algorithm = demand_id
-        .expected_signature_algorithm()
-        .expect("a checkpoint demand determines its own algorithm");
+    let derived_algorithm = demand_id.expected_signature_algorithm();
     // Any algorithm the identity does NOT imply serves as the announced lie.
     let announced_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
     assert_ne!(
