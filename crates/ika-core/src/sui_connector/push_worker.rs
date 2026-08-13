@@ -125,8 +125,10 @@ impl IkaCheckpointPusher {
                 persisted
             }
             None => {
-                let latest = transport.get_latest_checkpoint().await?;
-                let cursor = *latest.sequence_number();
+                // Watermark probe, not a summary fetch: a fullnode pruning at
+                // head NotFounds its own latest, which would fail node boot
+                // here.
+                let cursor = transport.get_latest_checkpoint_sequence().await?;
                 info!(
                     cursor,
                     "checkpoint pusher first start — initializing at upstream latest"
@@ -167,8 +169,11 @@ impl IkaCheckpointPusher {
     async fn advance(&mut self) -> anyhow::Result<()> {
         self.retry_pending_gaps().await;
 
-        let latest = self.transport.get_latest_checkpoint().await?;
-        let latest_seq = *latest.sequence_number();
+        // Watermark probe, not a summary fetch: `get_latest_checkpoint` reads
+        // through the fullnode's availability window, so a fullnode pruning at
+        // head NotFounds its own latest and aborts this tick — permanently,
+        // while the window stays empty. The height watermark survives pruning.
+        let latest_seq = self.transport.get_latest_checkpoint_sequence().await?;
         // Stall gauge: upstream advanced but we haven't caught up by more than
         // a tick's worth of checkpoints. A stalled pusher freezes the cache,
         // so direct cache-first reads fall through to the network
@@ -793,6 +798,10 @@ mod tests {
     /// implemented; the rest panic so an unexpected call is loud.
     struct MockTransport {
         latest: CertifiedCheckpointSummary,
+        /// Emulates a fullnode pruning AT head: the availability window is
+        /// empty, so summary reads NotFound even for `latest`, while the
+        /// height watermark (`GetServiceInfo`) still answers.
+        latest_summary_pruned: bool,
         checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
         /// `epoch -> last checkpoint seq of that epoch`, for
         /// `last_checkpoint_of_epoch` (the catch-up boundary walk). Empty for
@@ -805,7 +814,20 @@ mod tests {
         async fn get_latest_checkpoint(
             &self,
         ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            if self.latest_summary_pruned {
+                return Err(TransportError::NotFound(format!(
+                    "Checkpoint {} not found",
+                    self.latest.sequence_number()
+                )));
+            }
             Ok(self.latest.clone())
+        }
+        async fn get_latest_checkpoint_sequence(
+            &self,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            // The height watermark survives pruning — mirrors the real
+            // transport's `GetServiceInfo.checkpoint_height` probe.
+            Ok(*self.latest.sequence_number())
         }
         async fn get_full_checkpoint(
             &self,
@@ -1000,6 +1022,47 @@ mod tests {
     /// Slice 1: the pusher installs `committee[E+1]` the moment it streams past
     /// the end-of-epoch checkpoint — the committee head advances without the
     /// ratchet ever reaching back for that (prune-prone) checkpoint.
+    /// A fullnode pruning AT head empties its availability window and serves
+    /// NotFound for its OWN latest checkpoint — persistently, while the window
+    /// stays empty. The tick must survive that (the height watermark is
+    /// pruning-immune) and keep folding what IS available; before this, the
+    /// summary fetch at the top of `advance` aborted the whole tick with `?`,
+    /// freezing the cursor and the verified cache behind it.
+    #[tokio::test]
+    async fn pusher_tick_survives_a_fullnode_pruning_at_head() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
+        let latest = eoe.checkpoint_summary.clone();
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            // The summary read NotFounds — as a pruned-at-head fullnode does.
+            latest_summary_pruned: true,
+            latest,
+            checkpoints: HashMap::from([(100u64, eoe)]),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let mut pusher = pusher_over(perpetual.clone(), committees.clone(), transport).await;
+        pusher
+            .advance()
+            .await
+            .expect("a pruned-at-head latest must not abort the tick");
+
+        // The cursor advanced and the available checkpoint still folded.
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+        assert_eq!(committees.head_epoch(), 1);
+    }
+
     #[tokio::test]
     async fn pusher_eagerly_captures_end_of_epoch_committee() {
         let (committee, keys) = Committee::new_simple_test_committee();
@@ -1017,6 +1080,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
@@ -1061,6 +1125,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest: latest.clone(),
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
@@ -1078,6 +1143,7 @@ mod tests {
 
         // The checkpoint materializes; the next tick repairs the gap.
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
@@ -1128,6 +1194,7 @@ mod tests {
         // before the prune does.
         let latest = end_of_epoch_checkpoint(&committee, &keys, 2_100).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(30u64, eoe_30), (90u64, eoe_90)]),
             eoe_seqs: HashMap::from([(0u64, 30), (1u64, 60), (2u64, 90)]),
@@ -1187,6 +1254,7 @@ mod tests {
         }
         let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
             eoe_seqs: HashMap::new(),
@@ -1230,6 +1298,7 @@ mod tests {
         checkpoints.insert(6, end_of_epoch_checkpoint(&committee, &keys, 6));
         checkpoints.insert(9, plain_checkpoint(&committee, &keys, 9));
         pusher.transport = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints,
             eoe_seqs: HashMap::new(),
@@ -1311,6 +1380,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
@@ -1381,6 +1451,7 @@ mod tests {
 
         let latest = plain_checkpoint(&committee, &keys, 100).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
@@ -1440,6 +1511,7 @@ mod tests {
 
         let latest = plain_checkpoint(&committee, &keys, 101).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
@@ -1506,6 +1578,7 @@ mod tests {
             .collect();
         let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
             eoe_seqs: HashMap::new(),
@@ -1525,6 +1598,7 @@ mod tests {
         // construction seeds the cache's processed head to the resumed cursor.
         let resume_cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let transport2: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints,
             eoe_seqs: HashMap::new(),
@@ -1624,6 +1698,7 @@ mod tests {
         let latest = forged.checkpoint_summary.clone();
         let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, forged)]),
             eoe_seqs: HashMap::new(),
@@ -1673,6 +1748,7 @@ mod tests {
             .unwrap(),
         );
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: false,
             latest: end_of_epoch_checkpoint(&committee, &keys, 1).checkpoint_summary,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),

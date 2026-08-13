@@ -105,6 +105,16 @@ impl SuiTransport for VerifiedSuiTransport {
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         self.relay.get_latest_checkpoint().await
     }
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // Forward explicitly (see the fallback transport) — the trait
+        // default would reopen the pruned-at-head abort.
+        self.relay.get_latest_checkpoint_sequence().await
+    }
+    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
+        self.relay.get_latest_epoch().await
+    }
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,

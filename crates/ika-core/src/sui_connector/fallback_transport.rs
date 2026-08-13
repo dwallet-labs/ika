@@ -61,6 +61,17 @@ impl SuiTransport for FallbackTransport {
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         self.primary.get_latest_checkpoint().await
     }
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // Forward explicitly: the trait default would fall back to the
+        // summary fetch, reopening the pruned-at-head abort behind this
+        // wrapper.
+        self.primary.get_latest_checkpoint_sequence().await
+    }
+    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
+        self.primary.get_latest_epoch().await
+    }
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,

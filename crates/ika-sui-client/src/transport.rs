@@ -156,6 +156,27 @@ pub trait SuiTransport: Send + Sync {
 
     // -- checkpoints ------------------------------------------------------------------------
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError>;
+    /// The latest checkpoint SEQUENCE only — a pruning-immune watermark
+    /// probe. `get_latest_checkpoint` fetches the summary through the
+    /// fullnode's availability window (`lowest_available..=latest`), and an
+    /// aggressively pruning fullnode (a localnet prunes AT head) can empty
+    /// that window — the fullnode then serves NotFound for its OWN latest,
+    /// persistently. Consumers that only need the height (the checkpoint
+    /// pusher's per-tick probe and its first-start cursor) must use this
+    /// instead. Default delegates to the summary fetch for transports
+    /// without a lighter path.
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        Ok(*self.get_latest_checkpoint().await?.sequence_number())
+    }
+    /// The latest checkpoint's EPOCH only — the same pruning-immune probe
+    /// as [`Self::get_latest_checkpoint_sequence`], for consumers that feed
+    /// epoch-anchored state and must not freeze while the fullnode prunes
+    /// at head.
+    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
+        Ok(self.get_latest_checkpoint().await?.epoch)
+    }
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,
