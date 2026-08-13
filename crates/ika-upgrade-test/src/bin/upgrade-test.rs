@@ -3,7 +3,7 @@
 
 //! CLI entry point for the cross-binary upgrade test harness.
 //!
-//! `dev` vs `tag:release/mainnet-v1.2.7` is the default example, not a baked-in constant —
+//! `dev` vs `tag:release/mainnet-v1.3.1` is the default example, not a baked-in constant —
 //! both sides are `--old` / `--new` binary specs (`path:` / `tag:` / `sha:` /
 //! `branch:`, or a bare value the resolver classifies).
 
@@ -22,7 +22,7 @@ struct Args {
     #[arg(long, default_value_t = 4)]
     validators: usize,
 
-    /// Old binary spec, e.g. `tag:release/mainnet-v1.2.7`.
+    /// Old binary spec, e.g. `tag:release/mainnet-v1.3.1`.
     #[arg(long)]
     old: String,
 
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     let scenario = match args.scenario.as_str() {
         "rolling_majority_then_minority" => {
             // Proven-good config (originally from the retired
-            // `tests/cross_binary.rs`; `tests/v127_rollout.rs` uses the same
+            // `tests/cross_binary.rs`; `tests/v131_rollout.rs` uses the same
             // shape): long (10-min) epochs avoid the short-epoch sui_executor
             // wedge, the timeout covers a full long epoch per
             // `wait_for_epoch`, and the `set_buffer_stake(0)` before the

@@ -1494,7 +1494,7 @@ impl ClusterOfProcesses {
                 );
                 // Each observer is a validator under test (the upgraded
                 // binary); its own authority is the candidate whose
-                // byte-equality with the v1.2.7 quorum this boundary tries
+                // byte-equality with the deployed-release quorum this boundary tries
                 // to witness.
                 let candidate_authority: BTreeSet<String> = self
                     .validator_authorities
@@ -1884,7 +1884,7 @@ impl ClusterOfProcesses {
         .context("faucet-fund joiner")?;
 
         // The publisher signs `stake_ika` below, and by this point in a long
-        // scenario its bootstrap grants can be burned down to dust (v128_churn
+        // scenario its bootstrap grants can be burned down to dust (v131_churn
         // reached this step with 0.199 SUI total against the 5 SUI budget).
         // Top it up and wait for the grant to land before signing.
         ensure_sui_balance_from_faucet(
@@ -2442,7 +2442,7 @@ mod tests {
 
     #[test]
     fn candidate_straggler_without_late_evidence_converges_but_is_flagged() {
-        // The exact release-gate flake ordering: three v1.2.7 authorities
+        // The exact release-gate flake ordering: three deployed-release authorities
         // finalize with identical outputs, the quorum closes the session, and
         // the upgraded validator's own computation has produced nothing
         // comparable yet. The quorum itself converged (this must NOT fail),

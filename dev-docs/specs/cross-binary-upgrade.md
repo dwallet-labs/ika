@@ -133,7 +133,7 @@ serialization/schema change, MUST preserve all of the following.
 
 ## Genesis version
 
-Fresh networks genesis at `ProtocolVersion::MAX` (currently 6). The
+Fresh networks genesis at `ProtocolVersion::MAX` (currently 7). The
 genesis network DKG's PVSS keys are served by the current-epoch off-chain
 key assembly (`sui_syncer::sync_next_committee` assembles the CURRENT
 committee's self-announced bundles at genesis), so no upgrade-into-a-
@@ -141,7 +141,8 @@ version bootstrap path exists or is needed. (Historically — through the
 mainnet v1.1.8→v4 era — a v4+ genesis DKG was impossible and networks
 had to genesis at v3 and vote upward; that constraint died with the
 current-epoch assembly, and v3/v4 support was removed entirely once both
-deployed networks reached v5, then v6: `MIN_PROTOCOL_VERSION = 6`.)
+deployed networks reached v5, then v6, then v7:
+`MIN_PROTOCOL_VERSION = 7`.)
 
 ## Literal previous-release compatibility is a release requirement
 
@@ -176,14 +177,22 @@ v1.1.8→v4 and v1.2.1→v5 rehearsals (`v118_upgrade`, `v118_churn`,
 `v118_mixed_rollout`, `v121_rollout`, `cross_binary`,
 `malicious_cross_binary`). Retired at MIN = 6: the v1.2.5-based
 `v125_rollout`, `v125_churn` and `malicious_v125` — including the historical
-v5 gate, which cannot boot once genesis is MIN = 6. Every one of those
-rollouts completed on the deployed networks. The current deployed-release
-gate is `tests/v127_rollout.rs`: the same one-upgraded-validator mixed topology
-against the literal **v1.2.7** release at protocol v6, where the boundary
-under test is a pure binary swap (v1.2.7 can select either coefficient bound
-and produces the strict one at v6; the candidate is strict-only, so the two
-share exactly the v6 strict-bound transcript). It is the PR-gating scenario
-and the one a release manager dispatches against every release tag.
+v5 gate, which cannot boot once genesis is MIN = 6. Retired at MIN = 7: the
+v1.2.7-based `v127_rollout`, `v127_churn` and `malicious_v127`, along with
+BOTH protocol-transition gates (`v127_v7_upgrade` and the in-process
+`protocol_version_transition` cluster test) — MIN = MAX = 7 leaves no
+boundary for them to cross, so they were retired outright rather than
+retargeted, and whichever change introduces v8 must resurrect them. Every one
+of those rollouts completed on the deployed networks.
+
+Beyond the MIN-driven retirements, the mixed-committee family is retargeted
+whenever the DEPLOYED release moves — the scenario names carry the old
+binary's release (`v125_*` → `v127_*` → `v128_*` → `v131_*`), so the
+maintenance is visible rather than silent. The current deployed-release gate
+is `tests/v131_rollout.rs`: the one-upgraded-validator mixed topology against
+the literal **v1.3.1** release at protocol v7. Both sides support v7 and only
+v7, so the boundary under test is a pure binary swap. It is the PR-gating
+scenario and the one a release manager dispatches against every release tag.
 
 ## How this is verified
 
@@ -194,56 +203,39 @@ drives them across epochs. The surviving scenarios (current build only):
 - `tests/smoke.rs` — harness plumbing: four same-binary processes reach
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a full user
-  DKG → Presign → Sign completing on-chain at genesis protocol v6.
-- `tests/v127_rollout.rs` — the current deployed-release compatibility gate:
-  boot the literal v1.2.7 release at genesis protocol v6, upgrade exactly one
-  of four validators to the strict-only candidate, require two mixed
+  DKG → Presign → Sign completing on-chain at genesis protocol v7.
+- `tests/v131_rollout.rs` — the current deployed-release compatibility gate:
+  boot the literal v1.3.1 release at genesis protocol v7, upgrade exactly one
+  of four validators to the candidate, require two mixed
   network-key reshares to converge byte-identically with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
   validators and converge again. The upgrade workflow runs this scenario by
   default for relevant pull requests and release candidates.
-- `tests/v127_v7_upgrade.rs` — the PROTOCOL-upgrade gate, and the only
-  scenario that crosses a protocol version boundary (`v127_rollout` and the
-  churn/malicious scenarios are pure binary swaps that stay at v6). Boot the
-  literal v1.2.7 release at genesis protocol v6, run a user lifecycle while
-  names are still emitted zero-padded, swap the whole committee to the
-  current build, then cross v6 → v7 — where `AuthorityName` starts being
-  emitted as the raw 32-byte consensus key. It asserts the upgrade ACTUALLY
-  activated (`expect_protocol_version_at_least(7)`; without that assertion a
-  network that silently stayed at v6 would pass the whole scenario while
-  exercising nothing), that the boundary reshare converges byte-identically
-  with zero malicious reports, that no committee member is lost, that a
-  validator restarted after activation re-joins as a member, and that users
-  are served across the boundary plus one further all-v7 boundary.
-
-  This scenario matters more than usual for v7 specifically: the emitted
-  width is process-wide state, so only separately-compiled validator
-  PROCESSES flip independently the way a fleet does.
-
-  Its IN-PROCESS counterpart is
-  `crates/ika-test-cluster/tests/protocol_version_transition.rs`: one binary,
-  per-validator pinned advertised ranges, walking 1/4 → 2/4 → 4/4 v7
-  supporters and asserting v7 does NOT activate below the buffer-stake
-  effective threshold before crossing the boundary. It runs in the ordinary
-  cluster suite, so the capability-vote machinery is gated on a fixed cadence
-  rather than only when this release-gated harness runs. It shares one
-  encoding-width global across all four simulated validators, so it gates the
-  vote arithmetic and the cross-epoch handoff path but cannot show a genuine
-  per-validator width disagreement.
-- `tests/v127_churn.rs` — the churn counterpart: full sequential swap over
-  the literal v1.2.7 committee (on-disk RocksDB continuity), then a
-  peer-only-mirrored joiner folds into the reshared v1.2.7-origin key
+- No PROTOCOL-upgrade gate currently exists: with MIN = MAX = 7 there is no
+  boundary to cross, so `v127_v7_upgrade` and its in-process counterpart
+  `crates/ika-test-cluster/tests/protocol_version_transition.rs` were retired
+  with the v6 support they exercised. Both must be resurrected, retargeted at
+  the new boundary, by whichever change introduces v8 — a release blocker for
+  it, not a follow-up. The out-of-process flavor is the load-bearing one
+  whenever the boundary changes process-wide state (v7's `AuthorityName`
+  width was such a case): only separately-compiled validator PROCESSES flip
+  it independently the way a fleet does, while the in-process cluster test
+  shares one such global across all four simulated validators and can only
+  gate the vote arithmetic and the cross-epoch handoff path.
+- `tests/v131_churn.rs` — the churn counterpart: full sequential swap over
+  the literal v1.3.1 committee (on-disk RocksDB continuity), then a
+  peer-only-mirrored joiner folds into the reshared v1.3.1-origin key
   (4→5, the OCS joiner trust-anchor path) and a shrink reshare removes an
   original validator (5→4).
-- `tests/malicious_v127.rs` — the test-testing counterpart: an honest
-  literal-v1.2.7 committee plus ONE current-build validator carrying the
+- `tests/malicious_v131.rs` — the test-testing counterpart: an honest
+  literal-v1.3.1 committee plus ONE current-build validator carrying the
   `test-testing`-gated reconfiguration-message fault (the hook lives in
   the main reconfiguration advance path in
   `crytographic_computation/mpc_computations.rs`); honest validators must
   convict it and reshare without it, asserted via the malicious-actors
   gauge. Green = the compatibility gates above are not vacuous. The
   workflow's `test_testing_fault` input runs the same fault through
-  `v127_rollout` itself (that run must fail closed); `malicious_v127` is
+  `v131_rollout` itself (that run must fail closed); `malicious_v131` is
   also directly dispatchable (the workflow builds the faulty binary).
 How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
@@ -271,7 +263,7 @@ scheduling race). The scenario instead classifies each boundary:
 The scenario as a whole must witness conclusive candidate byte-equality on at
 least one reconfiguration boundary or it fails with "insufficient
 cross-version compatibility evidence". Every boundary still requires healthy
-validators, correct local epochs, protocol v3, quorum output convergence,
+validators, correct local epochs, protocol v7, quorum output convergence,
 zero malicious actors, zero rejected envelopes, no self-malicious logs, and
 no stranded sessions.
 
