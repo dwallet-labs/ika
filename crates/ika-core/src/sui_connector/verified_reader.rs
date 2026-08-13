@@ -49,6 +49,7 @@ use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
 use crate::sui_connector::ocs_currency::CurrencyVerdict;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
+use crate::sui_connector::watermark_guard::WatermarkGuard;
 use ika_network::proof_provider::VerifiedObjectEntry;
 use tracing::warn;
 
@@ -245,6 +246,16 @@ pub struct OcsVerifiedReader {
     /// so this stays fresh even if the pusher stalls. Used by the cache-first
     /// staleness tripwire below.
     observed_upstream_head: AtomicU64,
+    /// Plausibility bound on the claimed heads folded into
+    /// `observed_upstream_head`. That fold is a `fetch_max` that never comes
+    /// back down, so one inflated claim used to pin the freshness floor above
+    /// the real chain head forever — making every genuinely-current cached
+    /// object read stale and forcing permanent fall-through to network reads
+    /// (ika #2041). Refusing an implausible *increase* cannot weaken the
+    /// under-report protection the `fetch_max` exists for: a provider that
+    /// wants the floor low can simply claim a low head, which is already
+    /// ignored, and is the documented eclipse residual.
+    upstream_head_guard: WatermarkGuard,
     /// Cache-first staleness tripwire: if the cache head lags
     /// `observed_upstream_head` by more than this many checkpoints, the cache
     /// is too stale (e.g. a stalled pusher), so `try_cache_hit` falls through
@@ -292,6 +303,7 @@ impl OcsVerifiedReader {
             cache,
             cache_first,
             observed_upstream_head: AtomicU64::new(0),
+            upstream_head_guard: WatermarkGuard::new(),
             staleness_bound,
             anchor_refreshed_at: Mutex::new(HashMap::new()),
             changeset_index: None,
@@ -342,7 +354,26 @@ impl OcsVerifiedReader {
     /// Fold a provider-reported upstream head into `observed_upstream_head`
     /// (monotonic). Called on every network read so the cache-first staleness
     /// tripwire has a fresh reference even when cache-first short-circuits.
+    ///
+    /// The claim passes a plausibility bound first (see
+    /// [`Self::upstream_head_guard`]): the fold is irreversible, so an
+    /// implausible increase is skipped rather than latched. The monotone
+    /// (`fetch_max`) semantics the anti-under-report guarantee rests on are
+    /// unchanged — a refused claim leaves the floor exactly where it was.
     fn note_upstream_head(&self, seq: CheckpointSequenceNumber) {
+        if !self.upstream_head_guard.admit(seq) {
+            self.metrics
+                .watermark_implausible_total
+                .with_label_values(&["reader"])
+                .inc();
+            warn!(
+                claimed_head = seq,
+                observed_head = self.observed_upstream_head.load(Ordering::Relaxed),
+                "provider claimed a latest-checkpoint head that jumped implausibly far past \
+                 this process's previous observations — leaving the freshness floor unchanged"
+            );
+            return;
+        }
         self.observed_upstream_head
             .fetch_max(seq, Ordering::Relaxed);
     }

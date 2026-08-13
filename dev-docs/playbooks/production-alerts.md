@@ -185,3 +185,12 @@ is holding the service up.
   read staleness after the gauge becomes non-zero. Correlate it with
   `ika_ocs_proof_verify_failures_total`,
   `ika_ocs_high_water_violations_total`, and relay request/failure counters.
+- `rate(ika_ocs_watermark_implausible_total[15m]) > 0` → an upstream is
+  reporting a latest-checkpoint height this node's own observations cannot
+  explain (a desynced load-balancer backend, an endpoint on the wrong network,
+  a corrupted response). Refused samples are skipped, so this is a
+  configuration/upstream-health signal, not data loss; sustained refusals on
+  `{consumer="folder"}` mean the checkpoint folder is skipping ticks and its
+  cursor will lag. Investigate the fullnode endpoint before it is the only
+  thing between the node and a poisoned cursor — see
+  [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).

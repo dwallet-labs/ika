@@ -395,7 +395,20 @@ The relay's claimed head is never trusted directly. Every response folds
 `claimed_head` into a process-monotonic `observed_upstream_head`
 (`fetch_max`); freshness is always measured against that monotone value,
 so a relay cannot under-report its head to make a stale proof look
-fresh. Per **well-known** object (coordinator, system, versioned inner
+fresh. That fold is **bounded but not weakened**: a claim passes the same
+plausibility bound the folder applies (`WatermarkGuard`, under *Reading
+the head*) before it may raise the floor, because the fold is
+irreversible and one inflated claim otherwise pins the floor above the
+real chain head forever — making every genuinely-current cached object
+read stale and forcing permanent fall-through to network reads (ika
+#2041). The monotone semantics are untouched: a refused claim leaves the
+floor exactly where it was, and refusing an implausible *increase*
+cannot help an under-reporting relay, which can already just claim a low
+head (that is the eclipse residual below, not a new hole). Deliberately
+**not** done here: making the comparison windowed or decaying. The
+all-time max IS the anti-under-report guarantee — a floor that ages back
+down is a floor a relay can wait out and then under-report through.
+Per **well-known** object (coordinator, system, versioned inner
 children) a version high-water rejects any read below the highest
 version already accepted (`StaleVersion`); bag-entry dynamic-field
 children are deliberately excluded (short-lived ids). High-water is
@@ -705,6 +718,78 @@ never trusted directly") already assumes. Wrapper transports forward the
 probe explicitly so a direct primary keeps it; the mirror relay exposes
 no watermark RPC, so behind a relayed stack the probe degrades to the
 window-bound fetch.
+
+**Bounding the watermark's irreversible consumers.** Being untrusted is
+not the same as being harmless. Several consumers fold the height into
+state that cannot come back down — the folder's cursor in the perpetual
+tables (a restart resumes it), the cache's monotone processed head, the
+reader's freshness floor — so a single inflated sample (a buggy
+fullnode, a desynced load-balancer backend, an endpoint pointed at the
+wrong network, a corrupted response) used to latch permanently: the
+folder fast-forwarded past the real head, persisted that cursor, dropped
+the sacrificed span's pending gaps, and pinned the reader's staleness
+tripwire "healthy" while nothing folded (ika #2041). Content trust was
+never affected — everything folded still passes `verify_before_fold` —
+but an availability hint must not feed irreversible state. Two bounds,
+both in `watermark_guard.rs` / `push_worker.rs`:
+
+1. **Plausibility bound (`WatermarkGuard`, applied by the folder and by
+   the reader's freshness fold).** An observation is refused when it
+   exceeds the highest previously accepted observation *of this process*
+   by more than `15_000` (about an hour of real production at Sui's
+   ~4 checkpoints/s) plus `10/s` × the time since that observation. It
+   keys on **in-process observation deltas, never on persisted state**:
+   the first observation of a process is accepted whatever its size and
+   becomes the baseline, so a node starting against a mature chain, or
+   resuming after long downtime with a cursor millions of checkpoints
+   behind, passes trivially — the catch-up distance is never what is
+   measured. The time term is what stops the bound wedging itself: after
+   a multi-hour upstream outage the allowance has grown to cover the
+   genuine jump, whereas a fixed bound would refuse every sample forever
+   (the baseline can only advance through an accepted one). A refused
+   sample is skipped loudly, updates no baseline, and leaves every
+   monotone consumer untouched; the tick is retried 250 ms later.
+   Refusals are counted `ika_ocs_watermark_implausible_total{consumer}`.
+2. **Confirmation before the fast-forward.** The far-behind fast-forward
+   is the single-shot, persisted, span-sacrificing consumer, so it acts
+   only on a watermark **two consecutive ticks agree on**: the first
+   far-behind tick proposes a target and changes nothing (no cursor
+   write, no gap drop, no processed-head advance), and only a next tick
+   whose watermark is at least as high executes it. A proposal is
+   consumed each tick, so confirmation can only come from the
+   immediately preceding tick. This catches inflations too small for the
+   plausibility bound to see, and costs one poll interval (250 ms) on a
+   genuinely far-behind folder and no extra RPC. Confirmation is by
+   repeated observation rather than by fetching the target checkpoint:
+   an unfetchable target does not distinguish an inflated watermark from
+   an upstream prune — the very condition that makes the fast-forward
+   necessary — so a fetchability gate would turn a pruned-at-head window
+   into a scan of thousands of failing fetches and as many pending gaps.
+
+Residual: a process whose FIRST observation is already wrong (a node
+booted against a wrong-network endpoint) has nothing to compare against
+and is not protected by either bound; that misconfiguration is caught by
+the chain-identifier verification on the trust path, not here.
+
+**Symptom and recovery of a poisoned cursor.** Should a cursor still end
+up ahead of the chain (an older binary, or a fault outside these
+bounds), the signature is deceptive: `ika_ocs_pusher_stalled` reads
+**0** and `ika_ocs_pusher_cursor_seq` keeps up with — or exceeds — the
+chain head, while `ika_ocs_pusher_pushed_total` is flat, the verified
+cache never advances, and sessions stall behind objects that never enter
+it. The tripwire cannot see it either: it compares the *observed
+upstream head* against the *processed head*, and a poisoned processed
+head makes that difference zero forever. The discriminator is
+`ika_ocs_pusher_cursor_seq` against the chain's real latest checkpoint
+(any fullnode's `GetServiceInfo.checkpoint_height`). Recovery is to
+clear the persisted cursor so the folder re-initializes from the
+watermark on the next start: with the node stopped, delete the single
+row of the `sui_pusher_last_seq` column family in the perpetual tables
+(the same column `reset_direct_cache_for_format_recovery` clears
+alongside `verified_object_cache_head`). Trust is unaffected — every
+re-folded checkpoint is re-verified — and the objects whose only
+mutation rode the skipped span are repaired by their next mutation or by
+a consumer's network fallback.
 
 **Fetch-failure semantics (pending-gap repair).** The folder polls at
 250 ms because the fullnode's checkpoint-pruning watermark can trail its
@@ -1054,8 +1139,12 @@ reason enums. A stale-but-valid object version additionally increments
 `ika_ocs_high_water_violations_total`. A successful proof-verified read on the
 peer-only relay path updates `ika_ocs_last_successful_relay_timestamp_seconds`;
 the gauge starts at zero on process start and cache/direct reads do not update
-it. These metrics contain no object id, checkpoint digest, peer identity, raw
-error, or proof material.
+it. `ika_ocs_watermark_implausible_total{consumer}` counts latest-checkpoint
+watermark samples refused by the plausibility bound (`folder` = the checkpoint
+folder's scan bound and persisted cursor, `reader` = the freshness floor);
+steady state is zero, and any increase means an upstream is reporting a head
+this node's own observations cannot explain. These metrics contain no object
+id, checkpoint digest, peer identity, raw error, or proof material.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 (verification, freshness/high-water, bag-membership binding),

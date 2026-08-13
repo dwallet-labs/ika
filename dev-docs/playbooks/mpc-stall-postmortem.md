@@ -253,6 +253,21 @@ construction; divergence = determinism bug).
 - **Multi-line struct dumps break line-based grep.** Anchor greps on the
   timestamp prefix (`^2026-`) or use single-line fields
   (`session_sequence_number=`), and prefer python for multiset diffs.
+- **A "healthy" checkpoint folder that folds nothing is a specific
+  failure, not a contradiction.** On a sui-state-direct node,
+  `ika_ocs_pusher_stalled = 0` with `ika_ocs_pusher_pushed_total` flat
+  and dwallet sessions stalling means the folder's cursor is AHEAD of
+  the chain: every real checkpoint reads as already-processed, so
+  nothing folds into the verified cache and nothing looks stale (the
+  staleness tripwire measures the observed head against the folder's
+  own processed head — poison both and the difference is zero
+  forever). Compare `ika_ocs_pusher_cursor_seq` with the chain's real
+  latest checkpoint; if it is ahead, stop the node and clear the
+  `sui_pusher_last_seq` row in the perpetual tables so the folder
+  re-initializes from the watermark. Mechanism, the plausibility bound
+  that now prevents it, and the full recovery note:
+  [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)
+  ("Reading the head").
 - **Verify the chain you query is the chain the network used.** Stale
   config files (object ids from a previous run) and multiple listeners
   on one port have both produced hours of false "the object doesn't

@@ -85,6 +85,17 @@ pub struct OcsMetrics {
     /// it — together they quantify the verify's cost on the fold path.
     pub pusher_fold_verify_seconds: Histogram,
 
+    /// Latest-checkpoint watermark samples refused by the plausibility bound,
+    /// by consumer (`folder` = the checkpoint folder's per-tick scan bound and
+    /// persisted cursor; `reader` = the freshness floor a verified read folds).
+    /// The watermark is an unauthenticated integer that several consumers fold
+    /// into monotone state, so one inflated sample used to latch permanently.
+    /// A refusal is skipped, not folded — steady state is zero, and any
+    /// increase means an upstream is reporting a head this node's own
+    /// observations cannot explain (a desynced backend, a wrong-network
+    /// endpoint, a corrupted response).
+    pub watermark_implausible_total: IntCounterVec, // labels: ["consumer"]
+
     // OcsVerifiedReader (consumer-side proof verification)
     pub proof_verify_total: IntCounterVec, // labels: ["kind"]
     pub proof_verify_failures_total: IntCounterVec, // labels: ["kind", "reason"]
@@ -198,6 +209,13 @@ impl OcsMetrics {
                 "ika_ocs_pusher_fold_verify_seconds",
                 "Latency of the sui-state-direct pusher's pre-fold committee verification (BLS on the summary + artifacts-digest binding); _count is the number of checkpoints committee-verified before folding into the cache",
                 vec![0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
+                registry,
+            )
+            .unwrap(),
+            watermark_implausible_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_watermark_implausible_total",
+                "Latest-checkpoint watermark samples refused by the plausibility bound (jumped implausibly far past this process's previous observation), by consumer: folder (scan bound + persisted cursor) or reader (freshness floor). Refused samples are skipped, never folded",
+                &["consumer"],
                 registry,
             )
             .unwrap(),
