@@ -362,10 +362,27 @@ impl IkaCheckpointPusher {
         // hold the cursor back while the fullnode prunes more checkpoints —
         // the fallback amplifying the very loss it exists to prevent.
         const ARCHIVE_ATTEMPTS_PER_TICK: usize = 4;
+        // Bound the FULLNODE retries of one tick for the same reason the
+        // archive attempts are bounded above. A pruning-at-head window now
+        // gets traversed rather than aborting the tick (which is the point —
+        // see the watermark probe in `advance`), and every unfetchable
+        // checkpoint in it becomes a pending gap: at mainnet rates that is
+        // thousands by the retry deadline. Retrying all of them serially,
+        // every 250ms tick, against the very fullnode that is already failing
+        // to serve them is the self-amplification the archive cap exists to
+        // avoid — reached through the uncapped half of the loop. Gaps are
+        // retried oldest-first (`BTreeMap` order), so the ones nearest their
+        // deadline keep priority and the rest roll through over later ticks.
+        const FULLNODE_ATTEMPTS_PER_TICK: usize = 64;
 
         let mut archive_attempts_this_tick = 0usize;
+        let mut fullnode_attempts_this_tick = 0usize;
         let seqs: Vec<CheckpointSequenceNumber> = self.pending_gaps.keys().copied().collect();
         for seq in seqs {
+            if fullnode_attempts_this_tick >= FULLNODE_ATTEMPTS_PER_TICK {
+                break;
+            }
+            fullnode_attempts_this_tick += 1;
             let Some((first_seen, last_archive_attempt)) = self
                 .pending_gaps
                 .get(&seq)
@@ -1022,6 +1039,41 @@ mod tests {
     /// Slice 1: the pusher installs `committee[E+1]` the moment it streams past
     /// the end-of-epoch checkpoint — the committee head advances without the
     /// ratchet ever reaching back for that (prune-prone) checkpoint.
+    /// The pusher's FIRST START inside a pruned-at-head window: no persisted
+    /// cursor, so `new` must take its initial cursor from the watermark. With
+    /// a summary fetch there, constructing the pusher fails — and because
+    /// `SuiClient` construction sits upstream of this on every node-start
+    /// path, that failure surfaces as a node that does not come up at all.
+    #[tokio::test]
+    async fn pusher_first_start_survives_a_fullnode_pruning_at_head() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
+        let latest = eoe.checkpoint_summary.clone();
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest_summary_pruned: true,
+            latest,
+            checkpoints: HashMap::from([(100u64, eoe)]),
+            eoe_seqs: HashMap::new(),
+        });
+        // No `put_sui_pusher_last_seq` — this is a first start.
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), None);
+
+        let _pusher = pusher_over(perpetual.clone(), committees.clone(), transport).await;
+
+        // The cursor initialized from the watermark rather than failing.
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+    }
+
     /// A fullnode pruning AT head empties its availability window and serves
     /// NotFound for its OWN latest checkpoint — persistently, while the window
     /// stays empty. The tick must survive that (the height watermark is

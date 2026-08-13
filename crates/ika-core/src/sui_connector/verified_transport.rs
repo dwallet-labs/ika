@@ -108,12 +108,10 @@ impl SuiTransport for VerifiedSuiTransport {
     async fn get_latest_checkpoint_sequence(
         &self,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
-        // Forward explicitly (see the fallback transport) — the trait
-        // default would reopen the pruned-at-head abort.
+        // Forward explicitly (see the fallback transport). The relay here
+        // is the mirror in a mirrored stack, which has no watermark RPC, so
+        // this preserves the property only for a direct relay.
         self.relay.get_latest_checkpoint_sequence().await
-    }
-    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
-        self.relay.get_latest_epoch().await
     }
     async fn get_full_checkpoint(
         &self,

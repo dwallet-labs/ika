@@ -678,6 +678,34 @@ the next poll while a bad signature halts the fold loudly
 and folded in order, a cache hit is the object's current state up to the
 poll lag, and safely skips re-running the proof.
 
+**Reading the head (pruning-immune watermark).** Everything below starts
+from "what is the latest checkpoint sequence" — the folder's per-tick
+scan bound, the folder's first-start cursor, the `SuiClient` describe
+probe on every node-start path, and the `claimed_latest_checkpoint_seq`
+a direct node stamps on each verified-read response. None of them need
+the summary, only the NUMBER, and taking it from a summary fetch reads
+through the fullnode's availability window (`lowest_available..=latest`).
+A fullnode pruning AT head can empty that window and then answers
+`NotFound` for its OWN latest — persistently, while the window stays
+empty. Every one of those call sites is fatal-on-error, so that state
+froze the folder cursor, failed node boot, and failed every verified-read
+response this node served.
+
+The height therefore comes from `GetServiceInfo.checkpoint_height`, the
+store's own watermark, read WITHOUT the availability check
+(`SuiTransport::get_latest_checkpoint_sequence`). This does not weaken
+the trust chain: the head sequence was never a trust input. It bounds a
+scan, and every checkpoint the scan reaches is still committee-verified
+at fold time (`verify_before_fold` / `verify_archive_checkpoint`); the
+`claimed_latest_checkpoint_seq` it stamps is untrusted by construction —
+the reader folds it through `fetch_max` and never treats it as an
+attested head. The watermark is deliberately unauthenticated, which is
+exactly what the surrounding invariant ("the relay's claimed head is
+never trusted directly") already assumes. Wrapper transports forward the
+probe explicitly so a direct primary keeps it; the mirror relay exposes
+no watermark RPC, so behind a relayed stack the probe degrades to the
+window-bound fetch.
+
 **Fetch-failure semantics (pending-gap repair).** The folder polls at
 250 ms because the fullnode's checkpoint-pruning watermark can trail its
 executed head by as little as a couple of seconds: at a slower cadence
@@ -700,7 +728,15 @@ refusing past a short grace (5 s) is fetched from the resolved
 **checkpoint archive** instead (the same object store the ratchet falls
 back to; the public stores retain *ordinary* checkpoints ~30 days, and a
 localnet points this at the Sui fullnode's `--data-ingestion-dir` via
-`ika start --sui-checkpoint-archive-url file://…`). Archive fetches are
+`ika start --sui-checkpoint-archive-url file://…`). Fullnode retries
+of pending gaps are capped per tick as well, for the same reason and
+newly load-bearing: now that a pruned-at-head window is traversed rather
+than aborting the tick, every unfetchable checkpoint in it becomes a
+pending gap — thousands, at mainnet rates, by the retry deadline — and
+retrying all of them serially each 250 ms tick against the fullnode that
+is already failing to serve them is precisely the self-amplification the
+archive cap avoids. Gaps retry oldest-first, so the ones nearest their
+deadline keep priority. Archive fetches are
 paced per gap, capped per tick, and bounded by a per-fetch timeout (the
 object-store client otherwise retries internally for up to 60 s, and an
 unbounded stall here would hold the scan cursor back while the fullnode

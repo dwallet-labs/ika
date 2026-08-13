@@ -270,7 +270,6 @@ impl SuiTransport for SuiGrpcClient {
     async fn get_latest_checkpoint_sequence(
         &self,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
-        use sui_rpc_api::proto::sui::rpc::v2::GetServiceInfoRequest;
         // `GetServiceInfo.checkpoint_height` reads the store's latest
         // watermark WITHOUT the availability-window check that makes
         // `GetCheckpoint` NotFound a just-pruned latest — the probe keeps
@@ -280,7 +279,7 @@ impl SuiTransport for SuiGrpcClient {
             .inner_mut()
             .clone()
             .ledger_client()
-            .get_service_info(GetServiceInfoRequest::default())
+            .get_service_info(proto::GetServiceInfoRequest::default())
             .await
             .map_err(Self::rpc_status_err)?
             .into_inner();
@@ -288,22 +287,6 @@ impl SuiTransport for SuiGrpcClient {
             TransportError::Network(
                 "GetServiceInfo response carried no checkpoint_height".to_string(),
             )
-        })
-    }
-
-    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
-        use sui_rpc_api::proto::sui::rpc::v2::GetServiceInfoRequest;
-        let mut rpc = self.rpc.clone();
-        let response = rpc
-            .inner_mut()
-            .clone()
-            .ledger_client()
-            .get_service_info(GetServiceInfoRequest::default())
-            .await
-            .map_err(Self::rpc_status_err)?
-            .into_inner();
-        response.epoch.ok_or_else(|| {
-            TransportError::Network("GetServiceInfo response carried no epoch".to_string())
         })
     }
 

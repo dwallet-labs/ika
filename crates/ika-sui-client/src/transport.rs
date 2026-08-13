@@ -164,18 +164,15 @@ pub trait SuiTransport: Send + Sync {
     /// persistently. Consumers that only need the height (the checkpoint
     /// pusher's per-tick probe and its first-start cursor) must use this
     /// instead. Default delegates to the summary fetch for transports
-    /// without a lighter path.
+    /// without a lighter path — including the mirror relay, whose wire
+    /// exposes no watermark RPC, so the pruning-immunity holds for the
+    /// DIRECT transports and degrades to the window-bound fetch behind a
+    /// relayed one. Wrappers still forward explicitly so a direct primary
+    /// keeps the property through them.
     async fn get_latest_checkpoint_sequence(
         &self,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
         Ok(*self.get_latest_checkpoint().await?.sequence_number())
-    }
-    /// The latest checkpoint's EPOCH only — the same pruning-immune probe
-    /// as [`Self::get_latest_checkpoint_sequence`], for consumers that feed
-    /// epoch-anchored state and must not freeze while the fullnode prunes
-    /// at head.
-    async fn get_latest_epoch(&self) -> Result<u64, TransportError> {
-        Ok(self.get_latest_checkpoint().await?.epoch)
     }
     async fn get_full_checkpoint(
         &self,
