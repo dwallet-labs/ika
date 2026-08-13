@@ -591,7 +591,6 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
             .send(NetworkOwnedAddressSignRequest {
                 message: test_message.clone(),
                 curve: DWalletCurve::Curve25519,
-                signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
                 hash_scheme: DWalletHashScheme::SHA512,
                 demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                     session_identifier: ika_types::crypto::keccak256_digest(&test_message),

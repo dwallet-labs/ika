@@ -654,13 +654,11 @@ impl ConsensusTransaction {
     pub fn new_noa_presign_demand(
         authority: AuthorityName,
         demand_id: crate::noa_checkpoint::NOAPresignDemandId,
-        signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
         network_encryption_key_id: ObjectID,
     ) -> Self {
         let msg = ConsensusNOAPresignDemand {
             authority,
             demand_id,
-            signature_algorithm,
             network_encryption_key_id,
         };
         let mut hasher = DefaultHasher::new();
@@ -850,7 +848,6 @@ mod wire_format_tests {
                         session_identifier: [0u8; 32],
                         signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
-                    signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     network_encryption_key_id: ObjectID::ZERO,
                 }
             )),

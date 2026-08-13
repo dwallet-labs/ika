@@ -143,7 +143,6 @@ async fn network_owned_address_sign_flow(
             .send(NetworkOwnedAddressSignRequest {
                 message: test_message.clone(),
                 curve,
-                signature_algorithm,
                 hash_scheme,
                 demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                     session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -487,7 +486,6 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
                 .send(NetworkOwnedAddressSignRequest {
                     message: message.clone(),
                     curve: DWalletCurve::Curve25519,
-                    signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
                     hash_scheme: DWalletHashScheme::SHA512,
                     demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                         session_identifier: ika_types::crypto::keccak256_digest(&message),
@@ -710,7 +708,6 @@ async fn test_presign_assignment_is_consensus_ordered_not_local() {
                 .send(NetworkOwnedAddressSignRequest {
                     message: (*message).clone(),
                     curve,
-                    signature_algorithm,
                     hash_scheme,
                     demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                         session_identifier: ika_types::crypto::keccak256_digest(message),
@@ -850,7 +847,6 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
             .send(NetworkOwnedAddressSignRequest {
                 message: test_message.clone(),
                 curve,
-                signature_algorithm,
                 hash_scheme,
                 demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                     session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -916,7 +912,6 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
             .send(NetworkOwnedAddressSignRequest {
                 message: test_message.clone(),
                 curve,
-                signature_algorithm,
                 hash_scheme,
                 demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                     session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -993,7 +988,6 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
         .send(NetworkOwnedAddressSignRequest {
             message: test_message.clone(),
             curve,
-            signature_algorithm,
             hash_scheme,
             demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                 session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -1095,7 +1089,6 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
         .send(NetworkOwnedAddressSignRequest {
             message: test_message.clone(),
             curve,
-            signature_algorithm,
             hash_scheme,
             demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                 session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -1193,7 +1186,6 @@ async fn network_owned_address_vss_sign_flow(
             .send(NetworkOwnedAddressSignRequest {
                 message: test_message.clone(),
                 curve,
-                signature_algorithm,
                 hash_scheme,
                 demand_id: ika_types::noa_checkpoint::NOAPresignDemandId::GrpcAttestation {
                     session_identifier: ika_types::crypto::keccak256_digest(&test_message),
@@ -1283,19 +1275,19 @@ async fn test_network_owned_address_sign_schnorrkel_substrate_vss() {
 /// presign pool a demand draws from.
 ///
 /// The consensus dedup key for a presign-demand announcement is the demand-id
-/// digest alone, so the first announcement sequenced for a demand supplies the
-/// payload fields for the whole network and the honest duplicates are dropped.
-/// A checkpoint demand id names its checkpoint kind, and the kind determines
-/// the algorithm, so the drain re-derives it and the announced value carries no
-/// authority.
+/// digest alone, so the first announcement sequenced for a demand supplies any
+/// payload field the drain uses and the honest duplicates are dropped behind
+/// it. The algorithm is therefore not a payload field at all: it is part of
+/// the identity, so the pool a demand draws from is fixed by the id every
+/// validator agreed on and an announcer has no way to express a different one.
 ///
-/// Both pools are seeded with distinguishable bytes, so this asserts POSITIVELY
+/// Two pools are seeded with distinguishable bytes, so this asserts POSITIVELY
 /// which one was drawn from rather than inferring it from an empty pool: the
-/// assigned presign must be the derived pool's, while the announced pool is
-/// left untouched and full.
+/// assigned presign must be the identity's, while a pool the identity does not
+/// name is left untouched and full.
 #[tokio::test]
 #[cfg(test)]
-async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() {
+async fn test_noa_presign_demand_draws_from_the_pool_its_identity_names() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
@@ -1315,20 +1307,22 @@ async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() 
         retry_round: 0,
     };
     let derived_algorithm = demand_id.expected_signature_algorithm();
-    // Any algorithm the identity does NOT imply serves as the announced lie.
-    let announced_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+    // A pool for an algorithm the identity does NOT imply. Nothing may be
+    // drawn from it: an announcement cannot name an algorithm at all any
+    // more, so the identity is the only thing that can select a pool.
+    let decoy_algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
     assert_ne!(
-        derived_algorithm, announced_algorithm,
-        "the test needs the announced algorithm to differ from the derived one"
+        derived_algorithm, decoy_algorithm,
+        "the test needs the decoy pool to differ from the derived one"
     );
 
     // Seed both pools with recognizable, distinct bytes.
     const DERIVED_POOL_MARKER: u8 = 0xD1;
-    const ANNOUNCED_POOL_MARKER: u8 = 0xA9;
+    const DECOY_POOL_MARKER: u8 = 0xA9;
     let target = 0usize;
     for (algorithm, marker) in [
         (derived_algorithm, DERIVED_POOL_MARKER),
-        (announced_algorithm, ANNOUNCED_POOL_MARKER),
+        (decoy_algorithm, DECOY_POOL_MARKER),
     ] {
         test_state.epoch_stores[target]
             .insert_presigns(
@@ -1341,8 +1335,8 @@ async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() 
             .expect("seed presign pool");
     }
 
-    // A committee member announces the demand with the WRONG algorithm.
-    let byzantine_authority = test_state
+    // Another committee member announces the demand.
+    let announcing_authority = test_state
         .committee
         .names()
         .nth(1)
@@ -1365,9 +1359,8 @@ async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() 
         .entry(round)
         .or_default()
         .push(ConsensusNOAPresignDemand {
-            authority: byzantine_authority,
+            authority: announcing_authority,
             demand_id: demand_id.clone(),
-            signature_algorithm: announced_algorithm,
             network_encryption_key_id: network_key_id,
         });
     test_state.consensus_round += 1;
@@ -1410,24 +1403,25 @@ async fn test_noa_presign_demand_derives_its_algorithm_over_the_announced_one() 
     assert_eq!(
         presign_bytes,
         vec![DERIVED_POOL_MARKER; 16],
-        "the drain must draw from the pool its demand identity implies, not the announced one"
+        "the drain must draw from the pool its demand identity implies"
     );
     assert_eq!(
         assigned_key_id, network_key_id,
-        "the announced network key is still authoritative — it is not derivable"
+        "the announced network key is still authoritative — it is not derivable \
+         from the identity (the open half of #2019)"
     );
-    // The pool the announcement pointed at must be untouched.
+    // No other pool may be reachable: the announcement carries no algorithm.
     assert_eq!(
         test_state.epoch_stores[target]
-            .presign_pool_size(announced_algorithm, network_key_id)
+            .presign_pool_size(decoy_algorithm, network_key_id)
             .expect("pool size"),
         1,
-        "nothing should have been drawn from the announced algorithm's pool"
+        "nothing may be drawn from a pool the demand identity does not name"
     );
 
     info!(
         ?derived_algorithm,
-        ?announced_algorithm,
-        "a mismatched presign-demand announcement drew from the derived pool"
+        ?decoy_algorithm,
+        "the presign-demand drew from the pool its identity names"
     );
 }
