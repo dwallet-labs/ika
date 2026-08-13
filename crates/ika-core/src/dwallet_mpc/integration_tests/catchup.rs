@@ -200,6 +200,13 @@ async fn test_catchup_gate_suppresses_and_resumes_computations() {
             "validator {index}: gate must start disengaged"
         );
         assert!(
+            !test_state.epoch_stores[index]
+                .mpc_reported_catching_up
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "validator {index}: a validator at the tip must publish no catch-up to the \
+             consensus-path stall detector"
+        );
+        assert!(
             manager
                 .cryptographic_computations_orchestrator
                 .currently_running_cryptographic_computations
@@ -221,6 +228,16 @@ async fn test_catchup_gate_suppresses_and_resumes_computations() {
             manager.dwallet_mpc_metrics.catchup_mode.get(),
             1,
             "validator {index}: gate must engage on a {BACKLOG_ROUNDS}-round entry gap"
+        );
+        // The consensus-path stall detector holds its alarm only on a catch-up
+        // the service is actively publishing (ika #2036); without this the
+        // detector cannot tell this drain from a dead MPC service.
+        assert!(
+            test_state.epoch_stores[index]
+                .mpc_reported_catching_up
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "validator {index}: every round drained while the gate is engaged must be \
+             published to the consensus-path stall detector as a catch-up"
         );
         // The drain itself must have instantiated suppressible work
         // (internal presign top-up batches), otherwise the suppression

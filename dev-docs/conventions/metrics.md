@@ -162,6 +162,35 @@ loud line fires on transition into and out of the condition, and the gauge
 carries the continuous signal. `-1` before the MPC service reports its first
 round, since round 0 is a legitimate value.
 
+**The raw lag is not the alert target** — `ika_mpc_stopped_contributing_condition_active`
+is. Consensus rounds restart at zero each epoch and a restarted node builds a
+fresh epoch store whose cursor starts there too, so a mid-epoch restart's replay
+gap is simply "rounds elapsed this epoch": past the first three quarters of an
+hour of a 24h epoch it exceeds any stall threshold while the node is recovering
+perfectly normally, and the alarm fired on every restart of every production
+validator (#2036).
+
+Which forces the general rule: **a detector that lives outside a subsystem
+because the subsystem cannot report its own stall must still be told what the
+subsystem is deliberately doing** — otherwise "stopped" and "busy recovering"
+are the same observation from outside. What it must not do is read that
+intention from a flag the subsystem sets, because a flag outlives the loop that
+set it — a "busy recovering" flag left behind by a dead service loop reads
+exactly like a service still recovering. The MPC service publishes its catch-up
+state on every consumed
+round and the detector honours it only while it stays fresh, so the suppression
+is a lease the stalled side stops renewing the moment it stalls — a service that
+dies mid-catch-up alarms like any other stopped service. For the same reason the
+state is sampled from the catch-up gate itself, never from the gate's Prometheus
+gauge: that gauge is published by the service loop, so it latches at `1` exactly
+when the loop dies.
+
+Suppressing an alarm creates a hole, so it comes with the alarm that covers it:
+`ika_mpc_catch_up_stuck_condition_active` is a reported catch-up whose gap has
+stopped reaching new lows, over a bound generous against the observed drain
+rate. Between them, "not contributing" and "not recovering" are both loud, and
+the recovering-normally case is silent.
+
 ### Process-wide wire settings need a gauge, not just a log
 
 `ika_authority_name_encoding_width_bytes` and
@@ -421,8 +450,10 @@ ika_messages_included_in_dwallet_checkpoint
 ika_messages_included_in_system_checkpoint
 ika_mpc_blob_store_evictions_total
 ika_mpc_blob_store_size_bytes
+ika_mpc_catch_up_stuck_condition_active
 ika_mpc_consensus_round_lag
 ika_mpc_data_announcement_blob_bytes
+ika_mpc_stopped_contributing_condition_active
 ika_network_key_overlay_incomplete
 ika_network_key_registry_read_empty_condition_active
 ika_num_peers_with_external_address

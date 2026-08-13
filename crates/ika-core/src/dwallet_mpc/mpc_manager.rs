@@ -3559,6 +3559,16 @@ impl DWalletMPCManager {
             .set(i64::try_from(gap_rounds).unwrap_or(i64::MAX));
     }
 
+    /// Whether the catch-up gate is currently engaged.
+    ///
+    /// Read straight off the gate, never off the `catchup_mode` gauge: that
+    /// gauge is published by this service's loop, so it latches at its last
+    /// value the moment the loop dies — and the consensus-path stall detector
+    /// this feeds exists precisely for the case where the loop has died.
+    pub(crate) fn is_catching_up(&self) -> bool {
+        self.catchup_gate.is_catching_up()
+    }
+
     /// Spawns all ready MPC cryptographic computations on separate threads using Rayon.
     /// If no local CPUs are available, computations will execute as CPUs are freed.
     ///

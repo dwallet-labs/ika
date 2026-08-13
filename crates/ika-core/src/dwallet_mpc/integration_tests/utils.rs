@@ -70,6 +70,10 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Mirrors the real store's field so the MPC service's progress
     /// publication is exercised by the integration tests rather than stubbed.
     pub(crate) mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+    /// The catch-up gate state the MPC service published with the round above.
+    /// The real store holds it to decide whether an outsized lag is explained;
+    /// mirrored here so a test can prove the service publishes it at all.
+    pub(crate) mpc_reported_catching_up: std::sync::atomic::AtomicBool,
     pub(crate) round_to_idle_status_updates: Arc<Mutex<HashMap<Round, Vec<IdleStatusUpdate>>>>,
     pub(crate) round_to_sui_chain_observation_updates:
         Arc<Mutex<HashMap<Round, Vec<SuiChainObservationUpdate>>>>,
@@ -170,6 +174,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            mpc_reported_catching_up: std::sync::atomic::AtomicBool::new(false),
             round_to_idle_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_sui_chain_observation_updates: Arc::new(Mutex::new(HashMap::from([(
                 0,
@@ -200,9 +205,11 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(())
     }
 
-    fn record_mpc_consumed_consensus_round(&self, round: Round) {
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
         self.mpc_consumed_consensus_round
             .store(round, std::sync::atomic::Ordering::Relaxed);
+        self.mpc_reported_catching_up
+            .store(catching_up, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {

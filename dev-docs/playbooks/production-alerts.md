@@ -118,6 +118,44 @@ joiner bootstrap rejected: no peer-served certificate verified
 NOT auto-restart into it; verify the node's configured trust anchors
 and the peer set before bringing it back.
 
+## Alert 6: MPC subsystem has stopped contributing
+
+```promql
+ika_mpc_stopped_contributing_condition_active == 1
+# for: 5m (the condition is already latched and generous; this only filters
+#          a single sample straddling an epoch boundary)
+```
+
+The node follows consensus, serves requests and exports every other metric
+while contributing no MPC work — invisible from outside, and the reason this
+gauge exists (#1978, #1980). It is computed locally: the MPC service publishes
+the consensus round it has consumed and the **consensus commit path** compares,
+because every way the MPC service stops also stops any check placed inside it.
+
+**Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
+restarted mid-epoch replays the epoch from round 0, so its raw lag legitimately
+exceeds any stall threshold for as long as the replay runs. The gauge above
+already accounts for the catch-up the MPC service is reporting (#2036); the raw
+lag is a dashboard signal, not a page.
+
+**Operator action**: look for an earlier fatal in the dWallet MPC service on
+that host — the deliberate `break` on self-recognised maliciousness ends the
+service loop for the life of the process (Alert 2 fires for that one) — and
+restart the node if nothing else explains it. Recovery clears the gauge and logs
+`MPC subsystem has caught back up with consensus`.
+
+```promql
+ika_mpc_catch_up_stuck_condition_active == 1
+# no for-duration: the condition already carries a 15-minute bound
+```
+
+The complement: this validator IS draining a backlog, and the backlog has
+stopped shrinking. **Operator action**: do not restart — a restart discards the
+drain's progress and replays it. Check `ika_dwallet_mpc_catchup_gap_rounds` on
+the host; while that gap falls the drain is healthy and this gauge reads 0, so a
+`1` means it went flat or started growing, and something other than the backlog
+is holding the service up.
+
 ## Secondary signals worth dashboarding (no page)
 
 - `ika_last_pruned_authority_db_epoch` / `ika_last_pruned_consensus_db_epoch`
