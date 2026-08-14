@@ -253,6 +253,41 @@ construction; divergence = determinism bug).
 - **Multi-line struct dumps break line-based grep.** Anchor greps on the
   timestamp prefix (`^2026-`) or use single-line fields
   (`session_sequence_number=`), and prefer python for multiset diffs.
+- **A "healthy" checkpoint folder that folds nothing is a specific
+  failure, not a contradiction — and the cursor's SIDE tells you
+  which.** On a sui-state-direct node, `ika_ocs_pusher_pushed_total`
+  flat with dwallet sessions stalling has two opposite causes, so
+  always compare `ika_ocs_pusher_cursor_seq` against the chain's real
+  latest checkpoint (any fullnode's `GetServiceInfo.checkpoint_height`)
+  before acting:
+  - **Cursor AHEAD of the chain head → poisoned cursor.**
+    `ika_ocs_pusher_stalled` reads 0 (a cursor past the head has no lag
+    to report) and the staleness tripwire is blind too — it measures the
+    observed head against the folder's own processed head, and poisoning
+    both leaves the difference at zero forever. Recovery: stop the node
+    and clear the `sui_pusher_last_seq` row in the perpetual tables so
+    the folder re-initializes from the watermark.
+    Then check `rate(ika_ocs_pusher_gap_dropped_total[5m])`: climbing
+    steadily at roughly the chain's checkpoint rate (~4/s) means the
+    upstream is *ramping* the watermark — feeding a consistent
+    slightly-too-fast head that the rate bound admits — so clearing the
+    cursor only buys time until the endpoint is replaced. A flat drop
+    counter means a one-shot jump instead. See the residuals in
+    [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+  - **Cursor BEHIND the chain head with
+    `ika_ocs_watermark_implausible_total{consumer="folder"}` climbing →
+    the rate bound is refusing the upstream's samples.** Either the
+    endpoint really is reporting an unexplainable head (check it), or
+    the process was paused/suspended for longer than the bound's burst
+    covers (~an hour of production) — the bound uses monotonic time,
+    which does not advance while a host is suspended. It heals on its
+    own at a few checkpoints per second, and a **restart clears it
+    outright** (the bound is in-process state, re-seeded at start). Do
+    NOT clear the cursor row here; the cursor is fine.
+
+  Mechanism, both bounds, and the full recovery note:
+  [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)
+  ("Reading the head").
 - **Verify the chain you query is the chain the network used.** Stale
   config files (object ids from a previous run) and multiple listeners
   on one port have both produced hours of false "the object doesn't
