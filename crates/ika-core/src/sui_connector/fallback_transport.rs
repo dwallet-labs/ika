@@ -61,6 +61,16 @@ impl SuiTransport for FallbackTransport {
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         self.primary.get_latest_checkpoint().await
     }
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // Forward explicitly so a DIRECT primary keeps its pruning-immune
+        // probe through this wrapper; the trait default would substitute the
+        // window-bound summary fetch even when the primary implements one.
+        // (Behind a mirror relay there is no watermark RPC to reach, so the
+        // default is what runs — see the trait method's doc.)
+        self.primary.get_latest_checkpoint_sequence().await
+    }
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,
@@ -172,6 +182,11 @@ mod tests {
         ) -> Result<CertifiedCheckpointSummary, TransportError> {
             self.record("get_latest_checkpoint")
         }
+        async fn get_latest_checkpoint_sequence(
+            &self,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            self.record("get_latest_checkpoint_sequence")
+        }
         async fn get_full_checkpoint(
             &self,
             _seq: CheckpointSequenceNumber,
@@ -236,6 +251,10 @@ mod tests {
         let _ = transport.get_chain_identifier().await;
         let _ = transport.get_current_epoch().await;
         let _ = transport.get_latest_checkpoint().await;
+        // Explicitly forwarded, not inherited: a dropped forward would fall
+        // through to the trait default and record `get_latest_checkpoint`
+        // instead, which this ordered log catches.
+        let _ = transport.get_latest_checkpoint_sequence().await;
         let _ = transport.get_full_checkpoint(7).await;
         let _ = transport
             .get_checkpoint_summary_by_digest(CheckpointDigest::random())
@@ -254,6 +273,7 @@ mod tests {
             "get_chain_identifier",
             "get_current_epoch",
             "get_latest_checkpoint",
+            "get_latest_checkpoint_sequence",
             "get_full_checkpoint",
             "get_checkpoint_summary_by_digest",
             "last_checkpoint_of_epoch",

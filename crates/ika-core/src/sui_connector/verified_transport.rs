@@ -105,6 +105,14 @@ impl SuiTransport for VerifiedSuiTransport {
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         self.relay.get_latest_checkpoint().await
     }
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // Forward explicitly (see the fallback transport). The relay here
+        // is the mirror in a mirrored stack, which has no watermark RPC, so
+        // this preserves the property only for a direct relay.
+        self.relay.get_latest_checkpoint_sequence().await
+    }
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,

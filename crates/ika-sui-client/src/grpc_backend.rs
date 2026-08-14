@@ -225,8 +225,11 @@ impl SuiClientInner for GrpcSuiClient {
     }
 
     async fn get_latest_checkpoint_sequence_number(&self) -> Result<u64, Self::Error> {
-        let checkpoint = self.transport.get_latest_checkpoint().await?;
-        Ok(*checkpoint.sequence_number())
+        // Watermark probe, not a summary fetch: this is reached from
+        // `SuiClient::describe` on every node-start path, so taking the
+        // height through the fullnode's availability window fails node boot
+        // outright while that window is empty.
+        Ok(self.transport.get_latest_checkpoint_sequence().await?)
     }
 
     async fn get_system(&self, ika_system_object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {

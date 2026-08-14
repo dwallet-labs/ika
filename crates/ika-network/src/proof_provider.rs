@@ -577,8 +577,14 @@ impl LocalProofProvider {
     }
 
     async fn current_head_seq(&self) -> Result<CheckpointSequenceNumber, TransportError> {
-        let latest = self.raw.get_latest_checkpoint().await?;
-        Ok(*latest.sequence_number())
+        // Watermark probe, not a summary fetch: this stamps
+        // `claimed_latest_checkpoint_seq` on EVERY verified-read response,
+        // so a window-bound read makes a pruning-at-head fullnode fatal to
+        // every response this node serves — including the proof-snapshot
+        // cache reads that exist precisely to survive pruning. The value is
+        // untrusted by design (the reader folds it through `fetch_max`), so
+        // the unverified watermark is semantically appropriate here.
+        self.raw.get_latest_checkpoint_sequence().await
     }
 
     fn record_build_failure(&self, kind: &str, err: &TransportError) {

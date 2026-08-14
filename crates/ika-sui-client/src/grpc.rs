@@ -267,6 +267,29 @@ impl SuiTransport for SuiGrpcClient {
             .map_err(Self::rpc_status_err)
     }
 
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // `GetServiceInfo.checkpoint_height` reads the store's latest
+        // watermark WITHOUT the availability-window check that makes
+        // `GetCheckpoint` NotFound a just-pruned latest — the probe keeps
+        // working while the fullnode prunes at head.
+        let mut rpc = self.rpc.clone();
+        let response = rpc
+            .inner_mut()
+            .clone()
+            .ledger_client()
+            .get_service_info(proto::GetServiceInfoRequest::default())
+            .await
+            .map_err(Self::rpc_status_err)?
+            .into_inner();
+        response.checkpoint_height.ok_or_else(|| {
+            TransportError::Network(
+                "GetServiceInfo response carried no checkpoint_height".to_string(),
+            )
+        })
+    }
+
     async fn get_full_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,
