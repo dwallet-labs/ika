@@ -43,6 +43,46 @@ across the committee. A validator that binds a different presign to a request
 than its peers signs a checkpoint nobody else signs — an honest validator
 producing a divergent computation, the false-malicious class.
 
+## Which pool a demand draws from
+
+A pool is keyed by `(signature algorithm, network encryption key)`, so
+draining a demand starts by choosing an algorithm. That choice comes from
+the demand's IDENTITY (`NOAPresignDemandId::expected_signature_algorithm`),
+never from the announcement that carried it.
+
+The reason is the dedup key. Presign-demand announcements are deduplicated
+on the demand-id digest ALONE — deliberately, so several validators
+announcing the same demand collapse into one consensus transaction — and the
+consequence is that the first announcement sequenced for a demand would
+supply any payload field the drain reads, for the whole network, while every
+honest duplicate is dropped behind it. A committee member could then pick the
+pool for any demand whose id it can predict, and demand ids are derivable
+from public data.
+
+Deriving is what removes that, and it is stronger than validating the
+announced value:
+
+- **Rejecting a mismatch is unsafe.** The honest announcements were already
+  deduplicated away, so no correct one can follow: the demand stays
+  unassigned, its sign never happens, and the epoch cannot finalize its NOA
+  checkpoints. A substitution bug would have been traded for a stall.
+- **Carrying no second copy is stronger than comparing two.** Both demand
+  arms commit to their algorithm — the checkpoint arm through `kind_name`
+  (whose mapping to the counterparty chain's algorithm is pinned by test),
+  the attestation arm by carrying it in the identity — so an announcer
+  naming a different algorithm produces a DIFFERENT identity, a demand no
+  honest consumer looks up, rather than a competing answer for this one.
+  Neither the consensus message nor the internal sign request carries an
+  algorithm beside the id, so the pool drained and the session instantiated
+  cannot disagree.
+
+`network_encryption_key_id` is NOT covered by this reasoning and remains
+announcer-supplied behind the same dedup key: it is frozen at announce time
+on purpose, so the assignment does not depend on the announce-time and
+instantiate-time key resolutions agreeing. Closing that half is issue #2019;
+the shape it wants is park-rather-than-reject, pending the question of
+whether honest validators can transiently hold different adopted key sets.
+
 ## Fills complete out of sequence order
 
 A top-up batch starts *s* sessions at once. They finish in consensus order,

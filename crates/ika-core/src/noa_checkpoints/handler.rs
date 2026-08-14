@@ -100,7 +100,6 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .map(|(tx_index, tx_bytes)| NetworkOwnedAddressSignRequest {
                 message: tx_bytes,
                 curve: <K::Counterparty as CounterpartyChain>::CURVE,
-                signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
                 hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
                 // First attempt for this checkpoint tx: retry_round 0.
                 demand_id: NOAPresignDemandId::Checkpoint {
@@ -372,7 +371,6 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
         Some(NetworkOwnedAddressSignRequest {
             message: tx_bytes,
             curve: <K::Counterparty as CounterpartyChain>::CURVE,
-            signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
             hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
             demand_id: NOAPresignDemandId::Checkpoint {
                 tx_ref: tx_ref.clone(),

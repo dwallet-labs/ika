@@ -650,15 +650,20 @@ impl DWalletMPCService {
     /// Drains the channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
     fn process_network_owned_address_sign_requests(&mut self) {
-        // Drain the receiver into the shared pending buffer, deduplicating by message.
+        // Drain the receiver into the shared pending buffer, deduplicating by
+        // the demand IDENTITY rather than by the message: the same message
+        // under two algorithms is two distinct legitimate demands (the
+        // algorithm is part of the identity), and keying on the message alone
+        // would drop the second at intake while a peer's announcement of it
+        // still consumed a presign in the drain.
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
-            let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
-            if self.submitted_noa_sign_messages.contains(&message_hash) {
+            let demand_digest = request.demand_id.digest();
+            if self.submitted_noa_sign_messages.contains(&demand_digest) {
                 ika_types::report_invariant_violation!(
                     "duplicate_noa_sign_request",
                     message_len = request.message.len(),
                     curve = ?request.curve,
-                    algorithm = ?request.signature_algorithm,
+                    algorithm = ?request.demand_id.expected_signature_algorithm(),
                     "Skipping duplicate network-owned-address sign request"
                 );
                 continue;
@@ -666,7 +671,7 @@ impl DWalletMPCService {
             debug!(
                 message_len = request.message.len(),
                 curve = ?request.curve,
-                algorithm = ?request.signature_algorithm,
+                algorithm = ?request.demand_id.expected_signature_algorithm(),
                 "Received network-owned-address sign request"
             );
             self.pending_network_owned_address_sign_requests
@@ -720,7 +725,6 @@ impl DWalletMPCService {
                     .push(ConsensusNOAPresignDemand {
                         authority: self.name,
                         demand_id: request.demand_id.clone(),
-                        signature_algorithm: request.signature_algorithm,
                         network_encryption_key_id,
                     });
                 self.announced_noa_demand_digests.insert(digest);
@@ -758,7 +762,7 @@ impl DWalletMPCService {
                             .instantiate_network_owned_address_sign_session(
                                 request.message.clone(),
                                 request.curve,
-                                request.signature_algorithm,
+                                request.demand_id.expected_signature_algorithm(),
                                 request.hash_scheme,
                                 presign_session_id,
                                 presign_blending_index,
@@ -921,7 +925,6 @@ impl DWalletMPCService {
                 let tx = ConsensusTransaction::new_noa_presign_demand(
                     demand.authority,
                     demand.demand_id.clone(),
-                    demand.signature_algorithm,
                     demand.network_encryption_key_id,
                 );
                 if let Err(e) = self
@@ -1759,45 +1762,30 @@ impl DWalletMPCService {
                     // already assigned) — drop; `Ok(None)` => pool momentarily
                     // empty — keep, preserving order across rounds until the
                     // presign is generated; `Err` => keep for retry.
-                    // Prefer the algorithm DERIVED from the demand identity
-                    // over the one the announcement carries. The consensus
-                    // dedup key is the demand-id digest alone, so the first
-                    // announcement sequenced for a demand supplies the payload
-                    // fields for the whole network and the honest duplicates
-                    // are dropped — an announcer could otherwise pick the
-                    // algorithm, and so the presign pool, for a demand whose id
-                    // it can compute from public checkpoint data.
+                    // The algorithm comes from the demand IDENTITY, never from
+                    // the announcement: the consensus dedup key is the
+                    // demand-id digest alone, so the first announcement
+                    // sequenced for a demand would otherwise supply that field
+                    // for the whole network while the honest duplicates are
+                    // dropped behind it. Carrying no second copy is stronger
+                    // than comparing two: an announcer with a different
+                    // algorithm produces a DIFFERENT identity — a demand no
+                    // honest consumer looks up — and the pool popped here
+                    // cannot disagree with the session instantiated from the
+                    // same id.
                     //
-                    // Deriving is stronger than checking-and-rejecting here:
-                    // rejecting would leave the demand unassigned, and since
-                    // the honest announcements were already deduplicated away,
-                    // its sign would never happen and the epoch could not
-                    // finalize its NOA checkpoints. Every validator derives the
-                    // same value from the same consensus-agreed identity, so
-                    // this stays network-uniform.
-                    //
-                    // The announced value still governs where the identity does
-                    // not determine one. `network_encryption_key_id` is NOT
-                    // derivable — it is frozen at announce time on purpose (see
-                    // above) — and remains as announced.
-                    let signature_algorithm = demand
-                        .demand_id
-                        .expected_signature_algorithm()
-                        .unwrap_or(demand.signature_algorithm);
-                    if signature_algorithm != demand.signature_algorithm {
-                        ika_types::report_invariant_violation!(
-                            "noa_presign_demand_signature_algorithm_mismatch",
-                            announcer=?demand.authority,
-                            announced=?demand.signature_algorithm,
-                            derived=?signature_algorithm,
-                            demand_id=?demand.demand_id,
-                            "NOA presign demand announced a signature algorithm its demand \
-                             identity does not imply; using the derived one"
-                        );
-                    }
+                    // `network_encryption_key_id` is the field this reasoning
+                    // does NOT yet cover: it is not derivable from the
+                    // identity (frozen at announce time on purpose, so the
+                    // assignment does not rest on the announce-time and
+                    // instantiate-time key resolutions agreeing), so it stays
+                    // announcer-supplied behind the same dedup key.
+                    // TODO(#2019): close that half — the shape it wants is
+                    // park-rather-than-reject, pending the adopted-key-skew
+                    // question.
                     match self.epoch_store.assign_noa_presign(
                         demand.demand_id_digest(),
-                        signature_algorithm,
+                        demand.demand_id.expected_signature_algorithm(),
                         demand.network_encryption_key_id,
                     ) {
                         Ok(Some(_)) => false,

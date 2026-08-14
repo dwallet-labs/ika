@@ -328,13 +328,30 @@ pub struct NOACheckpointTxRef {
 /// demand sources: checkpoint signs (and their per-tx retries) carry the
 /// checkpoint tx coordinate + a retry round (0 for the first attempt); gRPC
 /// attestation signs carry their gRPC session identifier.
+///
+/// Every arm COMMITS to the signature algorithm the demand will use — the
+/// checkpoint arm implicitly (its `kind_name` determines it), the attestation
+/// arm explicitly. That is what lets a consumer derive the algorithm rather
+/// than trust the announcement carrying it; see
+/// [`Self::expected_signature_algorithm`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NOAPresignDemandId {
     Checkpoint {
         tx_ref: NOACheckpointTxRef,
         retry_round: u32,
     },
-    GrpcAttestation([u8; 32]),
+    GrpcAttestation {
+        /// The gRPC session identifier the attestation belongs to.
+        session_identifier: [u8; 32],
+        /// The algorithm this demand's presign must be drawn for. Part of the
+        /// IDENTITY, not payload: a demand announced with a different
+        /// algorithm is a DIFFERENT demand — a distinct digest that no honest
+        /// consumer ever looks up — rather than a competing answer for this
+        /// one. The session identifier alone could not carry that, so an
+        /// announcer could otherwise pick the algorithm (and with it the
+        /// presign pool) for any attestation whose identifier it can predict.
+        signature_algorithm: DWalletSignatureAlgorithm,
+    },
 }
 
 impl NOAPresignDemandId {
@@ -345,25 +362,26 @@ impl NOAPresignDemandId {
         keccak256_digest(&bcs::to_bytes(self).expect("NOAPresignDemandId is BCS-serializable"))
     }
 
-    /// The signature algorithm this demand must use, when the demand IDENTITY
-    /// determines it.
+    /// The signature algorithm this demand must use, derived from its
+    /// IDENTITY.
     ///
     /// The consensus dedup key for a presign-demand announcement is the digest
     /// of this identity alone — deliberately, so several validators announcing
     /// the same demand collapse into one transaction. The consequence is that
     /// the first announcement sequenced for a demand supplies the payload
-    /// fields the drain then uses for everyone. Wherever a field is instead
-    /// derivable from the identity, deriving it removes the announcer's say in
-    /// the matter entirely, which is stronger than validating what it sent:
-    /// there is no divergent value left to prefer, and no honest demand can be
-    /// dropped for carrying one.
+    /// fields the drain then uses for everyone. Deriving this one from the
+    /// identity removes the announcer's say in the matter entirely, which is
+    /// stronger than validating what it sent: there is no divergent value left
+    /// to prefer, and no honest demand can be dropped for carrying one.
     ///
-    /// `None` for a source whose identity does not determine the algorithm.
-    /// Such a demand has to keep taking the announced value.
-    pub fn expected_signature_algorithm(&self) -> Option<DWalletSignatureAlgorithm> {
+    /// Total by construction — every arm commits to its algorithm.
+    pub fn expected_signature_algorithm(&self) -> DWalletSignatureAlgorithm {
         match self {
-            Self::Checkpoint { tx_ref, .. } => Some(tx_ref.kind_name.signature_algorithm()),
-            Self::GrpcAttestation(_) => None,
+            Self::Checkpoint { tx_ref, .. } => tx_ref.kind_name.signature_algorithm(),
+            Self::GrpcAttestation {
+                signature_algorithm,
+                ..
+            } => *signature_algorithm,
         }
     }
 }
@@ -420,11 +438,11 @@ mod tests {
         assert_derived_matches_producer::<SuiSystemCheckpoint>();
     }
 
-    /// A checkpoint demand's identity determines its algorithm, so the drain
-    /// can derive it instead of trusting the announcement. A gRPC-attestation
-    /// demand's identity does not, so it must report that rather than guess.
+    /// EVERY demand's identity determines its algorithm — the checkpoint arm
+    /// through its `kind_name`, the attestation arm by carrying it — so the
+    /// drain always derives and never consults the announced value.
     #[test]
-    fn only_a_checkpoint_demand_determines_its_own_algorithm() {
+    fn every_demand_identity_determines_its_own_algorithm() {
         let checkpoint = NOAPresignDemandId::Checkpoint {
             tx_ref: NOACheckpointTxRef {
                 kind_name: NOACheckpointKindName::SuiDWallet,
@@ -436,12 +454,40 @@ mod tests {
         };
         assert_eq!(
             checkpoint.expected_signature_algorithm(),
-            Some(NOACheckpointKindName::SuiDWallet.signature_algorithm()),
+            NOACheckpointKindName::SuiDWallet.signature_algorithm(),
         );
         assert_eq!(
-            NOAPresignDemandId::GrpcAttestation([1u8; 32]).expected_signature_algorithm(),
-            None,
-            "a demand whose identity does not fix the algorithm must not claim one"
+            NOAPresignDemandId::GrpcAttestation {
+                session_identifier: [1u8; 32],
+                signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256r1,
+            }
+            .expected_signature_algorithm(),
+            DWalletSignatureAlgorithm::ECDSASecp256r1,
+        );
+    }
+
+    /// The algorithm is part of the attestation demand's IDENTITY: announcing
+    /// the same session with a different algorithm yields a DIFFERENT digest,
+    /// so it cannot compete with the honest demand for the same consensus
+    /// dedup key — it is a demand no honest consumer ever looks up. This is
+    /// what closes the substitution hole at the source rather than at the
+    /// consumer.
+    #[test]
+    fn a_different_algorithm_is_a_different_attestation_demand() {
+        let session_identifier = [9u8; 32];
+        let honest = NOAPresignDemandId::GrpcAttestation {
+            session_identifier,
+            signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+        };
+        let substituted = NOAPresignDemandId::GrpcAttestation {
+            session_identifier,
+            signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256r1,
+        };
+        assert_ne!(
+            honest.digest(),
+            substituted.digest(),
+            "the algorithm must be part of the demand identity, not payload \
+             beside it"
         );
     }
 

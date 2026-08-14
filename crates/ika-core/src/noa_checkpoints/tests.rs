@@ -316,8 +316,11 @@ fn test_handler_sends_sign_requests() {
         first_requests[0].curve,
         noa_checkpoint::SuiCounterpartyChain::CURVE
     );
+    // The algorithm is not carried beside the request — it is derived from
+    // the demand identity, so this asserts the identity implies the
+    // counterparty chain's algorithm.
     assert_eq!(
-        first_requests[0].signature_algorithm,
+        first_requests[0].demand_id.expected_signature_algorithm(),
         noa_checkpoint::SuiCounterpartyChain::SIGNATURE_ALGORITHM
     );
     assert_eq!(
@@ -350,7 +353,7 @@ async fn test_handler_certifies_and_submits_to_chain() {
             message: req.message.clone(),
             signature: b"mpc_signature".to_vec(),
             curve: req.curve,
-            signature_algorithm: req.signature_algorithm,
+            signature_algorithm: req.demand_id.expected_signature_algorithm(),
             hash_scheme: req.hash_scheme,
         })
         .await;
@@ -383,7 +386,7 @@ async fn test_end_to_end_handler() {
                 )
                 .into_bytes(),
                 curve: req.curve,
-                signature_algorithm: req.signature_algorithm,
+                signature_algorithm: req.demand_id.expected_signature_algorithm(),
                 hash_scheme: req.hash_scheme,
             })
             .await;
@@ -410,7 +413,7 @@ async fn test_end_to_end_system_checkpoint_handler() {
             message: req.message.clone(),
             signature: b"system_sig".to_vec(),
             curve: req.curve,
-            signature_algorithm: req.signature_algorithm,
+            signature_algorithm: req.demand_id.expected_signature_algorithm(),
             hash_scheme: req.hash_scheme,
         })
         .await;
