@@ -2403,13 +2403,29 @@ impl DWalletMPCManager {
     pub(super) fn network_owned_address_signing_network_encryption_key_id(
         &self,
     ) -> Option<ObjectID> {
-        // Select over the ADOPTED (consensus-agreed) set, not the installed set
+        // Select over the ADOPTED set, not the installed set
         // (`network_keys.network_encryption_keys`): installation completes on
         // wall-clock time per validator, so choosing over it would let two
         // honest validators pick a different NOA key while their installs lag,
         // apply different pool configs (batch sizes), and diverge the
         // internal-presign top-up decision. The adopted set drives the same
-        // top-up loop, so both agree on the NOA key by construction.
+        // top-up loop, so the two stay consistent WITHIN a validator.
+        //
+        // That is the only guarantee here: the answer is NOT uniform across
+        // validators at a given moment. `adopt_cert_verified_keys` is a
+        // per-tick LOCAL pass over a LOCAL overlay — WHICH keys are adoptable
+        // is network-uniform (the handoff cert pins them), but WHEN each
+        // validator adopts is not. The adopted set starts empty every epoch
+        // and fills as each key's blobs become locally resolvable, a key whose
+        // overlay entry is still blob-empty is skipped while its siblings
+        // adopt, and a handoff-cert read error skips the whole pass for a
+        // tick. So this returns `None` on a validator whose peers already
+        // answer `Some`, and with more than one key it can return a different
+        // key than a peer whose adopted set is ahead. The divergence is
+        // transient (the set only grows, so everyone converges on the same
+        // minimum) but not tick-bounded — a stranded key can stay unresolved
+        // for much of an epoch. Callers must not treat a peer's choice that
+        // differs from this one as evidence of misbehavior; see issue #2019.
         self.adopted_network_key_data
             .values()
             .min_by(|a, b| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a.id.cmp(&b.id)))

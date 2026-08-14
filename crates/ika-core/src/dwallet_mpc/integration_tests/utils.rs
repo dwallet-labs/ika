@@ -110,6 +110,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// "cert absent"); tests for the cert-digest gate insert one here.
     pub(crate) certified_handoff_attestations:
         Arc<Mutex<HashMap<EpochId, CertifiedHandoffAttestation>>>,
+    /// When set, every handoff-cert read returns `Err` instead of the map
+    /// contents — the store-hiccup path that makes the adoption pass skip
+    /// the whole tick (as opposed to a genuinely absent cert, which is an
+    /// answer). For tests that need one validator's adoption to stall.
+    pub(crate) fail_certified_handoff_attestation_reads: Arc<AtomicBool>,
     /// Configurable perpetual-tables handle. `None` by default (matching
     /// "nothing recorded"); tests for the produced-this-epoch adoption
     /// guard open real tables in a tempdir and install them here.
@@ -191,6 +196,7 @@ impl TestingAuthorityPerEpochStore {
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
+            fail_certified_handoff_attestation_reads: Arc::new(AtomicBool::new(false)),
             perpetual_tables: Arc::new(Mutex::new(None)),
         }
     }
@@ -645,6 +651,14 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // Testing impl: serves the configurable in-memory map (empty by
         // default, in which case the cert-verified adoption path behaves
         // as "cert absent" and tests exercise the consensus-voted path).
+        if self
+            .fail_certified_handoff_attestation_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(ika_types::error::IkaError::Storage(
+                "injected handoff-cert read failure".to_string(),
+            ));
+        }
         Ok(self
             .certified_handoff_attestations
             .lock()
