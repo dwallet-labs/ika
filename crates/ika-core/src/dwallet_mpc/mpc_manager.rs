@@ -3261,7 +3261,7 @@ impl DWalletMPCManager {
         };
 
         // The presign is assigned in consensus-delivery order by the service
-        // layer (`assign_noa_presign`) and passed in as raw bytes, so every
+        // layer (`assign_presign_for_demand`) and passed in as raw bytes, so every
         // validator pairs the same presign with the same demand. This function
         // no longer pops from the pool — doing so used LOCAL instantiation
         // order, which diverged across a staggered restart and wedged the epoch.

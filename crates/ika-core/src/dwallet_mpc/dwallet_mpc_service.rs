@@ -7,7 +7,7 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataReceivers;
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStoreTrait, PresignDemand};
 use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
@@ -1611,17 +1611,19 @@ impl DWalletMPCService {
                         return false;
                     }
 
-                    // Atomic + idempotent (see `serve_global_presign`): pops the
+                    // Atomic + idempotent (see `assign_presign_for_demand`): pops the
                     // pool head and records what it served in ONE committed
                     // batch, or returns the presign already served for this
-                    // sequence number without popping. A bare `pop_presign`
+                    // sequence number without popping. A bare pop
                     // here would re-pop when this loop replays the epoch's
                     // rounds after a restart — against a pool the replay never
                     // reset — and answer the request with a different presign
                     // than the never-crashed peers put in their checkpoint
                     // message for the same presign id.
-                    match self.epoch_store.serve_global_presign(
-                        request.session_sequence_number,
+                    match self.epoch_store.assign_presign_for_demand(
+                        &PresignDemand::GlobalRequest {
+                            session_sequence_number: request.session_sequence_number,
+                        },
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {
@@ -1726,7 +1728,7 @@ impl DWalletMPCService {
             //   (d) the presign pool is network-uniform (keyed by the
             //       consensus-assigned presign sequence), so popping in the same
             //       order yields the same presign per demand on every validator.
-            // `assign_noa_presign` is atomic + idempotent: it pops and records
+            // `assign_presign_for_demand` is atomic + idempotent: it pops and records
             // in one committed batch, and returns an already-assigned demand
             // without popping again (so re-delivery, and a re-drain after a
             // consensus-round replay, are both safe). Keeping a demand when the
@@ -1751,7 +1753,7 @@ impl DWalletMPCService {
                 .extend(noa_presign_demand_messages);
             if !self.agreed_noa_presign_demands_queue.is_empty() {
                 self.agreed_noa_presign_demands_queue.retain(|demand| {
-                    // Atomic + idempotent (see `assign_noa_presign`): pops a
+                    // Atomic + idempotent (see `assign_presign_for_demand`): pops a
                     // presign and records the assignment (raw presign + the
                     // demand's network key id) in ONE committed batch, or
                     // returns the existing assignment without popping. The pop
@@ -1783,8 +1785,10 @@ impl DWalletMPCService {
                     // TODO(#2019): close that half — the shape it wants is
                     // park-rather-than-reject, pending the adopted-key-skew
                     // question.
-                    match self.epoch_store.assign_noa_presign(
-                        demand.demand_id_digest(),
+                    match self.epoch_store.assign_presign_for_demand(
+                        &PresignDemand::Noa {
+                            demand_id: demand.demand_id.clone(),
+                        },
                         demand.demand_id.expected_signature_algorithm(),
                         demand.network_encryption_key_id,
                     ) {

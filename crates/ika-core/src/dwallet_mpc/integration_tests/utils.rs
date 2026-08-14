@@ -1,6 +1,6 @@
 use crate::authority::AuthorityStateTrait;
 use crate::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaAssignedPresign,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaAssignedPresign, PresignDemand,
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -164,6 +164,31 @@ impl TestingDWalletCheckpointNotify {
 }
 
 impl TestingAuthorityPerEpochStore {
+    /// Test-only raw pool pop for pool-inspection assertions. The production
+    /// trait surface has no bare pop — every consumer assigns through an
+    /// idempotent [`PresignDemand`] — so this exists solely so tests can
+    /// observe pool contents.
+    pub(crate) fn pop_presign_for_testing(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        let mut pools = self.presign_pools.lock().unwrap();
+        let key = (signature_algorithm, dwallet_network_encryption_key_id);
+        // FIFO — oldest first — mirroring the real store, which pops the head
+        // of a slot-ordered range. Popping LIFO here would prove idempotency
+        // against an ordering the real store never produces, and could not
+        // reproduce the scenario these tests exist for: a lower sequence
+        // number filling AFTER the original pop and winning the replayed one.
+        Ok(pools.get_mut(&key).and_then(|pool| {
+            if pool.is_empty() {
+                None
+            } else {
+                Some(pool.remove(0))
+            }
+        }))
+    }
+
     fn new() -> Self {
         Self {
             pending_checkpoints: Arc::new(Mutex::new(vec![])),
@@ -358,43 +383,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .copied())
     }
 
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let mut pools = self.presign_pools.lock().unwrap();
-        let key = (signature_algorithm, dwallet_network_encryption_key_id);
-        Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
-    }
-
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        if let Some(served) = self
-            .served_global_presigns
-            .lock()
-            .unwrap()
-            .get(&session_sequence_number)
-            .cloned()
-        {
-            return Ok(Some(served));
-        }
-        let Some(served) =
-            self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        self.served_global_presigns
-            .lock()
-            .unwrap()
-            .insert(session_sequence_number, served.clone());
-        Ok(Some(served))
-    }
-
     fn mark_presign_as_used(
         &self,
         presign_session_id: SessionIdentifier,
@@ -516,50 +504,81 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .cloned())
     }
 
-    fn assign_noa_presign(
-        &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        if let Some((session_id, blending_index, _, _)) = self
-            .noa_assigned_presigns
-            .lock()
-            .unwrap()
-            .get(&digest)
-            .cloned()
-        {
-            return Ok(Some((session_id, blending_index)));
-        }
-        let Some((session_id, blending_index, presign)) =
-            self.pop_presign(signature_algorithm, network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        self.noa_assigned_presigns.lock().unwrap().insert(
-            digest,
-            (
-                session_id,
-                blending_index,
-                presign,
-                network_encryption_key_id,
-            ),
-        );
-        // Mirror the real store: mark the popped presign used at the point of
-        // consumption (the pool pop above).
-        self.used_presigns
-            .lock()
-            .unwrap()
-            .insert((session_id, blending_index), ());
-        Ok(Some((session_id, blending_index)))
-    }
-
     fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
         Ok(self
             .noa_assigned_presigns
             .lock()
             .unwrap()
             .contains_key(digest))
+    }
+
+    fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                if let Some(served) = self
+                    .served_global_presigns
+                    .lock()
+                    .unwrap()
+                    .get(session_sequence_number)
+                    .cloned()
+                {
+                    return Ok(Some(served));
+                }
+            }
+            PresignDemand::Noa { demand_id } => {
+                if let Some((session_id, blending_index, presign, _)) = self
+                    .noa_assigned_presigns
+                    .lock()
+                    .unwrap()
+                    .get(&demand_id.digest())
+                    .cloned()
+                {
+                    return Ok(Some((session_id, blending_index, presign)));
+                }
+            }
+        }
+
+        let Some((session_id, blending_index, presign)) =
+            self.pop_presign_for_testing(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                self.served_global_presigns.lock().unwrap().insert(
+                    *session_sequence_number,
+                    (session_id, blending_index, presign.clone()),
+                );
+            }
+            PresignDemand::Noa { demand_id } => {
+                self.noa_assigned_presigns.lock().unwrap().insert(
+                    demand_id.digest(),
+                    (
+                        session_id,
+                        blending_index,
+                        presign.clone(),
+                        dwallet_network_encryption_key_id,
+                    ),
+                );
+                // Mirror the real store: mark the popped presign used at the
+                // point of consumption (the pool pop above).
+                self.used_presigns
+                    .lock()
+                    .unwrap()
+                    .insert((session_id, blending_index), ());
+            }
+        }
+        Ok(Some((session_id, blending_index, presign)))
     }
 
     fn assign_presign(
@@ -570,7 +589,8 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        let popped = self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?;
+        let popped =
+            self.pop_presign_for_testing(signature_algorithm, dwallet_network_encryption_key_id)?;
         match popped {
             Some((session_id, blending_index, presign_bytes)) => {
                 let assigned = AssignedPresign {
