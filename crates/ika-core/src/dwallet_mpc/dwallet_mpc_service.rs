@@ -7,7 +7,7 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataReceivers;
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStoreTrait, PresignDemand};
 use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
@@ -1620,8 +1620,10 @@ impl DWalletMPCService {
                     // reset — and answer the request with a different presign
                     // than the never-crashed peers put in their checkpoint
                     // message for the same presign id.
-                    match self.epoch_store.serve_global_presign(
-                        request.session_sequence_number,
+                    match self.epoch_store.assign_presign_for_demand(
+                        &PresignDemand::GlobalRequest {
+                            session_sequence_number: request.session_sequence_number,
+                        },
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {
@@ -1783,8 +1785,10 @@ impl DWalletMPCService {
                     // TODO(#2019): close that half — the shape it wants is
                     // park-rather-than-reject, pending the adopted-key-skew
                     // question.
-                    match self.epoch_store.assign_noa_presign(
-                        demand.demand_id_digest(),
+                    match self.epoch_store.assign_presign_for_demand(
+                        &PresignDemand::Noa {
+                            digest: demand.demand_id_digest(),
+                        },
                         demand.demand_id.expected_signature_algorithm(),
                         demand.network_encryption_key_id,
                     ) {

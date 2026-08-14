@@ -353,6 +353,26 @@ pub struct ExecutionIndicesWithStats {
 /// `(presign session id, blending index, raw presign bytes, network key id)`.
 pub(crate) type NoaAssignedPresign = (SessionIdentifier, u16, Vec<u8>, ObjectID);
 
+/// What a presign is being assigned TO — and, because assignment is keyed by
+/// it, the idempotency key.
+///
+/// Every consumer's demand stream is replayed from a per-epoch table after a
+/// restart, so a bare pool pop on replay binds a DIFFERENT presign than the
+/// never-crashed peers bound (fills complete out of sequence order, so the
+/// pool head moves between the original pop and the replayed one). That is a
+/// byte-divergent checkpoint or attestation from an honest validator. Routing
+/// every assignment through a demand identity makes the replay a no-op
+/// instead: a re-seen demand returns what it was already given, without
+/// popping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresignDemand {
+    /// A global presign request, identified by its consensus sequence number.
+    GlobalRequest { session_sequence_number: u64 },
+    /// A network-owned-address sign demand, identified by its demand-id
+    /// digest.
+    Noa { digest: [u8; 32] },
+}
+
 /// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
 pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     fn insert_pending_dwallet_checkpoint(
@@ -441,34 +461,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<u64>>;
 
-    /// Pop a presign from the internal pool for the given algorithm and key.
-    ///
-    /// Concurrency safety: This method is only called from the MPC manager
-    /// during consensus round processing, which is single-threaded (one round
-    /// at a time). There is no concurrent access to the presign pool.
-    ///
-    /// Self-committing and NOT idempotent — see the note on the inherent
-    /// method. Work that is replayed from a consensus round stream must use
-    /// `serve_global_presign` / `assign_noa_presign` / `assign_presign`.
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
-
-    /// Serves a global presign request out of the internal pool atomically and
-    /// idempotently: an already-served sequence number returns the SAME presign
-    /// without popping, otherwise the pop and the record of what it served land
-    /// in ONE committed batch (they must not be separable — a replayed request
-    /// that re-pops binds a different presign than its peers). Returns `None`
-    /// only when the pool is empty.
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
-
     /// Returns the next idle status updates after the given consensus round.
     fn next_idle_status_update(
         &self,
@@ -480,6 +472,18 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>>;
+
+    /// Assign a presign to a demand — atomically, and idempotently in the
+    /// demand's identity, so the per-epoch replay every consumer performs
+    /// after a restart re-reads the same assignment instead of popping a
+    /// second, different presign. See
+    /// [`AuthorityEpochTables::assign_presign_for_demand`].
+    fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
 
     /// Returns the next global presign requests after the given consensus round.
     fn next_global_presign_request(
@@ -501,20 +505,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     /// Reads the presign assigned (in consensus order) to a NOA sign demand.
     fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>>;
-
-    /// Assigns a presign to a NOA sign demand atomically and idempotently: if
-    /// the demand is already assigned, returns the existing assignment without
-    /// popping; otherwise pops a presign and records the assignment in a SINGLE
-    /// committed batch (the pop and the record must not be separable — a crash
-    /// between them would let a re-drain after replay pop a different presign
-    /// than peers assigned). Mirrors `assign_presign`. The network key id is
-    /// stored so the sign instantiates under the SAME key the presign came from.
-    fn assign_noa_presign(
-        &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>>;
 
     /// Whether a presign has already been assigned to a NOA sign demand.
     fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool>;
@@ -553,8 +543,10 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         presign_blending_index: u16,
     ) -> IkaResult<Option<Vec<u8>>>;
 
-    /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
-    /// This is used for external presign requests.
+    /// Assigns a presign to a USER by moving it from the internal pool to the
+    /// assigned pool. NOT idempotent — see
+    /// [`Self::assign_presign_for_demand`] for the demand-keyed form every
+    /// replayed consumer must use.
     fn assign_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -784,29 +776,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         tables.max_filled_presign_pool_slot(signature_algorithm, dwallet_network_encryption_key_id)
     }
 
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let tables = self.tables()?;
-        tables.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
-    }
-
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let tables = self.tables()?;
-        tables.serve_global_presign(
-            session_sequence_number,
-            signature_algorithm,
-            dwallet_network_encryption_key_id,
-        )
-    }
-
     fn next_idle_status_update(
         &self,
         last_consensus_round: Option<Round>,
@@ -851,14 +820,17 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(self.tables()?.noa_assigned_presigns.get(digest)?)
     }
 
-    fn assign_noa_presign(
+    fn assign_presign_for_demand(
         &self,
-        digest: [u8; 32],
+        demand: &PresignDemand,
         signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        self.tables()?
-            .assign_noa_presign(digest, signature_algorithm, network_encryption_key_id)
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        self.tables()?.assign_presign_for_demand(
+            demand,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        )
     }
 
     fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
@@ -2141,42 +2113,12 @@ impl AuthorityEpochTables {
     /// answered with a different presign than the never-crashed peers put in
     /// their checkpoint message for the same presign id: byte-divergent
     /// checkpoints from an honest validator. Mirrors `assign_noa_presign`.
-    pub fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        if let Some(served) = self.served_global_presigns.get(&session_sequence_number)? {
-            return Ok(Some(served));
-        }
-        let Some((mut batch, session_identifier, blending_index, presign)) =
-            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        batch.insert_batch(
-            &self.served_global_presigns,
-            [(
-                &session_sequence_number,
-                &(session_identifier, blending_index, presign.clone()),
-            )],
-        )?;
-        batch.write()?;
-        Ok(Some((session_identifier, blending_index, presign)))
-    }
-
-    /// Pops a single presign from the pool for the given signature algorithm and network
-    /// encryption key. Returns the session identifier, the presign's blending index, and presign
-    /// bytes, or None if the pool is empty. Presigns are consumed in order of session sequence
-    /// number (lowest first).
-    ///
-    /// Self-committing and NOT idempotent: the pool advances the moment this
-    /// returns. Any caller whose work is replayed from a consensus round stream
-    /// must instead pop through a method that records what it popped in the pop's
-    /// own batch (`serve_global_presign`, `assign_noa_presign`, `assign_presign`),
-    /// or the replay binds a different presign than its peers did.
-    pub fn pop_presign(
+    /// Test-only raw pool pop for pool-inspection assertions. Production has
+    /// no bare pop — every consumer assigns through an idempotent
+    /// [`PresignDemand`], because a bare pop on a replayed demand stream binds
+    /// a different presign than peers bound.
+    #[cfg(test)]
+    pub fn pop_presign_for_testing(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
@@ -2186,6 +2128,92 @@ impl AuthorityEpochTables {
         else {
             return Ok(None);
         };
+        batch.write()?;
+        Ok(Some((session_identifier, blending_index, presign)))
+    }
+
+    /// Assign a presign to a demand — atomically, and idempotently in the
+    /// demand's identity.
+    ///
+    /// A re-seen demand returns the presign it was already given WITHOUT
+    /// popping. That is what makes the per-epoch replay every consumer
+    /// performs after a restart safe: a bare re-pop would bind a different
+    /// presign than the never-crashed peers bound (fills complete out of
+    /// sequence order, so the pool head moves), and the checkpoint or
+    /// attestation built from it would be byte-divergent from an honest
+    /// validator.
+    ///
+    /// The pop and the record land in ONE committed batch. Separating them is
+    /// not merely untidy: `prepare_pop_presign` self-commits its half, so a
+    /// crash in between would leave the pool advanced with no record of where
+    /// the presign went, and the replay would pop again.
+    pub fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        // Already assigned? Return it; never pop again.
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                if let Some(served) = self.served_global_presigns.get(session_sequence_number)? {
+                    return Ok(Some(served));
+                }
+            }
+            PresignDemand::Noa { digest } => {
+                if let Some((session_identifier, blending_index, presign, _)) =
+                    self.noa_assigned_presigns.get(digest)?
+                {
+                    return Ok(Some((session_identifier, blending_index, presign)));
+                }
+            }
+        }
+
+        let Some((mut batch, session_identifier, blending_index, presign)) =
+            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                batch.insert_batch(
+                    &self.served_global_presigns,
+                    [(
+                        session_sequence_number,
+                        &(session_identifier, blending_index, presign.clone()),
+                    )],
+                )?;
+            }
+            PresignDemand::Noa { digest } => {
+                batch.insert_batch(
+                    &self.noa_assigned_presigns,
+                    [(
+                        digest,
+                        &(
+                            session_identifier,
+                            blending_index,
+                            presign.clone(),
+                            dwallet_network_encryption_key_id,
+                        ),
+                    )],
+                )?;
+                // Mark the popped presign used, in the SAME batch as the
+                // assignment. This is the point of actual consumption (the pool
+                // pop happens in `prepare_pop_presign` above); the sign session
+                // later reads the presign from the assignment table and never
+                // pops again, so this is the only place the consumption is
+                // recorded.
+                batch.insert_batch(
+                    &self.used_presigns,
+                    [(&(session_identifier, blending_index), &())],
+                )?;
+            }
+        }
         batch.write()?;
         Ok(Some((session_identifier, blending_index, presign)))
     }
@@ -2371,59 +2399,6 @@ impl AuthorityEpochTables {
         )?;
         batch.write()?;
 
-        Ok(Some((session_identifier, blending_index)))
-    }
-
-    /// Atomically + idempotently assign a presign to a NOA sign demand.
-    ///
-    /// If the demand is already assigned, return the existing assignment
-    /// without popping. Otherwise pop a presign and record the assignment
-    /// (raw presign bytes + the network key id it came from) in the SAME
-    /// committed batch as the pop. Atomicity is load-bearing: `pop_presign`
-    /// self-commits, so a separate record write would leave a crash window
-    /// where, after a consensus-round replay, the demand looks unassigned but
-    /// its presign is gone from the pool — a re-drain would then pop a
-    /// DIFFERENT presign than the (non-crashed) peers assigned, reintroducing
-    /// the cross-validator divergence this fix exists to remove. Mirrors
-    /// `assign_presign`.
-    pub fn assign_noa_presign(
-        &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        if let Some((session_identifier, blending_index, _, _)) =
-            self.noa_assigned_presigns.get(&digest)?
-        {
-            return Ok(Some((session_identifier, blending_index)));
-        }
-        let Some((mut batch, session_identifier, blending_index, presign)) =
-            self.prepare_pop_presign(signature_algorithm, network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        batch.insert_batch(
-            &self.noa_assigned_presigns,
-            [(
-                &digest,
-                &(
-                    session_identifier,
-                    blending_index,
-                    presign,
-                    network_encryption_key_id,
-                ),
-            )],
-        )?;
-        // Mark the popped presign used, in the SAME batch as the assignment.
-        // This is the point of actual consumption (the pool pop happens in
-        // `prepare_pop_presign` above); the sign session later reads the presign
-        // from the assignment table and never pops again, so this is the only
-        // place the consumption is recorded.
-        batch.insert_batch(
-            &self.used_presigns,
-            [(&(session_identifier, blending_index), &())],
-        )?;
-        batch.write()?;
         Ok(Some((session_identifier, blending_index)))
     }
 
@@ -8324,20 +8299,29 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (popped_session, first_blending_index, first_presign) =
-            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (popped_session, first_blending_index, first_presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id);
         assert_eq!(first_blending_index, 0);
         assert_eq!(first_presign, vec![1u8, 2, 3]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, second_blending_index, second_presign) =
-            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, second_blending_index, second_presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(second_blending_index, 1);
         assert_eq!(second_presign, vec![4u8, 5, 6]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -8361,26 +8345,41 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 2);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, _, presign) =
-            tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
+        let (popped_session, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_a)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id_a);
         assert_eq!(presign, vec![10u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, _, presign) =
-            tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (popped_session, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_b)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id_b);
         assert_eq!(presign, vec![20u8]);
 
         // Exhaust key_id_a
-        tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
-        assert!(tables.pop_presign(algorithm, key_id_a).unwrap().is_none());
+        tables
+            .pop_presign_for_testing(algorithm, key_id_a)
+            .unwrap()
+            .unwrap();
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id_a)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 0);
 
         // key_id_b still has presigns
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 2);
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_b)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![21u8]);
     }
 
@@ -8422,16 +8421,30 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
         // Should pop in ascending session_sequence_number order
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![5u8]);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![10u8]);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![20u8]);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// One replayed consensus round's effect on the presign pool: either an
@@ -8478,8 +8491,10 @@ mod tests {
                     request_sequence_number,
                 } => Some(
                     tables
-                        .serve_global_presign(
-                            *request_sequence_number,
+                        .assign_presign_for_demand(
+                            &PresignDemand::GlobalRequest {
+                                session_sequence_number: *request_sequence_number,
+                            },
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                         )
@@ -8550,11 +8565,23 @@ mod tests {
         // on-chain presign id.
         let fresh_request_sequence_number = 13;
         let crashed_fresh = crashed
-            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
+            .assign_presign_for_demand(
+                &PresignDemand::GlobalRequest {
+                    session_sequence_number: fresh_request_sequence_number,
+                },
+                signature_algorithm,
+                key_id,
+            )
             .unwrap()
             .map(|(_, _, presign)| presign);
         let control_fresh = control
-            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
+            .assign_presign_for_demand(
+                &PresignDemand::GlobalRequest {
+                    session_sequence_number: fresh_request_sequence_number,
+                },
+                signature_algorithm,
+                key_id,
+            )
             .unwrap()
             .map(|(_, _, presign)| presign);
         assert!(
@@ -8581,13 +8608,73 @@ mod tests {
         );
     }
 
+    /// Assignment is idempotent in the demand IDENTITY, for every demand kind.
+    ///
+    /// This is the property the whole API exists for: each consumer replays
+    /// its demand stream from a per-epoch table after a restart, and a second
+    /// pop would bind a different presign than the never-crashed peers bound
+    /// (fills complete out of sequence order, so the pool head moves between
+    /// the two pops) — a byte-divergent checkpoint or attestation from an
+    /// honest validator.
+    #[tokio::test]
+    async fn assignment_is_idempotent_in_the_demand_identity() {
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+
+        for demand in [
+            PresignDemand::GlobalRequest {
+                session_sequence_number: 7,
+            },
+            PresignDemand::Noa { digest: [3u8; 32] },
+        ] {
+            let tables = create_tables();
+            for (sequence_number, marker) in [(0u64, 0xAAu8), (1, 0xBB)] {
+                tables
+                    .insert_presigns(
+                        algorithm,
+                        key_id,
+                        sequence_number,
+                        SessionIdentifier::new(SessionType::InternalPresign, [marker; 32]),
+                        vec![vec![marker; 8]],
+                    )
+                    .unwrap();
+            }
+
+            let first = tables
+                .assign_presign_for_demand(&demand, algorithm, key_id)
+                .unwrap()
+                .expect("pool is non-empty");
+            let pool_after_first = tables.presign_pool_size(algorithm, key_id).unwrap();
+
+            let second = tables
+                .assign_presign_for_demand(&demand, algorithm, key_id)
+                .unwrap()
+                .expect("a re-seen demand still resolves");
+
+            assert_eq!(
+                first, second,
+                "{demand:?}: a re-seen demand must return the presign it was already                  given, not a fresh one"
+            );
+            assert_eq!(
+                tables.presign_pool_size(algorithm, key_id).unwrap(),
+                pool_after_first,
+                "{demand:?}: re-seeing a demand must not pop the pool a second time"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_pop_from_empty_pool() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
     }
 
@@ -8605,19 +8692,33 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![1u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![2u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![3u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -8639,13 +8740,19 @@ mod tests {
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
 
-        let (_, _, presign) = tables.pop_presign(ecdsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(ecdsa, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![100u8]);
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 0);
 
         // EdDSA pool unaffected
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
-        let (_, _, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(eddsa, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![200u8]);
     }
 
