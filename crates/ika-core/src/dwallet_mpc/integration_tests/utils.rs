@@ -175,7 +175,18 @@ impl TestingAuthorityPerEpochStore {
     ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
         let mut pools = self.presign_pools.lock().unwrap();
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
-        Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
+        // FIFO — oldest first — mirroring the real store, which pops the head
+        // of a slot-ordered range. Popping LIFO here would prove idempotency
+        // against an ordering the real store never produces, and could not
+        // reproduce the scenario these tests exist for: a lower sequence
+        // number filling AFTER the original pop and winning the replayed one.
+        Ok(pools.get_mut(&key).and_then(|pool| {
+            if pool.is_empty() {
+                None
+            } else {
+                Some(pool.remove(0))
+            }
+        }))
     }
 
     fn new() -> Self {
@@ -521,12 +532,12 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
                     return Ok(Some(served));
                 }
             }
-            PresignDemand::Noa { digest } => {
+            PresignDemand::Noa { demand_id } => {
                 if let Some((session_id, blending_index, presign, _)) = self
                     .noa_assigned_presigns
                     .lock()
                     .unwrap()
-                    .get(digest)
+                    .get(&demand_id.digest())
                     .cloned()
                 {
                     return Ok(Some((session_id, blending_index, presign)));
@@ -549,9 +560,9 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
                     (session_id, blending_index, presign.clone()),
                 );
             }
-            PresignDemand::Noa { digest } => {
+            PresignDemand::Noa { demand_id } => {
                 self.noa_assigned_presigns.lock().unwrap().insert(
-                    *digest,
+                    demand_id.digest(),
                     (
                         session_id,
                         blending_index,

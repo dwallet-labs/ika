@@ -83,6 +83,7 @@ use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
     SystemCheckpointSignatureMessage,
 };
+use ika_types::noa_checkpoint::NOAPresignDemandId;
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
 use ika_types::validator_metadata::{
     SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
@@ -368,9 +369,12 @@ pub(crate) type NoaAssignedPresign = (SessionIdentifier, u16, Vec<u8>, ObjectID)
 pub enum PresignDemand {
     /// A global presign request, identified by its consensus sequence number.
     GlobalRequest { session_sequence_number: u64 },
-    /// A network-owned-address sign demand, identified by its demand-id
-    /// digest.
-    Noa { digest: [u8; 32] },
+    /// A network-owned-address sign demand, identified by its demand id.
+    ///
+    /// Carries the identity TYPE, not a bare digest: the assignment table is
+    /// keyed by `NOAPresignDemandId::digest()`, and any other 32-byte value
+    /// would type-check at a call site while keying the assignment wrong.
+    Noa { demand_id: NOAPresignDemandId },
 }
 
 /// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
@@ -1508,7 +1512,7 @@ pub struct AuthorityEpochTables {
     /// than peers bound to it — the false-malicious class — for any consumer
     /// that requires pool-head determinism. The NOA path closed this by
     /// batching the pop with an idempotent assignment record (see
-    /// `noa_assigned_presigns` / `assign_noa_presign`); the external
+    /// `noa_assigned_presigns` / `assign_presign_for_demand`); the external
     /// `assign_presign` path has not been audited to the same standard.
     /// Do not add a consumer that assumes cross-validator pop identity until
     /// #1928 lands.
@@ -1655,7 +1659,7 @@ pub struct AuthorityEpochTables {
     ///
     /// write-discipline: direct — safe because idempotent-replay: keyed by the
     /// demand digest and written in the SAME batch as the pool pop and the
-    /// `used_presigns` marker (`assign_noa_presign`), so a re-drain after a
+    /// `used_presigns` marker (`assign_presign_for_demand`), so a re-drain after a
     /// crash returns the recorded assignment instead of popping again. This is
     /// the shape the raw pool tables lack (#1928): the consumer that needs
     /// cross-validator identity — sign-session instantiation — reads THIS
@@ -1670,7 +1674,7 @@ pub struct AuthorityEpochTables {
     ///
     /// write-discipline: direct — safe because idempotent-replay: a monotone
     /// marker keyed by the presign it retires, written either inside
-    /// `assign_noa_presign`'s pop batch or standalone by
+    /// `assign_presign_for_demand`'s pop batch or standalone by
     /// `mark_presign_as_used`. Re-writing it is a no-op, and the consumer
     /// (`is_presign_used`) only ever gates THIS node's reuse of a presign it
     /// already consumed.
@@ -2094,29 +2098,14 @@ impl AuthorityEpochTables {
             .unwrap_or(0))
     }
 
-    /// Serves a global presign request out of the internal pool, atomically and
-    /// idempotently.
+    /// Test-only raw pool pop, for tests that inspect pool contents directly.
     ///
-    /// If this request's sequence number was already served, returns the SAME
-    /// presign without popping. Otherwise pops the pool head and records the
-    /// serve in the SAME committed batch as the pop.
-    ///
-    /// Both halves are load-bearing. The request stream is a per-epoch table
-    /// that the DWallet MPC service replays in full after a restart, so a bare
-    /// `pop_presign` here re-pops on replay — and the replayed pool is not the
-    /// pool the original run popped from, because the surviving entries were
-    /// never cleared. An entry whose sequence number is lower than the head at
-    /// that round wins the replayed pop even though it did not exist yet when
-    /// the round was first processed (internal presign sessions in one batch
-    /// complete in consensus order, not sequence order, so a lower sequence
-    /// number filling later is ordinary). The replayed request would then be
-    /// answered with a different presign than the never-crashed peers put in
-    /// their checkpoint message for the same presign id: byte-divergent
-    /// checkpoints from an honest validator. Mirrors `assign_noa_presign`.
-    /// Test-only raw pool pop for pool-inspection assertions. Production has
-    /// no bare pop — every consumer assigns through an idempotent
-    /// [`PresignDemand`], because a bare pop on a replayed demand stream binds
-    /// a different presign than peers bound.
+    /// No REPLAYED path pops bare: every consumer whose demand stream is
+    /// replayed after a restart assigns through an idempotent
+    /// [`PresignDemand`], because a bare pop on replay binds a different
+    /// presign than peers bound. ([`Self::assign_presign`] does still pop
+    /// unconditionally, but it has no consumer; a future one must gain a
+    /// demand identity before it can be replay-safe.)
     #[cfg(test)]
     pub fn pop_presign_for_testing(
         &self,
@@ -2143,10 +2132,12 @@ impl AuthorityEpochTables {
     /// attestation built from it would be byte-divergent from an honest
     /// validator.
     ///
-    /// The pop and the record land in ONE committed batch. Separating them is
-    /// not merely untidy: `prepare_pop_presign` self-commits its half, so a
-    /// crash in between would leave the pool advanced with no record of where
-    /// the presign went, and the replay would pop again.
+    /// The pop and the record land in ONE committed batch, which is why
+    /// [`Self::prepare_pop_presign`] hands back an UNCOMMITTED batch for this
+    /// method to extend. Committing them separately would open a crash window
+    /// between the two writes: the pool would be advanced with no record of
+    /// where the presign went, so the replay would pop again — the very
+    /// divergence the identity key exists to prevent.
     pub fn assign_presign_for_demand(
         &self,
         demand: &PresignDemand,
@@ -2162,9 +2153,9 @@ impl AuthorityEpochTables {
                     return Ok(Some(served));
                 }
             }
-            PresignDemand::Noa { digest } => {
+            PresignDemand::Noa { demand_id } => {
                 if let Some((session_identifier, blending_index, presign, _)) =
-                    self.noa_assigned_presigns.get(digest)?
+                    self.noa_assigned_presigns.get(&demand_id.digest())?
                 {
                     return Ok(Some((session_identifier, blending_index, presign)));
                 }
@@ -2189,11 +2180,11 @@ impl AuthorityEpochTables {
                     )],
                 )?;
             }
-            PresignDemand::Noa { digest } => {
+            PresignDemand::Noa { demand_id } => {
                 batch.insert_batch(
                     &self.noa_assigned_presigns,
                     [(
-                        digest,
+                        &demand_id.digest(),
                         &(
                             session_identifier,
                             blending_index,
@@ -6722,6 +6713,7 @@ impl From<LockDetails> for LockDetailsWrapper {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef};
     use tokio::time::advance;
 
     /// `next_round_row` must return the first row STRICTLY after the anchor —
@@ -8625,7 +8617,17 @@ mod tests {
             PresignDemand::GlobalRequest {
                 session_sequence_number: 7,
             },
-            PresignDemand::Noa { digest: [3u8; 32] },
+            PresignDemand::Noa {
+                demand_id: NOAPresignDemandId::Checkpoint {
+                    tx_ref: NOACheckpointTxRef {
+                        kind_name: NOACheckpointKindName::SuiDWallet,
+                        sequence_number: 4,
+                        tx_index: 0,
+                        epoch: 1,
+                    },
+                    retry_round: 0,
+                },
+            },
         ] {
             let tables = create_tables();
             for (sequence_number, marker) in [(0u64, 0xAAu8), (1, 0xBB)] {
@@ -8653,13 +8655,39 @@ mod tests {
 
             assert_eq!(
                 first, second,
-                "{demand:?}: a re-seen demand must return the presign it was already                  given, not a fresh one"
+                "{demand:?}: a re-seen demand must return the presign it was \
+                 already given, not a fresh one"
             );
             assert_eq!(
                 tables.presign_pool_size(algorithm, key_id).unwrap(),
                 pool_after_first,
                 "{demand:?}: re-seeing a demand must not pop the pool a second time"
             );
+
+            // The NOA arm carries two writes the returned triple does not
+            // show, and a merge dropping either would pass every assertion
+            // above while failing at signing time: the used-presign marker
+            // (without it the presign can be handed out twice) and the network
+            // key id (the sign must instantiate under the SAME key the presign
+            // came from).
+            if let PresignDemand::Noa { demand_id } = &demand {
+                let (session_identifier, blending_index, _) = first;
+                assert!(
+                    tables
+                        .is_presign_used(session_identifier, blending_index)
+                        .unwrap(),
+                    "the NOA arm must mark its popped presign used"
+                );
+                let (_, _, _, recorded_key_id) = tables
+                    .noa_assigned_presigns
+                    .get(&demand_id.digest())
+                    .unwrap()
+                    .expect("the assignment was recorded");
+                assert_eq!(
+                    recorded_key_id, key_id,
+                    "the assignment must record the network key the presign came from"
+                );
+            }
         }
     }
 

@@ -122,22 +122,39 @@ idempotency marker in the same committed batch as the state it guards:**
 | operation | idempotency key | marker table |
 |---|---|---|
 | fill (`insert_presigns`) | `(signature algorithm, network key id, session sequence number)` — the slot | `filled_presign_pool_slots` |
-| global presign serve (`serve_global_presign`) | request's session sequence number | `served_global_presigns` |
-| NOA demand assign (`assign_noa_presign`) | demand id digest | `noa_assigned_presigns` |
+| drain (`assign_presign_for_demand`) | the `PresignDemand` identity — see below | per demand kind, below |
 
-A repeated fill is a no-op. A repeated serve or assign returns the presign it
-returned the first time, without touching the pool. Replay is then a no-op on
-the pool by construction, and the restarted validator's checkpoint messages
-match its peers' regardless of where it crashed.
+Draining is ONE entry point, `assign_presign_for_demand`, taking the demand a
+presign is being assigned to. The demand's identity IS the idempotency key,
+and it selects the marker table:
+
+| `PresignDemand` | idempotency key | marker table |
+|---|---|---|
+| `GlobalRequest { session_sequence_number }` | the request's session sequence number | `served_global_presigns` |
+| `Noa { demand_id }` | `NOAPresignDemandId::digest()` | `noa_assigned_presigns` |
+
+There is deliberately no way to drain the pool without naming a demand: a
+consumer that could pop bare would have to know this hazard to avoid it,
+and the next consumer's author is exactly who the type is protecting. (The
+`Noa` arm carries the identity type rather than a bare digest for the same
+reason — any other 32-byte value would type-check while keying the
+assignment wrong.)
+
+A repeated fill is a no-op. A repeated drain returns the presign it returned
+the first time, without touching the pool. Replay is then a no-op on the pool
+by construction, and the restarted validator's checkpoint messages match its
+peers' regardless of where it crashed.
 
 The batching is load-bearing in both directions: a pool mutation that landed
 without its marker is re-applied on the next replay, and a marker that landed
 without its mutation loses the presigns (fill) or serves a presign the pool
 never gave up (drain).
 
-`pop_presign` is the bare, self-committing pop. It is correct only for
-callers whose work is never replayed from the round stream — in practice,
-tests. Production drains go through the recorded variants above.
+The pool has no bare pop on any replayed path. `pop_presign_for_testing`
+exists only so tests can inspect pool contents directly, and is
+`#[cfg(test)]`-gated. (`assign_presign` — the user-facing pool-to-assigned-pool
+move — does still pop unconditionally, but it has no consumer; a future one
+must gain a demand identity before its stream can be replayed safely.)
 
 ## Ordinal-stream convergence
 

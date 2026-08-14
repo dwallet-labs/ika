@@ -1824,7 +1824,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
     for epoch_store in &test_state.epoch_stores {
         while epoch_store
             .pop_presign_for_testing(algorithm, network_key_id)
-            .expect("pop_presign")
+            .expect("pop_presign_for_testing")
             .is_some()
         {}
     }
@@ -1931,7 +1931,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
     restart_validator_zero(&mut test_state, &seeds, &bundles);
     while test_state.epoch_stores[0]
         .pop_presign_for_testing(algorithm, network_key_id)
-        .expect("pop_presign")
+        .expect("pop_presign_for_testing")
         .is_some()
     {}
 
@@ -2145,7 +2145,7 @@ fn drain_pools(
     for service_index in service_indices {
         while test_state.epoch_stores[service_index]
             .pop_presign_for_testing(algorithm, network_key_object_id)
-            .expect("pop_presign")
+            .expect("pop_presign_for_testing")
             .is_some()
         {}
     }
