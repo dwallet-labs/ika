@@ -87,13 +87,13 @@ pub struct IkaCheckpointPusher {
     /// gaps then behave as before — retried against the fullnode until the
     /// deadline, then dropped.
     archive: Option<Arc<dyn CheckpointArchive>>,
-    /// Plausibility bound on the (unauthenticated) latest-checkpoint
-    /// watermark. Everything this worker does with the watermark lands in
-    /// state that cannot come back down — the persisted cursor and the
-    /// cache's monotone processed head — so one inflated sample used to
-    /// poison both permanently, across restarts (ika #2041). See
-    /// [`WatermarkGuard`] for why the bound keys on in-process observation
-    /// deltas rather than on the persisted cursor.
+    /// Rate bound on the (unauthenticated) latest-checkpoint watermark.
+    /// Everything this worker does with the watermark lands in state that
+    /// cannot come back down — the persisted cursor and the cache's monotone
+    /// processed head — so an inflated sample used to poison both
+    /// permanently, across restarts (ika #2041). See [`WatermarkGuard`] for
+    /// why the bound meters advance admitted within this process rather than
+    /// distance from the persisted cursor.
     watermark: WatermarkGuard,
     /// The far-behind fast-forward target proposed by the PREVIOUS tick, if
     /// that tick saw the far-behind condition. The fast-forward is the one
@@ -104,6 +104,16 @@ pub struct IkaCheckpointPusher {
     /// it: confirmation can only ever come from the immediately preceding
     /// tick.
     pending_fast_forward: Option<CheckpointSequenceNumber>,
+    /// Whether the stall warn has already fired for the current stretch. Both
+    /// this and [`Self::watermark_refusal_warned`] are transition latches: the
+    /// conditions they describe persist for as long as they last, and at a
+    /// 250 ms poll a per-tick warn is ~14k lines an hour each. Log on entering
+    /// the condition and once on leaving it; the gauges stay per-tick, which
+    /// is where duration belongs.
+    stall_warned: bool,
+    /// Whether the watermark-refusal warn has already fired for the current
+    /// stretch. See [`Self::stall_warned`].
+    watermark_refusal_warned: bool,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -149,10 +159,10 @@ impl IkaCheckpointPusher {
                 // here.
                 let cursor = transport.get_latest_checkpoint_sequence().await?;
                 // The FIRST watermark observation of this process: there is no
-                // prior to judge it against — a node starting against a chain
+                // prior to meter it against — a node starting against a chain
                 // millions of checkpoints in must pass — so it seeds the
-                // plausibility baseline that later observations are bounded
-                // against.
+                // guard's head, and the advance admitted after it is what the
+                // rate bound meters.
                 watermark.admit(cursor);
                 info!(
                     cursor,
@@ -180,6 +190,8 @@ impl IkaCheckpointPusher {
             archive,
             watermark,
             pending_fast_forward: None,
+            stall_warned: false,
+            watermark_refusal_warned: false,
         })
     }
 
@@ -219,17 +231,24 @@ impl IkaCheckpointPusher {
         // bad sample cannot latch it, and a run of refused ticks is a real
         // stall — the folder is not advancing — which must not read healthy
         // just because the reason was a refusal.
+        // The warn is latched to the transition (see `stall_warned`); the
+        // gauge is not, because duration is what a gauge is for.
         const STALL_THRESHOLD: u64 = 100;
         let lag = latest_seq.saturating_sub(self.cursor);
-        self.metrics
-            .pusher_stalled
-            .set((lag > STALL_THRESHOLD) as i64);
-        if lag > STALL_THRESHOLD {
-            warn!(
+        let stalled = lag > STALL_THRESHOLD;
+        self.metrics.pusher_stalled.set(stalled as i64);
+        match (stalled, self.stall_warned) {
+            (true, false) => warn!(
                 cursor = self.cursor,
                 latest_seq, lag, "pusher stalled: falling behind upstream"
-            );
+            ),
+            (false, true) => info!(
+                cursor = self.cursor,
+                latest_seq, "pusher caught back up with upstream"
+            ),
+            _ => {}
         }
+        self.stall_warned = stalled;
 
         // The watermark is an unauthenticated integer, and everything below
         // folds it into state that cannot come back down (the persisted
@@ -239,17 +258,31 @@ impl IkaCheckpointPusher {
         // 250 ms later re-probes. Pending-gap repair already ran above and is
         // unaffected — it needs no watermark.
         if !self.watermark.admit(latest_seq) {
+            // The counter carries the per-tick volume; the warn is latched to
+            // the transition (see `watermark_refusal_warned`), since a refusal
+            // stretch can last as long as the upstream keeps it up.
             self.metrics
                 .watermark_implausible_total
                 .with_label_values(&["folder"])
                 .inc();
-            warn!(
-                cursor = self.cursor,
-                latest_seq,
-                "upstream claimed a latest-checkpoint watermark advancing faster than checkpoint \
-                 production can explain — skipping the tick rather than folding it into the cursor"
-            );
+            if !self.watermark_refusal_warned {
+                warn!(
+                    cursor = self.cursor,
+                    latest_seq,
+                    "upstream claimed a latest-checkpoint watermark advancing faster than \
+                     checkpoint production can explain — skipping ticks rather than folding it \
+                     into the cursor (logged once until samples are accepted again)"
+                );
+                self.watermark_refusal_warned = true;
+            }
             return Ok(());
+        }
+        if self.watermark_refusal_warned {
+            info!(
+                cursor = self.cursor,
+                latest_seq, "upstream watermark samples are within the rate bound again"
+            );
+            self.watermark_refusal_warned = false;
         }
         if latest_seq <= self.cursor {
             return Ok(());
@@ -1929,12 +1962,19 @@ mod tests {
             "a run of refused ticks is a real stall — the folder is not advancing — and must \
              not read healthy just because the reason was a refusal"
         );
+        // Two refused ticks, one warn: the refusal warn is latched to the
+        // transition (the counter carries the per-tick volume).
+        assert!(pusher.watermark_refusal_warned);
 
         // The genuine watermark returns and is still admitted — the refused
         // sample never became the baseline.
         pusher.transport = transport_reporting(&committee, &keys, 101, HashMap::new());
         pusher.advance().await.unwrap();
         assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(101));
+        assert!(
+            !pusher.watermark_refusal_warned,
+            "the latch must clear so a later stretch warns again"
+        );
     }
 
     /// The fast-forward is the single-shot, persisted, span-sacrificing

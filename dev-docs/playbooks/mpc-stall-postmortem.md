@@ -267,6 +267,13 @@ construction; divergence = determinism bug).
     both leaves the difference at zero forever. Recovery: stop the node
     and clear the `sui_pusher_last_seq` row in the perpetual tables so
     the folder re-initializes from the watermark.
+    Then check `rate(ika_ocs_pusher_gap_dropped_total[5m])`: climbing
+    steadily at roughly the chain's checkpoint rate (~4/s) means the
+    upstream is *ramping* the watermark — feeding a consistent
+    slightly-too-fast head that the rate bound admits — so clearing the
+    cursor only buys time until the endpoint is replaced. A flat drop
+    counter means a one-shot jump instead. See the residuals in
+    [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
   - **Cursor BEHIND the chain head with
     `ika_ocs_watermark_implausible_total{consumer="folder"}` climbing →
     the rate bound is refusing the upstream's samples.** Either the

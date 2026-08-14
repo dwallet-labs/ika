@@ -741,10 +741,13 @@ both in `watermark_guard.rs` / `push_worker.rs`:
    the reader's freshness fold).** A *token bucket over admitted
    advance*, not a per-sample delta limit: allowance accrues at `10/s`
    up to a `15_000` ceiling (about an hour of real production at Sui's
-   ~4 checkpoints/s) and is **spent by every accepted increase**. So a
-   single jump up to the ceiling is admitted, and *sustained* admitted
-   advance is bounded to 10/s over any window longer than one burst,
-   whatever step size the upstream chooses. A per-sample limit would
+   ~4 checkpoints/s) and is **spent by every accepted increase**. The
+   exact guarantee: advance admitted over any window of length `T` is at
+   most `15_000 + 10·T` checkpoints — one burst, plus the sustained rate
+   — whatever step size the upstream chooses. (So the *average* over a
+   short window can exceed 10/s: at exactly one burst-length window it
+   is ~20/s, converging on 10/s as the window grows.) A per-sample limit
+   would
    bound nothing over time — an upstream reporting "previous + just
    under the limit" every 250 ms tick is admitted forever and walks the
    head arbitrarily far, one legal step at a time; that is the shape the
@@ -823,6 +826,36 @@ Residuals, stated exactly:
   wrong-*network* endpoint is caught by the chain-identifier
   verification on the trust path; a same-network endpoint reporting a
   wrong height is not.
+- **Sustained adversarial ramp (the bound's shape, not a bug in it).**
+  The rate bound caps *how fast* the head may be walked, not *whether*
+  it can be. A source that is adversarial rather than merely buggy — one
+  that emits a self-consistent monotone ramp instead of a single wrong
+  number — can hold the folder's head, its persisted cursor and (from a
+  relay) the reader's floor ahead of reality indefinitely, at up to the
+  bound's spare rate over real production (~6/s here). Nothing downstream
+  caps it: consecutive ramp samples sit ~2.5 apart, well inside the
+  fast-forward's 250-checkpoint agreement band, and the reader's
+  verified-floor anchor only ever *raises* the head, never trims it back
+  toward locally-verified reality.
+
+  **Signature, once the margin passes ~2,400 checkpoints** (the
+  600 s gap-retry deadline × ~4/s production): every checkpoint the scan
+  reaches is still in the future, so every seq becomes a pending gap and
+  every gap expires before it can materialize. The verified cache stops
+  advancing entirely while `ika_ocs_pusher_stalled` reads **0** (the
+  cursor is *ahead* of the head, so there is no lag to report) and
+  `ika_ocs_watermark_implausible_total` stays **0** (every sample was
+  inside the bound). The one live signal is
+  `ika_ocs_pusher_gap_dropped_total` climbing steadily at roughly the
+  chain's checkpoint rate — a permanent-loss counter that should
+  otherwise be flat, and which already carries an alert. A steadily
+  climbing drop rate with the cursor ahead of the chain head is a ramp;
+  a one-off jump ahead with a flat drop counter is the single-sample
+  poisoning this bound does close. Recovery is the same cursor-row clear
+  as a poisoned cursor, plus replacing the endpoint — a source that can
+  do this is outside #2041's fault classes (buggy fullnode, desynced
+  backend, wrong-network endpoint, corrupted response), all of which
+  produce inconsistent or one-shot values that the bound refuses.
 - **Long host pauses.** `Instant` excludes suspended time, so a host
   paused longer than the burst covers (~an hour of production) resumes
   with a genuine head beyond the bucket and refuses it until the bucket
