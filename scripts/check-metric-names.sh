@@ -120,6 +120,37 @@ if stale:
     for s in stale:
         print(f"  {s}", file=sys.stderr)
 
+# The generated inventory in the metrics convention doc must match the
+# source exactly. It drifted silently for months (24 missing names, one
+# dead one) precisely because nothing enforced it — a list nobody
+# remembers to update is the failure mode this script exists to prevent,
+# so the doc block is checked here, in the same CI-run default path as
+# the prefix rules.
+doc_path = pathlib.Path("dev-docs/conventions/metrics.md")
+doc_match = re.search(
+    r"## Inventory \(generated\).*?```\n(?P<block>.*?)\n```",
+    doc_path.read_text(),
+    re.S,
+)
+if not doc_match:
+    print(f"ERROR: inventory block not found in {doc_path}", file=sys.stderr)
+    sys.exit(1)
+documented = set(doc_match.group("block").splitlines())
+missing_from_doc = sorted(names - documented)
+dead_in_doc = sorted(documented - names)
+if missing_from_doc or dead_in_doc:
+    print(f"ERROR: {doc_path} inventory is out of date:", file=sys.stderr)
+    for n in missing_from_doc:
+        print(f"  missing: {n}", file=sys.stderr)
+    for n in dead_in_doc:
+        print(f"  no longer registered: {n}", file=sys.stderr)
+    print(
+        "Regenerate the block: ./scripts/check-metric-names.sh --list\n"
+        "(paste the metric names into the fenced block under '## Inventory (generated)')",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 print(
     f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped; "
     f"{len(vendored)} prefixed registr{'y' if len(vendored) == 1 else 'ies'} "
