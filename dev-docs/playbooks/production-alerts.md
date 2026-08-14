@@ -186,11 +186,15 @@ is holding the service up.
   `ika_ocs_proof_verify_failures_total`,
   `ika_ocs_high_water_violations_total`, and relay request/failure counters.
 - `rate(ika_ocs_watermark_implausible_total[15m]) > 0` → an upstream is
-  reporting a latest-checkpoint height this node's own observations cannot
-  explain (a desynced load-balancer backend, an endpoint on the wrong network,
-  a corrupted response). Refused samples are skipped, so this is a
-  configuration/upstream-health signal, not data loss; sustained refusals on
-  `{consumer="folder"}` mean the checkpoint folder is skipping ticks and its
-  cursor will lag. Investigate the fullnode endpoint before it is the only
-  thing between the node and a poisoned cursor — see
+  claiming a latest-checkpoint height advancing faster than checkpoint
+  production can explain (a desynced load-balancer backend, an endpoint on the
+  wrong network, a corrupted response) — or this process was paused longer than
+  the bound's burst covers, which a restart clears. Refused samples are
+  skipped, so this is a configuration/upstream-health signal, not data loss;
+  sustained refusals on `{consumer="folder"}` mean the checkpoint folder is
+  skipping ticks and its cursor will lag *behind* the head (the opposite
+  signature to a poisoned cursor). Check `ika_ocs_pusher_cursor_seq` against
+  the chain head and see
+  [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)'s interpretation rules
+  plus
   [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).

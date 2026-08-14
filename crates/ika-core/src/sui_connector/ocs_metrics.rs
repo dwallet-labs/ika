@@ -85,15 +85,18 @@ pub struct OcsMetrics {
     /// it — together they quantify the verify's cost on the fold path.
     pub pusher_fold_verify_seconds: Histogram,
 
-    /// Latest-checkpoint watermark samples refused by the plausibility bound,
-    /// by consumer (`folder` = the checkpoint folder's per-tick scan bound and
+    /// Latest-checkpoint watermark samples refused by the rate bound, by
+    /// consumer (`folder` = the checkpoint folder's per-tick scan bound and
     /// persisted cursor; `reader` = the freshness floor a verified read folds).
     /// The watermark is an unauthenticated integer that several consumers fold
-    /// into monotone state, so one inflated sample used to latch permanently.
+    /// into monotone state, so an inflated sample used to latch permanently.
     /// A refusal is skipped, not folded — steady state is zero, and any
-    /// increase means an upstream is reporting a head this node's own
-    /// observations cannot explain (a desynced backend, a wrong-network
-    /// endpoint, a corrupted response).
+    /// increase means an upstream is claiming advance faster than checkpoint
+    /// production can explain (a desynced backend, a wrong-network endpoint, a
+    /// corrupted response), or that this process was paused longer than the
+    /// bound's burst covers (a restart clears that; the bound is in-process).
+    /// Refusals on `folder` leave the cursor BEHIND the chain head — the
+    /// opposite signature to the poisoned cursor the bound prevents.
     pub watermark_implausible_total: IntCounterVec, // labels: ["consumer"]
 
     // OcsVerifiedReader (consumer-side proof verification)
@@ -214,7 +217,7 @@ impl OcsMetrics {
             .unwrap(),
             watermark_implausible_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_watermark_implausible_total",
-                "Latest-checkpoint watermark samples refused by the plausibility bound (jumped implausibly far past this process's previous observation), by consumer: folder (scan bound + persisted cursor) or reader (freshness floor). Refused samples are skipped, never folded",
+                "Latest-checkpoint watermark samples refused by the rate bound (claimed advance beyond what checkpoint production can explain, metered as a token bucket over this process's admitted advance), by consumer: folder (scan bound + persisted cursor) or reader (freshness floor). Refused samples are skipped, never folded",
                 &["consumer"],
                 registry,
             )

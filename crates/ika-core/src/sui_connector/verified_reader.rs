@@ -246,15 +246,23 @@ pub struct OcsVerifiedReader {
     /// so this stays fresh even if the pusher stalls. Used by the cache-first
     /// staleness tripwire below.
     observed_upstream_head: AtomicU64,
-    /// Plausibility bound on the claimed heads folded into
-    /// `observed_upstream_head`. That fold is a `fetch_max` that never comes
-    /// back down, so one inflated claim used to pin the freshness floor above
-    /// the real chain head forever — making every genuinely-current cached
-    /// object read stale and forcing permanent fall-through to network reads
-    /// (ika #2041). Refusing an implausible *increase* cannot weaken the
+    /// Rate bound on the claimed heads folded into `observed_upstream_head`.
+    /// That fold is a `fetch_max` that never comes back down, so an inflated
+    /// claim used to pin the freshness floor above the real chain head forever
+    /// — making every genuinely-current cached object read stale and forcing
+    /// permanent fall-through to network reads on a direct node, and (once the
+    /// absolute freshness bound is enabled) failing every read outright (ika
+    /// #2041). Refusing an implausible *increase* cannot weaken the
     /// under-report protection the `fetch_max` exists for: a provider that
     /// wants the floor low can simply claim a low head, which is already
     /// ignored, and is the documented eclipse residual.
+    ///
+    /// The bound is anchored to the verified cache's fold head before every
+    /// claim (`note_verified_floor`), NOT to the first claim: on a mirrored or
+    /// peer-only node the claim comes from a relay that is untrusted by
+    /// design, so seeding from its first word would let it choose the floor
+    /// outright. The fold head only advances to checkpoints carrying a
+    /// committee quorum signature, which a relay cannot manufacture.
     upstream_head_guard: WatermarkGuard,
     /// Cache-first staleness tripwire: if the cache head lags
     /// `observed_upstream_head` by more than this many checkpoints, the cache
@@ -355,12 +363,23 @@ impl OcsVerifiedReader {
     /// (monotonic). Called on every network read so the cache-first staleness
     /// tripwire has a fresh reference even when cache-first short-circuits.
     ///
-    /// The claim passes a plausibility bound first (see
-    /// [`Self::upstream_head_guard`]): the fold is irreversible, so an
-    /// implausible increase is skipped rather than latched. The monotone
-    /// (`fetch_max`) semantics the anti-under-report guarantee rests on are
-    /// unchanged — a refused claim leaves the floor exactly where it was.
+    /// The claim passes a rate bound first (see [`Self::upstream_head_guard`]):
+    /// the fold is irreversible, so an increase the local view cannot explain
+    /// is skipped rather than latched. The monotone (`fetch_max`) semantics
+    /// the anti-under-report guarantee rests on are unchanged — a refused
+    /// claim leaves the floor exactly where it was.
+    ///
+    /// The bound is re-anchored to the verified cache's fold head on every
+    /// call, so it tracks committee-verified local progress for free and can
+    /// never be left metering against a stale anchor while the node's own
+    /// verified state has moved on. **Residual:** a node whose cache is still
+    /// empty (a cold peer-only/mirrored start) has no local anchor at all, so
+    /// its first claim seeds the floor — an untrusted relay picks the initial
+    /// value there. That is the known eclipse residual (a lone malicious relay
+    /// pinning a fresh node), narrowed but not closed here.
     fn note_upstream_head(&self, seq: CheckpointSequenceNumber) {
+        self.upstream_head_guard
+            .note_verified_floor(self.cache.head_seq());
         if !self.upstream_head_guard.admit(seq) {
             self.metrics
                 .watermark_implausible_total
@@ -369,8 +388,8 @@ impl OcsVerifiedReader {
             warn!(
                 claimed_head = seq,
                 observed_head = self.observed_upstream_head.load(Ordering::Relaxed),
-                "provider claimed a latest-checkpoint head that jumped implausibly far past \
-                 this process's previous observations — leaving the freshness floor unchanged"
+                "provider claimed a latest-checkpoint head advancing faster than checkpoint \
+                 production can explain — leaving the freshness floor unchanged"
             );
             return;
         }
@@ -1623,6 +1642,65 @@ mod tests {
             Some(bound),
         );
         (dir, reader)
+    }
+
+    /// The reader's rate bound must be anchored to state the node verified
+    /// ITSELF, never to the first thing a provider says. On a mirrored or
+    /// peer-only node the claimed head comes from a relay that is untrusted by
+    /// design, and the freshness floor it feeds is a `fetch_max` that never
+    /// comes back down — so seeding the bound from the relay's first claim
+    /// would let it pick the floor outright and pin every later read stale.
+    /// Anchored to the verified cache's fold head (advanced only by
+    /// committee-signed checkpoints, which a relay cannot manufacture), an
+    /// inflated first claim is refused and the floor stays put, while a claim
+    /// the node's own verified state can explain still folds.
+    #[tokio::test]
+    async fn an_inflated_first_relay_claim_cannot_seed_the_freshness_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        // This node has committee-verified checkpoints up to 1_000_000 itself.
+        tables
+            .write_verified_object_cache(vec![], 1_000_000)
+            .unwrap();
+        let cache = Arc::new(VerifiedStateCache::open(tables.clone()).unwrap());
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::Genesis(committee))).unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            Arc::new(UnusedProvider),
+            committees,
+            metrics.clone(),
+            None,
+            cache,
+            // A mirrored/peer-only reader: the provider is an untrusted relay.
+            false,
+            None,
+        );
+
+        // The relay's FIRST response claims a head ten million checkpoints
+        // past anything this node has verified.
+        reader.note_upstream_head(11_000_000);
+        assert_eq!(
+            reader.observed_upstream_head.load(Ordering::Relaxed),
+            0,
+            "an unexplained first claim must not become the freshness floor"
+        );
+        assert_eq!(
+            metrics
+                .watermark_implausible_total
+                .with_label_values(&["reader"])
+                .get(),
+            1
+        );
+
+        // A claim within reach of the node's own verified head still folds.
+        reader.note_upstream_head(1_000_100);
+        assert_eq!(
+            reader.observed_upstream_head.load(Ordering::Relaxed),
+            1_000_100
+        );
     }
 
     /// The cache-staleness tripwire keys off the worker's *processed* head, not

@@ -98,9 +98,11 @@ pub struct IkaCheckpointPusher {
     /// The far-behind fast-forward target proposed by the PREVIOUS tick, if
     /// that tick saw the far-behind condition. The fast-forward is the one
     /// single-shot, persisted, span-sacrificing consumer of the watermark, so
-    /// it acts only on a watermark two consecutive ticks agree on. Cleared on
-    /// every tick that does not re-propose it, so confirmation can only ever
-    /// come from the immediately preceding tick.
+    /// it acts only on a target two consecutive ticks agree on. Taken at the
+    /// top of every tick — before the probe and before the rate bound — so a
+    /// tick that errored, was refused, or simply was not far behind disarms
+    /// it: confirmation can only ever come from the immediately preceding
+    /// tick.
     pending_fast_forward: Option<CheckpointSequenceNumber>,
 }
 
@@ -194,42 +196,29 @@ impl IkaCheckpointPusher {
     async fn advance(&mut self) -> anyhow::Result<()> {
         self.retry_pending_gaps().await;
 
+        // Disarm the previous tick's fast-forward proposal HERE, before the
+        // probe can fail and before a sample can be refused: confirmation must
+        // come from the immediately preceding tick, so any tick that does not
+        // re-propose — including one that errored or was refused — leaves the
+        // proposal behind it.
+        let proposed_fast_forward = self.pending_fast_forward.take();
+
         // Watermark probe, not a summary fetch: `get_latest_checkpoint` reads
         // through the fullnode's availability window, so a fullnode pruning at
         // head NotFounds its own latest and aborts this tick — permanently,
         // while the window stays empty. The height watermark survives pruning.
         let latest_seq = self.transport.get_latest_checkpoint_sequence().await?;
-        // The watermark is an unauthenticated integer, and everything below
-        // folds it into state that cannot come back down (the persisted
-        // cursor, the cache's processed head). Refuse a sample that jumped
-        // implausibly far past this process's own previous observations and
-        // skip the tick entirely: nothing is scanned, persisted or noted, and
-        // the next tick 250 ms later re-probes. Pending-gap repair already ran
-        // above and is unaffected — it needs no watermark.
-        if !self.watermark.admit(latest_seq) {
-            self.metrics
-                .watermark_implausible_total
-                .with_label_values(&["folder"])
-                .inc();
-            warn!(
-                cursor = self.cursor,
-                latest_seq,
-                "upstream reported a latest-checkpoint watermark that jumped implausibly far \
-                 past this process's previous observations — skipping the tick rather than \
-                 folding it into the cursor"
-            );
-            return Ok(());
-        }
-        // Consume the previous tick's fast-forward proposal: confirmation is
-        // only ever granted by the IMMEDIATELY preceding tick, so a proposal
-        // left behind by an old far-behind stretch can never confirm a later
-        // watermark.
-        let proposed_fast_forward = self.pending_fast_forward.take();
+
         // Stall gauge: upstream advanced but we haven't caught up by more than
         // a tick's worth of checkpoints. A stalled pusher freezes the cache,
         // so direct cache-first reads fall through to the network
         // (`cache_first_stale_total`). `STALL_THRESHOLD` sits between the
         // normal per-tick lag (a handful) and the FAR_BEHIND fast-forward.
+        // Computed from the raw sample, BEFORE the rate bound below decides
+        // whether to use it: the gauge is neither monotone nor persisted, so a
+        // bad sample cannot latch it, and a run of refused ticks is a real
+        // stall — the folder is not advancing — which must not read healthy
+        // just because the reason was a refusal.
         const STALL_THRESHOLD: u64 = 100;
         let lag = latest_seq.saturating_sub(self.cursor);
         self.metrics
@@ -241,6 +230,27 @@ impl IkaCheckpointPusher {
                 latest_seq, lag, "pusher stalled: falling behind upstream"
             );
         }
+
+        // The watermark is an unauthenticated integer, and everything below
+        // folds it into state that cannot come back down (the persisted
+        // cursor, the cache's processed head). Refuse a sample claiming advance
+        // faster than real checkpoint production can explain and skip the tick
+        // entirely: nothing is scanned, persisted or noted, and the next tick
+        // 250 ms later re-probes. Pending-gap repair already ran above and is
+        // unaffected — it needs no watermark.
+        if !self.watermark.admit(latest_seq) {
+            self.metrics
+                .watermark_implausible_total
+                .with_label_values(&["folder"])
+                .inc();
+            warn!(
+                cursor = self.cursor,
+                latest_seq,
+                "upstream claimed a latest-checkpoint watermark advancing faster than checkpoint \
+                 production can explain — skipping the tick rather than folding it into the cursor"
+            );
+            return Ok(());
+        }
         if latest_seq <= self.cursor {
             return Ok(());
         }
@@ -251,10 +261,25 @@ impl IkaCheckpointPusher {
         if latest_seq.saturating_sub(self.cursor) > FAR_BEHIND_THRESHOLD {
             // The fast-forward is irreversible: it persists a cursor far ahead
             // of what was folded and drops every pending gap below it, before
-            // fetching anything. Act only on a watermark two consecutive ticks
-            // agree on (the second at least as high as the first — a genuine
-            // head only grows), so a single spurious sample costs one skipped
-            // tick instead of a permanently poisoned cursor.
+            // fetching anything. Act only on a target two consecutive ticks
+            // AGREE on — the second within `CONFIRMATION_BAND` of the first,
+            // in either direction — and then jump to the LOWER of the two.
+            // Agreement has to be two-sided and the target conservative: with
+            // a one-sided "at least as high" test, the confirming sample is
+            // itself unbounded above the proposal, so an inflated confirmer
+            // (or an alternating load balancer whose high backend always lands
+            // in the confirming slot) would execute an inflated jump — the
+            // confirmation would be checking the wrong sample.
+            //
+            // The band is one minute of real production (~4/s): two ticks are
+            // 250 ms apart, and even a tick delayed by every bounded retry
+            // budget in `retry_pending_gaps` (tens of seconds) leaves genuine
+            // production far inside it. Two samples further apart than that
+            // are not one head observed twice, so the tick re-proposes instead
+            // of jumping. A source that keeps flapping outside the band never
+            // fast-forwards and stays visibly stalled (`pusher_stalled`),
+            // which is the correct outcome: unexplained samples must not
+            // sacrifice a span.
             //
             // Confirmation is by repeated observation rather than by fetching
             // the target checkpoint: an unfetchable target does not
@@ -264,18 +289,22 @@ impl IkaCheckpointPusher {
             // scan of thousands of failing fetches and as many pending gaps.
             // Repeated observation is availability-independent and costs one
             // poll interval (250 ms) and no extra RPC.
-            let confirmed = proposed_fast_forward.is_some_and(|proposed| latest_seq >= proposed);
-            if !confirmed {
+            const CONFIRMATION_BAND: u64 = 250;
+            let confirmed_target = proposed_fast_forward
+                .filter(|proposed| latest_seq.abs_diff(*proposed) <= CONFIRMATION_BAND)
+                .map(|proposed| proposed.min(latest_seq));
+            let Some(target) = confirmed_target else {
                 self.pending_fast_forward = Some(latest_seq);
                 warn!(
                     cursor = self.cursor,
                     latest_seq,
+                    proposed = ?proposed_fast_forward,
                     "pusher cursor far behind upstream — deferring the fast-forward one tick \
                      for watermark confirmation"
                 );
                 return Ok(());
-            }
-            let new_cursor = latest_seq.saturating_sub(CATCHUP_LOOKBACK);
+            };
+            let new_cursor = target.saturating_sub(CATCHUP_LOOKBACK);
             // Object state for the skipped span is sacrificed (a cache miss
             // there falls through / degrades), but the committee chain must NOT
             // skip an epoch boundary: capture every still-available end-of-epoch
@@ -1894,6 +1923,12 @@ mod tests {
             "an implausible watermark must not sacrifice pending gaps"
         );
         assert_eq!(metrics.pusher_gap_dropped_total.get(), 0);
+        assert_eq!(
+            metrics.pusher_stalled.get(),
+            1,
+            "a run of refused ticks is a real stall — the folder is not advancing — and must \
+             not read healthy just because the reason was a refusal"
+        );
 
         // The genuine watermark returns and is still admitted — the refused
         // sample never became the baseline.
@@ -2020,6 +2055,202 @@ mod tests {
             "no span was sacrificed, so the pending gap in it survives"
         );
         assert_eq!(metrics.pusher_gap_dropped_total.get(), 0);
+    }
+
+    /// A watermark ramp — each tick reports a head far past the last one, but
+    /// never by enough for a single-step limit to notice — must not walk the
+    /// cursor away. The rate bound spends allowance on every accepted advance,
+    /// so the ramp is admitted until the burst is consumed and refused after
+    /// that; the cursor ends bounded by one burst rather than by the ramp's
+    /// length. (Guard-level counterpart:
+    /// `watermark_guard::tests::a_sustained_ramp_drains_the_bucket_and_is_refused`.)
+    #[tokio::test]
+    async fn a_watermark_ramp_cannot_walk_the_cursor_away() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        let start = 1_000u64;
+        perpetual.put_sui_pusher_last_seq(start).unwrap();
+        let transport = transport_reporting(&committee, &keys, start, HashMap::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            Arc::new(VerifiedStateCache::new()),
+            metrics.clone(),
+        )
+        .await;
+        // Establish the in-process baseline at the genuine head.
+        pusher.advance().await.unwrap();
+
+        // Ten ticks, each claiming ~10_000 past the last: every step is
+        // modest, the aggregate is not.
+        let mut claimed = start;
+        for _ in 0..10 {
+            claimed += 10_000;
+            pusher.transport = transport_reporting(&committee, &keys, claimed, HashMap::new());
+            // Twice per claim, so a far-behind fast-forward would be confirmed
+            // and executed if the rate bound admitted the claim.
+            pusher.advance().await.unwrap();
+            pusher.advance().await.unwrap();
+        }
+
+        assert!(
+            metrics
+                .watermark_implausible_total
+                .with_label_values(&["folder"])
+                .get()
+                > 0,
+            "the ramp must start being refused once the burst is spent"
+        );
+        let cursor = perpetual.get_sui_pusher_last_seq().unwrap().unwrap();
+        assert!(
+            cursor <= start + 20_000,
+            "a ramp must not walk the cursor past roughly one burst; cursor was {cursor}"
+        );
+        assert!(
+            claimed - cursor > 50_000,
+            "the ramp claimed far more than the cursor followed"
+        );
+    }
+
+    /// The confirming sample is checked, not just compared: a confirmer that
+    /// is itself inflated (an alternating load balancer whose high backend
+    /// lands in the confirming slot) is outside the agreement band, so no
+    /// fast-forward executes — and when a later pair does agree, the jump
+    /// targets the LOWER of the two samples, never the inflated one.
+    #[tokio::test]
+    async fn an_inflated_confirmer_does_not_execute_an_inflated_fast_forward() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        // A genuine far-behind proposal at 1_200 (cursor 0).
+        perpetual.put_sui_pusher_last_seq(0).unwrap();
+        let transport = transport_reporting(&committee, &keys, 1_200, HashMap::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            Arc::new(VerifiedStateCache::new()),
+            metrics.clone(),
+        )
+        .await;
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.pending_fast_forward, Some(1_200));
+
+        // The confirming tick is inflated by 9_000 — inside the rate bound, so
+        // it is admitted as a watermark, but far outside the agreement band.
+        pusher.transport = transport_reporting(&committee, &keys, 10_200, HashMap::new());
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(0),
+            "an out-of-band confirmer must not execute the fast-forward"
+        );
+        assert_eq!(pusher.pending_fast_forward, Some(10_200));
+
+        // The genuine head returns, close to the ORIGINAL proposal but far
+        // from the inflated one: still no agreement, so still no jump.
+        pusher.transport = transport_reporting(&committee, &keys, 1_210, HashMap::new());
+        pusher.advance().await.unwrap();
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(0));
+        assert_eq!(pusher.pending_fast_forward, Some(1_210));
+
+        // A pending gap inside the span the two samples disagree about: it
+        // survives iff the jump targets the LOWER sample.
+        pusher.pending_gaps.insert(
+            1_150,
+            PendingGap {
+                first_seen: Instant::now(),
+                last_archive_attempt: None,
+            },
+        );
+
+        // A confirmer 240 ahead — inside the agreement band, so the pair
+        // executes — but the jump takes the lower of the two, so the
+        // sacrificed span ends at 1_110 rather than 1_350.
+        pusher.transport = transport_reporting(&committee, &keys, 1_450, HashMap::new());
+        pusher.advance().await.unwrap();
+        assert!(
+            pusher.pending_gaps.contains_key(&1_150),
+            "the jump must target the lower of the two agreeing samples, sparing this gap"
+        );
+        assert_eq!(
+            metrics.pusher_gap_dropped_total.get(),
+            0,
+            "no gap may be sacrificed beyond the lower agreeing sample"
+        );
+    }
+
+    /// A tick that refuses its watermark disarms the pending proposal: the
+    /// refused sample must not stand in as the confirmation for a proposal
+    /// made before it. (The same `take()` covers a tick whose probe errored.)
+    #[tokio::test]
+    async fn a_refused_tick_disarms_a_pending_fast_forward_proposal() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        perpetual.put_sui_pusher_last_seq(0).unwrap();
+        let transport = transport_reporting(&committee, &keys, 1_200, HashMap::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            Arc::new(VerifiedStateCache::new()),
+            metrics.clone(),
+        )
+        .await;
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.pending_fast_forward, Some(1_200));
+
+        // A refused sample in between.
+        pusher.transport = transport_reporting(&committee, &keys, 50_000_000, HashMap::new());
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            metrics
+                .watermark_implausible_total
+                .with_label_values(&["folder"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            pusher.pending_fast_forward, None,
+            "a refused tick must leave no proposal behind it"
+        );
+
+        // The genuine head reappears: it has to propose again from scratch
+        // rather than being confirmed by the tick that was refused.
+        pusher.transport = transport_reporting(&committee, &keys, 1_200, HashMap::new());
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.pending_fast_forward, Some(1_200));
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(0));
     }
 
     /// A non-end-of-epoch, committee-signed summary at `seq` carrying exactly
