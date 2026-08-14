@@ -55,6 +55,29 @@ rule, not the instance.
   looks like nothing at all. When signing fails repeatedly with
   `InvalidParameters` and all malicious sets are empty, suspect key/share
   divergence, not a byzantine peer.
+- **A per-round drain decision kept only in memory can flip on the
+  restart replay — even when every INPUT is consensus-derived.** The
+  round replay after a restart re-runs the whole round stream against
+  durable per-epoch state (presign pools, marker tables) that is NOT
+  rewound to the round being replayed. Instance: the NOA presign-demand
+  park bound dropped a demand from the in-memory queue at round R_e; the
+  demand's key pool then filled at a later round; on restart the replayed
+  drain re-read the demand at its delivery round against the
+  now-non-empty durable pool and ASSIGNED a presign every peer (and the
+  validator's own pre-crash self) had abandoned — silently diverging the
+  demand→presign pairing for the rest of that pool. The pre-existing
+  drain was replay-safe only through an implicit invariant (a demand
+  still unassigned in the queue implies its pool is empty), which the new
+  eviction path broke. → Rule: for every decision a consensus drain makes,
+  ask "if this were forgotten and re-derived during replay against
+  POST-CRASH durable state, would it come out the same?" If not, the
+  decision itself must be durable — record the terminal outcome in the
+  same per-demand marker table that records the positive case (one
+  resolution per demand: `Assigned | Evicted`), so replay short-circuits
+  on the recorded answer instead of re-deciding. This is the
+  time-of-replay sibling of the wall-clock rule above: inputs can all be
+  consensus-ordered and the decision still diverges, because durable
+  state advanced between the original visit and the replayed one.
 
 ## Batch processing & error handling
 
@@ -186,6 +209,30 @@ rule, not the instance.
   releases the lock); it's purely an in-process-swarm hazard. → Rule:
   acquire handles on demand (inside each poll tick / scoped to one
   statement); never bind one across a `stop()`/`start()` of its node.
+- **Settle flake provenance by measurement, not inference: same module,
+  same parallelism, base commit.** A branch that adds heavy tests to a
+  module and then sees OTHER tests in it fail looks like a regression and
+  usually is not — but "my diff can't affect that path" is inference, and
+  it has been wrong in this repo before. Instance: after adding four
+  drain tests to `network_owned_address_sign`, two E2E sign tests failed
+  at `--test-threads=4`; moving the work aside with a temporary WIP
+  commit (never a bare stash — the stash stack is shared across
+  worktrees) and re-running the SAME module at the SAME parallelism on
+  the base commit showed FIVE failures with the identical assertion —
+  pre-existing, and the branch was strictly less affected. The
+  comparison also caught a refactor (#2042, identity-keyed idempotent
+  assignment) FIXING the underlying flake, which a fresh green run alone
+  could never have attributed. → Rule: adding tests to a parallel module
+  raises its contention and makes every latent race in it more likely to
+  fire; before triaging a module failure as yours, reproduce the module
+  run on the base commit at the same parallelism and compare failure
+  sets. Known latent race still open in that module:
+  `test_presign_assignment_is_consensus_ordered_not_local` asserts a
+  pool of ≥ 2 presigns in its SETUP ("test needs at least two presigns …
+  (pool size 1)") while the wait helper
+  `advance_rounds_while_presign_pool_empty` returns as soon as the pool
+  is non-empty; it passes alone. The fix belongs in the helper (take a
+  minimum pool size), not in the tests that trip it.
 
 ## Sui types & encoding
 
