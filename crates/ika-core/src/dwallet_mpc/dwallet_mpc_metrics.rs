@@ -188,6 +188,18 @@ pub struct DWalletMPCMetrics {
     /// can compute serve rate vs top-up rate and predict exhaustion.
     pub(crate) global_presigns_served_total: IntCounterVec,
 
+    /// Network-owned-address presign demands dropped from the assignment
+    /// drain because they stayed unassigned for the whole park bound, by
+    /// signature_algorithm.
+    ///
+    /// A demand parks when no presign pool exists for the network encryption
+    /// key its announcement named, and is retried every consensus round until
+    /// the bound. Any non-zero value means a demand's sign did not happen in
+    /// that epoch: either a committee member announced a key the network never
+    /// adopts, or a key legitimately took longer than the bound to arrive.
+    /// Both are worth an alert.
+    pub(crate) noa_presign_demands_evicted_total: IntCounterVec,
+
     /// Duration of each network-key instantiation sub-call (per-curve
     /// protocol/decryption-share public parameters + NOA DKG outputs), for
     /// both the network-DKG and reconfiguration instantiation paths.
@@ -635,6 +647,14 @@ impl DWalletMPCMetrics {
             global_presigns_served_total: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_global_presigns_served_total",
                 "Global presign requests served from the internal pool",
+                &["signature_algorithm"],
+                registry
+            )
+            .unwrap(),
+            noa_presign_demands_evicted_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_noa_presign_demands_evicted_total",
+                "Network-owned-address presign demands dropped from the assignment drain \
+                 after staying unassigned for the whole park bound",
                 &["signature_algorithm"],
                 registry
             )

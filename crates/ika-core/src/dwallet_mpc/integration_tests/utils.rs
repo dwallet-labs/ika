@@ -1,6 +1,7 @@
 use crate::authority::AuthorityStateTrait;
 use crate::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaAssignedPresign, PresignDemand,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaPresignDemandResolution,
+    PresignAssignmentOutcome, PresignDemand,
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -25,7 +26,7 @@ use ika_types::messages_dwallet_mpc::{
     IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
     UserSecretKeyShareEventType,
 };
-use ika_types::noa_checkpoint::CounterpartyChainKind;
+use ika_types::noa_checkpoint::{CounterpartyChainKind, NOAPresignDemandId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -82,9 +83,13 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_noa_observations: Arc<Mutex<HashMap<Round, Vec<ConsensusNOAObservation>>>>,
     pub(crate) round_to_noa_presign_demands:
         Arc<Mutex<HashMap<Round, Vec<ConsensusNOAPresignDemand>>>>,
-    /// NOA presigns assigned in consensus order, keyed by demand-id digest.
-    /// Value: (presign session id, blending index, raw presign bytes, network key id).
-    pub(crate) noa_assigned_presigns: Arc<Mutex<HashMap<[u8; 32], NoaAssignedPresign>>>,
+    /// Terminal resolution of each NOA sign demand, keyed by demand-id digest:
+    /// the presign assigned to it in consensus order, or the marker that the
+    /// park bound dropped it. Mirrors the real store's
+    /// `noa_presign_demand_resolutions`, including that it survives a simulated
+    /// restart while the service's in-memory state does not.
+    pub(crate) noa_presign_demand_resolutions:
+        Arc<Mutex<HashMap<[u8; 32], NoaPresignDemandResolution>>>,
     /// Presign served to each global presign request, keyed by the request's
     /// session sequence number. Mirrors the real store's `served_global_presigns`:
     /// a re-seen request is answered from here instead of popping again.
@@ -213,7 +218,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_presign_demands: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            noa_assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
+            noa_presign_demand_resolutions: Arc::new(Mutex::new(HashMap::new())),
             served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             filled_presign_slot_high_water: Arc::new(Mutex::new(HashMap::new())),
@@ -501,21 +506,35 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(store.get(&next).map(|v| (next, v.clone())))
     }
 
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
+    fn noa_presign_demand_resolution(
+        &self,
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>> {
         Ok(self
-            .noa_assigned_presigns
+            .noa_presign_demand_resolutions
             .lock()
             .unwrap()
-            .get(digest)
+            .get(&demand_id.digest())
             .cloned())
     }
 
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
-        Ok(self
-            .noa_assigned_presigns
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        // Mirror the real store: never replace an existing resolution.
+        self.noa_presign_demand_resolutions
             .lock()
             .unwrap()
-            .contains_key(digest))
+            .entry(demand_id.digest())
+            .or_insert(NoaPresignDemandResolution::Evicted);
+        Ok(())
+    }
+
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool> {
+        let digest = demand_id.digest();
+        Ok(self
+            .noa_presign_demand_resolutions
+            .lock()
+            .unwrap()
+            .contains_key(&digest))
     }
 
     fn assign_presign_for_demand(
@@ -523,38 +542,61 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         demand: &PresignDemand,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+    ) -> IkaResult<PresignAssignmentOutcome> {
         match demand {
             PresignDemand::GlobalRequest {
                 session_sequence_number,
             } => {
-                if let Some(served) = self
+                if let Some((session_identifier, blending_index, presign)) = self
                     .served_global_presigns
                     .lock()
                     .unwrap()
                     .get(session_sequence_number)
                     .cloned()
                 {
-                    return Ok(Some(served));
+                    return Ok(PresignAssignmentOutcome::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                    });
                 }
             }
+            // Mirror the real store: a NOA demand has ONE terminal resolution,
+            // and a drop recorded by the park bound is as final as an
+            // assignment — including across the simulated restart, which keeps
+            // this store while the service's memory is rebuilt.
             PresignDemand::Noa { demand_id } => {
-                if let Some((session_id, blending_index, presign, _)) = self
-                    .noa_assigned_presigns
+                match self
+                    .noa_presign_demand_resolutions
                     .lock()
                     .unwrap()
                     .get(&demand_id.digest())
                     .cloned()
                 {
-                    return Ok(Some((session_id, blending_index, presign)));
+                    Some(NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                        ..
+                    }) => {
+                        return Ok(PresignAssignmentOutcome::Assigned {
+                            session_identifier,
+                            blending_index,
+                            presign,
+                        });
+                    }
+                    Some(NoaPresignDemandResolution::Evicted) => {
+                        return Ok(PresignAssignmentOutcome::Evicted);
+                    }
+                    None => {}
                 }
             }
         }
 
-        let Some((session_id, blending_index, presign)) =
+        let Some((session_identifier, blending_index, presign)) =
             self.pop_presign_for_testing(signature_algorithm, dwallet_network_encryption_key_id)?
         else {
-            return Ok(None);
+            return Ok(PresignAssignmentOutcome::PoolEmpty);
         };
 
         match demand {
@@ -563,28 +605,32 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             } => {
                 self.served_global_presigns.lock().unwrap().insert(
                     *session_sequence_number,
-                    (session_id, blending_index, presign.clone()),
+                    (session_identifier, blending_index, presign.clone()),
                 );
             }
             PresignDemand::Noa { demand_id } => {
-                self.noa_assigned_presigns.lock().unwrap().insert(
+                self.noa_presign_demand_resolutions.lock().unwrap().insert(
                     demand_id.digest(),
-                    (
-                        session_id,
+                    NoaPresignDemandResolution::Assigned {
+                        session_identifier,
                         blending_index,
-                        presign.clone(),
-                        dwallet_network_encryption_key_id,
-                    ),
+                        presign: presign.clone(),
+                        network_encryption_key_id: dwallet_network_encryption_key_id,
+                    },
                 );
                 // Mirror the real store: mark the popped presign used at the
                 // point of consumption (the pool pop above).
                 self.used_presigns
                     .lock()
                     .unwrap()
-                    .insert((session_id, blending_index), ());
+                    .insert((session_identifier, blending_index), ());
             }
         }
-        Ok(Some((session_id, blending_index, presign)))
+        Ok(PresignAssignmentOutcome::Assigned {
+            session_identifier,
+            blending_index,
+            presign,
+        })
     }
 
     fn assign_presign(

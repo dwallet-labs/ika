@@ -350,9 +350,47 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
-/// A presign assigned (in consensus order) to a NOA sign demand:
-/// `(presign session id, blending index, raw presign bytes, network key id)`.
-pub(crate) type NoaAssignedPresign = (SessionIdentifier, u16, Vec<u8>, ObjectID);
+/// The terminal resolution of a NOA sign demand: exactly one per demand
+/// digest, per epoch, written by the consensus-order drain.
+///
+/// Both arms are terminal, and recording BOTH durably is what keeps a
+/// restarted validator consistent with its peers. The drain replays the
+/// epoch's consensus rounds after a restart while the presign pool — durable
+/// per-epoch state — is not rewound with them, so a demand the park bound
+/// dropped would otherwise be re-read at its delivery round against a pool
+/// that filled after the drop, and the replayed drain would pop for a demand
+/// every peer had already given up on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum NoaPresignDemandResolution {
+    /// A presign was popped for this demand and is bound to it.
+    Assigned {
+        session_identifier: SessionIdentifier,
+        blending_index: u16,
+        presign: Vec<u8>,
+        network_encryption_key_id: ObjectID,
+    },
+    /// The demand stayed unassigned for the whole park bound and was dropped;
+    /// it must never be assigned a presign in this epoch.
+    Evicted,
+}
+
+/// What one drain attempt at a demand resolved to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PresignAssignmentOutcome {
+    /// A presign is bound to the demand — popped by this call, or already
+    /// recorded by an earlier drain of the same rounds.
+    Assigned {
+        session_identifier: SessionIdentifier,
+        blending_index: u16,
+        presign: Vec<u8>,
+    },
+    /// The demand was dropped at the park bound in an earlier round, and must
+    /// never be assigned a presign in this epoch. Reachable only for
+    /// [`PresignDemand::Noa`] — a global presign request has no park bound.
+    Evicted,
+    /// No presign exists for the demand's network encryption key yet.
+    PoolEmpty,
+}
 
 /// What a presign is being assigned TO — and, because assignment is keyed by
 /// it, the idempotency key.
@@ -487,7 +525,7 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         demand: &PresignDemand,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
+    ) -> IkaResult<PresignAssignmentOutcome>;
 
     /// Returns the next global presign requests after the given consensus round.
     fn next_global_presign_request(
@@ -507,11 +545,28 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>>;
 
-    /// Reads the presign assigned (in consensus order) to a NOA sign demand.
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>>;
+    /// Reads a NOA sign demand's terminal resolution, if it has one.
+    ///
+    /// Keyed by the identity, never a bare digest — the same reason
+    /// [`PresignDemand::Noa`] carries one.
+    fn noa_presign_demand_resolution(
+        &self,
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>>;
 
-    /// Whether a presign has already been assigned to a NOA sign demand.
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool>;
+    /// Durably records that a demand was dropped at the park bound, so a
+    /// replay of the epoch's rounds cannot assign it a presign the rest of the
+    /// committee never assigned. Idempotent, and never overwrites an existing
+    /// resolution.
+    ///
+    /// NOA-only: a global presign request has no bound to outlive, and its
+    /// marker table holds served presigns alone.
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()>;
+
+    /// Whether a NOA sign demand already has a terminal resolution — assigned
+    /// OR dropped at the park bound. Both end the demand, so neither needs a
+    /// (re-)announcement.
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool>;
 
     /// Marks a presign as used so it cannot be reused.
     fn mark_presign_as_used(
@@ -820,8 +875,14 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         next_round_row(&tables.noa_presign_demands, last_consensus_round)
     }
 
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
-        Ok(self.tables()?.noa_assigned_presigns.get(digest)?)
+    fn noa_presign_demand_resolution(
+        &self,
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>> {
+        Ok(self
+            .tables()?
+            .noa_presign_demand_resolutions
+            .get(&demand_id.digest())?)
     }
 
     fn assign_presign_for_demand(
@@ -829,7 +890,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         demand: &PresignDemand,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+    ) -> IkaResult<PresignAssignmentOutcome> {
         self.tables()?.assign_presign_for_demand(
             demand,
             signature_algorithm,
@@ -837,8 +898,15 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         )
     }
 
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
-        Ok(self.tables()?.noa_assigned_presigns.contains_key(digest)?)
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        self.tables()?.evict_noa_presign_demand(demand_id)
+    }
+
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool> {
+        Ok(self
+            .tables()?
+            .noa_presign_demand_resolutions
+            .contains_key(&demand_id.digest())?)
     }
 
     fn mark_presign_as_used(
@@ -1512,7 +1580,7 @@ pub struct AuthorityEpochTables {
     /// than peers bound to it — the false-malicious class — for any consumer
     /// that requires pool-head determinism. The NOA path closed this by
     /// batching the pop with an idempotent assignment record (see
-    /// `noa_assigned_presigns` / `assign_presign_for_demand`); the external
+    /// `noa_presign_demand_resolutions` / `assign_presign_for_demand`); the external
     /// `assign_presign` path has not been audited to the same standard.
     /// Do not add a consumer that assumes cross-validator pop identity until
     /// #1928 lands.
@@ -1603,7 +1671,7 @@ pub struct AuthorityEpochTables {
     /// sessions in one batch complete in consensus order, not sequence order),
     /// so a bare re-pop serves a DIFFERENT presign than the never-crashed peers
     /// put in their checkpoint message for the same presign id. Per-epoch, like
-    /// `noa_assigned_presigns`, whose idempotency this mirrors.
+    /// `noa_presign_demand_resolutions`, whose idempotency this mirrors.
     ///
     /// write-discipline: direct — safe because idempotent-replay: written in
     /// the pop's own batch and read back on a re-served sequence number, so a
@@ -1649,12 +1717,14 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
 
-    /// Presign assigned to each NOA sign demand, keyed by the demand's
-    /// `demand_id` digest. Written by the consensus-order drain and read by the
-    /// sign-session instantiation, so all validators pair the same presign with
-    /// the same demand. Value is a [`NoaAssignedPresign`]. Per-epoch (physically
-    /// dropped on rotation) like `used_presigns`; the demand queue that feeds it
-    /// is rebuilt empty when the per-epoch service restarts, and idempotency here
+    /// Terminal resolution of each NOA sign demand, keyed by the demand's
+    /// `demand_id` digest: the presign assigned to it, or a marker that the
+    /// park bound dropped it. Written by the consensus-order drain and read by
+    /// the sign-session instantiation, so all validators pair the same presign
+    /// with the same demand — and give up on the same demands. Value is a
+    /// [`NoaPresignDemandResolution`]. Per-epoch (physically dropped on
+    /// rotation) like `used_presigns`; the demand queue that feeds it is
+    /// rebuilt empty when the per-epoch service restarts, and idempotency here
     /// makes re-drains safe.
     ///
     /// write-discipline: direct — safe because idempotent-replay: keyed by the
@@ -1663,8 +1733,11 @@ pub struct AuthorityEpochTables {
     /// crash returns the recorded assignment instead of popping again. This is
     /// the shape the raw pool tables lack (#1928): the consumer that needs
     /// cross-validator identity — sign-session instantiation — reads THIS
-    /// table, never the pool head.
-    noa_assigned_presigns: DBMap<[u8; 32], NoaAssignedPresign>,
+    /// table, never the pool head. The drop marker needs the same durability
+    /// for the same reason: the pool is not rewound by the replay, so a drop
+    /// held only in memory would let the replayed drain pop for a demand the
+    /// committee had already abandoned.
+    noa_presign_demand_resolutions: DBMap<[u8; 32], NoaPresignDemandResolution>,
 
     /// Tracks presigns that have been consumed for signing.
     /// Key: (SessionIdentifier, blending_index) - uniquely identifies a single presign within
@@ -1689,7 +1762,7 @@ pub struct AuthorityEpochTables {
     /// `assign_presign`'s pop batch (so an assignment can never exist without
     /// its pool removal), but that batch is the pool's own, not the consuming
     /// commit's — so WHICH presign a replayed assignment binds inherits the
-    /// pool's re-pop exposure. Unlike `noa_assigned_presigns` the key is the
+    /// pool's re-pop exposure. Unlike `noa_presign_demand_resolutions` the key is the
     /// popped presign, not the request, so a re-pop yields a new row rather
     /// than hitting an idempotence guard.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
@@ -2138,26 +2211,54 @@ impl AuthorityEpochTables {
     /// between the two writes: the pool would be advanced with no record of
     /// where the presign went, so the replay would pop again — the very
     /// divergence the identity key exists to prevent.
+    /// A NOA demand carries a second terminal outcome the global arm has no
+    /// equivalent of: the park bound can DROP it (see
+    /// [`NoaPresignDemandResolution`]). That drop is recorded in the same
+    /// per-demand table as its assignment, so this method reports it rather
+    /// than popping — which is what stops a restart's replay from assigning a
+    /// presign for a demand the whole committee already gave up on.
     pub fn assign_presign_for_demand(
         &self,
         demand: &PresignDemand,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        // Already assigned? Return it; never pop again.
+    ) -> IkaResult<PresignAssignmentOutcome> {
+        // Already resolved? Report it; never pop again.
         match demand {
             PresignDemand::GlobalRequest {
                 session_sequence_number,
             } => {
-                if let Some(served) = self.served_global_presigns.get(session_sequence_number)? {
-                    return Ok(Some(served));
+                if let Some((session_identifier, blending_index, presign)) =
+                    self.served_global_presigns.get(session_sequence_number)?
+                {
+                    return Ok(PresignAssignmentOutcome::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                    });
                 }
             }
             PresignDemand::Noa { demand_id } => {
-                if let Some((session_identifier, blending_index, presign, _)) =
-                    self.noa_assigned_presigns.get(&demand_id.digest())?
+                match self
+                    .noa_presign_demand_resolutions
+                    .get(&demand_id.digest())?
                 {
-                    return Ok(Some((session_identifier, blending_index, presign)));
+                    Some(NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                        ..
+                    }) => {
+                        return Ok(PresignAssignmentOutcome::Assigned {
+                            session_identifier,
+                            blending_index,
+                            presign,
+                        });
+                    }
+                    Some(NoaPresignDemandResolution::Evicted) => {
+                        return Ok(PresignAssignmentOutcome::Evicted);
+                    }
+                    None => {}
                 }
             }
         }
@@ -2165,7 +2266,7 @@ impl AuthorityEpochTables {
         let Some((mut batch, session_identifier, blending_index, presign)) =
             self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
         else {
-            return Ok(None);
+            return Ok(PresignAssignmentOutcome::PoolEmpty);
         };
 
         match demand {
@@ -2182,15 +2283,15 @@ impl AuthorityEpochTables {
             }
             PresignDemand::Noa { demand_id } => {
                 batch.insert_batch(
-                    &self.noa_assigned_presigns,
+                    &self.noa_presign_demand_resolutions,
                     [(
                         &demand_id.digest(),
-                        &(
+                        &NoaPresignDemandResolution::Assigned {
                             session_identifier,
                             blending_index,
-                            presign.clone(),
-                            dwallet_network_encryption_key_id,
-                        ),
+                            presign: presign.clone(),
+                            network_encryption_key_id: dwallet_network_encryption_key_id,
+                        },
                     )],
                 )?;
                 // Mark the popped presign used, in the SAME batch as the
@@ -2206,7 +2307,11 @@ impl AuthorityEpochTables {
             }
         }
         batch.write()?;
-        Ok(Some((session_identifier, blending_index, presign)))
+        Ok(PresignAssignmentOutcome::Assigned {
+            session_identifier,
+            blending_index,
+            presign,
+        })
     }
 
     /// Prepares a presign pop without committing, returning the uncommitted batch.
@@ -2391,6 +2496,24 @@ impl AuthorityEpochTables {
         batch.write()?;
 
         Ok(Some((session_identifier, blending_index)))
+    }
+
+    /// Durably record that the park bound dropped a NOA sign demand.
+    ///
+    /// Idempotent, and never replaces an existing resolution: an assignment
+    /// already recorded for this demand is the truth the whole committee holds,
+    /// and a second drop marker is the same fact written twice. The read and
+    /// the write need not be one batch — the drain is the single writer of this
+    /// table, and it only calls this after the same round's
+    /// `assign_presign_for_demand` reported an empty pool.
+    pub fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        let digest = demand_id.digest();
+        if self.noa_presign_demand_resolutions.contains_key(&digest)? {
+            return Ok(());
+        }
+        Ok(self
+            .noa_presign_demand_resolutions
+            .insert(&digest, &NoaPresignDemandResolution::Evicted)?)
     }
 
     /// Retrieves an assigned presign by session identifier, blending index, and signature algorithm.
@@ -8481,7 +8604,7 @@ mod tests {
                 }
                 PresignPoolRound::Serve {
                     request_sequence_number,
-                } => Some(
+                } => Some(bound_presign(
                     tables
                         .assign_presign_for_demand(
                             &PresignDemand::GlobalRequest {
@@ -8490,11 +8613,21 @@ mod tests {
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                         )
-                        .unwrap()
-                        .map(|(_, _, presign)| presign),
-                ),
+                        .unwrap(),
+                )),
             })
             .collect()
+    }
+
+    /// The presign a drain bound to the demand, or `None` if it bound none —
+    /// an empty pool, or (NOA only) a demand the park bound dropped. These
+    /// tests compare WHICH presign a demand got, so the identifiers the
+    /// outcome also carries are not part of the comparison.
+    fn bound_presign(outcome: PresignAssignmentOutcome) -> Option<Vec<u8>> {
+        match outcome {
+            PresignAssignmentOutcome::Assigned { presign, .. } => Some(presign),
+            PresignAssignmentOutcome::PoolEmpty | PresignAssignmentOutcome::Evicted => None,
+        }
     }
 
     /// The DWallet MPC service replays EVERY consensus round of the epoch after
@@ -8556,26 +8689,28 @@ mod tests {
         // resurrected already-served presigns and handed one to a second
         // on-chain presign id.
         let fresh_request_sequence_number = 13;
-        let crashed_fresh = crashed
-            .assign_presign_for_demand(
-                &PresignDemand::GlobalRequest {
-                    session_sequence_number: fresh_request_sequence_number,
-                },
-                signature_algorithm,
-                key_id,
-            )
-            .unwrap()
-            .map(|(_, _, presign)| presign);
-        let control_fresh = control
-            .assign_presign_for_demand(
-                &PresignDemand::GlobalRequest {
-                    session_sequence_number: fresh_request_sequence_number,
-                },
-                signature_algorithm,
-                key_id,
-            )
-            .unwrap()
-            .map(|(_, _, presign)| presign);
+        let crashed_fresh = bound_presign(
+            crashed
+                .assign_presign_for_demand(
+                    &PresignDemand::GlobalRequest {
+                        session_sequence_number: fresh_request_sequence_number,
+                    },
+                    signature_algorithm,
+                    key_id,
+                )
+                .unwrap(),
+        );
+        let control_fresh = bound_presign(
+            control
+                .assign_presign_for_demand(
+                    &PresignDemand::GlobalRequest {
+                        session_sequence_number: fresh_request_sequence_number,
+                    },
+                    signature_algorithm,
+                    key_id,
+                )
+                .unwrap(),
+        );
         assert!(
             !control_served.contains(&crashed_fresh),
             "the replay must not resurrect an already-served presign into the pool: \
@@ -8644,14 +8779,16 @@ mod tests {
 
             let first = tables
                 .assign_presign_for_demand(&demand, algorithm, key_id)
-                .unwrap()
-                .expect("pool is non-empty");
+                .unwrap();
+            assert!(
+                matches!(first, PresignAssignmentOutcome::Assigned { .. }),
+                "{demand:?}: the pool is non-empty, so the demand must be assigned"
+            );
             let pool_after_first = tables.presign_pool_size(algorithm, key_id).unwrap();
 
             let second = tables
                 .assign_presign_for_demand(&demand, algorithm, key_id)
-                .unwrap()
-                .expect("a re-seen demand still resolves");
+                .unwrap();
 
             assert_eq!(
                 first, second,
@@ -8671,20 +8808,32 @@ mod tests {
             // key id (the sign must instantiate under the SAME key the presign
             // came from).
             if let PresignDemand::Noa { demand_id } = &demand {
-                let (session_identifier, blending_index, _) = first;
+                let PresignAssignmentOutcome::Assigned {
+                    session_identifier,
+                    blending_index,
+                    ..
+                } = first
+                else {
+                    panic!("{demand:?}: expected an assignment, found {first:?}");
+                };
                 assert!(
                     tables
                         .is_presign_used(session_identifier, blending_index)
                         .unwrap(),
                     "the NOA arm must mark its popped presign used"
                 );
-                let (_, _, _, recorded_key_id) = tables
-                    .noa_assigned_presigns
+                let Some(NoaPresignDemandResolution::Assigned {
+                    network_encryption_key_id,
+                    ..
+                }) = tables
+                    .noa_presign_demand_resolutions
                     .get(&demand_id.digest())
                     .unwrap()
-                    .expect("the assignment was recorded");
+                else {
+                    panic!("the assignment was recorded as this demand's resolution");
+                };
                 assert_eq!(
-                    recorded_key_id, key_id,
+                    network_encryption_key_id, key_id,
                     "the assignment must record the network key the presign came from"
                 );
             }
