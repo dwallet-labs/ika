@@ -88,16 +88,34 @@ Everything the fold does must be a function of the commits it folds.
   commits reproduces the same prefix and re-pins the same
   `end_of_publish_quorum_voted_count` at the same commit — the divergence of
   ika #1917 removed at its root rather than compensated for.
-- **One residue remains, unchanged by this design.** `handoff_signatures`
-  rows are written only once this validator has installed its expected
-  handoff attestation, which depends on a background Sui poll rather than on
-  the commit sequence. A replay that runs before that install buffers the
-  sequenced `EndOfPublishV2` bundles and stages them when it completes, so
-  they land under a later commit than the original run's. The epoch close is
-  held safe there by buffered-quorum adoption plus the grace-multiplied
-  liveness backstop, exactly as before — see
-  [`epoch-close-session-lock.md`](epoch-close-session-lock.md) and
-  [`handoff.md`](handoff.md).
+### The epoch close is the one decision this changes the shape of
+
+`handoff_signatures` rows are written only once this validator has installed
+its expected handoff attestation, which depends on a background Sui poll,
+not on the commit sequence. So the epoch-close gate has never been a pure
+function of the sequence — peers can cross the handoff-cert quorum at
+different commits, and the safety argument is buffered-quorum adoption plus
+the grace-multiplied liveness backstop, not purity. See
+[`epoch-close-session-lock.md`](epoch-close-session-lock.md) and
+[`handoff.md`](handoff.md).
+
+What this design changes is what a RESTART does with that. Before, a
+restarted validator short-circuited: `epoch_close_emitted` survived, and the
+store restored `RejectAllTx` without re-deciding anything. Now the marker is
+derived like everything else, so the close is re-decided from the replayed
+commits against whatever handoff state is installed at the time — bundles
+that arrive before the install buffer and are staged when it completes, at
+whichever commit the replay has reached.
+
+The close round a restart picks is therefore no longer guaranteed to equal
+the one the crashed run picked. It is not a new divergence class — it is the
+same pre-existing non-purity, reached by a different route, and the rebuilt
+checkpoint stream is self-consistent with whichever round this validator
+does pick — but it is the part of this change with the least margin, and
+the one to look at first if a restart near an epoch boundary produces a
+final checkpoint no peer signs. Retiring it properly is the sequence-pure
+tally in `../plans/handoff-barrier-escape-and-pure-close-gate.md`, which
+would make the question moot.
 
 ## Emission must be silent for settled work
 
