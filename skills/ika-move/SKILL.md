@@ -56,8 +56,8 @@ pnpm add @ika.xyz/sdk
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-const suiClient = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet' });
+import { SuiGrpcClient } from '@mysten/sui/grpc';
+const suiClient = new SuiGrpcClient({ baseUrl: 'https://fullnode.testnet.sui.io:443', network: 'testnet' });
 const ikaClient = new IkaClient({ suiClient, config: getNetworkConfig('testnet'), cache: true });
 await ikaClient.initialize();
 ```

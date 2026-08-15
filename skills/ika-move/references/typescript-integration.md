@@ -6,10 +6,11 @@ Complete patterns for TypeScript SDK interaction with Move contracts.
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-const suiClient = new SuiJsonRpcClient({
-    url: getJsonRpcFullnodeUrl('testnet'),
+// Public Sui fullnodes no longer serve JSON-RPC — use gRPC.
+const suiClient = new SuiGrpcClient({
+    baseUrl: 'https://fullnode.testnet.sui.io:443',
     network: 'testnet',
 });
 

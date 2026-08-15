@@ -10,11 +10,11 @@ import { getNetworkConfig, IkaClient, IkaTransaction, UserShareEncryptionKeys,
     createUserSignMessageWithPublicOutput, publicKeyFromDWalletOutput,
     parseSignatureFromSignOutput, prepareImportedKeyDWalletVerification,
 } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';
 
-const suiClient = new SuiJsonRpcClient({
-    url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet',
+const suiClient = new SuiGrpcClient({
+    baseUrl: 'https://fullnode.testnet.sui.io:443', network: 'testnet',
 });
 const ikaClient = new IkaClient({
     suiClient, config: getNetworkConfig('testnet'), cache: true,

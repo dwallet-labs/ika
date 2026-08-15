@@ -51,15 +51,16 @@ const config = getNetworkConfig('testnet');
 
 ## Creating a client
 
-`IkaClient` wraps a Sui JSON-RPC client and provides caching, encryption key management, and helpers
-for fetching network objects and protocol parameters.
+`IkaClient` wraps a Sui client and provides caching, encryption key management, and helpers for
+fetching network objects and protocol parameters. Any `ClientWithCoreApi` implementation works;
+public Sui fullnodes no longer serve JSON-RPC, so use `SuiGrpcClient` against them.
 
 ```ts
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-const suiClient = new SuiJsonRpcClient({
-	url: getJsonRpcFullnodeUrl('testnet'),
+const suiClient = new SuiGrpcClient({
+	baseUrl: 'https://fullnode.testnet.sui.io:443',
 	network: 'testnet',
 });
 const ikaClient = new IkaClient({
@@ -77,7 +78,7 @@ await ikaClient.initialize();
 | Option                     | Description                                                         |
 | -------------------------- | ------------------------------------------------------------------- |
 | `config`                   | Network configuration from `getNetworkConfig()`                     |
-| `suiClient`                | A `SuiJsonRpcClient` (or any `ClientWithCoreApi`) instance          |
+| `suiClient`                | A `SuiGrpcClient` (or any `ClientWithCoreApi`) instance             |
 | `cache`                    | Enable caching for network objects (default: `false`)               |
 | `timeout`                  | Polling timeout in ms for state-waiting queries                     |
 | `encryptionKeyOptions`     | Encryption key selection: `{ autoDetect }` or `{ encryptionKeyID }` |
