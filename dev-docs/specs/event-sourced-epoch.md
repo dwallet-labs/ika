@@ -22,8 +22,11 @@ On every start, a validator that will run consensus for the current epoch:
 2. **Replays** the epoch's commits from the consensus store, in bounded
    batches of 250 — read a batch, fold it through the same
    `handle_consensus_commit` that processes live commits, release it, read
-   the next. Memory is flat in the epoch's age; there is no full-epoch
-   buffering and no unbounded channel.
+   the next. Memory is flat in the epoch's age: one batch of commits and
+   their blocks is resident at a time. The replay reads the store directly
+   and does not go through consensus-core's commit channel, which is
+   unbounded and would otherwise buffer the whole epoch between a producer
+   that scans at disk speed and a consumer that folds at handler speed.
 3. **Starts consensus** with the index the replay reached, as both
    `replay_after_commit_index` and `consumer_last_processed_commit_index`,
    and follows the live tail from there.
@@ -52,9 +55,11 @@ An unfinalized commit has no stored set of rejected transaction indices. A
 validator that folded one would treat as accepted a transaction its peers
 reject, and its derived state would diverge from theirs on a technicality of
 when it happened to restart. Those commits belong to consensus-core, which
-delivers them through the commit finalizer once it starts; there are only
-ever a few of them, so the tail consensus itself has to recover is bounded
-regardless of the epoch's age.
+delivers them through the commit finalizer once it starts. The tail
+consensus itself has to recover is therefore bounded by how much
+finalization was in flight when the process died, not by the epoch's age —
+which is also what keeps that recovery clear of the unbounded-channel
+problem above.
 
 ## Why the old watermark could brick a validator
 
