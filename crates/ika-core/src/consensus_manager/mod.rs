@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sui_types::committee::EpochId;
 use tokio::sync::{Mutex, broadcast};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{error, info};
 
 mod boot_replay;
@@ -423,27 +423,46 @@ impl UpdatableConsensusClient {
         }
     }
 
+    /// Waits until consensus has started for the current epoch.
+    ///
+    /// Deliberately unbounded, and deliberately not fatal. A submission that
+    /// arrives before consensus is up is a normal boot state, not a defect:
+    /// the node rebuilds the epoch's derived state by replaying the consensus
+    /// store before consensus starts
+    /// (`dev-docs/specs/event-sourced-epoch.md`), and on an old epoch that
+    /// legitimately takes tens of minutes, while the epoch tasks and the
+    /// capability notification submit on their own timers from the moment the
+    /// components exist. This used to abort the process after 300 seconds —
+    /// and with `panic = "abort"` in the release profile, one such submission
+    /// would take a healthy, recovering node down.
+    ///
+    /// The wait cannot leak: every caller reaches this through
+    /// `ConsensusAdapter::submit_and_wait`, which runs inside
+    /// `within_alive_epoch` and is dropped at the epoch boundary. The warning
+    /// below is what a genuinely stuck start looks like now.
     async fn get(&self) -> Arc<Arc<dyn ConsensusClient>> {
-        const START_TIMEOUT: Duration = Duration::from_secs(300);
         const RETRY_INTERVAL: Duration = Duration::from_millis(100);
-        if let Ok(client) = timeout(START_TIMEOUT, async {
-            loop {
-                let Some(client) = self.client.load_full() else {
-                    sleep(RETRY_INTERVAL).await;
-                    continue;
-                };
+        const SLOW_START_WARN_INTERVAL: Duration = Duration::from_secs(300);
+
+        let waiting_since = Instant::now();
+        let mut warnings = 0_u32;
+        loop {
+            if let Some(client) = self.client.load_full() {
                 return client;
             }
-        })
-        .await
-        {
-            return client;
+            let waited = waiting_since.elapsed();
+            if waited >= SLOW_START_WARN_INTERVAL * (warnings + 1) {
+                warnings += 1;
+                error!(
+                    waited_secs = waited.as_secs(),
+                    "a consensus submission has been waiting for consensus to start; this is \
+                     expected while the node replays an old epoch to rebuild its derived state, \
+                     and a defect if `ika_consensus_boot_replay_folded_commit_index` is not \
+                     advancing",
+                );
+            }
+            sleep(RETRY_INTERVAL).await;
         }
-
-        panic!(
-            "Timed out after {:?} waiting for Consensus to start!",
-            START_TIMEOUT,
-        );
     }
 
     pub fn set(&self, client: Arc<dyn ConsensusClient>) {
