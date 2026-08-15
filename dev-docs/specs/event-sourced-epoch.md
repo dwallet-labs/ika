@@ -124,6 +124,23 @@ verified watermark alone so state sync still gets to process the checkpoint,
 so a node that certified a checkpoint locally but has not synced past it
 would re-sign an epoch's worth of them on the verified watermark alone.
 
+### Nothing may submit before consensus is up
+
+Suppression is not enough on its own, because of *when* the replay runs. The
+checkpoint builders are started before consensus, and the consensus adapter's
+client panics if it is still unset 300s after a submission is issued — under
+`panic = "abort"`, that ends the process. Rebuilding an old epoch takes far
+longer than 300s, and the replay regenerates the builders' whole input queue,
+so a node that had not certified this epoch's early checkpoints would abort
+partway through its own recovery.
+
+Both builders therefore await the same replay signal the MPC service waits
+on (`ConsensusManager::replay_waiter`) before their first pass. The
+subscriptions are taken before consensus start is spawned, so the signal
+cannot be published into an empty subscriber set. The rule generalises: any
+component whose work submits to consensus must be gated on that signal, not
+merely on having been constructed.
+
 The catch-up gate (`dwallet_mpc/catchup_gate.rs`) is the other
 replay-aware emission gate, and it is a different tool: it keys on distance
 behind the tip and suppresses *starting new cryptographic computations*, not
