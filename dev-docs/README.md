@@ -21,6 +21,14 @@ here updates the file in the same PR.
 
 ## Index
 
+### Top-level audits
+- [`derived-epoch-state-audit.md`](derived-epoch-state-audit.md) — every
+  `AuthorityEpochTables` field classified derived (deleted on boot and
+  rebuilt by replaying the epoch's commits) vs preserved, with the reason
+  for each, why misclassification is silent in both directions, and the
+  four tests that enforce it. Read with
+  [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md).
+
 ### specs/ — protocol behavioral contracts
 The protocol-level contract per subsystem: actors, messages, decision
 rules, invariants, failure modes. **Read the relevant spec before
@@ -30,6 +38,11 @@ them has a bug — determine which before changing either.
 - [`specs/validator-mpc-data-announcements.md`](specs/validator-mpc-data-announcements.md)
   — off-chain mpc_data pipeline: announcements, P2P, ready signals,
   the freeze decision, next-committee assembly.
+- [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md) — the
+  consensus store as the only truth for epoch-scoped state: the boot wipe,
+  the bounded-batch replay that rebuilds derived state, why there is no
+  watermark, the determinism contract, the settled-state rule for
+  replay-silent emission, and the rollback story.
 - [`specs/handoff.md`](specs/handoff.md) — cross-epoch handoff:
   attestation, EndOfPublish V2, certificate, joiner bootstrap, the
   prepare-then-start barrier, network-key adoption guards.

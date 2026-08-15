@@ -270,18 +270,34 @@ because it is what makes replay unsafe — see below.
 
 ## The replay contract
 
-**`DWalletMPCService` replays every consensus round of the epoch after a
-restart.** Its round cursor (`last_read_consensus_round`) is in-memory and
-starts unset, so a restarted validator re-reads the whole per-epoch round
-stream — re-absorbing every internal presign output and re-draining every
-global presign request and NOA demand. The demand queue and the delivery
-rounds the park bound measures from are rebuilt by that replay, and rebuild
-identically because they are read from the same round stream.
+**A restart replays the epoch twice over, at two levels.** The consensus
+handler deletes its derived per-epoch tables and rebuilds them by folding
+the epoch's commits from the consensus store; the per-round streams the pool
+paths read are among them. Then `DWalletMPCService` replays every round of
+that rebuilt stream — its round cursor (`last_read_consensus_round`) is
+in-memory and starts unset — re-absorbing every internal presign output and
+re-draining every global presign request and NOA demand. The demand queue
+and the delivery rounds the park bound measures from are rebuilt by that
+replay, and rebuild identically because they are read from the same rounds
+the handler just re-derived from the same commits. The model is
+[`event-sourced-epoch.md`](event-sourced-epoch.md).
 
-**The pool is NOT reset for that replay.** It is durable per-epoch state, so
-the replay runs against a pool holding whatever survived the crash. That
-breaks the naive assumption that re-executing the same rounds reproduces the
-same decisions:
+**The pool is NOT reset for that replay — by classification, not by
+accident.** Every per-epoch table is classified derived (deleted and
+rebuilt) or preserved (left alone) in
+[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md), and
+the pool tables, their size counters, their idempotency markers
+(`filled_presign_pool_slots`, `served_global_presigns`,
+`noa_presign_demand_resolutions`, `used_presigns`), the assigned-presign
+pools and `presign_private_outputs` are all **preserved**. They have to be:
+the replay does not re-run the cryptography that produced the presigns (the
+catch-up gate suppresses it), and this validator's own VSS secret shares
+were never published, so no commit could carry them back.
+
+The consequence is the one this section has always been about — the replay
+runs against a pool holding whatever survived the crash, which breaks the
+naive assumption that re-executing the same rounds reproduces the same
+decisions:
 
 - a slot filled late in the epoch, still holding presigns at crash time, is
   visible to drains replayed at rounds *before* its own fill round. When its
@@ -336,6 +352,15 @@ The batching is load-bearing in both directions: a pool mutation that landed
 without its marker is re-applied on the next replay, and a marker that landed
 without its mutation loses the presigns (fill) or serves a presign the pool
 never gave up (drain).
+
+**A marker table can never be classified derived.** Wiping a marker while
+the pool it guards survives is precisely the double-absorb this contract
+exists to prevent, and it produces no error — an inflated size counter reads
+as a full pool and suppresses top-ups until the pool physically starves.
+The pairing is checked: the classification test that requires every table
+the consensus fold writes to be derived does not reach these (the pool paths
+write them, not the fold), so the argument for each is written out in the
+audit and reviewed there.
 
 The pool has no bare pop on any replayed path. `pop_presign_for_testing`
 exists only so tests can inspect pool contents directly, and is

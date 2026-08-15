@@ -2781,10 +2781,16 @@ impl AuthorityPerEpochStore {
                  replay would fold onto surviving state",
             );
             let wiped_rows: u64 = wiped.iter().map(|(_, rows)| rows).sum();
+            let derived_tables = EPOCH_STATE_REGISTRY
+                .iter()
+                .filter(|entry| entry.class == EpochStateClass::Derived)
+                .count();
             info!(
                 epoch = epoch_id,
                 wiped_rows,
                 wiped_tables = wiped.len(),
+                derived_tables,
+                preserved_tables = EPOCH_STATE_REGISTRY.len() - derived_tables,
                 ?wiped,
                 "wiped derived per-epoch state; rebuilding it by replaying the epoch's \
                  consensus commits",
@@ -9828,8 +9834,8 @@ mod tests {
             ];
             let transactions = transactions
                 .into_iter()
-                .map(|transaction| VerifiedSequencedConsensusTransaction {
-                    0: SequencedConsensusTransaction {
+                .map(|transaction| {
+                    VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
                         certificate_author_index: 0,
                         certificate_author: author,
                         consensus_index: ExecutionIndices {
@@ -9838,7 +9844,7 @@ mod tests {
                             transaction_index: 0,
                         },
                         transaction: SequencedConsensusTransactionKind::External(transaction),
-                    },
+                    })
                 })
                 .collect();
             let consensus_stats = ExecutionIndicesWithStats {

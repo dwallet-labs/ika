@@ -7,6 +7,17 @@ CI enforces the presence of that line
 (`scripts/check-epoch-table-write-discipline.sh`); review enforces that
 it is true.
 
+Every field carries a **second** declaration alongside it, in the
+`epoch_state_registry!` invocation in the same file: whether the table is
+DERIVED (deleted on every boot and rebuilt by replaying the epoch's commits)
+or PRESERVED. The two declarations answer different questions —
+`write-discipline:` is about which batch a row lands in, the classification
+is about whether the row exists at all after a restart — and both are
+required. The classification's rules and reasoning are
+[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md); the
+model behind it is
+[`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md).
+
 ## The rule
 
 **Writing.** A new table, or a new write site for an existing one, must
@@ -48,6 +59,13 @@ a crash before that batch replays the whole commit and re-derives the row.
 This is **required** for anything a consensus-visible decision reads: the
 close round, the freeze partition, checkpoint content, the MPC service's
 per-round replay streams.
+
+Note what the boot replay does and does not change here. It deletes every
+derived table and re-derives it from the commits, so a torn *pair* of rows
+cannot survive a restart — but within a running process the atomicity
+argument is unchanged, and a table written outside the commit batch is still
+read by consumers that may look at it between the decision and its batch.
+Commit-batching is about the live path; the classification is about the boot.
 
 **`direct`** — written outside the commit batch, with a stated reason.
 Fixed vocabulary, so the reasons stay comparable:

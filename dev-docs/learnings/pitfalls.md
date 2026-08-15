@@ -78,6 +78,39 @@ rule, not the instance.
   time-of-replay sibling of the wall-clock rule above: inputs can all be
   consensus-ordered and the decision still diverges, because durable
   state advanced between the original visit and the replayed one.
+  → **Retired for one class, still live for the other.** Boot now deletes
+  every per-epoch table classified DERIVED and rebuilds it by replaying the
+  epoch's commits, so replay against non-rewound durable state no longer
+  happens for those. It is unchanged for tables classified PRESERVED — the
+  presign pools and their markers, which is where the instance above lived
+  and where the rule still bites. Which class a table is in, and why:
+  `../derived-epoch-state-audit.md`.
+- **One logical fact in two databases is a brick waiting for a storage
+  incident.** "How much of this epoch has been consumed" lived both in
+  Mysticeti's commit store and in ika's per-epoch watermark, with no shared
+  fsync discipline. A CSI failure cost the consensus store its unsynced tail
+  while the watermark survived, the two disagreed by one commit, and
+  `CommitObserver::recover_and_send_commits` asserts the ordering — so the
+  validator aborted on every boot until the epoch rolled over, up to 24h
+  (ika #2057). Note the shape: neither store was corrupt, and each was
+  individually consistent.
+  → Rule: when a fact is recoverable from another component's durable state,
+  DERIVE it there rather than keeping a copy. Reconciling copies shrinks the
+  disagreement window; deleting the copy removes it. Where the copy is a
+  cache of expensive work, the question to ask is whether the work is
+  cheaper than the failure mode — here a full-epoch replay costs minutes and
+  the copy cost a day of downtime.
+- **A test that asserts a declaration against itself catches nothing.** The
+  per-epoch derived/preserved classification was first enforced by a wipe
+  test and a double-fold test; injecting the exact mistake they existed to
+  catch (a fold-written table declared preserved) left both GREEN. The wipe
+  test checked each table against its declared class, so a wrong declaration
+  agreed with itself; the double-fold passed because the per-round tables
+  are keyed by round and a second fold simply overwrote them.
+  → Rule: an enforcement test needs a source of truth INDEPENDENT of the
+  declaration — here, folding real commits and requiring every table that
+  actually got written to be declared derived. And this is only visible if
+  you inject the mistake: both tests read as thorough.
 
 ## Batch processing & error handling
 
