@@ -12,12 +12,16 @@
 //!
 //! - a table classified [`EpochStateClass::Derived`] that is NOT re-derivable
 //!   is silently lost at the next restart;
-//! - a table classified [`EpochStateClass::Preserved`] that IS re-derived by
-//!   the replay double-accumulates, because the replay adds to state the
-//!   previous run already produced.
+//! - a table classified [`EpochStateClass::Preserved`] that the replay DOES
+//!   write survives with rows the replay may not reach. Where the replay
+//!   accumulates rather than overwrites, that double-counts; where it
+//!   overwrites — the per-round streams, keyed by round — it looks harmless
+//!   until a boot whose consensus store lost its tail keeps rows for commits
+//!   the store no longer has.
 //!
-//! So the classification is written down ONCE, here, and both the wipe and the
-//! determinism test read that one list — there is no second list to drift.
+//! So the classification is written down ONCE, here, and the wipe, the
+//! post-wipe check and the tests are all generated from that one list — there
+//! is no second list to drift.
 //! `dev-docs/derived-epoch-state-audit.md` carries the per-table reasoning; this
 //! module carries the machine-checked half.
 
@@ -89,15 +93,17 @@ pub struct EpochStateEntry {
 /// Declares the classification of every `AuthorityEpochTables` field and, from
 /// the same list, generates:
 ///
-/// - `EPOCH_STATE_REGISTRY` — the audit table, iterated by the determinism
-///   test and by the post-wipe emptiness check;
+/// - `EPOCH_STATE_REGISTRY` — the audit table the tests iterate;
 /// - `AuthorityEpochTables::wipe_derived_state` — point-deletes every
-///   `Derived` table and leaves every `Preserved` one untouched.
+///   `Derived` table and leaves every `Preserved` one untouched;
+/// - `non_empty_derived_tables`, the post-wipe startup invariant.
 ///
 /// Adding a field to `AuthorityEpochTables` without adding it here fails
-/// `registry_covers_every_epoch_table` (which compares this list against the
-/// column families `DBMapUtils` actually generated), so the classification
-/// cannot be skipped.
+/// `every_epoch_table_is_classified`, which compares this list against the
+/// column families `DBMapUtils` actually generated, so the classification
+/// cannot be skipped. Getting the class WRONG is caught by
+/// `every_table_the_consensus_fold_writes_is_classified_derived`, which takes
+/// its answer from folding real commits rather than from this list.
 ///
 /// The deletion is a chunked sweep of point deletes rather than
 /// `Map::schedule_delete_all`, deliberately: that helper issues a RocksDB
