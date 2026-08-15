@@ -1342,9 +1342,12 @@ pub struct AuthorityEpochTables {
     /// transactions, and accumulated stats of consensus output.
     /// This field is written by a single process (consensus handler).
     ///
-    /// write-discipline: commit-batched — `get_last_consensus_stats` seeds the
-    /// consensus handler's replay cursor at startup, so a row durable ahead of
-    /// its commit's effects would skip that commit entirely.
+    /// write-discipline: commit-batched — the running per-author tallies must
+    /// land with the commit that produced them, or a validator's checkpoint
+    /// content would depend on where its last write happened to stop. This is
+    /// no longer a startup cursor: it is wiped and re-accumulated from the
+    /// first commit of the epoch on every boot, so `get_last_consensus_stats`
+    /// reads empty there and the handler starts at the epoch's beginning.
     last_consensus_stats: DBMap<u64, ExecutionIndicesWithStats>,
 
     /// This table has information for the checkpoints for which we constructed all the data
@@ -1464,11 +1467,18 @@ pub struct AuthorityEpochTables {
     /// vote, but the live aggregator stops accepting inserts the moment
     /// quorum is reached, so its membership is a prefix of the CONSENSUS
     /// ARRIVAL ORDER — which the table does not store (its value is `()`, and
-    /// iteration is by `AuthorityName`). Rebuilding the aggregator from the
-    /// table on restart therefore yields the FULL vote set, a larger count
-    /// than a never-restarted peer holds; without this record a restarted
-    /// validator could satisfy `all_voted`, skip the grace, and close the
-    /// epoch at a different round than the rest of the committee. See #1917.
+    /// iteration is by `AuthorityName`). Rebuilding the aggregator from a
+    /// SURVIVING table therefore yields the FULL vote set, a larger count than
+    /// a never-restarted peer holds; without this record a restarted validator
+    /// could satisfy `all_voted`, skip the grace, and close the epoch at a
+    /// different round than the rest of the committee. See #1917.
+    ///
+    /// Wiping both this and `end_of_publish` on boot removes that skew at its
+    /// root rather than compensating for it: the aggregator is refilled from
+    /// the replayed commits in the same consensus order, so it caps at the same
+    /// member and re-pins the same count at the same commit. The record is
+    /// still written, and still read back once pinned, because within a single
+    /// boot the aggregator and the table diverge exactly as described above.
     ///
     /// write-discipline: commit-batched — written in the same batch as
     /// `end_of_publish_quorum_round` so the anchor and the pinned count can
@@ -1479,10 +1489,12 @@ pub struct AuthorityEpochTables {
     end_of_publish_quorum_voted_count: DBMap<u64, u64>,
 
     /// Single-entry (key `0`) marker set when the deferred epoch-close
-    /// message set was emitted. Written atomically with that commit's batch;
-    /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
-    /// restarted validator does not re-emit the close at a later commit
-    /// (which would fork its checkpoint stream from peers).
+    /// message set was emitted. Written atomically with that commit's batch.
+    /// A restarting validator must not re-emit the close at a LATER commit
+    /// than the one it originally decided at (which would fork its checkpoint
+    /// stream from peers); the boot replay re-decides the close at that same
+    /// commit and re-sets this marker there, and the epoch-store-open restore
+    /// of `reconfig_state` covers a store opened without a replay behind it.
     ///
     /// write-discipline: commit-batched — the marker and the close messages it
     /// records must land or die together; the consumer is the epoch-store-open
@@ -1521,12 +1533,12 @@ pub struct AuthorityEpochTables {
     /// Single-key (0) table holding the `commit_timestamp_ms` of the FIRST
     /// consensus commit this validator processed this epoch — the
     /// consensus-clock anchor of the mpc_data ready-signal 3/4-epoch
-    /// backstop deadline (`ready_signal_deadline_ms`). Persisted (written
-    /// atomically with the first commit's batch) because replay after a
-    /// restart resumes from the last processed commit, so the first
-    /// commit's timestamp is otherwise unrecoverable. Identical across
-    /// honest validators up to consensus determinism; consumed only for
-    /// emit timing, never for signal content.
+    /// backstop deadline (`ready_signal_deadline_ms`). Written atomically
+    /// with the first commit's batch, and re-derived on every boot because
+    /// the replay starts at that same first commit — the row exists so the
+    /// anchor is attributable to a commit, not because it would otherwise be
+    /// unrecoverable. Identical across honest validators up to consensus
+    /// determinism; consumed only for emit timing, never for signal content.
     ///
     /// write-discipline: commit-batched — the anchor must be the timestamp of a
     /// commit that actually persisted, so the ready-signal backstop deadline
@@ -2908,12 +2920,15 @@ impl AuthorityPerEpochStore {
             .set(ready_signal_deadline_seconds);
         let end_of_publish =
             StakeAggregator::from_iter(committee.clone(), tables.end_of_publish.safe_iter())?;
-        // Restore the closed state across a restart: the deferred close
-        // persists `epoch_close_emitted` atomically with the closing commit,
-        // so reopening with `AcceptAllCerts` here would both re-emit the
-        // close set at a later commit (forking this validator's checkpoint
-        // stream from peers) and re-open transaction acceptance that the
-        // rest of the committee has closed.
+        // Restore the closed state from `epoch_close_emitted`, which the
+        // deferred close persists atomically with the closing commit. Under
+        // `RebuildFromConsensus` the marker was just wiped, so this reads
+        // `AcceptAllCerts` and the replay re-decides the close at the same
+        // commit the original run did — the close set lands at the same round,
+        // not a later one. Under `Retain` (a store opened without a replay
+        // behind it) this is the only thing standing between a reopened store
+        // and re-emitting the close at a later commit, which would fork this
+        // validator's checkpoint stream from its peers.
         let initial_reconfig_status = if tables.epoch_close_emitted.get(&0)?.is_some() {
             ReconfigCertStatus::RejectAllTx
         } else {
@@ -9701,5 +9716,345 @@ mod tests {
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
             0
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Event-sourced epoch: the derived/preserved classification, the wipe
+    // it drives, and the determinism of the fold that rebuilds what the
+    // wipe removed. Model: dev-docs/specs/event-sourced-epoch.md.
+    // ------------------------------------------------------------------
+
+    /// Every per-epoch table has to be classified, or a restart either
+    /// silently keeps state the replay will produce a second copy of, or
+    /// silently drops state nothing will rebuild.
+    ///
+    /// The comparison is against the column families `DBMapUtils` generated
+    /// from the struct — not a second hand-maintained list — so adding a field
+    /// to `AuthorityEpochTables` without classifying it fails here.
+    #[test]
+    fn every_epoch_table_is_classified() {
+        let declared: BTreeSet<&str> = EPOCH_STATE_REGISTRY
+            .iter()
+            .map(|entry| entry.field)
+            .collect();
+        let actual: BTreeSet<String> = AuthorityEpochTables::describe_tables()
+            .into_keys()
+            .collect();
+        let actual: BTreeSet<&str> = actual.iter().map(String::as_str).collect();
+
+        let unclassified: Vec<_> = actual.difference(&declared).copied().collect();
+        assert!(
+            unclassified.is_empty(),
+            "per-epoch tables with no derived/preserved classification: {unclassified:?} — add \
+             them to the `epoch_state_registry!` invocation and to \
+             dev-docs/derived-epoch-state-audit.md",
+        );
+        let stale: Vec<_> = declared.difference(&actual).copied().collect();
+        assert!(
+            stale.is_empty(),
+            "classified tables that no longer exist: {stale:?}",
+        );
+    }
+
+    #[test]
+    fn epoch_state_registry_names_each_table_once() {
+        let mut seen = BTreeSet::new();
+        for entry in EPOCH_STATE_REGISTRY {
+            assert!(
+                seen.insert(entry.field),
+                "`{}` is classified twice; the two arms could disagree",
+                entry.field,
+            );
+            assert!(
+                !entry.reason.is_empty(),
+                "`{}` has no classification reason",
+                entry.field,
+            );
+        }
+    }
+
+    /// A committee-member name plus the store it will fold commits into.
+    fn derived_state_test_store(
+        dir: &Path,
+        policy: DerivedEpochStatePolicy,
+    ) -> (Arc<AuthorityPerEpochStore>, AuthorityName) {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let name = *committee.names().next().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            name,
+            committee,
+            dir,
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+            policy,
+        )
+        .unwrap();
+        (epoch_store, name)
+    }
+
+    /// Drives `rounds` synthetic consensus commits through the real commit
+    /// boundary. The content is fixed, not sampled, so the same call folds the
+    /// same sequence every time — which is what makes the double-fold
+    /// comparison meaningful.
+    async fn fold_test_commits(
+        epoch_store: &Arc<AuthorityPerEpochStore>,
+        author: AuthorityName,
+        rounds: u64,
+    ) {
+        let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        for round in 1..=rounds {
+            let session_identifier = SessionIdentifier::new(SessionType::User, [round as u8; 32]);
+            let transactions = vec![
+                ConsensusTransaction::new_dwallet_mpc_message(
+                    author,
+                    session_identifier,
+                    vec![round as u8; 8],
+                ),
+                ConsensusTransaction::new_dwallet_mpc_output(
+                    author,
+                    session_identifier,
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                ConsensusTransaction::new_idle_status_update(IdleStatusUpdate {
+                    authority: author,
+                    nonce: [round as u8; 32],
+                    is_idle: round % 2 == 0,
+                }),
+            ];
+            let transactions = transactions
+                .into_iter()
+                .map(|transaction| VerifiedSequencedConsensusTransaction {
+                    0: SequencedConsensusTransaction {
+                        certificate_author_index: 0,
+                        certificate_author: author,
+                        consensus_index: ExecutionIndices {
+                            last_committed_round: round,
+                            sub_dag_index: round,
+                            transaction_index: 0,
+                        },
+                        transaction: SequencedConsensusTransactionKind::External(transaction),
+                    },
+                })
+                .collect();
+            let consensus_stats = ExecutionIndicesWithStats {
+                index: ExecutionIndices {
+                    last_committed_round: round,
+                    sub_dag_index: round,
+                    transaction_index: 0,
+                },
+                hash: 0,
+                stats: ConsensusStats::new(4),
+            };
+            epoch_store
+                .process_consensus_transactions_and_commit_boundary(
+                    transactions,
+                    &consensus_stats,
+                    &None::<Arc<DWalletCheckpointService>>,
+                    &None,
+                    &ConsensusCommitInfo::new_for_test(round, 1_000 + round, true),
+                    &metrics,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The serialized contents of every classified table, keyed by name.
+    #[allow(clippy::type_complexity)]
+    fn classified_table_snapshot(
+        tables: &AuthorityEpochTables,
+    ) -> BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>> {
+        EPOCH_STATE_REGISTRY
+            .iter()
+            .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
+            .collect()
+    }
+
+    /// Whether a table is derived is not a matter of opinion: if the consensus
+    /// fold writes it, the replay writes it again, and it MUST be wiped first.
+    ///
+    /// This is the check that catches a misclassification, because it takes the
+    /// truth from behaviour — which tables the real commit boundary actually
+    /// wrote — and compares it against the declaration, rather than asserting
+    /// the declaration against itself. Leaving a fold-written table preserved
+    /// is not harmless even though the replay overwrites most of its rows: the
+    /// rows the replay does NOT reach survive. A restart whose consensus store
+    /// lost its tail (ika #2057) would keep the per-round rows for commits the
+    /// store no longer has, and the MPC drain would replay rounds no commit
+    /// backs.
+    #[tokio::test]
+    async fn every_table_the_consensus_fold_writes_is_classified_derived() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) =
+            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+        let tables = epoch_store.tables().unwrap();
+
+        let before = classified_table_snapshot(&tables);
+        assert!(
+            before.values().all(Vec::is_empty),
+            "a freshly opened epoch store must hold no rows",
+        );
+
+        fold_test_commits(&epoch_store, author, 4).await;
+        let after = classified_table_snapshot(&tables);
+
+        let written: Vec<&'static str> = EPOCH_STATE_REGISTRY
+            .iter()
+            .map(|entry| entry.field)
+            .filter(|field| !after[field].is_empty())
+            .collect();
+        assert!(
+            written.len() >= 8,
+            "the commit boundary wrote only {} tables ({written:?}); this check would be \
+             near-vacuous",
+            written.len(),
+        );
+
+        let misclassified: Vec<&'static str> = EPOCH_STATE_REGISTRY
+            .iter()
+            .filter(|entry| {
+                entry.class == EpochStateClass::Preserved && written.contains(&entry.field)
+            })
+            .map(|entry| entry.field)
+            .collect();
+        assert!(
+            misclassified.is_empty(),
+            "these tables are written by the consensus fold but classified preserved: \
+             {misclassified:?} — the boot replay rewrites them, so rows it does not reach \
+             survive from a run whose commits may no longer exist",
+        );
+    }
+
+    /// The wipe must empty every derived table and leave every preserved one
+    /// exactly as it was. Getting either direction wrong is silent: a derived
+    /// table that survives is double-applied by the replay, a preserved one
+    /// that is wiped is simply gone.
+    #[tokio::test]
+    async fn wipe_empties_every_derived_table_and_preserves_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) =
+            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+        fold_test_commits(&epoch_store, author, 6).await;
+
+        // Two preserved tables, populated the way production populates them:
+        // a retired presign and this validator's own secret presign share.
+        let tables = epoch_store.tables().unwrap();
+        let presign_session = SessionIdentifier::new(SessionType::InternalPresign, [9; 32]);
+        tables.mark_presign_as_used(presign_session, 0).unwrap();
+        tables
+            .store_presign_private_output(CommitmentSizedNumber::from(7u64), 0, vec![1, 2, 3])
+            .unwrap();
+
+        let before = classified_table_snapshot(&tables);
+        let populated_derived = EPOCH_STATE_REGISTRY
+            .iter()
+            .filter(|entry| {
+                entry.class == EpochStateClass::Derived && !before[entry.field].is_empty()
+            })
+            .count();
+        // Guards against the whole assertion below passing because the fold
+        // wrote nothing at all.
+        assert!(
+            populated_derived >= 8,
+            "the fold populated only {populated_derived} derived tables; the wipe assertion \
+             would be near-vacuous",
+        );
+
+        tables.wipe_derived_state().unwrap();
+        let after = classified_table_snapshot(&tables);
+
+        for entry in EPOCH_STATE_REGISTRY {
+            match entry.class {
+                EpochStateClass::Derived => assert!(
+                    after[entry.field].is_empty(),
+                    "derived table `{}` survived the wipe ({} rows); the replay would fold onto it",
+                    entry.field,
+                    after[entry.field].len(),
+                ),
+                EpochStateClass::Preserved => assert_eq!(
+                    after[entry.field], before[entry.field],
+                    "preserved table `{}` lost rows to the wipe; nothing rebuilds it",
+                    entry.field,
+                ),
+            }
+        }
+        assert!(
+            !after["used_presigns"].is_empty() && !after["presign_private_outputs"].is_empty(),
+            "the preserved side of the check was vacuous — neither preserved table held a row",
+        );
+        assert!(tables.non_empty_derived_tables().is_empty());
+    }
+
+    /// The property the whole design rests on: derived state is a function of
+    /// the commit sequence and nothing else. Fold a sequence, restart onto the
+    /// same directory (which wipes), fold the identical sequence again — every
+    /// derived table must come back with the identical contents, and the
+    /// preserved ones must be untouched.
+    ///
+    /// Iterating the classification registry rather than a hand-picked list is
+    /// what makes this the audit's enforcement: a new table classified derived
+    /// that is not in fact re-derivable shows up here as a difference.
+    #[tokio::test]
+    async fn folding_the_same_commits_twice_rebuilds_identical_derived_state() {
+        const ROUNDS: u64 = 6;
+        let dir = tempfile::tempdir().unwrap();
+
+        let (epoch_store, author) =
+            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+        fold_test_commits(&epoch_store, author, ROUNDS).await;
+        let tables = epoch_store.tables().unwrap();
+        let preserved_marker = SessionIdentifier::new(SessionType::InternalPresign, [5; 32]);
+        tables.mark_presign_as_used(preserved_marker, 3).unwrap();
+
+        let first_fold = classified_table_snapshot(&tables);
+        let non_empty_first = EPOCH_STATE_REGISTRY
+            .iter()
+            .filter(|entry| {
+                entry.class == EpochStateClass::Derived && !first_fold[entry.field].is_empty()
+            })
+            .count();
+        assert!(
+            non_empty_first >= 8,
+            "only {non_empty_first} derived tables held rows after the first fold; the \
+             comparison below would be near-vacuous",
+        );
+        drop(tables);
+        drop(epoch_store);
+
+        // The restart: reopening with the rebuild policy is exactly what a
+        // validator does at boot, wipe included.
+        let (epoch_store, author_again) =
+            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::RebuildFromConsensus);
+        assert_eq!(author, author_again, "the test committee must be stable");
+        let tables = epoch_store.tables().unwrap();
+        assert!(
+            tables.non_empty_derived_tables().is_empty(),
+            "the reopen did not wipe; the second fold would be folding onto the first's output",
+        );
+        assert!(
+            tables.is_presign_used(preserved_marker, 3).unwrap(),
+            "the reopen wiped a preserved table",
+        );
+
+        fold_test_commits(&epoch_store, author, ROUNDS).await;
+        let second_fold = classified_table_snapshot(&tables);
+
+        // Compared over EVERY classified table, not just the derived ones.
+        // That is what makes this the audit's enforcement in both directions:
+        // a table wrongly called preserved accumulates a second copy here, and
+        // a table wrongly called derived comes back empty.
+        for entry in EPOCH_STATE_REGISTRY {
+            assert_eq!(
+                second_fold[entry.field], first_fold[entry.field],
+                "`{}` (classified {}) did not come back identical after a wipe-and-replay of \
+                 the same commits",
+                entry.field, entry.class,
+            );
+        }
     }
 }

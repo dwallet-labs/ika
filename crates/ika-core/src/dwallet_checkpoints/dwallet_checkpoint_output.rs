@@ -77,11 +77,18 @@ impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointTo
 
         let checkpoint_seq = checkpoint_message.sequence_number;
 
-        let highest_verified_checkpoint = checkpoint_store
-            .get_highest_verified_dwallet_checkpoint()?
-            .map(|x| *x.sequence_number());
+        // Suppress against SETTLED state, not against how far this node got.
+        // A restart rebuilds every checkpoint of the epoch from the consensus
+        // commits, so without this gate each restart would re-sign an epoch's
+        // worth of checkpoints into the DAG. The key is "a stake quorum has
+        // already certified this sequence number" — an observation about the
+        // network that converges across validators — which is why local
+        // aggregation counts here alongside state sync, and why no
+        // how-far-did-I-get watermark is involved.
+        let highest_settled_checkpoint =
+            checkpoint_store.get_highest_settled_dwallet_checkpoint_seq()?;
 
-        if Some(checkpoint_seq) > highest_verified_checkpoint {
+        if Some(checkpoint_seq) > highest_settled_checkpoint {
             debug!(
                 ?checkpoint_message,
                 "Sending dwallet checkpoint signature to consensus."

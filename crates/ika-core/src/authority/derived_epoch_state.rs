@@ -140,6 +140,19 @@ macro_rules! epoch_state_registry {
                 $( epoch_state_registry!(@check self, remaining, $class, $field); )*
                 remaining
             }
+
+            /// Every row of one table, serialized, for comparing a table
+            /// against itself across a wipe-and-rebuild. Serialized rather
+            /// than `Debug`-formatted because the property under test is
+            /// byte-identity of the rebuilt state, not that it looks alike.
+            #[cfg(test)]
+            pub(crate) fn classified_table_rows(
+                &self,
+                field: &str,
+            ) -> Vec<(Vec<u8>, Vec<u8>)> {
+                $( epoch_state_registry!(@rows self, field, $field); )*
+                panic!("no per-epoch table named `{field}`")
+            }
         }
     };
 
@@ -157,6 +170,22 @@ macro_rules! epoch_state_registry {
         }
     };
     (@check $tables:ident, $remaining:ident, Preserved, $field:ident) => {};
+
+    (@rows $tables:ident, $wanted:ident, $field:ident) => {
+        if $wanted == stringify!($field) {
+            return $tables
+                .$field
+                .safe_iter()
+                .map(|row| {
+                    let (key, value) = row.expect("reading a per-epoch table row");
+                    (
+                        bcs::to_bytes(&key).expect("serializing a per-epoch table key"),
+                        bcs::to_bytes(&value).expect("serializing a per-epoch table value"),
+                    )
+                })
+                .collect();
+        }
+    };
 }
 
 pub(crate) use epoch_state_registry;

@@ -235,6 +235,27 @@ impl SystemCheckpointStore {
         self.get_system_checkpoint_by_digest(&highest_verified.1)
     }
 
+    /// The highest system-checkpoint sequence number this node has seen
+    /// settled. Mirrors
+    /// [`crate::dwallet_checkpoints::DWalletCheckpointStore::get_highest_settled_dwallet_checkpoint_seq`]
+    /// — see there for why a certificate's existence, and not any local
+    /// progress counter, is the key a restart's re-signing is suppressed
+    /// against.
+    pub fn get_highest_settled_system_checkpoint_seq(
+        &self,
+    ) -> IkaResult<Option<SystemCheckpointSequenceNumber>> {
+        let highest_verified = self
+            .get_highest_verified_system_checkpoint()?
+            .map(|checkpoint| *checkpoint.sequence_number());
+        let highest_certified = self
+            .certified_checkpoints
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(sequence_number, _)| sequence_number);
+        Ok(highest_verified.max(highest_certified))
+    }
+
     pub fn get_highest_synced_system_checkpoint(
         &self,
     ) -> Result<Option<VerifiedSystemCheckpointMessage>, TypedStoreError> {

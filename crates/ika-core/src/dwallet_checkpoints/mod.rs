@@ -238,6 +238,39 @@ impl DWalletCheckpointStore {
         self.get_dwallet_checkpoint_by_digest(&highest_verified.1)
     }
 
+    /// The highest sequence number this node has SEEN SETTLED: the greater of
+    /// the state-sync-verified watermark and the head of the certificates this
+    /// node aggregated itself.
+    ///
+    /// Both inputs mean the same thing — a stake quorum signed that checkpoint
+    /// — so both are convergent: every honest validator arrives at the same
+    /// answer once it has seen the same certificates, in any order, and neither
+    /// is a record of how much work THIS node has done. That distinction is why
+    /// this is the right key to suppress signature re-submission against when a
+    /// restart rebuilds the epoch's checkpoints from consensus: a local
+    /// progress counter would be a second truth beside the consensus store, but
+    /// "this checkpoint is already certified" is an observation about the
+    /// network that any node can make independently.
+    ///
+    /// The two are combined because they move independently. The verified
+    /// watermark is bumped only by state sync (`insert_verified_checkpoint`),
+    /// never by local aggregation, so a node that certified a checkpoint itself
+    /// but has not synced past it would otherwise still re-sign it.
+    pub fn get_highest_settled_dwallet_checkpoint_seq(
+        &self,
+    ) -> IkaResult<Option<DWalletCheckpointSequenceNumber>> {
+        let highest_verified = self
+            .get_highest_verified_dwallet_checkpoint()?
+            .map(|checkpoint| *checkpoint.sequence_number());
+        let highest_certified = self
+            .certified_checkpoints
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(sequence_number, _)| sequence_number);
+        Ok(highest_verified.max(highest_certified))
+    }
+
     pub fn get_highest_synced_dwallet_checkpoint(
         &self,
     ) -> Result<Option<VerifiedDWalletCheckpointMessage>, TypedStoreError> {
