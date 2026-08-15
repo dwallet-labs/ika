@@ -40,6 +40,26 @@ use sui_types::base_types::EpochId;
 use tokio::task::JoinSet;
 use tracing::{debug, error, instrument, trace_span, warn};
 
+/// Notified once for every consensus commit this node finishes processing at
+/// the Ika commit boundary.
+///
+/// The commit boundary is the one place where "this process is still being
+/// fed by the consensus mesh" is observable from inside the node: the round
+/// and timestamp gauges stamped there
+/// (`ika_last_committed_leader_consensus_round`,
+/// `ika_consensus_last_committed_timestamp_seconds`) freeze together with
+/// the subscriptions when a validator is isolated at an epoch boundary
+/// (ika #1864), and no other subsystem's progress distinguishes that from a
+/// quiet network — `ika_dwallet_mpc_catchup_gap_rounds` in particular reads
+/// 0 on an isolated node, because it is measured against a persisted round
+/// stream that freezes too.
+///
+/// Consumers must be cheap and non-blocking: this runs on the commit path,
+/// once per commit, at sub-second cadence.
+pub trait ConsensusCommitSink: Send + Sync {
+    fn commit_processed(&self, leader_round: u64);
+}
+
 pub struct ConsensusHandlerInitializer {
     state: Arc<AuthorityState>,
     checkpoint_service: Option<Arc<DWalletCheckpointService>>,
@@ -47,6 +67,7 @@ pub struct ConsensusHandlerInitializer {
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
+    commit_sink: Option<Arc<dyn ConsensusCommitSink>>,
 }
 
 impl ConsensusHandlerInitializer {
@@ -57,6 +78,7 @@ impl ConsensusHandlerInitializer {
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        commit_sink: Option<Arc<dyn ConsensusCommitSink>>,
     ) -> Self {
         Self {
             state,
@@ -65,6 +87,7 @@ impl ConsensusHandlerInitializer {
             epoch_store,
             low_scoring_authorities,
             throughput_calculator,
+            commit_sink,
         }
     }
 
@@ -85,6 +108,7 @@ impl ConsensusHandlerInitializer {
                 None,
                 state.metrics.clone(),
             )),
+            commit_sink: None,
         }
     }
 
@@ -100,6 +124,7 @@ impl ConsensusHandlerInitializer {
             consensus_committee,
             self.state.metrics.clone(),
             self.throughput_calculator,
+            self.commit_sink,
         )
     }
 
@@ -131,6 +156,12 @@ pub struct ConsensusHandler<C> {
     processed_cache: LruCache<SequencedConsensusTransactionKey, ()>,
     /// Using the throughput calculator to record the current consensus throughput
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
+    /// Notified once per processed commit. Unlike everything else here it is
+    /// process-scoped, not epoch-scoped: it outlives the handler so that the
+    /// interval between the LAST commit of one epoch's handler and the FIRST
+    /// commit of the next one's is measurable — which is precisely the
+    /// interval that never ends on an isolated validator (ika #1864).
+    commit_sink: Option<Arc<dyn ConsensusCommitSink>>,
 }
 
 const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
@@ -144,6 +175,7 @@ impl<C> ConsensusHandler<C> {
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        commit_sink: Option<Arc<dyn ConsensusCommitSink>>,
     ) -> Self {
         // Recover last_consensus_stats so it is consistent across validators.
         let mut last_consensus_stats = epoch_store
@@ -164,6 +196,7 @@ impl<C> ConsensusHandler<C> {
             metrics,
             processed_cache: LruCache::new(NonZeroUsize::new(PROCESSED_CACHE_CAP).unwrap()),
             throughput_calculator,
+            commit_sink,
         }
     }
 
@@ -372,6 +405,15 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             )
             .await
             .expect("Unrecoverable error in consensus handler");
+
+        // A commit is only reported once it has been fully processed, not on
+        // entry: the commit-liveness watchdog behind this sink exists to catch
+        // a node that stops making commit progress, and a handler wedged
+        // inside the boundary above has stopped making it just as completely
+        // as one that receives nothing.
+        if let Some(sink) = &self.commit_sink {
+            sink.commit_processed(round);
+        }
 
         // update the calculated throughput
         self.throughput_calculator.add_transactions(
