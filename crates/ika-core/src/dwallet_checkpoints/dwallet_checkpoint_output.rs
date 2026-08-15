@@ -195,3 +195,179 @@ impl CertifiedDWalletCheckpointMessageOutput for SendDWalletCheckpointToStateSyn
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
+    use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+    use crate::dwallet_checkpoints::DWalletCheckpointMetrics;
+    use crate::epoch::epoch_metrics::EpochMetrics;
+    use ika_types::committee::Committee;
+    use ika_types::crypto::{AuthorityKeyPair, AuthoritySignInfo, AuthorityStrongQuorumSignInfo};
+    use ika_types::digests::ChainIdentifier;
+    use ika_types::intent::{Intent, IntentScope};
+    use ika_types::messages_consensus::ConsensusTransactionKind;
+    use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+    use ika_types::sui::EpochStartSystem;
+    use prometheus::Registry;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct CollectingSubmit {
+        submitted: Mutex<Vec<ConsensusTransaction>>,
+    }
+
+    #[async_trait]
+    impl SubmitToConsensus for Arc<CollectingSubmit> {
+        async fn submit_to_consensus(
+            &self,
+            transactions: &[ConsensusTransaction],
+            _epoch_store: &Arc<AuthorityPerEpochStore>,
+        ) -> IkaResult {
+            self.submitted
+                .lock()
+                .unwrap()
+                .extend_from_slice(transactions);
+            Ok(())
+        }
+    }
+
+    fn checkpoint_message(epoch: u64, sequence_number: u64) -> DWalletCheckpointMessage {
+        DWalletCheckpointMessage {
+            epoch,
+            sequence_number,
+            messages: Vec::new(),
+        }
+    }
+
+    /// A certificate over `message`, signed by the whole test committee. Only
+    /// its existence matters here — `insert_certified_checkpoint` stores it
+    /// without re-verifying, and the suppression key reads back the sequence
+    /// number.
+    fn certify(
+        message: DWalletCheckpointMessage,
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+    ) -> VerifiedDWalletCheckpointMessage {
+        let sign_infos: Vec<AuthoritySignInfo> = committee
+            .names()
+            .zip(keys.iter())
+            .map(|(name, key)| {
+                AuthoritySignInfo::new(
+                    committee.epoch,
+                    &message,
+                    Intent::ika_app(IntentScope::DWalletCheckpointMessage),
+                    *name,
+                    key,
+                )
+            })
+            .collect();
+        let quorum =
+            AuthorityStrongQuorumSignInfo::new_from_auth_sign_infos(sign_infos, committee).unwrap();
+        VerifiedDWalletCheckpointMessage::new_unchecked(
+            CertifiedDWalletCheckpointMessage::new_from_data_and_sig(message, quorum),
+        )
+    }
+
+    /// Replay rebuilds every checkpoint of the epoch, so without suppression
+    /// each restart sprays an epoch of signature re-submissions into the DAG.
+    ///
+    /// The suppression key has to be observed settled state — a certificate
+    /// exists only if a stake quorum signed it — and NOT a record of how far
+    /// this node got, which is exactly the second truth the event-sourced epoch
+    /// removes. This is also why local aggregation counts: the state-sync
+    /// watermark alone leaves a node that certified but has not synced past its
+    /// own certificate re-signing an epoch's worth of checkpoints.
+    #[tokio::test]
+    async fn a_rebuilt_checkpoint_is_not_re_signed_once_a_quorum_has_certified_it() {
+        let (committee, keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let name = *committee.names().next().unwrap();
+        let epoch_dir = tempfile::tempdir().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            name,
+            committee.clone(),
+            epoch_dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        )
+        .unwrap();
+
+        let checkpoint_dir = tempfile::tempdir().unwrap();
+        let checkpoint_store = DWalletCheckpointStore::new(checkpoint_dir.path());
+
+        // Settled through sequence 5, by this node's own aggregation only —
+        // `insert_certified_checkpoint` deliberately leaves the state-sync
+        // watermark alone, which is the case the old key missed.
+        for sequence_number in 1..=5 {
+            checkpoint_store
+                .insert_certified_checkpoint(&certify(
+                    checkpoint_message(0, sequence_number),
+                    &committee,
+                    &keys,
+                ))
+                .unwrap();
+        }
+        assert!(
+            checkpoint_store
+                .get_highest_verified_dwallet_checkpoint()
+                .unwrap()
+                .is_none(),
+            "the fixture must exercise locally-certified-but-not-synced, or it proves nothing \
+             beyond the pre-existing state-sync guard",
+        );
+        assert_eq!(
+            checkpoint_store
+                .get_highest_settled_dwallet_checkpoint_seq()
+                .unwrap(),
+            Some(5),
+        );
+
+        let collector = Arc::new(CollectingSubmit::default());
+        let signer: StableSyncAuthoritySigner = Arc::pin(keys.into_iter().next().unwrap());
+        let output = SubmitDWalletCheckpointToConsensus {
+            sender: collector.clone(),
+            signer,
+            authority: name,
+            metrics: DWalletCheckpointMetrics::new_for_tests(),
+        };
+
+        // The restart re-builds the whole epoch: sequences 1..=5 are settled,
+        // 6 and 7 are new work.
+        for sequence_number in 1..=7 {
+            output
+                .dwallet_checkpoint_created(
+                    &checkpoint_message(0, sequence_number),
+                    &epoch_store,
+                    &checkpoint_store,
+                )
+                .await
+                .unwrap();
+        }
+
+        let submitted: Vec<u64> = collector
+            .submitted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|transaction| match &transaction.kind {
+                ConsensusTransactionKind::DWalletCheckpointSignature(message) => {
+                    message.checkpoint_message.data().sequence_number
+                }
+                other => panic!("unexpected consensus transaction: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            submitted,
+            vec![6, 7],
+            "a restart re-signed already-certified checkpoints; every restart would spray an \
+             epoch of re-submissions into the DAG",
+        );
+    }
+}

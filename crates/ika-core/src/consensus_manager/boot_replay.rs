@@ -207,7 +207,7 @@ fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedS
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashMap};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use arc_swap::ArcSwap;
     use consensus_core::storage::WriteBatch;
@@ -220,6 +220,7 @@ mod tests {
     use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
     use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+    use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
     use crate::epoch::epoch_metrics::EpochMetrics;
     use ika_types::committee::Committee;
@@ -297,6 +298,14 @@ mod tests {
         epoch_store: Arc<AuthorityPerEpochStore>,
         context: &Context,
     ) -> ConsensusHandler<DWalletCheckpointService> {
+        test_handler_with_sink(epoch_store, context, None)
+    }
+
+    fn test_handler_with_sink(
+        epoch_store: Arc<AuthorityPerEpochStore>,
+        context: &Context,
+        commit_sink: Option<Arc<dyn ConsensusCommitSink>>,
+    ) -> ConsensusHandler<DWalletCheckpointService> {
         let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
         ConsensusHandler::new(
             epoch_store,
@@ -306,8 +315,19 @@ mod tests {
             context.committee.clone(),
             metrics.clone(),
             Arc::new(ConsensusThroughputCalculator::new(None, metrics)),
-            None,
+            commit_sink,
         )
+    }
+
+    #[derive(Default)]
+    struct CountingCommitSink {
+        rounds: Mutex<Vec<u64>>,
+    }
+
+    impl ConsensusCommitSink for CountingCommitSink {
+        fn commit_processed(&self, leader_round: u64) {
+            self.rounds.lock().unwrap().push(leader_round);
+        }
     }
 
     /// The index handed to consensus must never exceed what the consensus
@@ -352,6 +372,48 @@ mod tests {
             "the fold did not advance through every replayed commit",
         );
         assert_replay_index_is_backed_by_the_store(consensus_dir.path(), replayed_through);
+    }
+
+    /// The commit-liveness watchdog (ika #2054) arms on the first commit this
+    /// process reports and breaches if none follows for ~15 minutes. It was
+    /// documented as blind during boot, because a validator that skipped
+    /// already-processed commits could come up, process zero commits, and sit
+    /// isolated with the watchdog never armed.
+    ///
+    /// Replay closes that by construction — it goes through the same
+    /// `handle_consensus_commit` that reports to the sink — and this asserts
+    /// the construction, since the alternative (a separate replay-only fold
+    /// that forgets to report) is exactly what would silently reopen the gap.
+    #[tokio::test]
+    async fn replayed_commits_feed_the_commit_liveness_sink() {
+        let (consensus_dir, context) = consensus_store_with(5, 5);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        let sink = Arc::new(CountingCommitSink::default());
+        let mut handler = test_handler_with_sink(
+            epoch_store,
+            &context,
+            Some(sink.clone() as Arc<dyn ConsensusCommitSink>),
+        );
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        let reported = sink.rounds.lock().unwrap().clone();
+        assert_eq!(
+            reported.len(),
+            5,
+            "the watchdog saw {} of 5 replayed commits; a node whose whole boot is replay \
+             would leave it unarmed",
+            reported.len(),
+        );
+        assert!(
+            reported.windows(2).all(|pair| pair[0] < pair[1]),
+            "leader rounds reported out of order: {reported:?}",
+        );
     }
 
     /// More commits than fit in one read batch, so the loop that reads, folds
