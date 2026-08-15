@@ -122,11 +122,11 @@ jobs:
         with:
           version: "latest"
 
-      # The Cargo workspace pins Sui to mainnet-v1.76.1; a mismatched local
+      # The Cargo workspace pins Sui to mainnet-v1.77.2; a mismatched local
       # sui completes DKG but stalls reconfiguration, so pin the binary too.
-      - name: Install Sui mainnet-v1.76.1
+      - name: Install Sui mainnet-v1.77.2
         run: |
-          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.76.1/sui-mainnet-v1.76.1-ubuntu-x86_64.tgz > sui.tgz
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.77.2/sui-mainnet-v1.77.2-ubuntu-x86_64.tgz > sui.tgz
           tar -xzf sui.tgz
           mkdir -p "$HOME/.local/bin"
           cp ./sui "$HOME/.local/bin/sui"

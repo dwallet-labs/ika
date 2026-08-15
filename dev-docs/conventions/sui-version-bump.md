@@ -26,9 +26,10 @@ the locations below and runs in CI; it fails the build on drift.
    ```
 3. **CI workflows that download the `sui` binary** — the release URL
    embeds the version twice:
-   - `.github/workflows/ts-integration-tests.yaml`
-   - `.github/workflows/ts-ci.yaml`
-4. **`CLAUDE.md`** — the pinned-version line in Gotchas.
+    - `.github/workflows/ts-integration-tests.yaml`
+    - `.github/workflows/ts-ci.yaml`
+    - `.github/workflows/system-tests-ci.yaml`
+  4. **`CLAUDE.md`** — the pinned-version line in Gotchas.
 5. **msim / simtest rev** — `scripts/simtest/cargo-simtest` **and**
    `scripts/simtest/config-patch` (the coverage path in
    `scripts/simtest/codecov.sh` applies the same patch as a real diff,

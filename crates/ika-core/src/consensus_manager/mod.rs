@@ -75,7 +75,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
         // `enable_v3`: hardcoded `false` to match upstream exactly. At the
-        // pinned mainnet-v1.76.1, Sui's own `to_consensus_protocol_config` also
+        // pinned mainnet-v1.77.2, Sui's own `to_consensus_protocol_config` also
         // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
         // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
         // getter to source it from. When Sui gates it behind the protocol config
@@ -86,7 +86,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         false,
         // `leader_schedule_window_size` / `leader_schedule_update_interval`:
         // hardcoded to match upstream's `to_consensus_protocol_config` at the
-        // pinned mainnet-v1.76.1 (300 / 12). These only take effect under the
+        // pinned mainnet-v1.77.2 (300 / 12). These only take effect under the
         // Mysticeti v3 leader schedule, which is gated off above (`enable_v3 =
         // false`), so they are inert today; mirror upstream exactly so enabling
         // v3 later (via a version-gated getter) does not silently fork.
@@ -270,6 +270,9 @@ impl ConsensusManager {
             self.network_keypair.clone(),
             Arc::new(Clock::default()),
             Arc::new(tx_validator.clone()),
+            // ika submits via `TransactionClient`; it has no in-process pool to
+            // feed the proposer. `None` means fall back to the client path.
+            None,
             commit_consumer,
             registry.clone(),
             *boot_counter,
