@@ -7,9 +7,9 @@
 //!
 //! - `get_committee` — not served as a verified read; only the OCS ratchet's
 //!   prune fallback path needs it.
-//! - `get_transaction` — returns `sui_rpc_api::client::ExecutedTransaction`,
-//!   which is `Serialize`-only (not `Deserialize`), so the relay can't carry
-//!   it back over the wire — genuinely un-relayable.
+//! - `get_transaction` — returns Ika's `ExecutedTransaction` compatibility
+//!   view, which is `Serialize`-only (not `Deserialize`), so the relay can't
+//!   carry it back over the wire — genuinely un-relayable.
 //!
 //! (Transaction *writing* — submission, gas price, gas-coin selection — is not
 //! a `SuiTransport` concern at all: it lives on `SuiWriter`, implemented only by

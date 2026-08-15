@@ -3,9 +3,9 @@
 
 //! Direct gRPC implementation of [`SuiTransport`].
 //!
-//! Wraps [`sui_rpc_api::Client`]. Many of its methods take `&mut self`, but
-//! the client is a cheap `Clone` over a tonic channel (clone-per-request is
-//! tonic's intended concurrency model), so each call clones its own handle.
+//! Wraps [`sui_rpc::Client`] from the standalone Sui Rust SDK. The client is a
+//! cheap `Clone` over a tonic channel (clone-per-request is tonic's intended
+//! concurrency model), so each call clones its own handle.
 //! Do NOT put the client behind a Mutex held across the call — that would
 //! serialize every Sui read/write on the node behind one in-flight RPC.
 
@@ -17,24 +17,27 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use fastcrypto::traits::ToFromBytes;
 use futures::StreamExt;
 use ika_config::node::{SuiGrpcHeaderValue, SuiGrpcHeaders};
-use sui_rpc_api::Client as SuiRpcClient;
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_rpc_api::client::HeadersInterceptor;
-use sui_rpc_api::proto::sui::rpc::v2 as proto;
+use prost_types::value::Kind as ProtoValueKind;
+use sui_rpc::Client as SuiRpcClient;
+use sui_rpc::client::HeadersInterceptor;
+use sui_rpc::proto::sui::rpc::v2 as proto;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::effects::TransactionEvents;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::gas_coin::{GAS, GasCoin};
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use sui_types::transaction::Transaction;
+use sui_types::signature::GenericSignature;
+use sui_types::transaction::{Transaction, TransactionData};
 use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
 use crate::rate_limit::RateLimitGate;
 use crate::transport::{
-    CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
-    SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
+    CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, ExecutedTransaction,
+    SubmittedTransaction, SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
 };
 
 /// Sui rejects a transaction whose gas payment names more than
@@ -47,19 +50,17 @@ const MAX_GAS_PAYMENT_OBJECTS: usize = 256;
 /// Deadline for a transaction submission.
 const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+#[derive(Clone)]
 pub struct SuiGrpcClient {
     rpc: SuiRpcClient,
     endpoint: String,
-    /// Rate-limit state for this ENDPOINT — shared, not per-client. Every
-    /// request this client makes passes through it, and a node hands the same
-    /// gate to every client pointed at the same URL (see [`Self::with_gate`]),
-    /// so the components that share one `Arc<SuiGrpcClient>` — on a
-    /// sui-state-direct validator the committee ratchet, the
-    /// `LocalProofProvider` under the verified reader (and therefore the bag
-    /// event pump), and the checkpoint pusher — *and* the notifier's separate
-    /// client all back off together instead of retrying through each other's
-    /// throttling. See [`crate::rate_limit`].
+    /// Rate-limit state shared by every client that talks to this endpoint.
     gate: Arc<RateLimitGate>,
+}
+
+pub struct ObjectPage {
+    pub items: Vec<Object>,
+    pub next_page_token: Option<bytes::Bytes>,
 }
 
 impl SuiGrpcClient {
@@ -70,10 +71,6 @@ impl SuiGrpcClient {
 
     /// Connects with configured metadata attached to every request, then
     /// probes the endpoint by fetching the chain id.
-    ///
-    /// The returned client gets its own unmetered rate-limit gate. A node
-    /// should chain [`Self::with_gate`] to put every client that talks to the
-    /// SAME endpoint behind one shared, metered gate.
     pub async fn new_with_headers(
         endpoint: impl Into<String>,
         headers: &SuiGrpcHeaders,
@@ -92,17 +89,7 @@ impl SuiGrpcClient {
         Ok(client)
     }
 
-    /// Put this client behind an existing [`RateLimitGate`].
-    ///
-    /// Pass the SAME gate to every client pointed at the same endpoint — on a
-    /// node that is the connector stack's read client and the notifier's
-    /// read/write client, which are two `SuiGrpcClient`s against one URL.
-    /// Sharing the gate is the difference between the node backing off as a
-    /// unit and its two halves retrying through each other's cooldown.
-    ///
-    /// Clients that are not handed one (the one-shot CLI clients, the test
-    /// cluster) keep their own unmetered gate: the backoff still applies,
-    /// only the reporting does not.
+    /// Put this client behind the endpoint's shared rate-limit gate.
     pub fn with_gate(mut self, gate: Arc<RateLimitGate>) -> Self {
         self.gate = gate;
         self
@@ -112,13 +99,8 @@ impl SuiGrpcClient {
         &self.endpoint
     }
 
-    /// Run one upstream call under the shared rate-limit gate, keeping
-    /// `NotFound` distinguishable from generic transport failure.
-    ///
-    /// Admission first, then classification: a classified rate limit arms the
-    /// shared cooldown for every other component; any success disarms it;
-    /// anything else is passed through untouched, so non-rate-limit errors
-    /// keep exactly the retry behavior their caller already had.
+    /// Run one upstream call under the shared rate-limit gate while preserving
+    /// `NotFound` as a distinct transport outcome.
     async fn gated<T>(
         &self,
         call: impl Future<Output = Result<T, tonic::Status>>,
@@ -126,9 +108,8 @@ impl SuiGrpcClient {
         self.gated_with(call, Self::rpc_status_err).await
     }
 
-    /// As [`Self::gated`], but collapsing every failing status to
-    /// [`TransportError::Network`] — the historical mapping for the calls
-    /// whose callers have no `NotFound` branch.
+    /// Run one upstream call under the shared gate and map every failure to a
+    /// generic network error.
     async fn gated_network<T>(
         &self,
         call: impl Future<Output = Result<T, tonic::Status>>,
@@ -154,6 +135,103 @@ impl SuiGrpcClient {
         }
     }
 
+    pub async fn get_chain_identifier(
+        &self,
+    ) -> Result<sui_types::digests::ChainIdentifier, TransportError> {
+        SuiWriter::get_sui_chain_identifier(self).await
+    }
+
+    pub async fn get_full_checkpoint(
+        &self,
+        sequence_number: CheckpointSequenceNumber,
+    ) -> Result<CheckpointData, TransportError> {
+        SuiTransport::get_full_checkpoint(self, sequence_number).await
+    }
+
+    pub async fn get_object(&self, object_id: ObjectID) -> Result<Object, TransportError> {
+        SuiTransport::get_object(self, object_id).await
+    }
+
+    pub async fn get_object_with_json(
+        &self,
+        object_id: ObjectID,
+    ) -> Result<(Object, Option<serde_json::Value>), TransportError> {
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetObjectRequest::default();
+        request.object_id = Some(object_id.to_string());
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["bcs".into(), "json".into()],
+        });
+        let response = self
+            .gated(async move { rpc.ledger_client().get_object(request).await })
+            .await?
+            .into_inner();
+        let object = response
+            .object
+            .ok_or_else(|| TransportError::NotFound(format!("object {object_id} not found")))?;
+        Ok((
+            Self::decode_object(&object)?,
+            object.json.as_deref().map(proto_value_to_json_value),
+        ))
+    }
+
+    pub async fn get_transaction(
+        &self,
+        digest: &TransactionDigest,
+    ) -> Result<ExecutedTransaction, TransportError> {
+        SuiTransport::get_transaction(self, *digest).await
+    }
+
+    pub async fn get_owned_objects(
+        &self,
+        owner: SuiAddress,
+        object_type: Option<move_core_types::language_storage::StructTag>,
+        page_size: Option<u32>,
+        page_token: Option<bytes::Bytes>,
+    ) -> Result<ObjectPage, TransportError> {
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::ListOwnedObjectsRequest::default();
+        request.owner = Some(owner.to_string());
+        request.object_type = object_type.map(|type_| type_.to_canonical_string(true));
+        request.page_size = page_size;
+        request.page_token = page_token;
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["bcs".into()],
+        });
+        let response = self
+            .gated(async move { rpc.state_client().list_owned_objects(request).await })
+            .await?
+            .into_inner();
+        let items = response
+            .objects
+            .iter()
+            .map(Self::decode_object)
+            .collect::<Result<_, _>>()?;
+        Ok(ObjectPage {
+            items,
+            next_page_token: response.next_page_token,
+        })
+    }
+
+    pub async fn get_dynamic_fields(
+        &self,
+        parent: ObjectID,
+        page_size: Option<u32>,
+        page_token: Option<bytes::Bytes>,
+    ) -> Result<proto::ListDynamicFieldsResponse, TransportError> {
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::ListDynamicFieldsRequest::default();
+        request.parent = Some(parent.to_string());
+        request.page_size = page_size;
+        request.page_token = page_token;
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["*".into()],
+        });
+        self.gated(async move { rpc.state_client().list_dynamic_fields(request).await })
+            .await
+            .map(|response| response.into_inner())
+    }
+
     /// Returns the checkpoint sequence in which `tx` was committed; errors if
     /// the tx isn't yet finalized in any checkpoint. Deliberately *not* part of
     /// [`SuiTransport`] — a relay can't meaningfully serve it, and the only
@@ -164,10 +242,16 @@ impl SuiGrpcClient {
         tx: TransactionDigest,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
         let mut rpc = self.rpc.clone();
-        let executed = self
-            .gated(async move { rpc.get_transaction(&tx).await })
-            .await?;
-        executed.checkpoint.ok_or_else(|| {
+        let mut request = proto::GetTransactionRequest::default();
+        request.digest = Some(tx.to_string());
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["checkpoint".into()],
+        });
+        let response = self
+            .gated(async move { rpc.ledger_client().get_transaction(request).await })
+            .await?
+            .into_inner();
+        response.transaction().checkpoint.ok_or_else(|| {
             TransportError::NotFound(format!("tx {tx} not yet committed in any checkpoint"))
         })
     }
@@ -215,6 +299,142 @@ impl SuiGrpcClient {
             summary_data,
             signature,
         ))
+    }
+
+    fn decode_object(proto_object: &proto::Object) -> Result<Object, TransportError> {
+        proto_object
+            .bcs
+            .as_ref()
+            .ok_or_else(|| TransportError::Encoding("missing object.bcs".into()))?
+            .deserialize()
+            .map_err(|e| TransportError::Encoding(format!("decode Object: {e}")))
+    }
+
+    fn executed_transaction_read_mask() -> prost_types::FieldMask {
+        prost_types::FieldMask {
+            paths: vec![
+                "transaction.bcs".into(),
+                "signatures.bcs".into(),
+                "effects.bcs".into(),
+                "effects.status.error.abort.clever_error".into(),
+                "effects.changed_objects".into(),
+                "events.bcs".into(),
+                "events.events.json".into(),
+                "balance_changes".into(),
+                "checkpoint".into(),
+                "timestamp".into(),
+            ],
+        }
+    }
+
+    fn decode_executed_transaction(
+        executed: &proto::ExecutedTransaction,
+    ) -> Result<ExecutedTransaction, TransportError> {
+        let transaction: TransactionData = executed
+            .transaction()
+            .bcs()
+            .deserialize()
+            .map_err(|e| TransportError::Encoding(format!("decode transaction.bcs: {e}")))?;
+        let effects = executed
+            .effects()
+            .bcs()
+            .deserialize()
+            .map_err(|e| TransportError::Encoding(format!("decode effects.bcs: {e}")))?;
+        let signatures = executed
+            .signatures()
+            .iter()
+            .map(|signature| {
+                GenericSignature::from_bytes(signature.bcs().value())
+                    .map_err(|e| TransportError::Encoding(format!("decode signatures.bcs: {e}")))
+            })
+            .collect::<Result<_, _>>()?;
+        let events: Option<TransactionEvents> = executed
+            .events
+            .as_ref()
+            .and_then(|events| events.bcs.as_ref())
+            .map(|bcs| bcs.deserialize())
+            .transpose()
+            .map_err(|e| TransportError::Encoding(format!("decode events.bcs: {e}")))?;
+        let event_json = executed
+            .events_opt()
+            .map(|events| {
+                events
+                    .events()
+                    .iter()
+                    .map(|event| event.json_opt().map(proto_value_to_json_value))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let balance_changes = executed
+            .balance_changes
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<_, _>>()
+            .map_err(|e| TransportError::Encoding(format!("decode balance_changes: {e}")))?;
+        let clever_error = executed
+            .effects()
+            .status()
+            .error()
+            .abort()
+            .clever_error_opt()
+            .cloned();
+        let timestamp_ms = executed
+            .timestamp
+            .and_then(|timestamp| sui_rpc::proto::proto_to_timestamp_ms(timestamp).ok());
+
+        Ok(ExecutedTransaction {
+            transaction,
+            signatures,
+            effects,
+            clever_error,
+            events,
+            event_json,
+            changed_objects: executed.effects().changed_objects().to_owned(),
+            balance_changes,
+            checkpoint: executed.checkpoint,
+            timestamp_ms,
+        })
+    }
+
+    fn execute_transaction_request(
+        transaction: &Transaction,
+    ) -> Result<proto::ExecuteTransactionRequest, TransportError> {
+        let signatures = transaction
+            .inner()
+            .tx_signatures
+            .iter()
+            .map(|signature| {
+                let mut message = proto::UserSignature::default();
+                message.bcs = Some(signature.as_ref().to_vec().into());
+                message
+            })
+            .collect();
+        let mut tx = proto::Transaction::default();
+        tx.bcs = Some(
+            proto::Bcs::serialize(&transaction.inner().intent_message.value)
+                .map_err(|e| TransportError::Encoding(format!("encode transaction: {e}")))?,
+        );
+        let mut request = proto::ExecuteTransactionRequest::new(tx).with_signatures(signatures);
+        request.read_mask = Some(Self::executed_transaction_read_mask());
+        Ok(request)
+    }
+}
+
+fn proto_value_to_json_value(proto: &prost_types::Value) -> serde_json::Value {
+    match proto.kind.as_ref() {
+        Some(ProtoValueKind::NullValue(_)) | None => serde_json::Value::Null,
+        Some(ProtoValueKind::NumberValue(number)) => serde_json::Value::from(*number),
+        Some(ProtoValueKind::StringValue(string)) => serde_json::Value::from(string.clone()),
+        Some(ProtoValueKind::BoolValue(boolean)) => serde_json::Value::from(*boolean),
+        Some(ProtoValueKind::StructValue(map)) => serde_json::Value::Object(
+            map.fields
+                .iter()
+                .map(|(key, value)| (key.clone(), proto_value_to_json_value(value)))
+                .collect(),
+        ),
+        Some(ProtoValueKind::ListValue(list)) => {
+            serde_json::Value::Array(list.values.iter().map(proto_value_to_json_value).collect())
+        }
     }
 }
 
@@ -313,25 +533,41 @@ fn convert_dynamic_field(
 impl SuiTransport for SuiGrpcClient {
     // -- chain metadata ---------------------------------------------------------------------
     async fn get_chain_identifier(&self) -> Result<String, TransportError> {
-        let rpc = self.rpc.clone();
-        self.gated_network(async move { rpc.get_chain_identifier().await })
+        SuiGrpcClient::get_chain_identifier(self)
             .await
-            .map(|c| c.to_string())
+            .map(|chain_identifier| chain_identifier.to_string())
     }
 
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
-        let rpc = self.rpc.clone();
-        self.gated_network(async move { rpc.get_current_epoch().await })
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetEpochRequest::default();
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["epoch".into()],
+        });
+        self.gated_network(async move { rpc.ledger_client().get_epoch(request).await })
             .await
+            .map(|response| response.into_inner().epoch().epoch())
     }
 
     async fn get_committee(
         &self,
         epoch: Option<u64>,
     ) -> Result<sui_types::committee::Committee, TransportError> {
-        let rpc = self.rpc.clone();
-        self.gated_network(async move { rpc.get_committee(epoch).await })
-            .await
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetEpochRequest::default();
+        request.epoch = epoch;
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["epoch".into(), "committee".into()],
+        });
+        let response = self
+            .gated_network(async move { rpc.ledger_client().get_epoch(request).await })
+            .await?
+            .into_inner();
+        response
+            .epoch()
+            .committee()
+            .try_into()
+            .map_err(|e| TransportError::Encoding(format!("decode committee: {e}")))
     }
 
     // -- checkpoints ------------------------------------------------------------------------
@@ -341,8 +577,18 @@ impl SuiTransport for SuiGrpcClient {
         // empties the availability window and NotFounds its OWN latest, and
         // callers (the boot artifacts-digest probe) treat that transient
         // state differently from a real transport failure.
-        self.gated(async move { rpc.get_latest_checkpoint().await })
-            .await
+        let mut request = proto::GetCheckpointRequest::latest();
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["summary.bcs".into(), "signature".into()],
+        });
+        let response = self
+            .gated(async move { rpc.ledger_client().get_checkpoint(request).await })
+            .await?
+            .into_inner();
+        let checkpoint = response
+            .checkpoint
+            .ok_or_else(|| TransportError::NotFound("latest checkpoint not found".into()))?;
+        Self::decode_certified_summary(&checkpoint)
     }
 
     async fn get_latest_checkpoint_sequence(
@@ -355,9 +601,7 @@ impl SuiTransport for SuiGrpcClient {
         let mut rpc = self.rpc.clone();
         let response = self
             .gated(async move {
-                rpc.inner_mut()
-                    .clone()
-                    .ledger_client()
+                rpc.ledger_client()
                     .get_service_info(proto::GetServiceInfoRequest::default())
                     .await
             })
@@ -375,37 +619,40 @@ impl SuiTransport for SuiGrpcClient {
         seq: CheckpointSequenceNumber,
     ) -> Result<CheckpointData, TransportError> {
         let mut rpc = self.rpc.clone();
-        let checkpoint = self
-            .gated(async move { rpc.get_full_checkpoint(seq).await })
-            .await?;
-        Ok(CheckpointData::from(checkpoint))
+        let mut request = proto::GetCheckpointRequest::by_sequence_number(seq);
+        request.read_mask =
+            Some(sui_types::full_checkpoint_content::Checkpoint::proto_field_mask());
+        let response = self
+            .gated(async move {
+                rpc.ledger_client()
+                    .max_decoding_message_size(128 * 1024 * 1024)
+                    .get_checkpoint(request)
+                    .await
+            })
+            .await?
+            .into_inner();
+        let checkpoint = response
+            .checkpoint
+            .ok_or_else(|| TransportError::NotFound(format!("checkpoint {seq} not found")))?;
+        sui_types::full_checkpoint_content::Checkpoint::try_from(&checkpoint)
+            .map(CheckpointData::from)
+            .map_err(|e| TransportError::Encoding(format!("decode full checkpoint: {e}")))
     }
 
     async fn get_checkpoint_summary_by_digest(
         &self,
         digest: sui_types::digests::CheckpointDigest,
     ) -> Result<CertifiedCheckpointSummary, TransportError> {
-        use sui_rpc_api::proto::sui::rpc::v2::{GetCheckpointRequest, get_checkpoint_request};
         let mut rpc = self.rpc.clone();
-        // sui-rpc-api's Client only exposes seq-based lookup at the high
-        // level; drop down to the proto for digest-based lookup. Field
-        // mask narrowed to summary+signature — we don't need the full
-        // body.
-        let mut request = GetCheckpointRequest::default();
-        request.checkpoint_id = Some(get_checkpoint_request::CheckpointId::Digest(
+        let mut request = proto::GetCheckpointRequest::default();
+        request.checkpoint_id = Some(proto::get_checkpoint_request::CheckpointId::Digest(
             digest.to_string(),
         ));
         request.read_mask = Some(prost_types::FieldMask {
             paths: vec!["summary.bcs".into(), "signature".into()],
         });
         let response = self
-            .gated(async move {
-                rpc.inner_mut()
-                    .clone()
-                    .ledger_client()
-                    .get_checkpoint(request)
-                    .await
-            })
+            .gated(async move { rpc.ledger_client().get_checkpoint(request).await })
             .await?
             .into_inner();
         let proto_checkpoint = response
@@ -417,24 +664,20 @@ impl SuiTransport for SuiGrpcClient {
     async fn subscribe_checkpoint_summaries(
         &self,
     ) -> Result<CheckpointSummaryStream, TransportError> {
-        use sui_rpc_api::proto::sui::rpc::v2::SubscribeCheckpointsRequest;
         // Summary + signature only: served from the fullnode's live checkpoint
         // broadcast, so this never touches the object-pruning watermark that
         // gates `get_full_checkpoint`. `summary.bcs` carries
         // `end_of_epoch_data.next_epoch_committee` for boundary checkpoints.
-        let mut request = SubscribeCheckpointsRequest::default();
+        let mut request = proto::SubscribeCheckpointsRequest::default();
         request.read_mask = Some(prost_types::FieldMask {
             paths: vec!["summary.bcs".into(), "signature".into()],
         });
         let mut rpc = self.rpc.clone();
-        // Only the subscribe handshake is gated; per-item stream errors are the
-        // follower's resubscribe concern, and gating a long-lived stream would
-        // mean holding the gate for the life of the subscription.
+        // Gate only the subscription handshake; stream-item errors trigger a
+        // resubscribe and must not hold admission for the stream's lifetime.
         let streaming = self
             .gated(async move {
-                rpc.inner_mut()
-                    .clone()
-                    .subscription_client()
+                rpc.subscription_client()
                     .subscribe_checkpoints(request)
                     .await
             })
@@ -467,13 +710,7 @@ impl SuiTransport for SuiGrpcClient {
         // pruned-boundary fallback chain. Collapsing it into `Network` made the
         // ratchet retry it forever, invisibly.
         let response = self
-            .gated(async move {
-                rpc.inner_mut()
-                    .clone()
-                    .ledger_client()
-                    .get_epoch(request)
-                    .await
-            })
+            .gated(async move { rpc.ledger_client().get_epoch(request).await })
             .await?
             .into_inner();
         let info = response
@@ -487,7 +724,19 @@ impl SuiTransport for SuiGrpcClient {
     // -- objects ----------------------------------------------------------------------------
     async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
         let mut rpc = self.rpc.clone();
-        self.gated(async move { rpc.get_object(id).await }).await
+        let mut request = proto::GetObjectRequest::default();
+        request.object_id = Some(id.to_string());
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["bcs".into()],
+        });
+        let response = self
+            .gated(async move { rpc.ledger_client().get_object(request).await })
+            .await?
+            .into_inner();
+        let object = response
+            .object
+            .ok_or_else(|| TransportError::NotFound(format!("object {id} not found")))?;
+        Self::decode_object(&object)
     }
 
     async fn get_object_with_version(
@@ -496,14 +745,51 @@ impl SuiTransport for SuiGrpcClient {
         version: SequenceNumber,
     ) -> Result<Object, TransportError> {
         let mut rpc = self.rpc.clone();
-        self.gated(async move { rpc.get_object_with_version(id, version).await })
-            .await
+        let mut request = proto::GetObjectRequest::default();
+        request.object_id = Some(id.to_string());
+        request.version = Some(version.value());
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["bcs".into()],
+        });
+        let response = self
+            .gated(async move { rpc.ledger_client().get_object(request).await })
+            .await?
+            .into_inner();
+        let object = response.object.ok_or_else(|| {
+            TransportError::NotFound(format!("object {id} at version {version} not found"))
+        })?;
+        Self::decode_object(&object)
     }
 
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
-        let rpc = self.rpc.clone();
-        self.gated(async move { rpc.batch_get_objects(ids).await })
-            .await
+        let mut rpc = self.rpc.clone();
+        let request = proto::BatchGetObjectsRequest::default()
+            .with_requests(
+                ids.iter()
+                    .map(|id| {
+                        let mut request = proto::GetObjectRequest::default();
+                        request.object_id = Some(id.to_string());
+                        request
+                    })
+                    .collect(),
+            )
+            .with_read_mask(prost_types::FieldMask {
+                paths: vec!["bcs".into()],
+            });
+        let response = self
+            .gated(async move { rpc.ledger_client().batch_get_objects(request).await })
+            .await?
+            .into_inner();
+        response
+            .objects
+            .into_iter()
+            .map(|result| {
+                result
+                    .to_result()
+                    .map_err(|status| TransportError::NotFound(status.message))
+                    .and_then(|object| Self::decode_object(&object))
+            })
+            .collect()
     }
 
     // -- dynamic fields ---------------------------------------------------------------------
@@ -513,13 +799,18 @@ impl SuiTransport for SuiGrpcClient {
         page_size: Option<u32>,
         page_token: Option<Vec<u8>>,
     ) -> Result<DynamicFieldPage, TransportError> {
-        let rpc = self.rpc.clone();
-        let page_token = page_token.map(bytes::Bytes::from);
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::ListDynamicFieldsRequest::default();
+        request.parent = Some(parent.to_string());
+        request.page_size = page_size;
+        request.page_token = page_token.map(bytes::Bytes::from);
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["*".into()],
+        });
         let response = self
-            .gated_network(
-                async move { rpc.get_dynamic_fields(parent, page_size, page_token).await },
-            )
-            .await?;
+            .gated_network(async move { rpc.state_client().list_dynamic_fields(request).await })
+            .await?
+            .into_inner();
         let mut entries = Vec::with_capacity(response.dynamic_fields.len());
         for proto_df in response.dynamic_fields {
             if let Some(entry) = convert_dynamic_field(proto_df)? {
@@ -538,17 +829,31 @@ impl SuiTransport for SuiGrpcClient {
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError> {
         let mut rpc = self.rpc.clone();
-        self.gated(async move { rpc.get_transaction(&tx).await })
-            .await
+        let mut request = proto::GetTransactionRequest::default();
+        request.digest = Some(tx.to_string());
+        request.read_mask = Some(Self::executed_transaction_read_mask());
+        let response = self
+            .gated(async move { rpc.ledger_client().get_transaction(request).await })
+            .await?
+            .into_inner();
+        let transaction = response
+            .transaction
+            .ok_or_else(|| TransportError::NotFound(format!("transaction {tx} not found")))?;
+        Self::decode_executed_transaction(&transaction)
     }
 }
 
 #[async_trait]
 impl SuiWriter for SuiGrpcClient {
     async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        let rpc = self.rpc.clone();
-        self.gated_network(async move { rpc.get_reference_gas_price().await })
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetEpochRequest::default();
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["reference_gas_price".into()],
+        });
+        self.gated_network(async move { rpc.ledger_client().get_epoch(request).await })
             .await
+            .map(|response| response.into_inner().epoch().reference_gas_price())
     }
 
     async fn list_owned_gas_coins(
@@ -562,15 +867,27 @@ impl SuiWriter for SuiGrpcClient {
             if refs.len() >= MAX_GAS_PAYMENT_OBJECTS {
                 break;
             }
-            let rpc = rpc.clone();
+            let mut request = proto::ListOwnedObjectsRequest::default();
+            request.owner = Some(address.to_string());
+            request.object_type = Some(GasCoin::type_().to_canonical_string(true));
+            request.page_token = page_token;
+            request.read_mask = Some(prost_types::FieldMask {
+                paths: vec!["bcs".into()],
+            });
+            let mut page_rpc = rpc.clone();
             let page = self
                 .gated_network(async move {
-                    rpc.get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
-                        .await
+                    page_rpc.state_client().list_owned_objects(request).await
                 })
-                .await?;
+                .await?
+                .into_inner();
+            let objects = page
+                .objects
+                .iter()
+                .map(Self::decode_object)
+                .collect::<Result<Vec<_>, _>>()?;
             refs.extend(
-                page.items
+                objects
                     .iter()
                     .map(|object| object.compute_object_reference()),
             );
@@ -587,13 +904,19 @@ impl SuiWriter for SuiGrpcClient {
         &self,
         address: SuiAddress,
     ) -> Result<SuiFundsBreakdown, TransportError> {
-        let rpc = self.rpc.clone();
+        let mut rpc = self.rpc.clone();
         // NB: GetBalance takes the COIN type (`0x2::sui::SUI`, `GAS::type_()`),
         // not the coin OBJECT type (`Coin<SUI>`, `GasCoin::type_()`) — the
         // latter silently reads as a zero balance of a nonexistent coin type.
+        let mut request = proto::GetBalanceRequest::default();
+        request.owner = Some(address.to_string());
+        request.coin_type = Some(GAS::type_().to_canonical_string(true));
         let balance = self
-            .gated_network(async move { rpc.get_balance(address, &GAS::type_()).await })
-            .await?;
+            .gated_network(async move { rpc.state_client().get_balance(request).await })
+            .await?
+            .into_inner()
+            .balance
+            .unwrap_or_default();
         Ok(SuiFundsBreakdown {
             in_address_balance: balance.address_balance.unwrap_or(0),
             in_coin_objects: balance.coin_balance.unwrap_or(0),
@@ -603,11 +926,22 @@ impl SuiWriter for SuiGrpcClient {
     async fn get_sui_chain_identifier(
         &self,
     ) -> Result<sui_types::digests::ChainIdentifier, TransportError> {
-        let rpc = self.rpc.clone();
-        // The inner client already returns the typed, full identifier
-        // (service-info chain id parsed as the genesis checkpoint digest).
-        self.gated_network(async move { rpc.get_chain_identifier().await })
-            .await
+        let mut rpc = self.rpc.clone();
+        let response = self
+            .gated_network(async move {
+                rpc.ledger_client()
+                    .get_service_info(proto::GetServiceInfoRequest::default())
+                    .await
+            })
+            .await?
+            .into_inner();
+        let digest = response
+            .chain_id()
+            .parse::<sui_sdk_types::Digest>()
+            .map_err(|e| TransportError::Encoding(format!("decode chain identifier: {e}")))?;
+        Ok(sui_types::digests::ChainIdentifier::from(
+            sui_types::digests::CheckpointDigest::from(digest),
+        ))
     }
 
     async fn execute_transaction(
@@ -620,11 +954,15 @@ impl SuiWriter for SuiGrpcClient {
         // keepalives but no per-request deadline, so an upstream that accepts
         // the request and never answers would stall every notifier write
         // behind it, with no watchdog able to fire.
-        // Admission BEFORE the deadline starts: a shared rate-limit cooldown
-        // must not eat into the submission's own 60s budget and turn a
-        // throttled endpoint into a spurious "no response" timeout.
+        let request = Self::execute_transaction_request(tx)?;
+        // Admission happens before the request deadline starts, so a shared
+        // cooldown does not consume the submission's own timeout.
         self.gate.wait_for_capacity().await;
-        let executed = match tokio::time::timeout(SUBMIT_TIMEOUT, rpc.execute_transaction(tx)).await
+        let executed = match tokio::time::timeout(
+            SUBMIT_TIMEOUT,
+            rpc.execution_client().execute_transaction(request),
+        )
+        .await
         {
             Err(_) => {
                 return Err(TransportError::Network(format!(
@@ -633,13 +971,14 @@ impl SuiWriter for SuiGrpcClient {
             }
             Ok(Ok(executed)) => {
                 self.gate.note_success();
-                executed
+                executed.into_inner()
             }
             Ok(Err(status)) => {
                 self.gate.note_status(&status);
                 return Err(Self::rpc_err(status));
             }
         };
+        let executed = Self::decode_executed_transaction(executed.transaction())?;
         Ok(SubmittedTransaction {
             digest: *tx.digest(),
             effects: executed.effects,
@@ -650,6 +989,56 @@ impl SuiWriter for SuiGrpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sdk_proto_object_bcs_decodes_to_core_object() {
+        let object = Object::immutable_with_id_for_testing(ObjectID::random());
+        let mut proto_object = proto::Object::default();
+        proto_object.bcs = Some(proto::Bcs::serialize(&object).expect("object must serialize"));
+
+        let decoded = SuiGrpcClient::decode_object(&proto_object).expect("object must decode");
+        assert_eq!(
+            decoded.compute_object_reference(),
+            object.compute_object_reference()
+        );
+    }
+
+    #[test]
+    fn sdk_proto_object_without_bcs_is_rejected() {
+        let err = SuiGrpcClient::decode_object(&proto::Object::default())
+            .expect_err("missing BCS must fail");
+        assert!(matches!(err, TransportError::Encoding(_)));
+        assert!(err.to_string().contains("object.bcs"));
+    }
+
+    #[test]
+    fn sdk_proto_json_conversion_preserves_nested_values() {
+        let value = prost_types::Value {
+            kind: Some(ProtoValueKind::StructValue(prost_types::Struct {
+                fields: [(
+                    "items".to_string(),
+                    prost_types::Value {
+                        kind: Some(ProtoValueKind::ListValue(prost_types::ListValue {
+                            values: vec![
+                                prost_types::Value {
+                                    kind: Some(ProtoValueKind::NumberValue(7.0)),
+                                },
+                                prost_types::Value {
+                                    kind: Some(ProtoValueKind::BoolValue(true)),
+                                },
+                            ],
+                        })),
+                    },
+                )]
+                .into(),
+            })),
+        };
+
+        assert_eq!(
+            proto_value_to_json_value(&value),
+            serde_json::json!({ "items": [7.0, true] })
+        );
+    }
 
     #[test]
     fn configured_headers_resolve_all_sources_and_are_sensitive() {

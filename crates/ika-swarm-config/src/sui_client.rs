@@ -16,6 +16,7 @@ use ika_move_contracts::{
     save_mainnet_contracts_to_temp_dir, save_testnet_contracts_to_temp_dir,
 };
 use ika_protocol_config::Chain;
+use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::ika_coin::IKACoin;
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
 use ika_types::sui::{
@@ -43,9 +44,8 @@ use sui::client_commands::{
 use sui_config::SUI_CLIENT_CONFIG;
 use sui_keys::key_derive::generate_new_key;
 use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
+use sui_rpc::proto;
 use sui_rpc_api::Client;
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_rpc_api::proto;
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
@@ -1874,7 +1874,7 @@ async fn publish_package_to_sui(
         bail!("Unexpected result type after publishing the package.");
     };
 
-    Ok(response)
+    Ok(ExecutedTransaction::from_sui(response))
 }
 
 fn find_published_package_id(response: &ExecutedTransaction) -> Option<ObjectID> {
@@ -1974,7 +1974,7 @@ pub(crate) async fn execute_sui_transaction(
     let response = context
         .execute_transaction_may_fail(transaction.clone())
         .await?;
-    Ok(response)
+    Ok(ExecutedTransaction::from_sui(response))
 }
 
 #[allow(dead_code)]

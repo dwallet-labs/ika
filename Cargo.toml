@@ -318,9 +318,10 @@ sui-protocol-config = { git = "https://github.com/MystenLabs/sui", tag = "mainne
 sui-protocol-config-macros = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.77.2" }
 sui-rpc-api = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.77.2" }
 sui-sdk = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.77.2" }
-# Proto/BCS type conversions (e.g. ValidatorAggregatedSignature) used by the
-# OCS gRPC read layer. Pinned to the sui-rust-sdk rev that sui@mainnet-v1.77.2
-# itself depends on, so there's exactly one sui-sdk-types in the tree.
+# Client, proto, and BCS types used by the Ika gRPC read/write layer. Pin both
+# crates to the sui-rust-sdk revision that sui@mainnet-v1.77.2 itself depends
+# on, so there is exactly one copy of each SDK crate in the dependency graph.
+sui-rpc = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8" }
 sui-sdk-types = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8" }
 sui-simulator = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.77.2" }
 sui-storage = { git = "https://github.com/MystenLabs/sui", tag = "mainnet-v1.77.2" }

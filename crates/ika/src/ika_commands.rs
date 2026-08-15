@@ -21,11 +21,11 @@ use crate::protocol_commands::IkaProtocolCommand;
 #[cfg(feature = "protocol-commands")]
 use crate::system_commands::IkaSystemCommand;
 use crate::validator_commands::IkaValidatorCommand;
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORITIES;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
-use sui_rpc_api::Client as SuiGrpcClient;
 use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
@@ -392,7 +392,7 @@ async fn start(
         );
     }
 
-    let sui_client = SuiGrpcClient::new(&sui_fullnode_grpc_url)?;
+    let sui_client = SuiGrpcClient::new(&sui_fullnode_grpc_url).await?;
     if let Err(e) = sui_client.get_chain_identifier().await {
         bail!(
             "Cannot reach the Sui gRPC endpoint at {sui_fullnode_grpc_url}: {e}.\n\

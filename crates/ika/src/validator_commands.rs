@@ -34,6 +34,7 @@ use ika_sui_client::ika_validator_transactions::{
     withdraw_stake,
 };
 use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::crypto::generate_proof_of_possession;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::{DEFAULT_COMMISSION_RATE, PricingInfoKey, PricingInfoValue};
@@ -45,7 +46,6 @@ use sui_keys::{
         read_network_keypair_from_file, write_authority_keypair_to_file, write_keypair_to_file,
     },
 };
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;

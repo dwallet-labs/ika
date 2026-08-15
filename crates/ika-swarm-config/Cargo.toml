@@ -34,6 +34,7 @@ sui.workspace = true
 sui-config.workspace = true
 sui-keys.workspace = true
 sui-rpc-api.workspace = true
+sui-rpc.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
 ika-move-contracts.workspace = true

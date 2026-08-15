@@ -16,6 +16,7 @@ bcs.workspace = true
 bytes.workspace = true
 futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 itertools.workspace = true
 prometheus.workspace = true
 thiserror.workspace = true
@@ -35,6 +36,7 @@ object_store.workspace = true
 
 prost-types.workspace = true
 sui-rpc-api.workspace = true
+sui-rpc.workspace = true
 sui-sdk-types.workspace = true
 sui-sdk.workspace = true
 tonic.workspace = true
@@ -46,7 +48,6 @@ dwallet-mpc-types.workspace = true
 
 [dev-dependencies]
 ika-types = { workspace = true }
-serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]

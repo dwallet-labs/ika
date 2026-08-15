@@ -11,22 +11,108 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-pub use sui_rpc_api::client::ExecutedTransaction;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::committee::Committee;
 use sui_types::digests::CheckpointDigest;
-use sui_types::effects::TransactionEffects;
+use sui_types::effects::{TransactionEffects, TransactionEvents};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::{Object, Owner};
-use sui_types::transaction::Transaction;
+use sui_types::signature::GenericSignature;
+use sui_types::transaction::{Transaction, TransactionData};
+
+/// A Sui transaction together with its execution result.
+///
+/// This keeps Ika's public client surface independent of Sui main's
+/// `sui-rpc-api` compatibility wrapper. The direct gRPC implementation fills
+/// it from `sui-rust-sdk` protobuf responses; wallet-backed command paths can
+/// convert the legacy result while they still depend on Sui's `WalletContext`.
+#[derive(Clone, Debug, Serialize)]
+pub struct ExecutedTransaction {
+    pub transaction: TransactionData,
+    pub signatures: Vec<GenericSignature>,
+    pub effects: TransactionEffects,
+    pub clever_error: Option<sui_rpc::proto::sui::rpc::v2::CleverError>,
+    pub events: Option<TransactionEvents>,
+    pub event_json: Vec<Option<serde_json::Value>>,
+    pub changed_objects: Vec<sui_rpc::proto::sui::rpc::v2::ChangedObject>,
+    pub balance_changes: Vec<sui_sdk_types::BalanceChange>,
+    pub checkpoint: Option<u64>,
+    #[serde(skip)]
+    pub(crate) timestamp_ms: Option<u64>,
+}
+
+impl ExecutedTransaction {
+    /// Compatibility bridge for wallet operations that still return the
+    /// Sui-main wrapper type. Keep this at the wallet boundary; network calls
+    /// construct this type directly from `sui-rust-sdk` responses.
+    pub fn from_sui(value: sui_rpc_api::client::ExecutedTransaction) -> Self {
+        let timestamp_ms = value.timestamp_ms();
+        Self {
+            transaction: value.transaction,
+            signatures: value.signatures,
+            effects: value.effects,
+            clever_error: value.clever_error,
+            events: value.events,
+            event_json: value.event_json,
+            changed_objects: value.changed_objects,
+            balance_changes: value.balance_changes,
+            checkpoint: value.checkpoint,
+            timestamp_ms,
+        }
+    }
+
+    pub fn get_new_package_obj(&self) -> Option<ObjectRef> {
+        use sui_rpc::proto::sui::rpc::v2::changed_object::OutputObjectState;
+
+        self.changed_objects
+            .iter()
+            .find(|object| matches!(object.output_state(), OutputObjectState::PackageWrite))
+            .and_then(|object| {
+                Some((
+                    object.object_id().parse().ok()?,
+                    object.output_version().into(),
+                    object.output_digest().parse().ok()?,
+                ))
+            })
+    }
+
+    pub fn get_new_package_upgrade_cap(&self) -> Option<ObjectRef> {
+        use sui_rpc::proto::sui::rpc::v2::changed_object::OutputObjectState;
+        use sui_rpc::proto::sui::rpc::v2::owner::OwnerKind;
+
+        const UPGRADE_CAP: &str = "0x0000000000000000000000000000000000000000000000000000000000000002::package::UpgradeCap";
+
+        self.changed_objects
+            .iter()
+            .find(|object| {
+                matches!(object.output_state(), OutputObjectState::ObjectWrite)
+                    && matches!(
+                        object.output_owner().kind(),
+                        OwnerKind::Address | OwnerKind::ConsensusAddress
+                    )
+                    && object.object_type() == UPGRADE_CAP
+            })
+            .and_then(|object| {
+                Some((
+                    object.object_id().parse().ok()?,
+                    object.output_version().into(),
+                    object.output_digest().parse().ok()?,
+                ))
+            })
+    }
+
+    pub fn timestamp_ms(&self) -> Option<u64> {
+        self.timestamp_ms
+    }
+}
 
 /// Minimal, transport-agnostic result of submitting a transaction: the tx
 /// digest plus its committed [`TransactionEffects`]. Unlike
-/// `sui_rpc_api::client::ExecutedTransaction` (which has private fields and a
-/// `Serialize`-only shape), this is constructible *and* `Deserialize`-able, so
-/// it can be carried back over the anemo relay for a peer-only validator. The
-/// only field any caller reads is `effects` (status / object changes).
+/// [`ExecutedTransaction`] (which has a `Serialize`-only shape), this is
+/// constructible *and* `Deserialize`-able, so it can be carried back over the
+/// anemo relay for a peer-only validator. The only field any caller reads is
+/// `effects` (status / object changes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmittedTransaction {
     pub digest: TransactionDigest,

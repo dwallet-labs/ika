@@ -15,13 +15,14 @@ use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use std::collections::HashMap;
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg};
+
+use crate::transport::ExecutedTransaction;
 
 const VERIFY_PROTOCOL_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_protocol_cap");
 const SET_PAUSED_CURVES_AND_SIGNATURE_ALGORITHMS_FUNCTION_NAME: &IdentStr =

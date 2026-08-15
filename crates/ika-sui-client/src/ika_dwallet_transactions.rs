@@ -24,7 +24,6 @@ use ika_types::sui::{
     SIGN_DURING_DKG_REQUEST_FUNCTION_NAME, VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME,
     VERIFY_PRESIGN_CAP_FUNCTION_NAME,
 };
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
@@ -33,6 +32,7 @@ use sui_types::transaction::{Argument, CallArg, ObjectArg};
 use crate::ika_validator_transactions::{
     construct_unsigned_txn, execute_transaction, get_dwallet_2pc_mpc_coordinator_call_arg,
 };
+use crate::transport::ExecutedTransaction;
 
 /// Payment coin arguments for dWallet coordinator transactions.
 ///

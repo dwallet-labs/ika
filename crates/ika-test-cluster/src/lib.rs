@@ -29,6 +29,7 @@ use ika_swarm::memory::{Swarm, SwarmBuilder};
 
 pub mod flows;
 pub use flows::{ImportedKeyHandle, PresignHandle};
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
@@ -47,7 +48,6 @@ use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU16, Ordering};
 use sui_keys::key_derive::generate_new_key;
-use sui_rpc_api::Client as SuiGrpcClient;
 use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
 use sui_swarm_config::network_config_builder::ConfigBuilder;
 use sui_types::base_types::{ObjectID, SuiAddress};
@@ -874,7 +874,7 @@ impl IkaTestCluster {
         dwallet_id: ObjectID,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let mut client = SuiGrpcClient::new(&self.sui_grpc_url)?;
+        let client = SuiGrpcClient::new(&self.sui_grpc_url).await?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut last_observed_state = String::from("(no get_object response yet)");
         loop {
@@ -1080,7 +1080,7 @@ pub(crate) async fn fetch_event_field(
     event_type_substr: &str,
     field_name: &str,
 ) -> Option<String> {
-    let mut client = SuiGrpcClient::new(sui_grpc_url).ok()?;
+    let client = SuiGrpcClient::new(sui_grpc_url).await.ok()?;
     let transaction = client.get_transaction(tx_digest).await.ok()?;
     let events = transaction.events?;
     for (index, event) in events.data.iter().enumerate() {

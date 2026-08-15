@@ -16,14 +16,14 @@ use fastcrypto::ed25519::Ed25519KeyPair;
 use fastcrypto::traits::{KeyPair, Signer, ToFromBytes};
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_sui_client::SuiConnectorClient;
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::ika_dwallet_transactions;
 use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
 use move_core_types::language_storage::StructTag;
 use serde::Serialize;
 use sui_keys::keystore::AccountKeystore;
-use sui_rpc_api::Client as SuiGrpcClient;
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::Coin;
@@ -855,7 +855,7 @@ async fn fetch_tx_events(
     context: &WalletContext,
     digest: &str,
 ) -> Option<Vec<(String, serde_json::Value)>> {
-    let mut grpc_client = create_grpc_client(context).await.ok()?;
+    let grpc_client = create_grpc_client(context).await.ok()?;
     let tx_digest: sui_types::digests::TransactionDigest = digest.parse().ok()?;
     let transaction = grpc_client.get_transaction(&tx_digest).await.ok()?;
     let events = transaction.events?;
@@ -1278,8 +1278,8 @@ fn resolve_seed(
 
 /// Get the active Sui gRPC client.
 async fn create_grpc_client(context: &WalletContext) -> Result<SuiGrpcClient> {
-    context
-        .grpc_client()
+    SuiGrpcClient::new(&context.get_active_env()?.rpc)
+        .await
         .context("Failed to create Sui gRPC client")
 }
 
@@ -1450,7 +1450,6 @@ async fn is_presign_cap_verified(
     presign_cap_id: ObjectID,
 ) -> Result<bool> {
     let grpc_client = create_grpc_client(context).await?;
-    let mut grpc_client = grpc_client;
     let object = grpc_client.get_object(presign_cap_id).await?;
     let type_str = object
         .data
@@ -1472,7 +1471,6 @@ async fn fetch_object_fields(
     grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
-    let mut grpc_client = grpc_client.clone();
     let (_, json) = grpc_client.get_object_with_json(object_id).await?;
     json.ok_or_else(|| anyhow::anyhow!("No JSON content for object: {object_id}"))
 }
@@ -2745,7 +2743,6 @@ impl IkaDWalletCommand {
 
             IkaDWalletCommand::Get { dwallet_id, tx: _ } => {
                 let grpc_client = create_grpc_client(context).await?;
-                let mut grpc_client = grpc_client;
                 let (_, json_value) = grpc_client.get_object_with_json(dwallet_id).await?;
                 let json_value = json_value.ok_or_else(|| {
                     anyhow::anyhow!("No content for dWallet object: {dwallet_id}")

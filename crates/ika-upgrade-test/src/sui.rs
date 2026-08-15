@@ -80,7 +80,7 @@ impl SuiLocalnet {
         let http = reqwest::Client::new();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let grpc_ok = match sui_rpc_api::Client::new(&self.grpc_url) {
+            let grpc_ok = match ika_sui_client::grpc::SuiGrpcClient::new(&self.grpc_url).await {
                 Ok(client) => client.get_chain_identifier().await.is_ok(),
                 Err(_) => false,
             };

@@ -38,7 +38,6 @@ use shared_crypto::intent::Intent;
 use sui::client_commands::{SuiClientCommandResult, execute_dry_run};
 use sui::fire_drill::get_gas_obj_ref;
 use sui_keys::keystore::AccountKeystore;
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
@@ -48,6 +47,8 @@ use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction, TransactionKind};
 use sui_types::transaction::{Command, TransactionData};
 use sui_types::{MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID};
+
+use crate::transport::ExecutedTransaction;
 #[derive(Serialize)]
 pub struct BecomeCandidateValidatorData {
     pub validator_id: ObjectID,
@@ -778,7 +779,10 @@ pub async fn execute_transaction(
         .sign_secure(&sender, &tx_data, Intent::sui_transaction())
         .await?;
     let transaction = Transaction::from_data(tx_data, vec![signature]);
-    context.execute_transaction_may_fail(transaction).await
+    context
+        .execute_transaction_may_fail(transaction)
+        .await
+        .map(ExecutedTransaction::from_sui)
 }
 
 pub async fn call_ika_system(
