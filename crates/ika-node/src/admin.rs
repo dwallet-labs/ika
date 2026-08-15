@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::IkaNode;
+use crate::bind_retry::{BIND_ATTEMPTS, BIND_RETRY_INTERVAL, bind_with_retry};
 use axum::{
     Router,
     extract::{Query, State},
@@ -12,8 +13,9 @@ use humantime::parse_duration;
 use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 use telemetry_subscribers::TracingHandle;
-use tracing::info;
+use tracing::{error, info};
 
 // Example commands:
 //
@@ -56,13 +58,22 @@ const CLEAR_BUFFER_STAKE_ROUTE: &str = "/clear-override-buffer-stake";
 const CAPABILITIES: &str = "/capabilities";
 const NODE_CONFIG: &str = "/node-config";
 
+/// Stand-in for the current log filter when the tracing handle can't report
+/// it. Only ever used for the "starting admin server" log line, so an
+/// unreadable filter must not stop the admin server from coming up (matching
+/// sui-node's tolerant handling of the same call).
+const UNKNOWN_LOG_FILTER: &str = "log filter not available";
+
 struct AppState {
     node: Arc<IkaNode>,
     tracing_handle: TracingHandle,
 }
 
 pub async fn run_admin_server(node: Arc<IkaNode>, port: u16, tracing_handle: TracingHandle) {
-    let filter = tracing_handle.get_log().unwrap();
+    let filter = tracing_handle
+        .get_log()
+        .ok()
+        .unwrap_or_else(|| UNKNOWN_LOG_FILTER.to_string());
 
     let app_state = AppState {
         node,
@@ -93,15 +104,47 @@ pub async fn run_admin_server(node: Arc<IkaNode>, port: u16, tracing_handle: Tra
         "starting admin server"
     );
 
-    let listener = tokio::net::TcpListener::bind(&socket_address)
-        .await
-        .unwrap();
-    axum::serve(
+    serve_admin(app, socket_address, BIND_ATTEMPTS, BIND_RETRY_INTERVAL).await;
+}
+
+/// Serve `app` on `socket_address`, riding out a transient bind failure and
+/// then giving up quietly — never panicking.
+///
+/// The admin endpoint is an operational convenience, not a correctness
+/// component, and losing it is the entire cost of a failure here. Since
+/// panics kill the process by default, an `unwrap` on this bind turned a
+/// transient `AddrInUse` — a port race on a shared CI runner, or a restart
+/// racing its own port through `TIME_WAIT` — into node death at boot. A node
+/// without an admin endpoint is strictly healthier than a dead node.
+///
+/// The retry policy lives in [`crate::bind_retry`], shared with the metrics
+/// server, which has the same "must not kill the node" property.
+async fn serve_admin(
+    app: Router,
+    socket_address: SocketAddr,
+    attempts: u32,
+    retry_interval: Duration,
+) {
+    let Some(listener) = bind_with_retry("admin", socket_address, attempts, retry_interval).await
+    else {
+        error!(
+            address =% socket_address,
+            "gave up binding the admin server; the node continues without the admin endpoint"
+        );
+        return;
+    };
+    if let Err(err) = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
-    .unwrap();
+    {
+        error!(
+            address =% socket_address,
+            error =? err,
+            "admin server stopped; the node continues without the admin endpoint"
+        );
+    }
 }
 
 #[derive(Deserialize)]
@@ -264,5 +307,76 @@ async fn set_override_protocol_upgrade_buffer_stake(
             format!("protocol upgrade buffer stake set to '{buffer_bps}'\n"),
         ),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bind_retry::test_support::squatted_port;
+    use tokio::time::{sleep, timeout};
+
+    /// A stand-in for the real admin router: `serve_admin` only ever sees an
+    /// already-stateless `Router`, so the routes it carries are irrelevant to
+    /// the bind path under test.
+    fn test_router() -> Router {
+        Router::new().route("/ping", get(|| async { "pong" }))
+    }
+
+    async fn get_ping(address: SocketAddr) -> Option<String> {
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}/ping"))
+            .send()
+            .await
+            .ok()?;
+        response.text().await.ok()
+    }
+
+    /// The node-side failure this guards: another process holds the admin
+    /// port, and the node dies at boot because the bind panicked on a runtime
+    /// where panics are fatal. `serve_admin` must exhaust its retries and
+    /// return normally instead — the node runs on, minus the admin endpoint.
+    #[tokio::test]
+    async fn a_squatted_admin_port_does_not_take_the_node_down() {
+        let (_squatter, address) = squatted_port().await;
+
+        timeout(
+            Duration::from_secs(30),
+            serve_admin(test_router(), address, 3, Duration::from_millis(50)),
+        )
+        .await
+        .expect("a permanently squatted admin port must be given up on, not waited on forever");
+    }
+
+    /// The retries ride out a transient squatter: once the port is released
+    /// the admin server comes up on its own, with no node restart.
+    #[tokio::test]
+    async fn the_admin_server_comes_up_once_the_port_is_released() {
+        let (squatter, address) = squatted_port().await;
+
+        let server = tokio::spawn(serve_admin(
+            test_router(),
+            address,
+            600,
+            Duration::from_millis(50),
+        ));
+
+        // Let the first attempts fail against the squatter before it lets go.
+        sleep(Duration::from_millis(120)).await;
+        drop(squatter);
+
+        let body = timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(body) = get_ping(address).await {
+                    return body;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the admin server must come up once the port is released");
+        assert_eq!(body, "pong");
+
+        server.abort();
     }
 }

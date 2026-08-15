@@ -91,6 +91,10 @@ jobs:
         # is frozen in scripts/metric-name-allowlist.txt.
         # See dev-docs/conventions/metrics.md.
         run: ./scripts/check-metric-names.sh
+      - name: Workspace membership
+        # Every crate must be built by the workspace or explicitly excluded;
+        # a crate in neither is never compiled and rots invisibly.
+        run: ./scripts/check-workspace-manifests.sh
       - name: Epoch-table write discipline
         # Every AuthorityEpochTables field must declare whether it is
         # commit-batched or written directly (and why that is safe).
@@ -163,7 +167,7 @@ jobs:
           # prefix as the simtest workflow, which shares the dep graph).
           prefix-key: "simtest"
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2.85.10
+        uses: taiki-e/install-action@v2.85.11
         with:
           tool: cargo-nextest
       - name: Install cargo-simtest shim

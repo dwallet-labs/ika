@@ -19,10 +19,36 @@ parts:
   old→new table at the bottom of this file;
 - the **Mysticeti-internal metrics** (registered by upstream Sui's
   `consensus-core` crate, not by ika code) are prefixed via their
-  per-epoch registry's namespace — `Registry::new_custom(Some("ika_consensus"))`
-  in `consensus_manager/mod.rs` — so they export as `ika_consensus_*`
+  per-epoch registry's namespace — `Registry::new_custom(Some("consensus_ika"))`
+  in `consensus_manager/mod.rs` — so they export as `consensus_ika_*`
   without any upstream code change. Consequence: upstream Mysticeti
   Grafana dashboards need a prefix adjustment to be reused;
+
+  **`ika_` is ika's namespace and nothing else's.** The two sides live in
+  *different* registries that `RegistryService` merges at `/metrics`, and
+  the prefix is applied at `gather()` rather than at registration — so
+  prometheus's per-registry duplicate check never sees both names, and a
+  collision is silent: the endpoint serves the same family twice and the
+  scraper drops a sample per scrape ("duplicate sample for timestamp"),
+  halving one series with nothing failing. That is ika #2022, from back
+  when the vendored registry was prefixed `ika_consensus` and ika's own
+  commit-boundary gauge landed on upstream's `last_committed_leader_round`.
+
+  **The rule is a bipartition, so a collision is unrepresentable:**
+  1. every metric ika registers starts with `ika_`;
+  2. no re-export registry uses a prefix starting with `ika`.
+
+  Both are properties of source, and both are enforced statically by
+  `scripts/check-metric-names.sh`. Rule 2 needs no list of anyone's
+  names and self-extends: a vendored registry added later is caught
+  without anybody remembering to update anything — which was the failure
+  mode of every list-based version of this rule.
+
+  Note that `ika_consensus_*` **is** ika's to use — those are ika's own
+  consensus-handling metrics (`ika_consensus_handler_processed` and
+  friends), sitting alongside `ika_dwallet_*` and `ika_ocs_*`. They were
+  never badly named; the vendored registry was squatting in their
+  namespace, and it is the squatter that moved.
 - ~85 registered-but-never-set fork-residue metrics (tx-deny, zklogin,
   Move-verifier/execution, transaction-manager caches, random-beacon —
   subsystems ika does not run) were **deleted**, not renamed: they only
@@ -136,6 +162,35 @@ loud line fires on transition into and out of the condition, and the gauge
 carries the continuous signal. `-1` before the MPC service reports its first
 round, since round 0 is a legitimate value.
 
+**The raw lag is not the alert target** — `ika_mpc_stopped_contributing_condition_active`
+is. Consensus rounds restart at zero each epoch and a restarted node builds a
+fresh epoch store whose cursor starts there too, so a mid-epoch restart's replay
+gap is simply "rounds elapsed this epoch": past the first three quarters of an
+hour of a 24h epoch it exceeds any stall threshold while the node is recovering
+perfectly normally, and the alarm fired on every restart of every production
+validator (#2036).
+
+Which forces the general rule: **a detector that lives outside a subsystem
+because the subsystem cannot report its own stall must still be told what the
+subsystem is deliberately doing** — otherwise "stopped" and "busy recovering"
+are the same observation from outside. What it must not do is read that
+intention from a flag the subsystem sets, because a flag outlives the loop that
+set it — a "busy recovering" flag left behind by a dead service loop reads
+exactly like a service still recovering. The MPC service publishes its catch-up
+state on every consumed
+round and the detector honours it only while it stays fresh, so the suppression
+is a lease the stalled side stops renewing the moment it stalls — a service that
+dies mid-catch-up alarms like any other stopped service. For the same reason the
+state is sampled from the catch-up gate itself, never from the gate's Prometheus
+gauge: that gauge is published by the service loop, so it latches at `1` exactly
+when the loop dies.
+
+Suppressing an alarm creates a hole, so it comes with the alarm that covers it:
+`ika_mpc_catch_up_stuck_condition_active` is a reported catch-up whose gap has
+stopped reaching new lows, over a bound generous against the observed drain
+rate. Between them, "not contributing" and "not recovering" are both loud, and
+the recovering-normally case is silent.
+
 ### Process-wide wire settings need a gauge, not just a log
 
 `ika_authority_name_encoding_width_bytes` and
@@ -244,11 +299,19 @@ derived through a third-party IP-geolocation service.
 
 Regenerate with: `./scripts/check-metric-names.sh --list`
 
+CI enforces this block: the same script's default (validate) mode fails
+when the list and the source disagree in either direction, so adding or
+removing a metric without updating this block fails the build instead of
+drifting silently.
+
 ```
 ika_archive_actions_read
 ika_archive_dwallet_checkpoints_read
 ika_archive_system_checkpoints_read
 ika_binary_max_protocol_version
+ika_committee_quorum_threshold
+ika_committee_total_stake
+ika_committee_validity_threshold
 ika_configured_max_protocol_version
 ika_consensus_calculated_throughput
 ika_consensus_calculated_throughput_profile
@@ -260,7 +323,6 @@ ika_consensus_handler_num_low_scoring_authorities
 ika_consensus_handler_processed
 ika_consensus_handler_scores
 ika_consensus_handler_transaction_sizes
-ika_consensus_last_committed_leader_round
 ika_consensus_last_committed_timestamp_seconds
 ika_consensus_manager_shutdown_latency
 ika_consensus_manager_start_latency
@@ -278,6 +340,7 @@ ika_dwallet_checkpoint_participation
 ika_dwallet_checkpoint_pending_queue_depth
 ika_dwallet_checkpoint_roots_count
 ika_dwallet_checkpoint_signatures_verified
+ika_dwallet_checkpoint_sync_stall_seconds
 ika_dwallet_checkpoint_user_session_written_at_seq
 ika_dwallet_handoff_cert_epoch
 ika_dwallet_handoff_signatures_buffered
@@ -290,10 +353,15 @@ ika_dwallet_mpc_advance_completions
 ika_dwallet_mpc_anomaly_snapshots_dropped_total
 ika_dwallet_mpc_anomaly_snapshots_total
 ika_dwallet_mpc_anomaly_triggers_total
+ika_dwallet_mpc_catchup_gap_rounds
+ika_dwallet_mpc_catchup_mode
+ika_dwallet_mpc_catchup_suppressed_computations_total
 ika_dwallet_mpc_completion_races_total
 ika_dwallet_mpc_completions_count
 ika_dwallet_mpc_computation_duration_avg
 ika_dwallet_mpc_computation_duration_variance
+ika_dwallet_mpc_cryptographic_computation_core_budget
+ika_dwallet_mpc_cryptographic_computations_running
 ika_dwallet_mpc_data_announcements_received
 ika_dwallet_mpc_data_blob_fetch_total
 ika_dwallet_mpc_data_excluded_validators
@@ -315,12 +383,15 @@ ika_dwallet_mpc_last_completion_duration
 ika_dwallet_mpc_malicious_actors_count
 ika_dwallet_mpc_messages_after_terminal_session_total
 ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version
+ika_dwallet_mpc_network_encryption_key_latest_reconfiguration_output_version
 ika_dwallet_mpc_network_key_instantiation_failures_total
 ika_dwallet_mpc_network_key_instantiation_sub_call_duration_seconds
 ika_dwallet_mpc_network_key_instantiations_in_flight
 ika_dwallet_mpc_network_key_loaded_epoch
+ika_dwallet_mpc_noa_presign_demands_evicted_total
 ika_dwallet_mpc_number_of_expected_sign_sessions
 ika_dwallet_mpc_number_of_unexpected_sign_sessions
+ika_dwallet_mpc_prior_cert_blobs_missing
 ika_dwallet_mpc_protocol_data_generation_errors_total
 ika_dwallet_mpc_protocol_sessions_pending
 ika_dwallet_mpc_ready_to_advance_result_total
@@ -349,6 +420,7 @@ ika_dwallet_mpc_user_session_output_received_from
 ika_dwallet_mpc_user_session_quorum_consensus_round
 ika_dwallet_mpc_user_session_self_output_consensus_round
 ika_dwallet_mpc_user_session_state
+ika_dwallet_mpc_user_sessions_active_without_local_output
 ika_dwallet_native_calls
 ika_dwallet_native_completions
 ika_effective_buffer_stake
@@ -374,6 +446,7 @@ ika_last_certified_dwallet_checkpoint
 ika_last_certified_dwallet_checkpoint_age
 ika_last_certified_system_checkpoint
 ika_last_certified_system_checkpoint_age
+ika_last_committed_leader_consensus_round
 ika_last_constructed_dwallet_checkpoint
 ika_last_constructed_system_checkpoint
 ika_last_created_dwallet_checkpoint_age
@@ -395,8 +468,10 @@ ika_messages_included_in_dwallet_checkpoint
 ika_messages_included_in_system_checkpoint
 ika_mpc_blob_store_evictions_total
 ika_mpc_blob_store_size_bytes
+ika_mpc_catch_up_stuck_condition_active
 ika_mpc_consensus_round_lag
 ika_mpc_data_announcement_blob_bytes
+ika_mpc_stopped_contributing_condition_active
 ika_network_key_overlay_incomplete
 ika_network_key_registry_read_empty_condition_active
 ika_num_peers_with_external_address
@@ -410,6 +485,7 @@ ika_ocs_dynamic_fields_walk_entries_returned_total
 ika_ocs_dynamic_fields_walk_entries_seen_total
 ika_ocs_dynamic_fields_walk_entries_skipped_transient_total
 ika_ocs_high_water_violations_total
+ika_ocs_identity_mismatch_total
 ika_ocs_last_successful_relay_timestamp_seconds
 ika_ocs_proof_build_failures_total
 ika_ocs_proof_build_latency_seconds
@@ -422,9 +498,13 @@ ika_ocs_proof_verify_total
 ika_ocs_pusher_cursor_seq
 ika_ocs_pusher_fetch_failures_total
 ika_ocs_pusher_fold_verify_seconds
+ika_ocs_pusher_gap_archive_repairs_total
+ika_ocs_pusher_gap_dropped_total
 ika_ocs_pusher_pushed_total
 ika_ocs_pusher_skipped_irrelevant_total
 ika_ocs_pusher_stalled
+ika_ocs_ratchet_failures_total
+ika_ocs_ratchet_stalled
 ika_ocs_relay_failures_total
 ika_ocs_relay_peer_failover_total
 ika_ocs_relay_request_latency_seconds
@@ -433,8 +513,8 @@ ika_ocs_role_info
 ika_ocs_serve_latency_seconds
 ika_ocs_serve_request_by_peer_total
 ika_ocs_serve_request_total
-ika_ocs_unverified_committee_fallback_total
 ika_ocs_verify_latency_seconds
+ika_ocs_watermark_implausible_total
 ika_off_chain_assembly_consecutive_incomplete_ticks
 ika_off_chain_assembly_incomplete
 ika_off_chain_assembly_incomplete_duration_seconds
@@ -443,6 +523,9 @@ ika_off_chain_assembly_last_success_timestamp_seconds
 ika_off_chain_assembly_missing
 ika_off_chain_assembly_wedged
 ika_own_mpc_data_blob_unhealthy
+ika_protocol_upgrade_effective_threshold
+ika_protocol_upgrade_supporting_stake
+ika_reconfig_phase
 ika_remote_dwallet_checkpoint_forks
 ika_remote_system_checkpoint_forks
 ika_sequencing_acknowledge_latency
@@ -467,6 +550,7 @@ ika_sui_client_chain_blob_reads
 ika_sui_client_sui_rpc_errors
 ika_sui_connector_chain_active_system_sessions_count
 ika_sui_connector_chain_active_user_sessions_count
+ika_sui_connector_chain_dwallet_checkpoint_writer_lag
 ika_sui_connector_chain_epoch_overdue_seconds
 ika_sui_connector_chain_received_end_of_publish
 ika_sui_connector_chain_user_sessions_lag
@@ -485,11 +569,14 @@ ika_sui_connector_system_checkpoint_write_requests_total
 ika_sui_connector_system_checkpoint_writes_failure_total
 ika_sui_connector_system_checkpoint_writes_success_total
 ika_sui_connector_uncompleted_events_backlog
+ika_supported_protocol_version_max
+ika_supported_protocol_version_min
 ika_system_checkpoint_creation_latency
 ika_system_checkpoint_errors
 ika_system_checkpoint_participation
 ika_system_checkpoint_roots_count
 ika_system_checkpoint_signatures_verified
+ika_system_checkpoint_sync_stall_seconds
 ika_validator_binary_info
 ika_validator_binary_size_bytes
 ika_validator_cgroup_cpu_limit_cores

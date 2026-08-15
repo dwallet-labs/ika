@@ -324,7 +324,7 @@ fn is_false(b: &bool) -> bool {
     !b
 }
 
-/// Ordering mechanism for transactions in one Narwhal consensus output.
+/// Ordering mechanism for transactions in one consensus commit.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum ConsensusTransactionOrdering {
     /// No ordering. Transactions are processed in the order they appear in the consensus output.

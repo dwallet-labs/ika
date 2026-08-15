@@ -258,7 +258,36 @@ impl SuiTransport for SuiGrpcClient {
     // -- checkpoints ------------------------------------------------------------------------
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         let mut rpc = self.rpc.clone();
-        rpc.get_latest_checkpoint().await.map_err(Self::rpc_err)
+        // NotFound must stay distinguishable: a fullnode pruning AT head
+        // empties the availability window and NotFounds its OWN latest, and
+        // callers (the boot artifacts-digest probe) treat that transient
+        // state differently from a real transport failure.
+        rpc.get_latest_checkpoint()
+            .await
+            .map_err(Self::rpc_status_err)
+    }
+
+    async fn get_latest_checkpoint_sequence(
+        &self,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        // `GetServiceInfo.checkpoint_height` reads the store's latest
+        // watermark WITHOUT the availability-window check that makes
+        // `GetCheckpoint` NotFound a just-pruned latest — the probe keeps
+        // working while the fullnode prunes at head.
+        let mut rpc = self.rpc.clone();
+        let response = rpc
+            .inner_mut()
+            .clone()
+            .ledger_client()
+            .get_service_info(proto::GetServiceInfoRequest::default())
+            .await
+            .map_err(Self::rpc_status_err)?
+            .into_inner();
+        response.checkpoint_height.ok_or_else(|| {
+            TransportError::Network(
+                "GetServiceInfo response carried no checkpoint_height".to_string(),
+            )
+        })
     }
 
     async fn get_full_checkpoint(

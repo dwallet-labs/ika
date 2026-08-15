@@ -36,7 +36,11 @@ the locations below and runs in CI; it fails the build on drift.
    goes stale at the next bump with CI still green.
 
 4. **`CLAUDE.md`** — the pinned-version line in Gotchas.
-5. **msim / simtest rev** — `scripts/simtest/cargo-simtest`. ika applies
+5. **msim / simtest rev** — `scripts/simtest/cargo-simtest` **and**
+   `scripts/simtest/config-patch` (the coverage path in
+   `scripts/simtest/codecov.sh` applies the same patch as a real diff,
+   because `cargo llvm-cov` does not go through the `cargo simtest`
+   shim — keep the two revs identical). ika applies
    the `tokio`/`futures-timer` → mysten-sim patch THERE (via `--config`),
    not in `Cargo.toml`, pinned to a git `rev`. That rev MUST match the
    `msim`/`sui-simulator` rev the new Sui tag uses: copy it from Sui's own

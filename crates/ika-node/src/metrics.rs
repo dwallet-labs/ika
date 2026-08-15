@@ -1,10 +1,86 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
+use crate::bind_retry::{BIND_ATTEMPTS, BIND_RETRY_INTERVAL, bind_with_retry};
+use axum::{Extension, Router, routing::get};
+use mysten_metrics::{METRICS_ROUTE, RegistryService};
 use prometheus::{
     Histogram, IntCounter, IntCounterVec, IntGauge, Registry, register_histogram_with_registry,
     register_int_counter_vec_with_registry, register_int_counter_with_registry,
     register_int_gauge_with_registry,
 };
+use std::net::SocketAddr;
+use std::time::Duration;
+use tracing::{error, warn};
+
+/// Start the Prometheus scrape endpoint on `addr` and return the
+/// [`RegistryService`] backing it.
+///
+/// A local equivalent of `mysten_metrics::start_prometheus_server`, which
+/// `unwrap`s both the `TcpListener::bind` and the `axum::serve` inside its
+/// spawned task. Under this node those `unwrap`s are fatal — the release
+/// profile sets `panic = 'abort'` and the node enables `crash_on_panic` — so
+/// a squatted metrics port (a shared CI runner, a duplicated port in a
+/// deployment, or a restart racing its own port through `TIME_WAIT`) takes the
+/// whole process down at boot, before telemetry is even initialized. This
+/// version retries the bind and then gives up loudly, exactly like the admin
+/// server; a node without a scrape endpoint is strictly healthier than a dead
+/// node.
+///
+/// Metrics are more load-bearing than the admin endpoint — losing them blinds
+/// every dashboard and alert for this validator — so the give-up logs at
+/// `error!` and names the address.
+///
+/// The rest of the behaviour is upstream's, unchanged: same route, same
+/// handler, same registry wiring, and the same simulator short-circuit.
+pub fn start_prometheus_server(addr: SocketAddr) -> RegistryService {
+    let registry = Registry::new();
+
+    let registry_service = RegistryService::new(registry);
+
+    if cfg!(msim) {
+        // prometheus uses difficult-to-support features such as
+        // TcpSocket::from_raw_fd(), so it can't run in the simulator.
+        // Identical to upstream: return the registry service without ever
+        // spawning a server.
+        warn!("not starting prometheus server in simulator");
+        return registry_service;
+    }
+
+    let app = Router::new()
+        .route(METRICS_ROUTE, get(mysten_metrics::metrics))
+        .layer(Extension(registry_service.clone()));
+
+    tokio::spawn(serve_metrics(app, addr, BIND_ATTEMPTS, BIND_RETRY_INTERVAL));
+
+    registry_service
+}
+
+/// Serve the metrics `app` on `socket_address`, riding out a transient bind
+/// failure and then giving up loudly — never panicking.
+async fn serve_metrics(
+    app: Router,
+    socket_address: SocketAddr,
+    attempts: u32,
+    retry_interval: Duration,
+) {
+    let Some(listener) = bind_with_retry("metrics", socket_address, attempts, retry_interval).await
+    else {
+        error!(
+            address =% socket_address,
+            "gave up binding the metrics server; the node continues without a metrics \
+             endpoint and will not be scrapable"
+        );
+        return;
+    };
+    if let Err(err) = axum::serve(listener, app.into_make_service()).await {
+        error!(
+            address =% socket_address,
+            error =? err,
+            "metrics server stopped; the node continues without a metrics endpoint and \
+             will not be scrapable"
+        );
+    }
+}
 
 pub struct IkaNodeMetrics {
     pub current_protocol_version: IntGauge,
@@ -121,9 +197,11 @@ impl IkaNodeMetrics {
 
 #[cfg(test)]
 mod tests {
-    use mysten_metrics::start_prometheus_server;
+    use super::*;
+    use crate::bind_retry::test_support::squatted_port;
     use prometheus::{IntCounter, Registry};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use tokio::time::{sleep, timeout};
 
     #[tokio::test]
     pub async fn test_metrics_endpoint_with_multiple_registries_add_remove() {
@@ -135,7 +213,7 @@ mod tests {
         tokio::task::yield_now().await;
 
         // now add a few registries to the service along side with metrics
-        let registry_1 = Registry::new_custom(Some("narwhal".to_string()), None).unwrap();
+        let registry_1 = Registry::new_custom(Some("vendored".to_string()), None).unwrap();
         let counter_1 = IntCounter::new("counter_1", "a sample counter 1").unwrap();
         registry_1.register(Box::new(counter_1)).unwrap();
 
@@ -156,9 +234,9 @@ ika_counter_2 0"
         ));
 
         assert!(result.contains(
-            "# HELP narwhal_counter_1 a sample counter 1
-# TYPE narwhal_counter_1 counter
-narwhal_counter_1 0"
+            "# HELP vendored_counter_1 a sample counter 1
+# TYPE vendored_counter_1 counter
+vendored_counter_1 0"
         ));
 
         // Now remove registry 1
@@ -173,9 +251,9 @@ narwhal_counter_1 0"
 
         // Registry 1 metrics should not be present anymore
         assert!(!result.contains(
-            "# HELP narwhal_counter_1 a sample counter 1
-# TYPE narwhal_counter_1 counter
-narwhal_counter_1 0"
+            "# HELP vendored_counter_1 a sample counter 1
+# TYPE vendored_counter_1 counter
+vendored_counter_1 0"
         ));
 
         // Registry 2 metric should have increased by 1
@@ -194,5 +272,93 @@ ika_counter_2 1"
             .await
             .unwrap();
         response.text().await.unwrap()
+    }
+
+    /// A stand-in for the real metrics router: `serve_metrics` only ever sees
+    /// an already-built `Router`, so the routes it carries are irrelevant to
+    /// the bind path under test.
+    fn test_router() -> Router {
+        Router::new().route("/ping", get(|| async { "pong" }))
+    }
+
+    async fn get_ping(address: SocketAddr) -> Option<String> {
+        let response = reqwest::Client::new()
+            .get(format!("http://{address}/ping"))
+            .send()
+            .await
+            .ok()?;
+        response.text().await.ok()
+    }
+
+    /// The node-side failure this guards: something already holds the metrics
+    /// port, and the node dies at boot because the bind panicked on a runtime
+    /// where panics are fatal — before telemetry is even initialized, so the
+    /// death is close to silent. `serve_metrics` must exhaust its retries and
+    /// return normally instead: the node runs on, minus the scrape endpoint.
+    #[tokio::test]
+    async fn a_squatted_metrics_port_does_not_take_the_node_down() {
+        let (_squatter, address) = squatted_port().await;
+
+        timeout(
+            Duration::from_secs(30),
+            serve_metrics(test_router(), address, 3, Duration::from_millis(50)),
+        )
+        .await
+        .expect("a permanently squatted metrics port must be given up on, not waited on forever");
+    }
+
+    /// The retries ride out a transient squatter: once the port is released
+    /// the metrics server comes up on its own, with no node restart.
+    #[tokio::test]
+    async fn the_metrics_server_comes_up_once_the_port_is_released() {
+        let (squatter, address) = squatted_port().await;
+
+        let server = tokio::spawn(serve_metrics(
+            test_router(),
+            address,
+            600,
+            Duration::from_millis(50),
+        ));
+
+        // Let the first attempts fail against the squatter before it lets go.
+        sleep(Duration::from_millis(120)).await;
+        drop(squatter);
+
+        let body = timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(body) = get_ping(address).await {
+                    return body;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the metrics server must come up once the port is released");
+        assert_eq!(body, "pong");
+
+        server.abort();
+    }
+
+    /// `start_prometheus_server` must hand back a usable `RegistryService`
+    /// even when the port can never be bound — the node keeps recording
+    /// metrics into the registry, it just has nothing serving them.
+    #[tokio::test]
+    async fn a_squatted_port_still_yields_a_working_registry_service() {
+        let (_squatter, address) = squatted_port().await;
+
+        let registry_service = start_prometheus_server(address);
+        let registry = Registry::new_custom(Some("ika".to_string()), None).unwrap();
+        let counter = IntCounter::new("counter", "a sample counter").unwrap();
+        registry.register(Box::new(counter.clone())).unwrap();
+        registry_service.add(registry);
+        counter.inc();
+
+        assert!(
+            registry_service
+                .gather_all()
+                .iter()
+                .any(|family| family.name() == "ika_counter"),
+            "the registry service must keep collecting even with no server bound"
+        );
     }
 }

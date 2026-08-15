@@ -159,7 +159,9 @@ pub fn run_node_with_name(
 
     let runtimes = IkaRuntimes::new(&config, node_mode);
     let metrics_rt = runtimes.metrics.enter();
-    let registry_service = mysten_metrics::start_prometheus_server(config.metrics_address);
+    // Local equivalent of `mysten_metrics::start_prometheus_server` that
+    // retries the bind instead of panicking on it — see `crate::metrics`.
+    let registry_service = crate::metrics::start_prometheus_server(config.metrics_address);
     let prometheus_registry = registry_service.default_registry();
     ika_types::metrics::init_invariant_violation_metric(&prometheus_registry);
 
@@ -275,13 +277,17 @@ pub fn run_node_with_name(
     runtimes.metrics.spawn(async move {
         let node = node_once_cell_clone.get().await;
         info!("Ika chain identifier: {chain_identifier}");
-        prometheus_registry
-            .register(mysten_metrics::uptime_metric(
-                uptime_label,
-                version,
-                &chain_identifier.to_string(),
-            ))
-            .unwrap();
+        // The uptime metric is informational; the admin server is started on
+        // the same task right below it. Losing one must not cost the other, so
+        // a failed registration is logged and stepped over rather than
+        // unwrapped (a panic here is fatal to the process).
+        if let Err(err) = prometheus_registry.register(mysten_metrics::uptime_metric(
+            uptime_label,
+            version,
+            &chain_identifier.to_string(),
+        )) {
+            error!("Failed to register the uptime metric, continuing without it: {err:?}");
+        }
 
         crate::admin::run_admin_server(node, admin_interface_port, filter_handle).await
     });

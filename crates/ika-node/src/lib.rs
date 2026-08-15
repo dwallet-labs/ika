@@ -89,6 +89,7 @@ use typed_store::rocks::default_db_options;
 use crate::metrics::IkaNodeMetrics;
 
 pub mod admin;
+mod bind_retry;
 mod handle;
 pub mod metrics;
 mod node_runner;

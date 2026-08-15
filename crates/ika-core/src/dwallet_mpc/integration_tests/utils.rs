@@ -1,6 +1,7 @@
 use crate::authority::AuthorityStateTrait;
 use crate::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaAssignedPresign,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaPresignDemandResolution,
+    PresignAssignmentOutcome, PresignDemand,
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -25,7 +26,7 @@ use ika_types::messages_dwallet_mpc::{
     IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
     UserSecretKeyShareEventType,
 };
-use ika_types::noa_checkpoint::CounterpartyChainKind;
+use ika_types::noa_checkpoint::{CounterpartyChainKind, NOAPresignDemandId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,6 +71,10 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Mirrors the real store's field so the MPC service's progress
     /// publication is exercised by the integration tests rather than stubbed.
     pub(crate) mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+    /// The catch-up gate state the MPC service published with the round above.
+    /// The real store holds it to decide whether an outsized lag is explained;
+    /// mirrored here so a test can prove the service publishes it at all.
+    pub(crate) mpc_reported_catching_up: std::sync::atomic::AtomicBool,
     pub(crate) round_to_idle_status_updates: Arc<Mutex<HashMap<Round, Vec<IdleStatusUpdate>>>>,
     pub(crate) round_to_sui_chain_observation_updates:
         Arc<Mutex<HashMap<Round, Vec<SuiChainObservationUpdate>>>>,
@@ -78,9 +83,13 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_noa_observations: Arc<Mutex<HashMap<Round, Vec<ConsensusNOAObservation>>>>,
     pub(crate) round_to_noa_presign_demands:
         Arc<Mutex<HashMap<Round, Vec<ConsensusNOAPresignDemand>>>>,
-    /// NOA presigns assigned in consensus order, keyed by demand-id digest.
-    /// Value: (presign session id, blending index, raw presign bytes, network key id).
-    pub(crate) noa_assigned_presigns: Arc<Mutex<HashMap<[u8; 32], NoaAssignedPresign>>>,
+    /// Terminal resolution of each NOA sign demand, keyed by demand-id digest:
+    /// the presign assigned to it in consensus order, or the marker that the
+    /// park bound dropped it. Mirrors the real store's
+    /// `noa_presign_demand_resolutions`, including that it survives a simulated
+    /// restart while the service's in-memory state does not.
+    pub(crate) noa_presign_demand_resolutions:
+        Arc<Mutex<HashMap<[u8; 32], NoaPresignDemandResolution>>>,
     /// Presign served to each global presign request, keyed by the request's
     /// session sequence number. Mirrors the real store's `served_global_presigns`:
     /// a re-seen request is answered from here instead of popping again.
@@ -106,6 +115,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// "cert absent"); tests for the cert-digest gate insert one here.
     pub(crate) certified_handoff_attestations:
         Arc<Mutex<HashMap<EpochId, CertifiedHandoffAttestation>>>,
+    /// When set, every handoff-cert read returns `Err` instead of the map
+    /// contents — the store-hiccup path that makes the adoption pass skip
+    /// the whole tick (as opposed to a genuinely absent cert, which is an
+    /// answer). For tests that need one validator's adoption to stall.
+    pub(crate) fail_certified_handoff_attestation_reads: Arc<AtomicBool>,
     /// Configurable perpetual-tables handle. `None` by default (matching
     /// "nothing recorded"); tests for the produced-this-epoch adoption
     /// guard open real tables in a tempdir and install them here.
@@ -160,6 +174,31 @@ impl TestingDWalletCheckpointNotify {
 }
 
 impl TestingAuthorityPerEpochStore {
+    /// Test-only raw pool pop for pool-inspection assertions. The production
+    /// trait surface has no bare pop — every consumer assigns through an
+    /// idempotent [`PresignDemand`] — so this exists solely so tests can
+    /// observe pool contents.
+    pub(crate) fn pop_presign_for_testing(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        let mut pools = self.presign_pools.lock().unwrap();
+        let key = (signature_algorithm, dwallet_network_encryption_key_id);
+        // FIFO — oldest first — mirroring the real store, which pops the head
+        // of a slot-ordered range. Popping LIFO here would prove idempotency
+        // against an ordering the real store never produces, and could not
+        // reproduce the scenario these tests exist for: a lower sequence
+        // number filling AFTER the original pop and winning the replayed one.
+        Ok(pools.get_mut(&key).and_then(|pool| {
+            if pool.is_empty() {
+                None
+            } else {
+                Some(pool.remove(0))
+            }
+        }))
+    }
+
     fn new() -> Self {
         Self {
             pending_checkpoints: Arc::new(Mutex::new(vec![])),
@@ -170,6 +209,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            mpc_reported_catching_up: std::sync::atomic::AtomicBool::new(false),
             round_to_idle_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_sui_chain_observation_updates: Arc::new(Mutex::new(HashMap::from([(
                 0,
@@ -178,7 +218,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_presign_demands: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            noa_assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
+            noa_presign_demand_resolutions: Arc::new(Mutex::new(HashMap::new())),
             served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             filled_presign_slot_high_water: Arc::new(Mutex::new(HashMap::new())),
@@ -186,6 +226,7 @@ impl TestingAuthorityPerEpochStore {
             presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
+            fail_certified_handoff_attestation_reads: Arc::new(AtomicBool::new(false)),
             perpetual_tables: Arc::new(Mutex::new(None)),
         }
     }
@@ -200,9 +241,11 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(())
     }
 
-    fn record_mpc_consumed_consensus_round(&self, round: Round) {
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
         self.mpc_consumed_consensus_round
             .store(round, std::sync::atomic::Ordering::Relaxed);
+        self.mpc_reported_catching_up
+            .store(catching_up, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
@@ -351,43 +394,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .copied())
     }
 
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let mut pools = self.presign_pools.lock().unwrap();
-        let key = (signature_algorithm, dwallet_network_encryption_key_id);
-        Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
-    }
-
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        if let Some(served) = self
-            .served_global_presigns
-            .lock()
-            .unwrap()
-            .get(&session_sequence_number)
-            .cloned()
-        {
-            return Ok(Some(served));
-        }
-        let Some(served) =
-            self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        self.served_global_presigns
-            .lock()
-            .unwrap()
-            .insert(session_sequence_number, served.clone());
-        Ok(Some(served))
-    }
-
     fn mark_presign_as_used(
         &self,
         presign_session_id: SessionIdentifier,
@@ -500,59 +506,131 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(store.get(&next).map(|v| (next, v.clone())))
     }
 
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
+    fn noa_presign_demand_resolution(
+        &self,
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>> {
         Ok(self
-            .noa_assigned_presigns
+            .noa_presign_demand_resolutions
             .lock()
             .unwrap()
-            .get(digest)
+            .get(&demand_id.digest())
             .cloned())
     }
 
-    fn assign_noa_presign(
-        &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        if let Some((session_id, blending_index, _, _)) = self
-            .noa_assigned_presigns
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        // Mirror the real store: never replace an existing resolution.
+        self.noa_presign_demand_resolutions
             .lock()
             .unwrap()
-            .get(&digest)
-            .cloned()
-        {
-            return Ok(Some((session_id, blending_index)));
-        }
-        let Some((session_id, blending_index, presign)) =
-            self.pop_presign(signature_algorithm, network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        self.noa_assigned_presigns.lock().unwrap().insert(
-            digest,
-            (
-                session_id,
-                blending_index,
-                presign,
-                network_encryption_key_id,
-            ),
-        );
-        // Mirror the real store: mark the popped presign used at the point of
-        // consumption (the pool pop above).
-        self.used_presigns
-            .lock()
-            .unwrap()
-            .insert((session_id, blending_index), ());
-        Ok(Some((session_id, blending_index)))
+            .entry(demand_id.digest())
+            .or_insert(NoaPresignDemandResolution::Evicted);
+        Ok(())
     }
 
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool> {
+        let digest = demand_id.digest();
         Ok(self
-            .noa_assigned_presigns
+            .noa_presign_demand_resolutions
             .lock()
             .unwrap()
-            .contains_key(digest))
+            .contains_key(&digest))
+    }
+
+    fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<PresignAssignmentOutcome> {
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                if let Some((session_identifier, blending_index, presign)) = self
+                    .served_global_presigns
+                    .lock()
+                    .unwrap()
+                    .get(session_sequence_number)
+                    .cloned()
+                {
+                    return Ok(PresignAssignmentOutcome::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                    });
+                }
+            }
+            // Mirror the real store: a NOA demand has ONE terminal resolution,
+            // and a drop recorded by the park bound is as final as an
+            // assignment — including across the simulated restart, which keeps
+            // this store while the service's memory is rebuilt.
+            PresignDemand::Noa { demand_id } => {
+                match self
+                    .noa_presign_demand_resolutions
+                    .lock()
+                    .unwrap()
+                    .get(&demand_id.digest())
+                    .cloned()
+                {
+                    Some(NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                        ..
+                    }) => {
+                        return Ok(PresignAssignmentOutcome::Assigned {
+                            session_identifier,
+                            blending_index,
+                            presign,
+                        });
+                    }
+                    Some(NoaPresignDemandResolution::Evicted) => {
+                        return Ok(PresignAssignmentOutcome::Evicted);
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        let Some((session_identifier, blending_index, presign)) =
+            self.pop_presign_for_testing(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(PresignAssignmentOutcome::PoolEmpty);
+        };
+
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                self.served_global_presigns.lock().unwrap().insert(
+                    *session_sequence_number,
+                    (session_identifier, blending_index, presign.clone()),
+                );
+            }
+            PresignDemand::Noa { demand_id } => {
+                self.noa_presign_demand_resolutions.lock().unwrap().insert(
+                    demand_id.digest(),
+                    NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign: presign.clone(),
+                        network_encryption_key_id: dwallet_network_encryption_key_id,
+                    },
+                );
+                // Mirror the real store: mark the popped presign used at the
+                // point of consumption (the pool pop above).
+                self.used_presigns
+                    .lock()
+                    .unwrap()
+                    .insert((session_identifier, blending_index), ());
+            }
+        }
+        Ok(PresignAssignmentOutcome::Assigned {
+            session_identifier,
+            blending_index,
+            presign,
+        })
     }
 
     fn assign_presign(
@@ -563,7 +641,8 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        let popped = self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?;
+        let popped =
+            self.pop_presign_for_testing(signature_algorithm, dwallet_network_encryption_key_id)?;
         match popped {
             Some((session_id, blending_index, presign_bytes)) => {
                 let assigned = AssignedPresign {
@@ -638,6 +717,14 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // Testing impl: serves the configurable in-memory map (empty by
         // default, in which case the cert-verified adoption path behaves
         // as "cert absent" and tests exercise the consensus-voted path).
+        if self
+            .fail_certified_handoff_attestation_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(ika_types::error::IkaError::Storage(
+                "injected handoff-cert read failure".to_string(),
+            ));
+        }
         Ok(self
             .certified_handoff_attestations
             .lock()

@@ -17,6 +17,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
@@ -82,6 +83,7 @@ use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
     SystemCheckpointSignatureMessage,
 };
+use ika_types::noa_checkpoint::NOAPresignDemandId;
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
 use ika_types::validator_metadata::{
     SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
@@ -113,6 +115,70 @@ pub const EPOCH_DB_PREFIX: &str = "epoch_";
 /// catching up closes the gap; a stopped one only grows it.
 const MPC_LAG_ALARM_ROUNDS: u64 = 50_000;
 
+/// How recent an MPC progress report must be for its catch-up flag to hold the
+/// stopped-contributing alarm.
+///
+/// The hold is a LEASE the MPC service renews, never a flag it can leave set:
+/// the service publishes a report for every consensus round it consumes, so a
+/// service genuinely draining a backlog renews this hundreds to thousands of
+/// times a second, and one that stopped renews never. An expiry-free flag would
+/// hand the stall its perfect hiding place — the deliberate service-loop
+/// `break` on self-recognised maliciousness is reachable during the
+/// post-restart replay window, and would otherwise latch the suppression for
+/// the life of the process.
+///
+/// A minute is ~3,000 service-loop iterations (the loop sleeps 20ms between
+/// them) and orders of magnitude beyond the per-round drain interval a
+/// catching-up validator sustains (~1-2k rounds a second in production), so
+/// nothing short of the service actually stopping expires it — the bound is
+/// generous in the direction where being wrong reintroduces the false alarm
+/// this exists to remove. It is still 1/60th of the time scale
+/// `MPC_LAG_ALARM_ROUNDS` encodes (~an hour of round production), so a service
+/// that dies mid-catch-up is reported within a minute rather than never.
+const MPC_CATCH_UP_REPORT_FRESHNESS: Duration = Duration::from_secs(60);
+
+/// How long a reported catch-up may run without its lag reaching a new low
+/// before the drain is called stuck.
+///
+/// While the service keeps reporting a catch-up the stopped-contributing alarm
+/// is held, so this is the only line left that can say the validator is not on
+/// its way back. The bound is generous on purpose: the largest backlog seen in
+/// production (~640k rounds, a mid-epoch restart replaying the epoch) drained
+/// COMPLETELY in five to ten minutes — with computation withheld the drain runs
+/// at ~1-2k rounds/s against a ~19.5 rounds/s tip. A drain running at a
+/// hundredth of that still reaches a new low every few commits, so a quarter
+/// hour without one is not a slow drain — it is a drain that stopped.
+const MPC_CATCH_UP_STUCK_DRAIN: Duration = Duration::from_secs(15 * 60);
+
+/// What the MPC service publishes for the consensus-path stall detector: the
+/// round it has finished consuming, whether its catch-up gate was engaged when
+/// it finished, and when it said so.
+///
+/// One immutable value behind a single `ArcSwapOption` rather than three
+/// separate atomics, so the consensus path always weighs a round against the
+/// gate state and the timestamp that were true *together*. Torn across atomics
+/// these would pair a fresh timestamp with a stale gate flag, which is the
+/// exact combination that decides whether the alarm is held.
+#[derive(Debug, Clone, Copy)]
+struct MpcServiceProgress {
+    consumed_round: Round,
+    catching_up: bool,
+    observed_at: Instant,
+}
+
+/// Consensus-side view of the catch-up currently being reported: the smallest
+/// lag seen since it started and when that low was reached.
+///
+/// The MINIMUM rather than the previous sample, because the tip keeps advancing
+/// while the cursor chases it: a drain closing the gap fast still produces
+/// individual samples that tick upwards, and comparing consecutive samples
+/// would read those as a stall.
+#[derive(Debug, Clone, Copy)]
+struct CatchUpDrainProgress {
+    lowest_lag_rounds: u64,
+    lowest_lag_at: Instant,
+}
+
 /// What a single MPC-lag sample changed, so the loud log fires on transition
 /// rather than on every consensus commit. Returned rather than kept private so
 /// the latching is directly testable — the state flag alone cannot distinguish
@@ -122,6 +188,24 @@ enum MpcLagTransition {
     Raised,
     Cleared,
     Unchanged,
+}
+
+/// What one MPC-lag sample changed, per alarm: `stopped_contributing` is an MPC
+/// service that is no longer consuming rounds at all, `stuck_drain` a reported
+/// catch-up that has stopped closing its gap. Two alarms rather than one
+/// because the first is deliberately held in exactly the situation that makes
+/// the second the only remaining signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MpcLagReport {
+    stopped_contributing: MpcLagTransition,
+    stuck_drain: MpcLagTransition,
+}
+
+impl MpcLagReport {
+    const UNCHANGED: Self = Self {
+        stopped_contributing: MpcLagTransition::Unchanged,
+        stuck_drain: MpcLagTransition::Unchanged,
+    };
 }
 
 pub enum CancelConsensusCertificateReason {
@@ -266,9 +350,70 @@ pub struct ExecutionIndicesWithStats {
     pub stats: ConsensusStats,
 }
 
-/// A presign assigned (in consensus order) to a NOA sign demand:
-/// `(presign session id, blending index, raw presign bytes, network key id)`.
-pub(crate) type NoaAssignedPresign = (SessionIdentifier, u16, Vec<u8>, ObjectID);
+/// The terminal resolution of a NOA sign demand: exactly one per demand
+/// digest, per epoch, written by the consensus-order drain.
+///
+/// Both arms are terminal, and recording BOTH durably is what keeps a
+/// restarted validator consistent with its peers. The drain replays the
+/// epoch's consensus rounds after a restart while the presign pool — durable
+/// per-epoch state — is not rewound with them, so a demand the park bound
+/// dropped would otherwise be re-read at its delivery round against a pool
+/// that filled after the drop, and the replayed drain would pop for a demand
+/// every peer had already given up on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum NoaPresignDemandResolution {
+    /// A presign was popped for this demand and is bound to it.
+    Assigned {
+        session_identifier: SessionIdentifier,
+        blending_index: u16,
+        presign: Vec<u8>,
+        network_encryption_key_id: ObjectID,
+    },
+    /// The demand stayed unassigned for the whole park bound and was dropped;
+    /// it must never be assigned a presign in this epoch.
+    Evicted,
+}
+
+/// What one drain attempt at a demand resolved to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PresignAssignmentOutcome {
+    /// A presign is bound to the demand — popped by this call, or already
+    /// recorded by an earlier drain of the same rounds.
+    Assigned {
+        session_identifier: SessionIdentifier,
+        blending_index: u16,
+        presign: Vec<u8>,
+    },
+    /// The demand was dropped at the park bound in an earlier round, and must
+    /// never be assigned a presign in this epoch. Reachable only for
+    /// [`PresignDemand::Noa`] — a global presign request has no park bound.
+    Evicted,
+    /// No presign exists for the demand's network encryption key yet.
+    PoolEmpty,
+}
+
+/// What a presign is being assigned TO — and, because assignment is keyed by
+/// it, the idempotency key.
+///
+/// Every consumer's demand stream is replayed from a per-epoch table after a
+/// restart, so a bare pool pop on replay binds a DIFFERENT presign than the
+/// never-crashed peers bound (fills complete out of sequence order, so the
+/// pool head moves between the original pop and the replayed one). That is a
+/// byte-divergent checkpoint or attestation from an honest validator. Routing
+/// every assignment through a demand identity makes the replay a no-op
+/// instead: a re-seen demand returns what it was already given, without
+/// popping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresignDemand {
+    /// A global presign request, identified by its consensus sequence number.
+    GlobalRequest { session_sequence_number: u64 },
+    /// A network-owned-address sign demand, identified by its demand id.
+    ///
+    /// Carries the identity TYPE, not a bare digest: the assignment table is
+    /// keyed by `NOAPresignDemandId::digest()`, and any other 32-byte value
+    /// would type-check at a call site while keying the assignment wrong.
+    Noa { demand_id: NOAPresignDemandId },
+}
 
 /// Trait for the AuthorityPerEpochStore, which gets recreated at the beginning of each epoch.
 pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
@@ -279,7 +424,8 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
 
-    /// Publishes the consensus round the MPC service has finished consuming.
+    /// Publishes the consensus round the MPC service has finished consuming,
+    /// and whether its catch-up gate was engaged when it finished.
     ///
     /// The MPC service cannot report its own stall: every path that stops it
     /// also stops the code that would notice — most starkly the deliberate
@@ -288,7 +434,16 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// So the MPC side only publishes its progress here, and the CONSENSUS
     /// commit path — which is still alive in exactly the cases that matter —
     /// does the comparing.
-    fn record_mpc_consumed_consensus_round(&self, round: Round);
+    ///
+    /// The gate state rides along because the consensus path cannot otherwise
+    /// tell a stopped service from one deliberately draining a replay backlog:
+    /// consensus rounds restart at zero each epoch and a restart's fresh epoch
+    /// store starts its cursor there too, so from the commit path a mid-epoch
+    /// restart looks exactly like a service that never started. `catching_up`
+    /// must be sampled from the gate itself, not from the gate's metric — a
+    /// gauge published by the service loop latches at its last value when that
+    /// loop dies, which is the one case the detector exists for.
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool);
 
     fn next_dwallet_mpc_message(
         &self,
@@ -348,34 +503,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<u64>>;
 
-    /// Pop a presign from the internal pool for the given algorithm and key.
-    ///
-    /// Concurrency safety: This method is only called from the MPC manager
-    /// during consensus round processing, which is single-threaded (one round
-    /// at a time). There is no concurrent access to the presign pool.
-    ///
-    /// Self-committing and NOT idempotent — see the note on the inherent
-    /// method. Work that is replayed from a consensus round stream must use
-    /// `serve_global_presign` / `assign_noa_presign` / `assign_presign`.
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
-
-    /// Serves a global presign request out of the internal pool atomically and
-    /// idempotently: an already-served sequence number returns the SAME presign
-    /// without popping, otherwise the pop and the record of what it served land
-    /// in ONE committed batch (they must not be separable — a replayed request
-    /// that re-pops binds a different presign than its peers). Returns `None`
-    /// only when the pool is empty.
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
-
     /// Returns the next idle status updates after the given consensus round.
     fn next_idle_status_update(
         &self,
@@ -387,6 +514,18 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>>;
+
+    /// Assign a presign to a demand — atomically, and idempotently in the
+    /// demand's identity, so the per-epoch replay every consumer performs
+    /// after a restart re-reads the same assignment instead of popping a
+    /// second, different presign. See
+    /// [`AuthorityEpochTables::assign_presign_for_demand`].
+    fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<PresignAssignmentOutcome>;
 
     /// Returns the next global presign requests after the given consensus round.
     fn next_global_presign_request(
@@ -406,25 +545,28 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>>;
 
-    /// Reads the presign assigned (in consensus order) to a NOA sign demand.
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>>;
-
-    /// Assigns a presign to a NOA sign demand atomically and idempotently: if
-    /// the demand is already assigned, returns the existing assignment without
-    /// popping; otherwise pops a presign and records the assignment in a SINGLE
-    /// committed batch (the pop and the record must not be separable — a crash
-    /// between them would let a re-drain after replay pop a different presign
-    /// than peers assigned). Mirrors `assign_presign`. The network key id is
-    /// stored so the sign instantiates under the SAME key the presign came from.
-    fn assign_noa_presign(
+    /// Reads a NOA sign demand's terminal resolution, if it has one.
+    ///
+    /// Keyed by the identity, never a bare digest — the same reason
+    /// [`PresignDemand::Noa`] carries one.
+    fn noa_presign_demand_resolution(
         &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>>;
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>>;
 
-    /// Whether a presign has already been assigned to a NOA sign demand.
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool>;
+    /// Durably records that a demand was dropped at the park bound, so a
+    /// replay of the epoch's rounds cannot assign it a presign the rest of the
+    /// committee never assigned. Idempotent, and never overwrites an existing
+    /// resolution.
+    ///
+    /// NOA-only: a global presign request has no bound to outlive, and its
+    /// marker table holds served presigns alone.
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()>;
+
+    /// Whether a NOA sign demand already has a terminal resolution — assigned
+    /// OR dropped at the park bound. Both end the demand, so neither needs a
+    /// (re-)announcement.
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool>;
 
     /// Marks a presign as used so it cannot be reused.
     fn mark_presign_as_used(
@@ -460,8 +602,10 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         presign_blending_index: u16,
     ) -> IkaResult<Option<Vec<u8>>>;
 
-    /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
-    /// This is used for external presign requests.
+    /// Assigns a presign to a USER by moving it from the internal pool to the
+    /// assigned pool. NOT idempotent — see
+    /// [`Self::assign_presign_for_demand`] for the demand-keyed form every
+    /// replayed consumer must use.
     fn assign_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -590,9 +734,13 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             .insert(&checkpoint.height(), &checkpoint)?)
     }
 
-    fn record_mpc_consumed_consensus_round(&self, round: Round) {
-        self.mpc_consumed_consensus_round
-            .store(round, std::sync::atomic::Ordering::Relaxed);
+    fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
+        self.mpc_service_progress
+            .store(Some(Arc::new(MpcServiceProgress {
+                consumed_round: round,
+                catching_up,
+                observed_at: Instant::now(),
+            })));
     }
 
     fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
@@ -687,29 +835,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         tables.max_filled_presign_pool_slot(signature_algorithm, dwallet_network_encryption_key_id)
     }
 
-    fn pop_presign(
-        &self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let tables = self.tables()?;
-        tables.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
-    }
-
-    fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        let tables = self.tables()?;
-        tables.serve_global_presign(
-            session_sequence_number,
-            signature_algorithm,
-            dwallet_network_encryption_key_id,
-        )
-    }
-
     fn next_idle_status_update(
         &self,
         last_consensus_round: Option<Round>,
@@ -750,22 +875,38 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         next_round_row(&tables.noa_presign_demands, last_consensus_round)
     }
 
-    fn noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<Option<NoaAssignedPresign>> {
-        Ok(self.tables()?.noa_assigned_presigns.get(digest)?)
-    }
-
-    fn assign_noa_presign(
+    fn noa_presign_demand_resolution(
         &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        self.tables()?
-            .assign_noa_presign(digest, signature_algorithm, network_encryption_key_id)
+        demand_id: &NOAPresignDemandId,
+    ) -> IkaResult<Option<NoaPresignDemandResolution>> {
+        Ok(self
+            .tables()?
+            .noa_presign_demand_resolutions
+            .get(&demand_id.digest())?)
     }
 
-    fn has_noa_assigned_presign(&self, digest: &[u8; 32]) -> IkaResult<bool> {
-        Ok(self.tables()?.noa_assigned_presigns.contains_key(digest)?)
+    fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<PresignAssignmentOutcome> {
+        self.tables()?.assign_presign_for_demand(
+            demand,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        )
+    }
+
+    fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        self.tables()?.evict_noa_presign_demand(demand_id)
+    }
+
+    fn has_noa_presign_demand_resolution(&self, demand_id: &NOAPresignDemandId) -> IkaResult<bool> {
+        Ok(self
+            .tables()?
+            .noa_presign_demand_resolutions
+            .contains_key(&demand_id.digest())?)
     }
 
     fn mark_presign_as_used(
@@ -1030,16 +1171,27 @@ pub struct AuthorityPerEpochStore {
     pending_handoff_signatures:
         parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
 
-    /// Consensus round the MPC service last finished consuming, published by
-    /// the service itself. Compared against the commit round on the consensus
-    /// path to detect an MPC subsystem that has stopped while consensus keeps
-    /// running — see `record_mpc_consumed_consensus_round`. `0` until the
-    /// service reports its first round.
-    mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+    /// Latest progress report from the MPC service — the round it finished
+    /// consuming, its catch-up gate state, and when it published them.
+    /// Compared against the commit round on the consensus path to detect an MPC
+    /// subsystem that has stopped while consensus keeps running — see
+    /// `record_mpc_consumed_consensus_round`. `None` until the service reports
+    /// for the first time.
+    mpc_service_progress: ArcSwapOption<MpcServiceProgress>,
 
     /// Whether the MPC-lag alarm is currently raised, so the loud log fires on
     /// transition instead of on every consensus commit.
     mpc_lag_alarm_active: std::sync::atomic::AtomicBool,
+
+    /// Drain progress of the catch-up the MPC service is currently reporting,
+    /// or `None` when it is reporting none. Cleared when the reported catch-up
+    /// ends, so every catch-up is judged on its own drain rather than on the
+    /// low-water mark of an earlier one.
+    mpc_catch_up_drain: Mutex<Option<CatchUpDrainProgress>>,
+
+    /// Whether the stuck-drain alarm is currently raised; latched for the same
+    /// reason as `mpc_lag_alarm_active`.
+    mpc_catch_up_stuck_alarm_active: AtomicBool,
 
     /// Pending `handoff_signatures` row mutations, waiting to be folded into
     /// the next `ConsensusCommitOutput`. `Some(signature)` is an upsert,
@@ -1428,7 +1580,7 @@ pub struct AuthorityEpochTables {
     /// than peers bound to it — the false-malicious class — for any consumer
     /// that requires pool-head determinism. The NOA path closed this by
     /// batching the pop with an idempotent assignment record (see
-    /// `noa_assigned_presigns` / `assign_noa_presign`); the external
+    /// `noa_presign_demand_resolutions` / `assign_presign_for_demand`); the external
     /// `assign_presign` path has not been audited to the same standard.
     /// Do not add a consumer that assumes cross-validator pop identity until
     /// #1928 lands.
@@ -1519,7 +1671,7 @@ pub struct AuthorityEpochTables {
     /// sessions in one batch complete in consensus order, not sequence order),
     /// so a bare re-pop serves a DIFFERENT presign than the never-crashed peers
     /// put in their checkpoint message for the same presign id. Per-epoch, like
-    /// `noa_assigned_presigns`, whose idempotency this mirrors.
+    /// `noa_presign_demand_resolutions`, whose idempotency this mirrors.
     ///
     /// write-discipline: direct — safe because idempotent-replay: written in
     /// the pop's own batch and read back on a re-served sequence number, so a
@@ -1565,22 +1717,27 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
 
-    /// Presign assigned to each NOA sign demand, keyed by the demand's
-    /// `demand_id` digest. Written by the consensus-order drain and read by the
-    /// sign-session instantiation, so all validators pair the same presign with
-    /// the same demand. Value is a [`NoaAssignedPresign`]. Per-epoch (physically
-    /// dropped on rotation) like `used_presigns`; the demand queue that feeds it
-    /// is rebuilt empty when the per-epoch service restarts, and idempotency here
+    /// Terminal resolution of each NOA sign demand, keyed by the demand's
+    /// `demand_id` digest: the presign assigned to it, or a marker that the
+    /// park bound dropped it. Written by the consensus-order drain and read by
+    /// the sign-session instantiation, so all validators pair the same presign
+    /// with the same demand — and give up on the same demands. Value is a
+    /// [`NoaPresignDemandResolution`]. Per-epoch (physically dropped on
+    /// rotation) like `used_presigns`; the demand queue that feeds it is
+    /// rebuilt empty when the per-epoch service restarts, and idempotency here
     /// makes re-drains safe.
     ///
     /// write-discipline: direct — safe because idempotent-replay: keyed by the
     /// demand digest and written in the SAME batch as the pool pop and the
-    /// `used_presigns` marker (`assign_noa_presign`), so a re-drain after a
+    /// `used_presigns` marker (`assign_presign_for_demand`), so a re-drain after a
     /// crash returns the recorded assignment instead of popping again. This is
     /// the shape the raw pool tables lack (#1928): the consumer that needs
     /// cross-validator identity — sign-session instantiation — reads THIS
-    /// table, never the pool head.
-    noa_assigned_presigns: DBMap<[u8; 32], NoaAssignedPresign>,
+    /// table, never the pool head. The drop marker needs the same durability
+    /// for the same reason: the pool is not rewound by the replay, so a drop
+    /// held only in memory would let the replayed drain pop for a demand the
+    /// committee had already abandoned.
+    noa_presign_demand_resolutions: DBMap<[u8; 32], NoaPresignDemandResolution>,
 
     /// Tracks presigns that have been consumed for signing.
     /// Key: (SessionIdentifier, blending_index) - uniquely identifies a single presign within
@@ -1590,7 +1747,7 @@ pub struct AuthorityEpochTables {
     ///
     /// write-discipline: direct — safe because idempotent-replay: a monotone
     /// marker keyed by the presign it retires, written either inside
-    /// `assign_noa_presign`'s pop batch or standalone by
+    /// `assign_presign_for_demand`'s pop batch or standalone by
     /// `mark_presign_as_used`. Re-writing it is a no-op, and the consumer
     /// (`is_presign_used`) only ever gates THIS node's reuse of a presign it
     /// already consumed.
@@ -1605,7 +1762,7 @@ pub struct AuthorityEpochTables {
     /// `assign_presign`'s pop batch (so an assignment can never exist without
     /// its pool removal), but that batch is the pool's own, not the consuming
     /// commit's — so WHICH presign a replayed assignment binds inherits the
-    /// pool's re-pop exposure. Unlike `noa_assigned_presigns` the key is the
+    /// pool's re-pop exposure. Unlike `noa_presign_demand_resolutions` the key is the
     /// popped presign, not the request, so a re-pop yields a new row rather
     /// than hitting an idempotence guard.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
@@ -2014,61 +2171,16 @@ impl AuthorityEpochTables {
             .unwrap_or(0))
     }
 
-    /// Serves a global presign request out of the internal pool, atomically and
-    /// idempotently.
+    /// Test-only raw pool pop, for tests that inspect pool contents directly.
     ///
-    /// If this request's sequence number was already served, returns the SAME
-    /// presign without popping. Otherwise pops the pool head and records the
-    /// serve in the SAME committed batch as the pop.
-    ///
-    /// Both halves are load-bearing. The request stream is a per-epoch table
-    /// that the DWallet MPC service replays in full after a restart, so a bare
-    /// `pop_presign` here re-pops on replay — and the replayed pool is not the
-    /// pool the original run popped from, because the surviving entries were
-    /// never cleared. An entry whose sequence number is lower than the head at
-    /// that round wins the replayed pop even though it did not exist yet when
-    /// the round was first processed (internal presign sessions in one batch
-    /// complete in consensus order, not sequence order, so a lower sequence
-    /// number filling later is ordinary). The replayed request would then be
-    /// answered with a different presign than the never-crashed peers put in
-    /// their checkpoint message for the same presign id: byte-divergent
-    /// checkpoints from an honest validator. Mirrors `assign_noa_presign`.
-    pub fn serve_global_presign(
-        &self,
-        session_sequence_number: u64,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
-        if let Some(served) = self.served_global_presigns.get(&session_sequence_number)? {
-            return Ok(Some(served));
-        }
-        let Some((mut batch, session_identifier, blending_index, presign)) =
-            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        batch.insert_batch(
-            &self.served_global_presigns,
-            [(
-                &session_sequence_number,
-                &(session_identifier, blending_index, presign.clone()),
-            )],
-        )?;
-        batch.write()?;
-        Ok(Some((session_identifier, blending_index, presign)))
-    }
-
-    /// Pops a single presign from the pool for the given signature algorithm and network
-    /// encryption key. Returns the session identifier, the presign's blending index, and presign
-    /// bytes, or None if the pool is empty. Presigns are consumed in order of session sequence
-    /// number (lowest first).
-    ///
-    /// Self-committing and NOT idempotent: the pool advances the moment this
-    /// returns. Any caller whose work is replayed from a consensus round stream
-    /// must instead pop through a method that records what it popped in the pop's
-    /// own batch (`serve_global_presign`, `assign_noa_presign`, `assign_presign`),
-    /// or the replay binds a different presign than its peers did.
-    pub fn pop_presign(
+    /// No REPLAYED path pops bare: every consumer whose demand stream is
+    /// replayed after a restart assigns through an idempotent
+    /// [`PresignDemand`], because a bare pop on replay binds a different
+    /// presign than peers bound. ([`Self::assign_presign`] does still pop
+    /// unconditionally, but it has no consumer; a future one must gain a
+    /// demand identity before it can be replay-safe.)
+    #[cfg(test)]
+    pub fn pop_presign_for_testing(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
@@ -2080,6 +2192,126 @@ impl AuthorityEpochTables {
         };
         batch.write()?;
         Ok(Some((session_identifier, blending_index, presign)))
+    }
+
+    /// Assign a presign to a demand — atomically, and idempotently in the
+    /// demand's identity.
+    ///
+    /// A re-seen demand returns the presign it was already given WITHOUT
+    /// popping. That is what makes the per-epoch replay every consumer
+    /// performs after a restart safe: a bare re-pop would bind a different
+    /// presign than the never-crashed peers bound (fills complete out of
+    /// sequence order, so the pool head moves), and the checkpoint or
+    /// attestation built from it would be byte-divergent from an honest
+    /// validator.
+    ///
+    /// The pop and the record land in ONE committed batch, which is why
+    /// [`Self::prepare_pop_presign`] hands back an UNCOMMITTED batch for this
+    /// method to extend. Committing them separately would open a crash window
+    /// between the two writes: the pool would be advanced with no record of
+    /// where the presign went, so the replay would pop again — the very
+    /// divergence the identity key exists to prevent.
+    /// A NOA demand carries a second terminal outcome the global arm has no
+    /// equivalent of: the park bound can DROP it (see
+    /// [`NoaPresignDemandResolution`]). That drop is recorded in the same
+    /// per-demand table as its assignment, so this method reports it rather
+    /// than popping — which is what stops a restart's replay from assigning a
+    /// presign for a demand the whole committee already gave up on.
+    pub fn assign_presign_for_demand(
+        &self,
+        demand: &PresignDemand,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<PresignAssignmentOutcome> {
+        // Already resolved? Report it; never pop again.
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                if let Some((session_identifier, blending_index, presign)) =
+                    self.served_global_presigns.get(session_sequence_number)?
+                {
+                    return Ok(PresignAssignmentOutcome::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                    });
+                }
+            }
+            PresignDemand::Noa { demand_id } => {
+                match self
+                    .noa_presign_demand_resolutions
+                    .get(&demand_id.digest())?
+                {
+                    Some(NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                        ..
+                    }) => {
+                        return Ok(PresignAssignmentOutcome::Assigned {
+                            session_identifier,
+                            blending_index,
+                            presign,
+                        });
+                    }
+                    Some(NoaPresignDemandResolution::Evicted) => {
+                        return Ok(PresignAssignmentOutcome::Evicted);
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        let Some((mut batch, session_identifier, blending_index, presign)) =
+            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(PresignAssignmentOutcome::PoolEmpty);
+        };
+
+        match demand {
+            PresignDemand::GlobalRequest {
+                session_sequence_number,
+            } => {
+                batch.insert_batch(
+                    &self.served_global_presigns,
+                    [(
+                        session_sequence_number,
+                        &(session_identifier, blending_index, presign.clone()),
+                    )],
+                )?;
+            }
+            PresignDemand::Noa { demand_id } => {
+                batch.insert_batch(
+                    &self.noa_presign_demand_resolutions,
+                    [(
+                        &demand_id.digest(),
+                        &NoaPresignDemandResolution::Assigned {
+                            session_identifier,
+                            blending_index,
+                            presign: presign.clone(),
+                            network_encryption_key_id: dwallet_network_encryption_key_id,
+                        },
+                    )],
+                )?;
+                // Mark the popped presign used, in the SAME batch as the
+                // assignment. This is the point of actual consumption (the pool
+                // pop happens in `prepare_pop_presign` above); the sign session
+                // later reads the presign from the assignment table and never
+                // pops again, so this is the only place the consumption is
+                // recorded.
+                batch.insert_batch(
+                    &self.used_presigns,
+                    [(&(session_identifier, blending_index), &())],
+                )?;
+            }
+        }
+        batch.write()?;
+        Ok(PresignAssignmentOutcome::Assigned {
+            session_identifier,
+            blending_index,
+            presign,
+        })
     }
 
     /// Prepares a presign pop without committing, returning the uncommitted batch.
@@ -2266,57 +2498,22 @@ impl AuthorityEpochTables {
         Ok(Some((session_identifier, blending_index)))
     }
 
-    /// Atomically + idempotently assign a presign to a NOA sign demand.
+    /// Durably record that the park bound dropped a NOA sign demand.
     ///
-    /// If the demand is already assigned, return the existing assignment
-    /// without popping. Otherwise pop a presign and record the assignment
-    /// (raw presign bytes + the network key id it came from) in the SAME
-    /// committed batch as the pop. Atomicity is load-bearing: `pop_presign`
-    /// self-commits, so a separate record write would leave a crash window
-    /// where, after a consensus-round replay, the demand looks unassigned but
-    /// its presign is gone from the pool — a re-drain would then pop a
-    /// DIFFERENT presign than the (non-crashed) peers assigned, reintroducing
-    /// the cross-validator divergence this fix exists to remove. Mirrors
-    /// `assign_presign`.
-    pub fn assign_noa_presign(
-        &self,
-        digest: [u8; 32],
-        signature_algorithm: DWalletSignatureAlgorithm,
-        network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
-        if let Some((session_identifier, blending_index, _, _)) =
-            self.noa_assigned_presigns.get(&digest)?
-        {
-            return Ok(Some((session_identifier, blending_index)));
+    /// Idempotent, and never replaces an existing resolution: an assignment
+    /// already recorded for this demand is the truth the whole committee holds,
+    /// and a second drop marker is the same fact written twice. The read and
+    /// the write need not be one batch — the drain is the single writer of this
+    /// table, and it only calls this after the same round's
+    /// `assign_presign_for_demand` reported an empty pool.
+    pub fn evict_noa_presign_demand(&self, demand_id: &NOAPresignDemandId) -> IkaResult<()> {
+        let digest = demand_id.digest();
+        if self.noa_presign_demand_resolutions.contains_key(&digest)? {
+            return Ok(());
         }
-        let Some((mut batch, session_identifier, blending_index, presign)) =
-            self.prepare_pop_presign(signature_algorithm, network_encryption_key_id)?
-        else {
-            return Ok(None);
-        };
-        batch.insert_batch(
-            &self.noa_assigned_presigns,
-            [(
-                &digest,
-                &(
-                    session_identifier,
-                    blending_index,
-                    presign,
-                    network_encryption_key_id,
-                ),
-            )],
-        )?;
-        // Mark the popped presign used, in the SAME batch as the assignment.
-        // This is the point of actual consumption (the pool pop happens in
-        // `prepare_pop_presign` above); the sign session later reads the presign
-        // from the assignment table and never pops again, so this is the only
-        // place the consumption is recorded.
-        batch.insert_batch(
-            &self.used_presigns,
-            [(&(session_identifier, blending_index), &())],
-        )?;
-        batch.write()?;
-        Ok(Some((session_identifier, blending_index)))
+        Ok(self
+            .noa_presign_demand_resolutions
+            .insert(&digest, &NoaPresignDemandResolution::Evicted)?)
     }
 
     /// Retrieves an assigned presign by session identifier, blending index, and signature algorithm.
@@ -2471,7 +2668,7 @@ impl AuthorityPerEpochStore {
             .get_last_consensus_stats()?
             .map(|stats| stats.index.last_committed_round);
         metrics
-            .consensus_last_committed_leader_round
+            .last_committed_leader_consensus_round
             .set(last_committed_leader_round.map_or(-1, |round| round as i64));
         // Ready-signal deadline: restore the persisted 3/4-epoch backstop
         // anchor. The publication-grace term is deliberately absent here —
@@ -2531,8 +2728,10 @@ impl AuthorityPerEpochStore {
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
-            mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            mpc_service_progress: ArcSwapOption::empty(),
             mpc_lag_alarm_active: std::sync::atomic::AtomicBool::new(false),
+            mpc_catch_up_drain: Mutex::new(None),
+            mpc_catch_up_stuck_alarm_active: AtomicBool::new(false),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
             staged_handoff_signature_rows: parking_lot::Mutex::new(BTreeMap::new()),
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
@@ -3589,27 +3788,123 @@ impl AuthorityPerEpochStore {
     /// production at observed testnet rates; the two production incidents this
     /// exists for sat far past it for many hours.
     ///
+    /// Generous is not enough on its own, though: a gap the MPC service is
+    /// itself reporting as a catch-up drain is explained, not unambiguous. A
+    /// mid-epoch restart replays every round of the epoch so far, so past the
+    /// first three quarters of an hour of a 24h epoch that replay alone exceeds
+    /// the threshold and the alarm fires on every restart of a perfectly
+    /// healthy validator — telling its operator to restart it again and discard
+    /// the drain. So a reported catch-up holds this alarm, but only for as long
+    /// as the service keeps renewing that report
+    /// (`MPC_CATCH_UP_REPORT_FRESHNESS`): a service that stops mid-catch-up
+    /// alarms like any other stopped service, and a drain that stops closing
+    /// its gap raises `stuck_drain` instead. Nothing goes quiet.
+    ///
     /// Logged on TRANSITION only, not per commit: this runs on every consensus
     /// commit, so an unconditional log would emit thousands of lines an hour
-    /// and bury itself. The gauge carries the continuous signal.
-    fn report_mpc_consensus_round_lag(&self, commit_round: Round) -> MpcLagTransition {
-        let consumed = self
-            .mpc_consumed_consensus_round
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if consumed == 0 {
+    /// and bury itself. The gauges carry the continuous signal.
+    fn report_mpc_consensus_round_lag(&self, commit_round: Round) -> MpcLagReport {
+        let Some(progress) = self.mpc_service_progress.load_full() else {
             // The MPC service has not reported a round yet (fresh epoch store,
-            // still replaying). Round 0 is legitimate, so the gauge carries a
-            // sentinel rather than a plausible-looking 0.
+            // still replaying). Round 0 is a legitimate round to have consumed,
+            // so the gauge carries a sentinel rather than a plausible-looking 0.
+            // The condition gauges are reset here too: the metrics registry is
+            // process-wide while the alarm latches are per-epoch-store, so
+            // without this an epoch that ended with a condition raised would
+            // keep exporting 1 through the next epoch's sentinel window and
+            // then drop to 0 without a Cleared log.
             self.metrics.mpc_consensus_round_lag.set(-1);
-            return MpcLagTransition::Unchanged;
-        }
-        let lag = commit_round.saturating_sub(consumed);
+            self.metrics
+                .mpc_stopped_contributing_condition_active
+                .set(0);
+            self.metrics.mpc_catch_up_stuck_condition_active.set(0);
+            return MpcLagReport::UNCHANGED;
+        };
+        let lag = commit_round.saturating_sub(progress.consumed_round);
         self.metrics.mpc_consensus_round_lag.set(lag as i64);
 
-        let alarming = lag >= MPC_LAG_ALARM_ROUNDS;
+        let report_age = progress.observed_at.elapsed();
+        let draining = progress.catching_up && report_age < MPC_CATCH_UP_REPORT_FRESHNESS;
+        let stuck_drain = self.report_catch_up_drain_progress(lag, draining, commit_round);
+
+        let alarming = lag >= MPC_LAG_ALARM_ROUNDS && !draining;
+        let was_alarming = self.mpc_lag_alarm_active.swap(alarming, Ordering::Relaxed);
+        self.metrics
+            .mpc_stopped_contributing_condition_active
+            .set(alarming as i64);
+        let stopped_contributing = match (was_alarming, alarming) {
+            (false, true) => MpcLagTransition::Raised,
+            (true, false) => MpcLagTransition::Cleared,
+            _ => MpcLagTransition::Unchanged,
+        };
+        match stopped_contributing {
+            MpcLagTransition::Raised => error!(
+                lag_rounds = lag,
+                commit_round,
+                mpc_consumed_round = progress.consumed_round,
+                mpc_catching_up = progress.catching_up,
+                report_age_secs = report_age.as_secs(),
+                "MPC subsystem has stopped keeping up with consensus: this validator is \
+                 following consensus normally but is no longer contributing MPC work. No live \
+                 catch-up explains the gap — a validator draining a post-restart backlog keeps \
+                 reporting one, and its ika_dwallet_mpc_catchup_gap_rounds falls while it does. \
+                 It will not recover on its own in every known case — check for an earlier fatal \
+                 in the dWallet MPC service, and restart the node if none explains it"
+            ),
+            MpcLagTransition::Cleared => info!(
+                lag_rounds = lag,
+                "MPC subsystem has caught back up with consensus"
+            ),
+            MpcLagTransition::Unchanged => {}
+        }
+        MpcLagReport {
+            stopped_contributing,
+            stuck_drain,
+        }
+    }
+
+    /// Follows the drain of the catch-up the MPC service is reporting, and
+    /// escalates once it has stopped draining.
+    ///
+    /// `draining` is true only while a live catch-up report is holding the
+    /// stopped-contributing alarm, which is exactly when this is the sole
+    /// remaining signal. False ends the tracking: the catch-up either finished
+    /// (the gate disengaged) or the service stopped reporting it, and the
+    /// stopped-contributing alarm covers the second.
+    fn report_catch_up_drain_progress(
+        &self,
+        lag: u64,
+        draining: bool,
+        commit_round: Round,
+    ) -> MpcLagTransition {
+        let stalled_for = if draining {
+            let now = Instant::now();
+            let mut drain = self.mpc_catch_up_drain.lock();
+            let progress = drain.get_or_insert(CatchUpDrainProgress {
+                lowest_lag_rounds: lag,
+                lowest_lag_at: now,
+            });
+            if lag < progress.lowest_lag_rounds {
+                // A new low: the backlog is still shrinking, so the drain is
+                // healthy however long it has been running.
+                *progress = CatchUpDrainProgress {
+                    lowest_lag_rounds: lag,
+                    lowest_lag_at: now,
+                };
+            }
+            now.saturating_duration_since(progress.lowest_lag_at)
+        } else {
+            *self.mpc_catch_up_drain.lock() = None;
+            Duration::ZERO
+        };
+
+        let alarming = stalled_for >= MPC_CATCH_UP_STUCK_DRAIN;
         let was_alarming = self
-            .mpc_lag_alarm_active
-            .swap(alarming, std::sync::atomic::Ordering::Relaxed);
+            .mpc_catch_up_stuck_alarm_active
+            .swap(alarming, Ordering::Relaxed);
+        self.metrics
+            .mpc_catch_up_stuck_condition_active
+            .set(alarming as i64);
         let transition = match (was_alarming, alarming) {
             (false, true) => MpcLagTransition::Raised,
             (true, false) => MpcLagTransition::Cleared,
@@ -3619,15 +3914,18 @@ impl AuthorityPerEpochStore {
             MpcLagTransition::Raised => error!(
                 lag_rounds = lag,
                 commit_round,
-                mpc_consumed_round = consumed,
-                "MPC subsystem has stopped keeping up with consensus: this validator is \
-                 following consensus normally but is no longer contributing MPC work. It will \
-                 not recover on its own in every known case — check for an earlier fatal in \
-                 the dWallet MPC service, and restart the node if none explains it"
+                stalled_for_secs = stalled_for.as_secs(),
+                "MPC catch-up backlog has stopped draining: the MPC service is still reporting \
+                 progress and its catch-up gate is still engaged, but the consensus-round gap \
+                 has not reached a new low for the whole window above, so this validator is not \
+                 on its way back to contributing MPC work. Watch \
+                 ika_dwallet_mpc_catchup_gap_rounds: while that gap falls the drain is healthy \
+                 and needs no action; this line means it stopped falling. A restart does not \
+                 help — it discards the drain's progress and replays it"
             ),
             MpcLagTransition::Cleared => info!(
                 lag_rounds = lag,
-                "MPC subsystem has caught back up with consensus"
+                "MPC catch-up backlog is draining again, or the catch-up it was stuck in ended"
             ),
             MpcLagTransition::Unchanged => {}
         }
@@ -5054,7 +5352,7 @@ impl AuthorityPerEpochStore {
         // `ika_last_process_mpc_consensus_round`, the MPC service's consumed
         // round, which lags this one).
         self.metrics
-            .consensus_last_committed_leader_round
+            .last_committed_leader_consensus_round
             .set(consensus_commit_info.round as i64);
         self.metrics
             .consensus_last_committed_timestamp_seconds
@@ -6538,6 +6836,8 @@ impl From<LockDetails> for LockDetailsWrapper {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef};
+    use tokio::time::advance;
 
     /// `next_round_row` must return the first row STRICTLY after the anchor —
     /// including when the anchor row itself is ABSENT from the table. The
@@ -6639,8 +6939,9 @@ mod tests {
     /// subsystem has stopped while consensus keeps running. Both production
     /// incidents this exists for (#1978, #1980) were invisible to their
     /// operators and diagnosable only from a fleet-wide view they do not have.
-    #[tokio::test]
-    async fn mpc_lag_is_reported_and_alarms_only_once_stopped() {
+    /// An epoch store for the MPC-lag detector tests. The tempdir comes back
+    /// with it because RocksDB needs its path to outlive the store.
+    fn mpc_lag_test_epoch_store() -> (Arc<AuthorityPerEpochStore>, tempfile::TempDir) {
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
@@ -6656,6 +6957,12 @@ mod tests {
             IkaNetworkConfig::new_for_testing(),
         )
         .unwrap();
+        (epoch_store, dir)
+    }
+
+    #[tokio::test]
+    async fn mpc_lag_is_reported_and_alarms_only_once_stopped() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
         let lag = || epoch_store.metrics.mpc_consensus_round_lag.get();
 
         // Before the MPC service reports anything the gauge must NOT read 0 —
@@ -6664,8 +6971,8 @@ mod tests {
         epoch_store.report_mpc_consensus_round_lag(1_000);
         assert_eq!(lag(), -1, "no MPC report yet must be a sentinel, not 0");
 
-        // Healthy: the service trails the commit path slightly.
-        epoch_store.record_mpc_consumed_consensus_round(990);
+        // Healthy: the service trails the commit path slightly, no catch-up.
+        epoch_store.record_mpc_consumed_consensus_round(990, false);
         epoch_store.report_mpc_consensus_round_lag(1_000);
         assert_eq!(lag(), 10);
         assert!(
@@ -6675,7 +6982,8 @@ mod tests {
             "an ordinary trailing distance must not alarm"
         );
 
-        // Stopped: consensus advances, MPC does not.
+        // Stopped: consensus advances, MPC does not. With no catch-up reported
+        // this is the unchanged pre-#2036 behavior.
         epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
         assert_eq!(lag(), MPC_LAG_ALARM_ROUNDS as i64);
         assert!(
@@ -6686,7 +6994,7 @@ mod tests {
         );
 
         // Recovery clears it, so a restart that fixes the node is visible too.
-        epoch_store.record_mpc_consumed_consensus_round(990 + MPC_LAG_ALARM_ROUNDS);
+        epoch_store.record_mpc_consumed_consensus_round(990 + MPC_LAG_ALARM_ROUNDS, false);
         epoch_store.report_mpc_consensus_round_lag(990 + MPC_LAG_ALARM_ROUNDS);
         assert_eq!(lag(), 0);
         assert!(
@@ -6697,34 +7005,223 @@ mod tests {
         );
     }
 
+    /// A validator restarted mid-epoch replays every round of the epoch so far,
+    /// and consensus rounds restart at 0 each epoch — so past roughly the first
+    /// three quarters of an hour of a 24h epoch, the replay gap alone exceeds
+    /// `MPC_LAG_ALARM_ROUNDS` and the ERROR was arithmetically guaranteed on
+    /// every restart (ika #2036, seen on all six production validators). Its
+    /// advice — restart the node — would have discarded the drain and replayed
+    /// it. A catch-up the MPC service is actively reporting must hold the alarm,
+    /// however large the gap and however long the drain runs.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn mpc_lag_alarm_is_held_while_the_service_reports_a_live_catch_up() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+
+        epoch_store.record_mpc_consumed_consensus_round(1, true);
+        let commit_round = 10 * MPC_LAG_ALARM_ROUNDS;
+        let report = epoch_store.report_mpc_consensus_round_lag(commit_round);
+        assert_eq!(
+            report.stopped_contributing,
+            MpcLagTransition::Unchanged,
+            "a reported catch-up must hold the alarm at ten times the threshold"
+        );
+        assert!(!epoch_store.mpc_lag_alarm_active.load(Ordering::Relaxed));
+        // Held, not hidden: the gauge still carries the real distance.
+        assert_eq!(
+            epoch_store.metrics.mpc_consensus_round_lag.get(),
+            (commit_round - 1) as i64
+        );
+
+        // Twenty minutes of an actual drain — the cursor closing on the tip far
+        // faster than the tip advances, which is what a suppressed-computation
+        // catch-up does (~1-2k rounds/s against a ~19.5 rounds/s tip in
+        // production). Longer than the stuck-drain bound on purpose: a drain
+        // that keeps making progress must raise neither alarm however long it
+        // runs.
+        for minute in 1..=20u64 {
+            advance(Duration::from_secs(60)).await;
+            epoch_store.record_mpc_consumed_consensus_round(minute * 40_000, true);
+            assert_eq!(
+                epoch_store.report_mpc_consensus_round_lag(commit_round + minute * 1_000),
+                MpcLagReport::UNCHANGED,
+                "minute {minute} of a healthy drain must stay silent"
+            );
+        }
+
+        // The drain finishes and the gate disengages: the ordinary path is back,
+        // with no alarm ever having fired.
+        epoch_store.record_mpc_consumed_consensus_round(commit_round + 20_000, false);
+        assert_eq!(
+            epoch_store.report_mpc_consensus_round_lag(commit_round + 20_000),
+            MpcLagReport::UNCHANGED
+        );
+    }
+
+    /// The hold is a lease the MPC service renews, not a flag it can leave set.
+    /// The service-loop `break` on self-recognised maliciousness is reachable
+    /// during the post-restart replay window, so a catch-up flag with no expiry
+    /// would hide that stall for the life of the process — which is why the
+    /// gate state is published on every consumed round and read with a
+    /// freshness bound, and why it is sampled from the gate rather than from
+    /// the gate's metric.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn mpc_lag_alarm_raises_when_the_catch_up_report_goes_stale() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        let commit_round = MPC_LAG_ALARM_ROUNDS + 1;
+
+        epoch_store.record_mpc_consumed_consensus_round(1, true);
+        advance(MPC_CATCH_UP_REPORT_FRESHNESS - Duration::from_secs(1)).await;
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(commit_round)
+                .stopped_contributing,
+            MpcLagTransition::Unchanged,
+            "a report still inside the freshness window holds the alarm"
+        );
+
+        // The service stops here: nothing renews the report.
+        advance(Duration::from_secs(2)).await;
+        let report = epoch_store.report_mpc_consensus_round_lag(commit_round);
+        assert_eq!(
+            report.stopped_contributing,
+            MpcLagTransition::Raised,
+            "a catch-up nobody is renewing IS the stall case, and must alarm"
+        );
+        assert_eq!(
+            report.stuck_drain,
+            MpcLagTransition::Unchanged,
+            "the stuck-drain alarm is for a live drain; a dead service is the other alarm"
+        );
+
+        // The service comes back and resumes draining: the alarm clears once.
+        epoch_store.record_mpc_consumed_consensus_round(commit_round, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(commit_round)
+                .stopped_contributing,
+            MpcLagTransition::Cleared
+        );
+    }
+
+    /// Holding the stopped-contributing alarm for a reported catch-up leaves a
+    /// gap only a second alarm can cover: a drain that has stopped draining.
+    /// The bound is generous — production backlogs of ~640k rounds drain
+    /// completely in five to ten minutes — so a quarter hour without the gap
+    /// reaching a new low means the validator is not coming back on its own.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn stuck_catch_up_drain_raises_while_the_lag_alarm_is_held() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        // A gap that stays exactly the same size: the cursor advances at the
+        // tip rate, so rounds keep being consumed (the report stays fresh) and
+        // the backlog never shrinks.
+        let held_lag = MPC_LAG_ALARM_ROUNDS + 1;
+        let sample = |minute: u64| {
+            epoch_store.record_mpc_consumed_consensus_round(1_000 * minute, true);
+            epoch_store.report_mpc_consensus_round_lag(1_000 * minute + held_lag)
+        };
+
+        let mut reports = Vec::new();
+        for minute in 1..=20u64 {
+            reports.push(sample(minute));
+            advance(Duration::from_secs(60)).await;
+        }
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.stopped_contributing == MpcLagTransition::Unchanged),
+            "the stopped-contributing alarm stays held throughout: the service IS reporting"
+        );
+        // The tracker starts at the first sample, so the window closes on the
+        // sample a full `MPC_CATCH_UP_STUCK_DRAIN` later — minute 16 of a
+        // fifteen-minute bound sampled once a minute.
+        let stuck: Vec<_> = reports.iter().map(|report| report.stuck_drain).collect();
+        assert_eq!(
+            stuck[15],
+            MpcLagTransition::Raised,
+            "a drain stuck past the bound must be reported: {stuck:?}"
+        );
+        assert_eq!(
+            stuck
+                .iter()
+                .filter(|transition| **transition == MpcLagTransition::Raised)
+                .count(),
+            1,
+            "the stuck-drain alarm must latch like the one it complements: {stuck:?}"
+        );
+        assert!(
+            stuck[..15]
+                .iter()
+                .all(|transition| *transition == MpcLagTransition::Unchanged),
+            "nothing may fire before the bound elapses: {stuck:?}"
+        );
+
+        // The drain gets moving again: a new low clears the alarm, once, and
+        // the cleared alarm stays quiet while the drain holds that new low.
+        epoch_store.record_mpc_consumed_consensus_round(1_000 * 21 + held_lag, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(1_000 * 21 + held_lag)
+                .stuck_drain,
+            MpcLagTransition::Cleared
+        );
+        advance(Duration::from_secs(60)).await;
+        epoch_store.record_mpc_consumed_consensus_round(1_000 * 22 + held_lag, true);
+        assert_eq!(
+            epoch_store
+                .report_mpc_consensus_round_lag(1_000 * 22 + held_lag)
+                .stuck_drain,
+            MpcLagTransition::Unchanged,
+            "a cleared alarm must not re-fire without a new stall"
+        );
+    }
+
+    /// A gap that wobbles upward between samples is still a draining gap. The
+    /// tip keeps advancing while the cursor chases it, so a healthy catch-up
+    /// produces individual samples that tick up; across five hours of them,
+    /// with the gap closing on balance, neither alarm may fire. Tracking the
+    /// low-water mark is what makes that hold without a smoothing window — any
+    /// new low restarts the clock, whatever the samples did in between.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_drain_that_keeps_reaching_new_lows_never_raises() {
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
+        let mut lag = 400_000;
+
+        for step in 1..=60u64 {
+            // Two steps forward, one back, hours in total: no window of
+            // `MPC_CATCH_UP_STUCK_DRAIN` ever passes without a new low.
+            lag = if step % 3 == 0 {
+                lag + 3_000
+            } else {
+                lag - 5_000
+            };
+            epoch_store.record_mpc_consumed_consensus_round(step * 10_000, true);
+            assert_eq!(
+                epoch_store.report_mpc_consensus_round_lag(step * 10_000 + lag),
+                MpcLagReport::UNCHANGED,
+                "step {step} of a jittery but progressing drain must stay silent"
+            );
+            advance(Duration::from_secs(5 * 60)).await;
+        }
+    }
+
     /// The alarm latches, so the loud line fires on transition rather than on
     /// every consensus commit — this runs per commit, and an unconditional log
     /// would emit thousands of lines an hour and bury itself.
     #[tokio::test]
     async fn mpc_lag_alarm_does_not_re_fire_while_it_stays_raised() {
-        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
-        let committee = Arc::new(committee);
-        let names: Vec<AuthorityName> = committee.names().copied().collect();
-        let dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee,
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let (epoch_store, _dir) = mpc_lag_test_epoch_store();
 
-        epoch_store.record_mpc_consumed_consensus_round(1);
+        epoch_store.record_mpc_consumed_consensus_round(1, false);
         // A sustained stall across many commits must announce itself exactly
         // once. This asserts the LOGGING decision, not the flag: the flag ends
         // up `true` either way, so observing it cannot tell a latched alarm
         // from one that re-fires on every commit.
         let transitions: Vec<_> = (1..=5)
-            .map(|i| epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + i))
+            .map(|i| {
+                epoch_store
+                    .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + i)
+                    .stopped_contributing
+            })
             .collect();
         assert_eq!(
             transitions,
@@ -6745,13 +7242,17 @@ mod tests {
         );
 
         // Recovery announces itself once too, then goes quiet.
-        epoch_store.record_mpc_consumed_consensus_round(MPC_LAG_ALARM_ROUNDS + 5);
+        epoch_store.record_mpc_consumed_consensus_round(MPC_LAG_ALARM_ROUNDS + 5, false);
         assert_eq!(
-            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            epoch_store
+                .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5)
+                .stopped_contributing,
             MpcLagTransition::Cleared
         );
         assert_eq!(
-            epoch_store.report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5),
+            epoch_store
+                .report_mpc_consensus_round_lag(MPC_LAG_ALARM_ROUNDS + 5)
+                .stopped_contributing,
             MpcLagTransition::Unchanged
         );
     }
@@ -7913,20 +8414,29 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (popped_session, first_blending_index, first_presign) =
-            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (popped_session, first_blending_index, first_presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id);
         assert_eq!(first_blending_index, 0);
         assert_eq!(first_presign, vec![1u8, 2, 3]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, second_blending_index, second_presign) =
-            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, second_blending_index, second_presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(second_blending_index, 1);
         assert_eq!(second_presign, vec![4u8, 5, 6]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -7950,26 +8460,41 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 2);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, _, presign) =
-            tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
+        let (popped_session, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_a)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id_a);
         assert_eq!(presign, vec![10u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, _, presign) =
-            tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (popped_session, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_b)
+            .unwrap()
+            .unwrap();
         assert_eq!(popped_session, session_id_b);
         assert_eq!(presign, vec![20u8]);
 
         // Exhaust key_id_a
-        tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
-        assert!(tables.pop_presign(algorithm, key_id_a).unwrap().is_none());
+        tables
+            .pop_presign_for_testing(algorithm, key_id_a)
+            .unwrap()
+            .unwrap();
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id_a)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 0);
 
         // key_id_b still has presigns
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 2);
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id_b)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![21u8]);
     }
 
@@ -8011,16 +8536,30 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
         // Should pop in ascending session_sequence_number order
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![5u8]);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![10u8]);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![20u8]);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// One replayed consensus round's effect on the presign pool: either an
@@ -8065,18 +8604,30 @@ mod tests {
                 }
                 PresignPoolRound::Serve {
                     request_sequence_number,
-                } => Some(
+                } => Some(bound_presign(
                     tables
-                        .serve_global_presign(
-                            *request_sequence_number,
+                        .assign_presign_for_demand(
+                            &PresignDemand::GlobalRequest {
+                                session_sequence_number: *request_sequence_number,
+                            },
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                         )
-                        .unwrap()
-                        .map(|(_, _, presign)| presign),
-                ),
+                        .unwrap(),
+                )),
             })
             .collect()
+    }
+
+    /// The presign a drain bound to the demand, or `None` if it bound none —
+    /// an empty pool, or (NOA only) a demand the park bound dropped. These
+    /// tests compare WHICH presign a demand got, so the identifiers the
+    /// outcome also carries are not part of the comparison.
+    fn bound_presign(outcome: PresignAssignmentOutcome) -> Option<Vec<u8>> {
+        match outcome {
+            PresignAssignmentOutcome::Assigned { presign, .. } => Some(presign),
+            PresignAssignmentOutcome::PoolEmpty | PresignAssignmentOutcome::Evicted => None,
+        }
     }
 
     /// The DWallet MPC service replays EVERY consensus round of the epoch after
@@ -8138,14 +8689,28 @@ mod tests {
         // resurrected already-served presigns and handed one to a second
         // on-chain presign id.
         let fresh_request_sequence_number = 13;
-        let crashed_fresh = crashed
-            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
-            .unwrap()
-            .map(|(_, _, presign)| presign);
-        let control_fresh = control
-            .serve_global_presign(fresh_request_sequence_number, signature_algorithm, key_id)
-            .unwrap()
-            .map(|(_, _, presign)| presign);
+        let crashed_fresh = bound_presign(
+            crashed
+                .assign_presign_for_demand(
+                    &PresignDemand::GlobalRequest {
+                        session_sequence_number: fresh_request_sequence_number,
+                    },
+                    signature_algorithm,
+                    key_id,
+                )
+                .unwrap(),
+        );
+        let control_fresh = bound_presign(
+            control
+                .assign_presign_for_demand(
+                    &PresignDemand::GlobalRequest {
+                        session_sequence_number: fresh_request_sequence_number,
+                    },
+                    signature_algorithm,
+                    key_id,
+                )
+                .unwrap(),
+        );
         assert!(
             !control_served.contains(&crashed_fresh),
             "the replay must not resurrect an already-served presign into the pool: \
@@ -8170,13 +8735,123 @@ mod tests {
         );
     }
 
+    /// Assignment is idempotent in the demand IDENTITY, for every demand kind.
+    ///
+    /// This is the property the whole API exists for: each consumer replays
+    /// its demand stream from a per-epoch table after a restart, and a second
+    /// pop would bind a different presign than the never-crashed peers bound
+    /// (fills complete out of sequence order, so the pool head moves between
+    /// the two pops) — a byte-divergent checkpoint or attestation from an
+    /// honest validator.
+    #[tokio::test]
+    async fn assignment_is_idempotent_in_the_demand_identity() {
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+
+        for demand in [
+            PresignDemand::GlobalRequest {
+                session_sequence_number: 7,
+            },
+            PresignDemand::Noa {
+                demand_id: NOAPresignDemandId::Checkpoint {
+                    tx_ref: NOACheckpointTxRef {
+                        kind_name: NOACheckpointKindName::SuiDWallet,
+                        sequence_number: 4,
+                        tx_index: 0,
+                        epoch: 1,
+                    },
+                    retry_round: 0,
+                },
+            },
+        ] {
+            let tables = create_tables();
+            for (sequence_number, marker) in [(0u64, 0xAAu8), (1, 0xBB)] {
+                tables
+                    .insert_presigns(
+                        algorithm,
+                        key_id,
+                        sequence_number,
+                        SessionIdentifier::new(SessionType::InternalPresign, [marker; 32]),
+                        vec![vec![marker; 8]],
+                    )
+                    .unwrap();
+            }
+
+            let first = tables
+                .assign_presign_for_demand(&demand, algorithm, key_id)
+                .unwrap();
+            assert!(
+                matches!(first, PresignAssignmentOutcome::Assigned { .. }),
+                "{demand:?}: the pool is non-empty, so the demand must be assigned"
+            );
+            let pool_after_first = tables.presign_pool_size(algorithm, key_id).unwrap();
+
+            let second = tables
+                .assign_presign_for_demand(&demand, algorithm, key_id)
+                .unwrap();
+
+            assert_eq!(
+                first, second,
+                "{demand:?}: a re-seen demand must return the presign it was \
+                 already given, not a fresh one"
+            );
+            assert_eq!(
+                tables.presign_pool_size(algorithm, key_id).unwrap(),
+                pool_after_first,
+                "{demand:?}: re-seeing a demand must not pop the pool a second time"
+            );
+
+            // The NOA arm carries two writes the returned triple does not
+            // show, and a merge dropping either would pass every assertion
+            // above while failing at signing time: the used-presign marker
+            // (without it the presign can be handed out twice) and the network
+            // key id (the sign must instantiate under the SAME key the presign
+            // came from).
+            if let PresignDemand::Noa { demand_id } = &demand {
+                let PresignAssignmentOutcome::Assigned {
+                    session_identifier,
+                    blending_index,
+                    ..
+                } = first
+                else {
+                    panic!("{demand:?}: expected an assignment, found {first:?}");
+                };
+                assert!(
+                    tables
+                        .is_presign_used(session_identifier, blending_index)
+                        .unwrap(),
+                    "the NOA arm must mark its popped presign used"
+                );
+                let Some(NoaPresignDemandResolution::Assigned {
+                    network_encryption_key_id,
+                    ..
+                }) = tables
+                    .noa_presign_demand_resolutions
+                    .get(&demand_id.digest())
+                    .unwrap()
+                else {
+                    panic!("the assignment was recorded as this demand's resolution");
+                };
+                assert_eq!(
+                    network_encryption_key_id, key_id,
+                    "the assignment must record the network key the presign came from"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_pop_from_empty_pool() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
     }
 
@@ -8194,19 +8869,33 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![1u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![2u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(algorithm, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![3u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
-        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert!(
+            tables
+                .pop_presign_for_testing(algorithm, key_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -8228,13 +8917,19 @@ mod tests {
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
 
-        let (_, _, presign) = tables.pop_presign(ecdsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(ecdsa, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![100u8]);
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 0);
 
         // EdDSA pool unaffected
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
-        let (_, _, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables
+            .pop_presign_for_testing(eddsa, key_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(presign, vec![200u8]);
     }
 
@@ -8417,7 +9112,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
             -1
         );
         assert_eq!(
@@ -8474,7 +9169,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
             100
         );
         assert_eq!(
@@ -8504,7 +9199,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
             (100 + grace - 1) as i64
         );
         assert_eq!(
@@ -8628,7 +9323,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
             100
         );
         assert_eq!(
@@ -8764,7 +9459,7 @@ mod tests {
             -1
         );
         assert_eq!(
-            registry_gauge(&registry, "ika_consensus_last_committed_leader_round"),
+            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
             -1
         );
         assert_eq!(

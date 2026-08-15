@@ -369,7 +369,7 @@ async fn test_epoch_store_presign_pool_operations() {
 
     // Test consuming a presign
     let consumed = test_epoch_store
-        .pop_presign(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
+        .pop_presign_for_testing(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("failed to pop presign");
     assert!(consumed.is_some(), "should have consumed a presign");
 
@@ -456,7 +456,7 @@ async fn test_epoch_store_presign_pool_operations() {
     // Test pop from empty pool
     let empty_key = ObjectID::random();
     let empty_pop = test_epoch_store
-        .pop_presign(DWalletSignatureAlgorithm::ECDSASecp256k1, empty_key)
+        .pop_presign_for_testing(DWalletSignatureAlgorithm::ECDSASecp256k1, empty_key)
         .expect("pop from empty pool should not error");
     assert!(
         empty_pop.is_none(),

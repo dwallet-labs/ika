@@ -78,11 +78,12 @@ async fn workload_dkg_presign_sign() {
     // Epochs are 3 minutes so the lifecycle fits inside an epoch before its
     // own reconfiguration window.
     Scenario::new(4, repo, sui, notifier)
-        // Pinned to v6: this scenario gates the session lifecycle at a FIXED
-        // protocol version. `MAX_PROTOCOL_VERSION` is 7, so without this pin
-        // the all-current committee would vote itself to v7 partway through
-        // and the lifecycle would straddle a protocol boundary it is not
-        // meant to test. Crossing v7 is `v127_v7_upgrade`'s job.
+        // Pinned to v7: this scenario gates the session lifecycle at a FIXED
+        // protocol version. v7 is currently the only version this binary
+        // supports (`MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 7`), so the
+        // pin changes nothing today — it keeps the lifecycle from straddling a
+        // protocol boundary it is not meant to test the moment a higher
+        // version exists.
         .with_supported_protocol_versions(SupportedProtocolVersions::new_for_testing(7, 7))
         .with_base_dir(base)
         .with_epoch_duration_ms(180_000)

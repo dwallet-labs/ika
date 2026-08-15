@@ -106,6 +106,34 @@ pub struct DWalletMPCMetrics {
     /// The last process MPC consensus round.
     pub last_process_mpc_consensus_round: IntGauge,
 
+    /// 1 while the dwallet MPC service is in catch-up mode — its processing
+    /// cursor trails the consensus tip beyond the trap radius (issue #2023)
+    /// and new cryptographic computations for internal-presign and user
+    /// sessions are suppressed so the round backlog can drain at replay
+    /// speed — 0 otherwise. Refreshed once per service iteration.
+    pub(crate) catchup_mode: IntGauge,
+
+    /// How far MPC round processing trails the consensus tip, in consensus
+    /// rounds, as of the most recent service iteration.
+    ///
+    /// `catchup_mode` says whether the gate is engaged; this says whether a
+    /// gated validator is *draining or stuck*. The gate's log lines only fire
+    /// on the enter/exit transitions, so between them — which is the entire
+    /// duration of a catch-up, potentially hours — there is otherwise no
+    /// signal at all. This gauge is refreshed on every observation, so its
+    /// slope answers the operational question directly: falling means the
+    /// backlog is draining and the validator will return on its own, flat or
+    /// rising means it is trapped and needs intervention.
+    pub(crate) catchup_gap_rounds: IntGauge,
+
+    /// Computation spawn decisions withheld by catch-up mode. Labels:
+    /// `session_type` (only the suppressible types — `user` /
+    /// `internal_presign` — ever appear). Incremented once per suppressed
+    /// session per service tick, so its RATE tracks how much would-be
+    /// computation the gate is currently shedding, and it going flat while
+    /// `catchup_mode` is 1 means nothing is left to suppress.
+    pub(crate) catchup_suppressed_computations_total: IntCounterVec,
+
     /// Internal presign pool size per (curve, signature_algorithm, key_role).
     ///
     /// The pool is keyed by `(signature_algorithm, network_key_id)`; to keep
@@ -159,6 +187,18 @@ pub struct DWalletMPCMetrics {
     /// signature_algorithm — pairs with the pool-size gauge so a dashboard
     /// can compute serve rate vs top-up rate and predict exhaustion.
     pub(crate) global_presigns_served_total: IntCounterVec,
+
+    /// Network-owned-address presign demands dropped from the assignment
+    /// drain because they stayed unassigned for the whole park bound, by
+    /// signature_algorithm.
+    ///
+    /// A demand parks when no presign pool exists for the network encryption
+    /// key its announcement named, and is retried every consensus round until
+    /// the bound. Any non-zero value means a demand's sign did not happen in
+    /// that epoch: either a committee member announced a key the network never
+    /// adopts, or a key legitimately took longer than the bound to arrive.
+    /// Both are worth an alert.
+    pub(crate) noa_presign_demands_evicted_total: IntCounterVec,
 
     /// Duration of each network-key instantiation sub-call (per-curve
     /// protocol/decryption-share public parameters + NOA DKG outputs), for
@@ -552,6 +592,30 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
+            catchup_mode: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_catchup_mode",
+                "1 while MPC round processing trails the consensus tip beyond the catch-up \
+                 threshold and new internal-presign/user computations are suppressed \
+                 (issue #2023), 0 otherwise",
+                registry
+            )
+            .unwrap(),
+            catchup_gap_rounds: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_catchup_gap_rounds",
+                "How far MPC round processing trails the consensus tip, in consensus rounds, \
+                 as of the most recent service iteration; answers whether a catch-up-gated \
+                 validator is draining or stuck (issue #2023)",
+                registry
+            )
+            .unwrap(),
+            catchup_suppressed_computations_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_catchup_suppressed_computations_total",
+                "Cryptographic computation spawn decisions withheld by catch-up mode, \
+                 per session type",
+                &["session_type"],
+                registry
+            )
+            .unwrap(),
             internal_presign_pool_size: register_int_gauge_vec_with_registry!(
                 "ika_dwallet_mpc_internal_presign_pool_size",
                 "Internal presign pool size per (curve, signature_algorithm, key_role)",
@@ -583,6 +647,14 @@ impl DWalletMPCMetrics {
             global_presigns_served_total: register_int_counter_vec_with_registry!(
                 "ika_dwallet_mpc_global_presigns_served_total",
                 "Global presign requests served from the internal pool",
+                &["signature_algorithm"],
+                registry
+            )
+            .unwrap(),
+            noa_presign_demands_evicted_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_noa_presign_demands_evicted_total",
+                "Network-owned-address presign demands dropped from the assignment drain \
+                 after staying unassigned for the whole park bound",
                 &["signature_algorithm"],
                 registry
             )

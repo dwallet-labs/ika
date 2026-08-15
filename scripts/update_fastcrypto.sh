@@ -64,7 +64,7 @@ check_gnu_grep
 CURRENT_FC=$(current_fc_revision)
 LATEST_FC=$(latest_fc_revision)
 if [[ "$CURRENT_FC" != "$LATEST_FC" ]]; then
-	echo "About to replace $CURRENT_FC with $LATEST_FC as the Narwhal pointer in Ika"
+	echo "About to replace $CURRENT_FC with $LATEST_FC as the fastcrypto pointer in Ika"
 else
 	exit 0
 fi

@@ -22,12 +22,15 @@ use tracing::error;
 pub struct NetworkOwnedAddressSignRequest {
     pub message: Vec<u8>,
     pub curve: DWalletCurve,
-    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: DWalletHashScheme,
     /// Network-uniform identity of this sign demand. Announced through
     /// consensus so every validator assigns it the same presign in
     /// consensus-delivery order (see `dwallet_mpc_service`'s NOA presign-demand
     /// drain).
+    ///
+    /// The signature algorithm is NOT carried beside this: it is derived from
+    /// the identity (`expected_signature_algorithm`), so the pool a demand
+    /// pops from and the session it instantiates cannot disagree.
     pub demand_id: ika_types::noa_checkpoint::NOAPresignDemandId,
 }
 
@@ -43,6 +46,7 @@ pub struct NetworkOwnedAddressSignOutput {
     pub hash_scheme: DWalletHashScheme,
 }
 
+mod catchup_gate;
 pub mod dwallet_mpc_service;
 mod mpc_diagnostics;
 pub mod mpc_manager;

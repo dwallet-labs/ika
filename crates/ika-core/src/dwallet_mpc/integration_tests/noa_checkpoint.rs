@@ -580,7 +580,6 @@ async fn test_noa_status_update_rebuffers_on_submit_failure() {
             tx_ref,
             retry_round: 0,
         },
-        signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
         network_encryption_key_id: ObjectID::random(),
     };
     service.buffer_noa_observation_for_testing(observation.clone());

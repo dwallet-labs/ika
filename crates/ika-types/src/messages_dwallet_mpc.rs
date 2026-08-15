@@ -215,7 +215,6 @@ impl ConsensusNOAObservation {
 pub struct ConsensusNOAPresignDemand {
     pub authority: AuthorityName,
     pub demand_id: crate::noa_checkpoint::NOAPresignDemandId,
-    pub signature_algorithm: DWalletSignatureAlgorithm,
     pub network_encryption_key_id: ObjectID,
 }
 

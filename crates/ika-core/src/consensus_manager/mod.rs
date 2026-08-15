@@ -75,7 +75,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
         // `enable_v3`: hardcoded `false` to match upstream exactly. At the
-        // pinned mainnet-v1.76.1, Sui's own `to_consensus_protocol_config` also
+        // pinned mainnet-v1.77.2, Sui's own `to_consensus_protocol_config` also
         // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
         // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
         // getter to source it from. When Sui gates it behind the protocol config
@@ -86,7 +86,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         false,
         // `leader_schedule_window_size` / `leader_schedule_update_interval`:
         // hardcoded to match upstream's `to_consensus_protocol_config` at the
-        // pinned mainnet-v1.76.1 (300 / 12). These only take effect under the
+        // pinned mainnet-v1.77.2 (300 / 12). These only take effect under the
         // Mysticeti v3 leader schedule, which is gated off above (`enable_v3 =
         // false`), so they are inert today; mirror upstream exactly so enabling
         // v3 later (via a version-gated getter) does not silently fork.
@@ -197,7 +197,20 @@ impl ConsensusManager {
             .find(|(_, a)| a.protocol_key == own_protocol_key)
             .expect("Own authority should be among the consensus authorities!");
 
-        let registry = Registry::new_custom(Some("ika_consensus".to_string()), None).unwrap();
+        // consensus-core's metrics are re-exported under this prefix, which
+        // must NOT start with `ika`: `ika_*` is ika's own namespace, and a
+        // shared prefix is exactly what let an upstream metric and an ika one
+        // collide in #2022. `RegistryService` merges the two registries at
+        // /metrics, prometheus's duplicate check is per-registry, and the
+        // prefix is applied at `gather()` — so the two names never meet
+        // anywhere the collision could be caught. Keeping the vendored
+        // namespace outside `ika_` makes the rule a clean bipartition: ika's
+        // metrics start with `ika_`, vendored ones never do, and neither side
+        // needs a list of the other's names. `consensus_ika_*` does sit inside
+        // sui's own `consensus_*` namespace, which is safe in a way this
+        // arrangement was not: sui will never register a metric named
+        // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
+        let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
@@ -257,6 +270,9 @@ impl ConsensusManager {
             self.network_keypair.clone(),
             Arc::new(Clock::default()),
             Arc::new(tx_validator.clone()),
+            // ika submits via `TransactionClient`; it has no in-process pool to
+            // feed the proposer. `None` means fall back to the client path.
+            None,
             commit_consumer,
             registry.clone(),
             *boot_counter,

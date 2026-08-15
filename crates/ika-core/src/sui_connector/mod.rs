@@ -65,6 +65,7 @@ pub mod trusted_peer_updater;
 pub mod verified_reader;
 pub mod verified_state_cache;
 pub mod verified_transport;
+mod watermark_guard;
 
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,

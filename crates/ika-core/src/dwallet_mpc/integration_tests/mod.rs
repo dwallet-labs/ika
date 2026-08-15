@@ -1,4 +1,5 @@
 mod anomaly_diagnostics;
+mod catchup;
 mod computation_results_batch;
 mod create_dwallet;
 mod encrypt_secret_share;
@@ -14,6 +15,7 @@ mod network_dkg;
 mod network_key_adoption;
 mod network_owned_address_sign;
 mod noa_checkpoint;
+mod noa_signing_key_skew;
 mod presign_consensus;
 mod session;
 mod sign;
