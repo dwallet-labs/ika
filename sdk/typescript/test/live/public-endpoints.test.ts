@@ -18,10 +18,13 @@ import { Curve } from '../../src/client/types.js';
  * months before a user reported them. Nothing here needs funds, a keypair, or
  * a localnet — it only reads.
  *
- * Failures are classified deliberately: a fullnode that is unreachable or
- * erroring at the transport level skips the assertion instead of failing it,
- * so a Sui-side outage does not turn into a red build on an unrelated PR. Any
- * error the SDK itself raises after the connection works is a hard failure.
+ * A failing assertion must mean "the SDK is broken", never "Sui had a bad
+ * minute", and an outage must never be able to hide a real defect. Rather than
+ * guess which of those two a failure was from its error text — every marker
+ * that could match an outage can also appear inside a genuine SDK error, and
+ * the SDK wraps transport errors in its own `NetworkError` besides — the probe
+ * asks the endpoint directly: on failure it makes an independent, minimal gRPC
+ * call, and only a fullnode that fails THAT turns the failure into a skip.
  */
 
 const NETWORKS = ['mainnet', 'testnet'] as const;
@@ -31,78 +34,102 @@ type Network = (typeof NETWORKS)[number];
 const ATTEMPTS = 3;
 const BACKOFF_MS = 5_000;
 
+/**
+ * The gRPC transport's own `timeout` option only sets the `grpc-timeout`
+ * request header, which a fullnode that never answers is free to ignore, and
+ * `SuiGrpcClient` forwards only `baseUrl`/`fetchInit` to the transport anyway.
+ * So the deadline has to be imposed here, or a hung endpoint would run until
+ * undici's ~300s header timeout and blow the job's wall-clock budget.
+ */
+const OPERATION_DEADLINE_MS = 60_000;
+const REACHABILITY_DEADLINE_MS = 10_000;
+
+class DeadlineExceeded extends Error {
+	constructor(label: string, ms: number) {
+		super(`${label} exceeded ${ms}ms`);
+		this.name = 'DeadlineExceeded';
+	}
+}
+
 function baseUrlFor(network: Network): string {
 	const override = process.env[`SUI_${network.toUpperCase()}_GRPC_URL`];
 	return override || `https://fullnode.${network}.sui.io:443`;
 }
 
-/**
- * Distinguishes "the endpoint did not answer" from "the SDK could not handle
- * what it answered". Only the latter is a defect on our side.
- */
-function isEndpointUnavailable(error: unknown): boolean {
-	const text = [
-		(error as Error)?.message,
-		((error as Error)?.cause as Error)?.message,
-		String(error),
-	]
-		.filter(Boolean)
-		.join(' ')
-		.toLowerCase();
+async function withDeadline<T>(label: string, ms: number, run: () => Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout>;
 
-	return [
-		'fetch failed',
-		'econnrefused',
-		'econnreset',
-		'enotfound',
-		'etimedout',
-		'socket hang up',
-		'503',
-		'502',
-		'504',
-		'unavailable',
-		'deadline_exceeded',
-		'too many requests',
-	].some((marker) => text.includes(marker));
+	try {
+		return await Promise.race([
+			run(),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new DeadlineExceeded(label, ms)), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer!);
+	}
 }
 
-async function withRetries<T>(operation: () => Promise<T>): Promise<T> {
-	let lastError: unknown;
-
-	for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-		try {
-			return await operation();
-		} catch (error) {
-			lastError = error;
-			if (!isEndpointUnavailable(error) || attempt === ATTEMPTS) {
-				throw error;
-			}
-			await new Promise((resolve) => setTimeout(resolve, BACKOFF_MS * attempt));
-		}
+/**
+ * The oracle. `getServiceInfo` is the cheapest call the fullnode serves and
+ * goes over the same transport as everything the probe does, so it answers
+ * exactly one question: was the endpoint able to talk to us at all?
+ */
+async function isEndpointReachable(suiClient: SuiGrpcClient): Promise<boolean> {
+	try {
+		await withDeadline('reachability check', REACHABILITY_DEADLINE_MS, async () => {
+			await suiClient.ledgerService.getServiceInfo({});
+		});
+		return true;
+	} catch {
+		return false;
 	}
+}
 
-	throw lastError;
+/** `skip()` throws a `PendingError`; the throw documents that and fires only if that ever changes. */
+function skipRun(skip: (note?: string) => void, reason: string): never {
+	skip(reason);
+	throw new Error(`unreachable: vitest skip() is expected to throw (${reason})`);
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe.each(NETWORKS)('public %s endpoint', (network) => {
 	async function probe<T>(
 		skip: (note?: string) => void,
 		operation: (ikaClient: IkaClient) => Promise<T>,
-	): Promise<T | undefined> {
-		const suiClient = new SuiGrpcClient({ network, baseUrl: baseUrlFor(network) });
-		const ikaClient = new IkaClient({ suiClient, config: getNetworkConfig(network), cache: true });
-
-		try {
-			return await withRetries(async () => {
-				await ikaClient.initialize();
-				return operation(ikaClient);
+	): Promise<T> {
+		for (let attempt = 1; ; attempt++) {
+			const suiClient = new SuiGrpcClient({ network, baseUrl: baseUrlFor(network) });
+			const ikaClient = new IkaClient({
+				suiClient,
+				config: getNetworkConfig(network),
+				cache: true,
 			});
-		} catch (error) {
-			if (isEndpointUnavailable(error)) {
-				skip(`${network} fullnode unreachable: ${(error as Error).message}`);
-				return undefined;
+
+			try {
+				return await withDeadline(`${network} probe`, OPERATION_DEADLINE_MS, async () => {
+					await ikaClient.initialize();
+					return operation(ikaClient);
+				});
+			} catch (error) {
+				// The endpoint answered, so whatever went wrong is ours.
+				if (await isEndpointReachable(suiClient)) {
+					throw error;
+				}
+
+				if (attempt === ATTEMPTS) {
+					return skipRun(
+						skip,
+						`${network} fullnode unreachable after ${ATTEMPTS} attempts: ${(error as Error).message}`,
+					);
+				}
+
+				await sleep(BACKOFF_MS * attempt);
 			}
-			throw error;
 		}
 	}
 
@@ -110,7 +137,6 @@ describe.each(NETWORKS)('public %s endpoint', (network) => {
 	// is where a wrong transport surfaces ("Method not found").
 	test('initializes and reads the current epoch over gRPC', async ({ skip }) => {
 		const epoch = await probe(skip, (ikaClient) => ikaClient.getEpoch());
-		if (epoch === undefined) return;
 
 		expect(epoch).toBeGreaterThan(0);
 	});
@@ -120,17 +146,18 @@ describe.each(NETWORKS)('public %s endpoint', (network) => {
 	// starts emitting a newer variant than the bundled WASM understands breaks
 	// every user-side dWallet operation while plain object reads still work.
 	test('derives protocol public parameters from the live network key', async ({ skip }) => {
-		const result = await probe(skip, async (ikaClient) => {
-			const networkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
-			const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(
-				undefined,
-				Curve.SECP256K1,
-			);
-			return { networkEncryptionKey, protocolPublicParameters };
-		});
-		if (result === undefined) return;
+		const { networkEncryptionKey, protocolPublicParameters } = await probe(
+			skip,
+			async (ikaClient) => ({
+				networkEncryptionKey: await ikaClient.getLatestNetworkEncryptionKey(),
+				protocolPublicParameters: await ikaClient.getProtocolPublicParameters(
+					undefined,
+					Curve.SECP256K1,
+				),
+			}),
+		);
 
-		expect(result.networkEncryptionKey.id).toMatch(/^0x[0-9a-f]{64}$/);
-		expect(result.protocolPublicParameters.length).toBeGreaterThan(0);
+		expect(networkEncryptionKey.id).toMatch(/^0x[0-9a-f]{64}$/);
+		expect(protocolPublicParameters.length).toBeGreaterThan(0);
 	});
 });
