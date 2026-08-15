@@ -53,6 +53,7 @@ use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
 use ika_core::consensus_manager::ConsensusManager;
+use ika_core::consensus_manager::ReplayWaiter;
 use ika_core::consensus_throughput_calculator::{
     ConsensusThroughputCalculator, ConsensusThroughputProfiler, ThroughputProfileRanges,
 };
@@ -2143,6 +2144,13 @@ impl IkaNode {
             (None, None)
         };
 
+        // Subscribed BEFORE `ConsensusManager::start` is spawned below, so the
+        // signal cannot be published into an empty subscriber set. Both
+        // checkpoint builders hold one, so neither builds — and therefore
+        // neither submits a signature — before consensus is accepting them.
+        let dwallet_checkpoint_replay_waiter = consensus_manager.replay_waiter();
+        let system_checkpoint_replay_waiter = consensus_manager.replay_waiter();
+
         let bls_dwallet = Self::start_dwallet_checkpoint_service(
             config,
             consensus_adapter.clone(),
@@ -2152,6 +2160,7 @@ impl IkaNode {
             state_sync_handle.clone(),
             dwallet_checkpoint_metrics.clone(),
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            dwallet_checkpoint_replay_waiter,
         );
         let (checkpoint_service, checkpoint_service_tasks): (
             Option<Arc<DWalletCheckpointService>>,
@@ -2170,6 +2179,7 @@ impl IkaNode {
             state_sync_handle.clone(),
             system_checkpoint_metrics.clone(),
             previous_epoch_last_system_checkpoint_sequence_number,
+            system_checkpoint_replay_waiter,
         );
         let (system_checkpoint_service, system_checkpoint_service_tasks): (
             Option<Arc<SystemCheckpointService>>,
@@ -2326,6 +2336,7 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<DWalletCheckpointService>, JoinSet<()>)> {
         if !epoch_store.protocol_config().bls_checkpoints() {
             info!("BLS checkpoints disabled, skipping DWallet checkpoint service");
@@ -2370,6 +2381,7 @@ impl IkaNode {
             max_tx_per_checkpoint,
             max_dwallet_checkpoint_size_bytes,
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            replay_waiter,
         ))
     }
 
@@ -2382,6 +2394,7 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         system_checkpoint_metrics: Arc<SystemCheckpointMetrics>,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<SystemCheckpointService>, JoinSet<()>)> {
         if !epoch_store.protocol_config().bls_checkpoints() {
             info!("BLS checkpoints disabled, skipping System checkpoint service");
@@ -2428,6 +2441,7 @@ impl IkaNode {
             max_tx_per_system_checkpoint as usize,
             max_system_checkpoint_size_bytes,
             previous_epoch_last_system_checkpoint_sequence_number,
+            replay_waiter,
         ))
     }
 

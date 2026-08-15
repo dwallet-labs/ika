@@ -22,6 +22,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::consensus_manager::ReplayWaiter;
 
 use ika_types::crypto::AuthorityStrongQuorumSignInfo;
 use ika_types::digests::DWalletCheckpointMessageDigest;
@@ -483,8 +484,21 @@ impl DWalletCheckpointBuilder {
         }
     }
 
-    async fn run(mut self) {
+    async fn run(mut self, replay_waiter: ReplayWaiter) {
         info!("Starting DWalletCheckpointBuilder");
+
+        // Wait for the epoch's derived state to be rebuilt and consensus to
+        // be running before building anything.
+        //
+        // The builder's output SUBMITS a signature to consensus, and the
+        // consensus adapter's client panics if it is still unset 300s after a
+        // submission is issued — with `panic = "abort"`, that takes the
+        // process down. A boot that rebuilds an old epoch legitimately spends
+        // far longer than that in replay, and the replay regenerates this
+        // builder's whole input queue, so without this gate the node could
+        // abort partway through its own recovery. Mirrors how the MPC service
+        // waits on the same signal.
+        replay_waiter.wait_for_replay().await;
 
         // Collect info about the most recently built dwallet checkpoint for metrics.
         let checkpoint_message = self
@@ -1151,6 +1165,7 @@ impl DWalletCheckpointService {
         max_messages_per_checkpoint: usize,
         max_checkpoint_size_bytes: usize,
         previous_epoch_last_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> (Arc<Self>, JoinSet<()> /* Handle to tasks */) {
         info!(
             max_messages_per_checkpoint,
@@ -1172,7 +1187,7 @@ impl DWalletCheckpointService {
             max_checkpoint_size_bytes,
             previous_epoch_last_checkpoint_sequence_number,
         );
-        tasks.spawn(monitored_future!(builder.run()));
+        tasks.spawn(monitored_future!(builder.run(replay_waiter)));
 
         if let Some(certified_checkpoint_output) = certified_checkpoint_output {
             let aggregator = DWalletCheckpointAggregator::new(
