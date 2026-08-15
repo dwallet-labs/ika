@@ -123,8 +123,8 @@ backoff = { version = "0.4.0", features = [
     "tokio",
     "tokio_1",
 ] }
-base64 = "0.22.1"
-bcs = "0.1.4"
+base64 = "0.23.1"
+bcs = "0.2.1"
 byteorder = "1.4.3"
 bytes = { version = "1.5.0", features = ["serde"] }
 cached = "0.43.0"
@@ -162,7 +162,7 @@ im = "15"
 indexmap = { version = "2.1.0", features = ["serde"] }
 indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
-itertools = "0.14.0"
+itertools = "0.15.0"
 tikv-jemalloc-ctl = "0.5.4"
 # `background_threads` bakes `background_thread:true` into the compiled-in
 # jemalloc malloc_conf so the allocator runs a background purger that proactively
@@ -173,10 +173,10 @@ tikv-jemalloc-ctl = "0.5.4"
 # not an error, because `background_threads_runtime_support` stays enabled).
 tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls", "background_threads"] }
 jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
-lru = "0.16.3"
+lru = "0.18.2"
 merlin = { version = "3", default-features = false }
 miette = { version = "7", features = ["fancy"] }
-mockall = "0.14.0"
+mockall = "0.15.0"
 mime = "0.3"
 moka = { version = "0.12", default-features = false, features = [
     "sync",
@@ -216,20 +216,20 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 sha2 = "0.10.9"
-sysinfo = "0.35.2"
+sysinfo = "0.39.6"
 roaring = "0.11.1"
 rstest = "0.25.0"
 rustls-pemfile = "2"
 schemars = { version = "0.8.21", features = ["either"] }
 scopeguard = "1.1"
 serde = { version = "1.0.144", features = ["derive", "rc"] }
-serde-env = "0.2.0"
+serde-env = "0.3.0"
 rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
     "ring",
 ] }
-serde-name = "0.2.1"
+serde-name = "0.3.0"
 serde-reflection = "0.5.0"
 serde_json = { version = "1.0.95", features = ["preserve_order"] }
 serde_repr = "0.1"
@@ -237,8 +237,8 @@ serde_with = "3.17"
 serde_yaml = "0.9.34+deprecated"
 signature = "3.0.0-rc.1"
 static_assertions = "1.1.0"
-strum = { version = "0.27.1", features = ["derive"] }
-strum_macros = "0.27.1"
+strum = { version = "0.28.0", features = ["derive"] }
+strum_macros = "0.28.0"
 snap = "1.1.0"
 syn = { version = "2.0.104", features = ["full", "derive", "extra-traits"] }
 tap = "1.0.1"
@@ -250,7 +250,7 @@ thiserror = "2.0.12"
 # lives in scripts/simtest/cargo-simtest and tracks the Sui tag — when bumping
 # Sui, update that rev too (and keep this version matching its msim-tokio).
 tokio = "=1.52.1"
-toml_edit = "0.22"
+toml_edit = "0.25"
 tokio-retry = "0.3"
 tokio-stream = { version = "0.1.14", features = ["sync", "net"] }
 tonic = { version = "0.14.2", features = [
@@ -268,13 +268,7 @@ tower = { version = "0.5", features = [
     "limit",
 ] }
 twox-hash = "2.1.1"
-tower-http = { version = "0.6.8", features = [
-    "cors",
-    "full",
-    "trace",
-    "set-header",
-    "propagate-header",
-] }
+tower-http = { version = "0.7.0", features = ["cors", "full", "trace", "set-header", "propagate-header"] }
 tracing = "0.1.37"
 url = "2.3.1"
 zeroize = "1.6.0"
