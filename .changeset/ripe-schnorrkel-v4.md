@@ -3,15 +3,19 @@
 '@ika.xyz/ika-wasm': minor
 ---
 
-Release 0.5.0 — protocol-v4 readiness and the `SchnorrkelSubstrate` rename.
+Release 0.5.0 — repairs the published SDK against the live networks, and renames `SchnorrkelSubstrate`.
 
 **Breaking**
 
 - `SignatureAlgorithm.SchnorrkelSubstrate` is renamed to `SignatureAlgorithm.Schnorrkel`. Both the enum key AND its runtime string value changed from `'SchnorrkelSubstrate'` to `'Schnorrkel'`. Update every reference; a value persisted or transmitted as `'SchnorrkelSubstrate'` is no longer recognized.
 
-**Required before protocol v4 activates**
+**Required — `0.4.x` is broken against mainnet and testnet today**
 
-- The bundled WASM is rebuilt to parse V3-tagged network reconfiguration outputs. When the network advances to protocol v4, validators write V3-tagged reconfiguration outputs each epoch; the WASM shipped in `@ika.xyz/ika-wasm@0.2.x` only understands V1/V2 and throws a BCS "unknown variant" error from `getProtocolPublicParameters`. dApps must be on this release before v4 activates on their network, or user-side dWallet operations stop until they upgrade.
+- The bundled WASM is rebuilt to parse the current network reconfiguration outputs. Both networks now write V4-tagged reconfiguration outputs each epoch; the WASM shipped in `@ika.xyz/ika-wasm@0.2.x` understands only V1/V2 and throws ``invalid value: integer `3`, expected variant index 0 <= i < 2`` from `getProtocolPublicParameters`. Plain object reads still succeed, so the failure surfaces only once a dApp reaches an actual dWallet operation. Every dApp on `0.4.x` is affected and must upgrade.
+
+**Transport**
+
+- Public Sui fullnodes no longer serve JSON-RPC. `IkaClient` accepts any `ClientWithCoreApi` implementation and needs no change, but the documented setup now builds a `SuiGrpcClient`; a `SuiJsonRpcClient` pointed at a public fullnode fails with `Method not found`. JSON-RPC stays valid for a localnet or a private fullnode.
 
 **Behavior change**
 

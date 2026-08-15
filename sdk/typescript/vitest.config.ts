@@ -14,7 +14,9 @@ export default defineConfig({
 		env: {
 			NODE_ENV: 'test',
 		},
-		exclude: ['**/node_modules/**', '**/system-tests/multiple-network-keys/**'],
+		// `test/live` talks to the public mainnet/testnet fullnodes, so it is not
+		// part of any localnet-backed run — invoke it with `pnpm test:live`.
+		exclude: ['**/node_modules/**', '**/system-tests/multiple-network-keys/**', '**/test/live/**'],
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'html', 'json', 'lcov'],
