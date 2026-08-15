@@ -82,6 +82,7 @@ check_optional_pin() {
 check_file .github/workflows/ts-integration-tests.yaml
 check_file .github/workflows/ts-ci.yaml
 check_file .github/workflows/system-tests-ci.yaml
+check_file .github/workflows/sdk-live-endpoints.yaml
 check_file CLAUDE.md
 # Excluded workspaces: manifests resolve workspace deps against the root,
 # but any direct tag pin added later must stay in lockstep.
