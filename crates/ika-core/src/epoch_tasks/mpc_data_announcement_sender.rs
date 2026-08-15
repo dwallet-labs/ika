@@ -876,6 +876,7 @@ impl MpcDataAnnouncementSender {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
     use ika_network::mpc_artifacts::InMemoryBlobStore;
     use ika_types::messages_consensus::ConsensusTransaction;
 
@@ -1259,6 +1260,7 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -1370,6 +1372,7 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -1468,6 +1471,7 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 

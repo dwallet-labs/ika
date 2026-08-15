@@ -24,7 +24,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::{CommitConsumerMonitor, CommitIndex};
+use consensus_core::CommitConsumerMonitor;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -199,16 +199,21 @@ impl<C> ConsensusHandler<C> {
             commit_sink,
         }
     }
-
-    /// Returns the last subdag index processed by the handler.
-    pub(crate) fn last_processed_subdag_index(&self) -> u64 {
-        self.last_consensus_stats.index.sub_dag_index
-    }
 }
 
 impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
+    /// Folds one consensus commit into this epoch's derived state.
+    ///
+    /// The same entry point serves live commits and the boot replay that
+    /// rebuilds the epoch from the consensus store
+    /// (`consensus_manager::boot_replay`) — deliberately, because the two must
+    /// produce identical state from identical commits, and a second fold
+    /// implementation is a second thing that can disagree.
     #[instrument(level = "debug", skip_all)]
-    async fn handle_consensus_commit(&mut self, consensus_commit: impl ConsensusCommitAPI) {
+    pub(crate) async fn handle_consensus_commit(
+        &mut self,
+        consensus_commit: impl ConsensusCommitAPI,
+    ) {
         let _scope = monitored_scope("ConsensusCommitHandler::handle_consensus_commit");
         let round = consensus_commit.leader_round();
 
@@ -439,34 +444,29 @@ pub(crate) struct MysticetiConsensusHandler {
 }
 
 impl MysticetiConsensusHandler {
+    /// Starts the task that folds commits as consensus delivers them.
+    ///
+    /// There is no already-processed skip here any more, and no watermark to
+    /// drive one. The boot replay has already folded every finalized commit the
+    /// consensus store holds, and consensus is started with that same index as
+    /// its `replay_after_commit_index`, so nothing consensus delivers has been
+    /// folded before. The watermark that used to gate this loop was a second
+    /// record of the same fact as the consensus store's head, kept in a
+    /// different database — and when the two disagreed the node could not start
+    /// at all (ika #2057).
     pub(crate) fn new(
-        last_processed_commit_at_startup: CommitIndex,
         mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
         commit_consumer_monitor: Arc<CommitConsumerMonitor>,
     ) -> Self {
-        debug!(
-            last_processed_commit_at_startup,
-            "Starting consensus replay"
-        );
         let mut tasks = JoinSet::new();
         tasks.spawn(monitored_future!(async move {
             // TODO: pause when execution is overloaded, so consensus can detect the backpressure.
             while let Some(consensus_commit) = commit_receiver.recv().await {
                 let commit_index = consensus_commit.commit_ref.index;
-                // Skip commits that were already processed before startup.
-                // These may be replayed by consensus for crash recovery purposes.
-                if commit_index <= last_processed_commit_at_startup {
-                    debug!(
-                        commit_index,
-                        last_processed_commit_at_startup,
-                        "Skipping already-processed replayed commit"
-                    );
-                } else {
-                    consensus_handler
-                        .handle_consensus_commit(consensus_commit)
-                        .await;
-                }
+                consensus_handler
+                    .handle_consensus_commit(consensus_commit)
+                    .await;
                 commit_consumer_monitor.set_highest_handled_commit(commit_index);
             }
         }));

@@ -448,6 +448,7 @@ fn hydrate_network_dkg_digests(
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::epoch::epoch_metrics::EpochMetrics;
     use ika_types::digests::ChainIdentifier;
@@ -495,6 +496,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
         let perpetual_dir = tempfile::tempdir().unwrap();

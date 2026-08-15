@@ -25,6 +25,9 @@ use typed_store::rocksdb::Options;
 
 use super::epoch_start_configuration::EpochStartConfigTrait;
 
+use crate::authority::derived_epoch_state::{
+    DerivedEpochStatePolicy, EpochStateClass, EpochStateEntry, epoch_state_registry,
+};
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::authority::{AuthorityCapabilitiesVotingResults, AuthorityMetrics, AuthorityState};
 use crate::dwallet_checkpoints::{
@@ -1949,6 +1952,191 @@ pub struct AuthorityEpochTables {
     pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
+epoch_state_registry! {
+    Derived consensus_message_processed:
+        "the marker set is written by the fold itself, one row per transaction the \
+         replayed commit re-processes; keeping it would make the replay see every \
+         transaction as already handled and produce an empty epoch",
+    Derived last_consensus_stats:
+        "the fold's own cursor and per-author message tallies — a pure running \
+         aggregate of the commits replayed so far",
+    Derived pending_dwallet_checkpoints:
+        "the MPC service builds these from the per-round streams it re-derives; \
+         keyed by consensus round, so a rebuild lands the identical heights",
+    Derived verified_dwallet_checkpoint_messages:
+        "the fold's own output for the commit (session results promoted to \
+         checkpoint messages), not an input to it",
+    Derived verified_system_checkpoint_messages:
+        "same as the dWallet stream, on the system-checkpoint side",
+    Derived pending_dwallet_checkpoint_signatures:
+        "peers' checkpoint signatures arrive as sequenced \
+         `DWalletCheckpointSignature` transactions, so the replay re-collects the \
+         same set",
+    Derived builder_dwallet_checkpoint_message_v1:
+        "the builder's output over the rebuilt pending queue; deterministic in the \
+         queue, so it rebuilds byte-identically",
+    Derived pending_system_checkpoints:
+        "written through the commit batch by the fold",
+    Derived pending_system_checkpoint_signatures:
+        "mirrors `pending_dwallet_checkpoint_signatures` on the system-checkpoint \
+         aggregator",
+    Derived builder_system_checkpoint_v1:
+        "mirrors `builder_dwallet_checkpoint_message_v1`",
+    Derived authority_capabilities_v1:
+        "every row comes from a sequenced `CapabilityNotificationV1`",
+    Derived end_of_publish:
+        "the vote set is exactly the sequenced `EndOfPublish*` senders",
+    Derived end_of_publish_quorum_round:
+        "the close-grace anchor is the round of the commit that first observed \
+         quorum, which the replay re-observes at the same commit",
+    Derived end_of_publish_quorum_voted_count:
+        "pinned at the quorum-observing commit from an arrival-order-capped \
+         aggregator; wiping is what makes the re-derivation exact, because the \
+         aggregator is refilled in the same consensus order and stops at the same \
+         member (this is the #1917 divergence removed at the root rather than \
+         patched)",
+    Derived epoch_close_emitted:
+        "set by the fold in the closing commit's batch; the replay re-decides the \
+         close at the same commit",
+    Derived mpc_data_ready_quorum_round:
+        "the freeze-grace anchor, re-observed at the same commit",
+    Derived mpc_data_freeze_round:
+        "observability re-seed of the freeze round, re-derived with the freeze",
+    Derived epoch_first_commit_timestamp_ms:
+        "the replay starts at the epoch's first commit, so the anchor it recorded \
+         is directly re-observable — the reason this table was persisted at all \
+         (replay used to resume mid-epoch) no longer applies",
+    Preserved override_protocol_upgrade_buffer_stake:
+        "an operator-set per-node knob written over the admin interface; no commit \
+         carries it",
+    Derived dwallet_mpc_messages:
+        "a filter of the commit's transactions",
+    Derived dwallet_mpc_outputs:
+        "a filter of the commit's transactions",
+    Derived dwallet_internal_mpc_outputs:
+        "a filter of the commit's transactions",
+    Preserved internal_presign_pool_ecdsa_secp256k1:
+        "presign material this node computed; the replay does not re-run the \
+         cryptography (the catch-up gate suppresses it), and the pops that consume \
+         the pool are not all consensus-ordered, so a rebuilt pool would serve \
+         different presigns than never-crashed peers (#1928)",
+    Preserved internal_presign_pool_ecdsa_secp256r1:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_eddsa:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_taproot:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_schnorrkel_substrate:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_taproot_vss:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_eddsa_vss:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_schnorrkel_substrate_vss:
+        "see `internal_presign_pool_ecdsa_secp256k1`",
+    Preserved internal_presign_pool_sizes:
+        "counts the preserved pools and is written in their batches; wiping it \
+         while the pools survive would report empty pools and trigger endless \
+         top-ups",
+    Preserved filled_presign_pool_slots:
+        "the marker that makes a replayed internal-presign fill a no-op against \
+         the preserved pool; wiping it is the double-accumulation failure this \
+         classification exists to prevent (#1934)",
+    Preserved served_global_presigns:
+        "records which presign was served for a request so a re-served sequence \
+         number returns the identical bytes; without it the replay re-pops a \
+         different presign and this node's checkpoint message stops matching the \
+         committee's (#1934)",
+    Derived idle_status_updates:
+        "a filter of the commit's transactions",
+    Derived sui_chain_observation_updates:
+        "a filter of the commit's transactions",
+    Derived global_presign_requests:
+        "a filter of the commit's transactions",
+    Derived noa_observations:
+        "a filter of the commit's transactions",
+    Derived noa_presign_demands:
+        "a filter of the commit's transactions",
+    Preserved noa_presign_demand_resolutions:
+        "binds a demand to a presign popped from the preserved pool, and records \
+         the demands the park bound abandoned; a wipe would re-pop for demands the \
+         committee already resolved",
+    Preserved used_presigns:
+        "the monotone retirement marker over the preserved pool; losing it lets \
+         the same presign be consumed twice",
+    Preserved assigned_presigns_ecdsa_secp256k1:
+        "an assignment carved out of the preserved pool — the pool row is already \
+         gone, so the assignment is the only remaining copy",
+    Preserved assigned_presigns_ecdsa_secp256r1:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_eddsa:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_taproot:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_schnorrkel_substrate:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_taproot_vss:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_eddsa_vss:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved assigned_presigns_schnorrkel_substrate_vss:
+        "see `assigned_presigns_ecdsa_secp256k1`",
+    Preserved presign_private_outputs:
+        "this validator's own secret nonce shares from VSS presign sessions — \
+         never published, so no commit can reproduce them",
+    Derived validator_mpc_data_announcements:
+        "every row comes from a sequenced (or sequenced-relayed) announcement",
+    Derived epoch_mpc_data_ready_signals:
+        "every row comes from a sequenced `EpochMpcDataReadySignal`",
+    Derived frozen_validator_mpc_data_input_set:
+        "the freeze partition is decided at a commit boundary from the ready \
+         signals; the replay re-decides it at the same commit",
+    Derived epoch_excluded_validators:
+        "the other half of the freeze partition",
+    Derived handoff_signatures:
+        "rows come from sequenced `EndOfPublishV2` bundles. Preserving them would \
+         let the epoch-close gate read signatures the replayed commits have not \
+         re-counted, which is the shape #1917 was; the buffered-drain path \
+         re-stages every bundle once this node's expected attestation installs",
+    Preserved network_dkg_output_digests:
+        "a content-addressed cache of protocol outputs this node computed or read \
+         from Sui/peers; the replay does not re-run the cryptography, and the \
+         handoff attestation reads it",
+    Preserved network_reconfiguration_output_digests:
+        "see `network_dkg_output_digests`",
+}
+
+/// Deletes every row of `table`, in bounded chunks, and returns how many were
+/// removed.
+///
+/// Point deletes rather than a range delete: `Map::schedule_delete_all` issues
+/// a RocksDB range delete over `[first_key, last_key)` and so leaves the last
+/// row in place. Chunking keeps the wipe's memory flat on the dense per-round
+/// tables, which hold one row per consensus round of the epoch.
+fn wipe_table<K, V>(table: &DBMap<K, V>) -> IkaResult<u64>
+where
+    K: Serialize + serde::de::DeserializeOwned,
+    V: Serialize + serde::de::DeserializeOwned,
+{
+    const WIPE_CHUNK_ROWS: usize = 10_000;
+
+    let mut removed = 0_u64;
+    loop {
+        let keys = table
+            .safe_iter()
+            .take(WIPE_CHUNK_ROWS)
+            .map(|row| row.map(|(key, _)| key))
+            .collect::<Result<Vec<_>, _>>()?;
+        if keys.is_empty() {
+            return Ok(removed);
+        }
+        removed += keys.len() as u64;
+        let mut batch = table.batch();
+        batch.delete_batch(table, keys)?;
+        batch.write()?;
+    }
+}
+
 fn verified_dwallet_checkpoint_messages_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
@@ -2559,11 +2747,37 @@ impl AuthorityPerEpochStore {
         epoch_start_configuration: EpochStartConfiguration,
         chain_identifier: ChainIdentifier,
         packages_config: IkaNetworkConfig,
+        derived_state_policy: DerivedEpochStatePolicy,
     ) -> IkaResult<Arc<Self>> {
         let current_time = Instant::now();
         let epoch_id = committee.epoch;
 
         let tables = AuthorityEpochTables::open(epoch_id, parent_path, db_options.clone());
+
+        // Everything below this point re-seeds in-memory state (the
+        // EndOfPublish aggregator, the reconfiguration status, the freeze and
+        // deadline gauges) from the tables, so the wipe has to happen FIRST or
+        // that state would be rehydrated from rows the replay is about to
+        // re-derive — the "replay against non-rewound durable state" hazard
+        // this design exists to remove.
+        if derived_state_policy == DerivedEpochStatePolicy::RebuildFromConsensus {
+            let wiped = tables.wipe_derived_state()?;
+            let remaining = tables.non_empty_derived_tables();
+            assert!(
+                remaining.is_empty(),
+                "derived per-epoch tables still hold rows after the wipe: {remaining:?} — the \
+                 replay would fold onto surviving state",
+            );
+            let wiped_rows: u64 = wiped.iter().map(|(_, rows)| rows).sum();
+            info!(
+                epoch = epoch_id,
+                wiped_rows,
+                wiped_tables = wiped.len(),
+                ?wiped,
+                "wiped derived per-epoch state; rebuilding it by replaying the epoch's \
+                 consensus commits",
+            );
+        }
 
         let epoch_alive_notify = NotifyOnce::new();
         assert_eq!(
@@ -2813,6 +3027,13 @@ impl AuthorityPerEpochStore {
             epoch_start_configuration,
             chain_identifier,
             self.packages_config.clone(),
+            // The next epoch's tables have never been opened, so the wipe is a
+            // no-op here whatever the node's role — but declaring the rebuild
+            // policy keeps the invariant ("a store that is not replayed is
+            // never wiped") uniform across both entry points. A node that
+            // instead RESTARTS into this epoch comes through `Self::new`
+            // directly, where the policy is a real decision.
+            DerivedEpochStatePolicy::RebuildFromConsensus,
         )
     }
 
@@ -6955,6 +7176,7 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
         (epoch_store, dir)
@@ -7277,6 +7499,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -7711,6 +7934,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -7871,6 +8095,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -7962,6 +8187,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -8083,6 +8309,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap()
     }
@@ -9031,6 +9258,7 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap()
     }

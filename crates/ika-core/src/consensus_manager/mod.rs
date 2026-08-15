@@ -29,10 +29,22 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::time::{sleep, timeout};
 use tracing::{error, info};
 
+mod boot_replay;
+
 #[derive(PartialEq)]
 enum Running {
     True(EpochId, ProtocolVersion),
     False,
+}
+
+/// The commit-consumer monitor created by one `start()`, paired with the commit
+/// index the boot replay had already folded when it was created.
+///
+/// Both halves are needed to answer "did this consumer handle a live commit?",
+/// because the monitor's initial reading is the replay floor, not zero.
+struct StartedCommitConsumer {
+    monitor: Arc<CommitConsumerMonitor>,
+    replay_floor: CommitIndex,
 }
 
 /// Build the consensus-core [`ConsensusProtocolConfig`] from ika's
@@ -112,7 +124,7 @@ pub struct ConsensusManager {
 
     consensus_handler: Mutex<Option<MysticetiConsensusHandler>>,
 
-    consumer_monitor: ArcSwapOption<CommitConsumerMonitor>,
+    consumer_monitor: ArcSwapOption<StartedCommitConsumer>,
     consumer_monitor_sender: broadcast::Sender<Arc<CommitConsumerMonitor>>,
 
     running: Mutex<Running>,
@@ -212,20 +224,28 @@ impl ConsensusManager {
         // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
         let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
-        let consensus_handler = consensus_handler_initializer.new_consensus_handler();
+        let mut consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
-        let last_processed_commit_index =
-            consensus_handler.last_processed_subdag_index() as CommitIndex;
+        // Rebuild this epoch's derived state before consensus starts. The
+        // per-epoch store was opened with its derived tables deleted, so the
+        // handler begins from nothing and folds every finalized commit the
+        // consensus store holds. `replay_after` is then the store's own last
+        // finalized commit — not a watermark kept beside it — which is what
+        // makes `CommitObserver::recover_and_send_commits` unable to find the
+        // two out of order (ika #2057).
+        let replayed_through = boot_replay::replay_epoch_commits(
+            &parameters.db_path,
+            &mut consensus_handler,
+            &self.metrics,
+        )
+        .await;
+
         let (commit_consumer, commit_receiver) =
-            CommitConsumerArgs::new(last_processed_commit_index, last_processed_commit_index);
+            CommitConsumerArgs::new(replayed_through, replayed_through);
         let monitor = commit_consumer.monitor();
 
-        let handler = MysticetiConsensusHandler::new(
-            last_processed_commit_index,
-            consensus_handler,
-            commit_receiver,
-            monitor.clone(),
-        );
+        let handler =
+            MysticetiConsensusHandler::new(consensus_handler, commit_receiver, monitor.clone());
 
         let mut consensus_handler = self.consensus_handler.lock().await;
         *consensus_handler = Some(handler);
@@ -233,9 +253,19 @@ impl ConsensusManager {
         // If there is a previous consumer monitor, it indicates that the consensus engine has been restarted, due to an epoch change. However, that on its
         // own doesn't tell us much whether it participated on an active epoch or an old one. We need to check if it has handled any commits to determine this.
         // If indeed any commits did happen, then we assume that node did participate on previous run.
+        //
+        // "Any commits" means any commit beyond the one the boot replay had
+        // already folded when that consumer was created: the monitor starts at
+        // the replay floor, so comparing against zero would report every node
+        // that merely replayed an existing store as having participated, and
+        // suppress the amnesia recovery a node that handled nothing live needs.
+        let started_consumer = Arc::new(StartedCommitConsumer {
+            monitor: monitor.clone(),
+            replay_floor: replayed_through,
+        });
         let participated_on_previous_run =
-            if let Some(previous_monitor) = self.consumer_monitor.swap(Some(monitor.clone())) {
-                previous_monitor.highest_handled_commit() > 0
+            if let Some(previous) = self.consumer_monitor.swap(Some(started_consumer)) {
+                previous.monitor.highest_handled_commit() > previous.replay_floor
             } else {
                 false
             };
@@ -477,6 +507,16 @@ impl Clone for ReplayWaiter {
 pub struct ConsensusManagerMetrics {
     start_latency: IntGauge,
     shutdown_latency: IntGauge,
+    /// The commit index the boot replay set out to reach — the consensus
+    /// store's last finalized commit for this epoch.
+    pub(crate) boot_replay_target_commit_index: IntGauge,
+    /// How far the boot replay has folded. Equal to the target once the node
+    /// is live; the distance between the two is the remaining boot work, which
+    /// on an old epoch is the dominant term in time-to-live.
+    pub(crate) boot_replay_folded_commit_index: IntGauge,
+    /// Wall-clock seconds the boot replay took. Compared against the epoch's
+    /// age, this is the number the restart-latency budget is set from.
+    pub(crate) boot_replay_latency_seconds: IntGauge,
 }
 
 impl ConsensusManagerMetrics {
@@ -491,6 +531,24 @@ impl ConsensusManagerMetrics {
             shutdown_latency: register_int_gauge_with_registry!(
                 "ika_consensus_manager_shutdown_latency",
                 "The latency of shutting down consensus nodes",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_target_commit_index: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_target_commit_index",
+                "Last finalized consensus commit index this boot's derived-state replay must reach",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_folded_commit_index: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_folded_commit_index",
+                "Consensus commit index this boot's derived-state replay has folded so far",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_latency_seconds: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_latency_seconds",
+                "Seconds the derived-state replay took to reach the consensus store head",
                 registry,
             )
             .unwrap(),

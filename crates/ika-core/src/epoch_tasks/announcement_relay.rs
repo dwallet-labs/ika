@@ -218,6 +218,7 @@ mod tests {
         ConsensusStats, ExecutionIndices, ExecutionIndicesWithStats,
     };
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::consensus_handler::{ConsensusCommitInfo, VerifiedSequencedConsensusTransaction};
     use crate::dwallet_checkpoints::DWalletCheckpointService;
@@ -271,6 +272,7 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
+            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
         std::mem::forget(dir); // keep the DB path alive for the test
