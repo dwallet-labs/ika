@@ -120,6 +120,20 @@ pub struct IkaNodeMetrics {
     /// teardown-to-restart window (#1864), and the value names the hanging
     /// await.
     pub reconfig_phase: IntGauge,
+
+    /// Seconds since this process last finished processing a consensus
+    /// commit, while the commit-liveness watchdog is armed and running;
+    /// `-1` while it is unarmed (no commit processed yet this process) or
+    /// held (consensus torn down for reconfiguration, or the watchdog
+    /// disabled). A healthy validator reads single-digit seconds. Sustained
+    /// growth is the #1864 isolation signature — subscriptions gone in both
+    /// directions with the process otherwise healthy — and the watchdog
+    /// exits the node once it passes the bound. This is the in-node twin of
+    /// the fleet-side staleness alert on
+    /// `ika_consensus_last_committed_timestamp_seconds`, measured on the
+    /// LOCAL clock instead of the consensus clock, so a validator replaying
+    /// a backlog of old commits reads healthy here while it makes progress.
+    pub consensus_commit_silence_seconds: IntGauge,
 }
 
 impl IkaNodeMetrics {
@@ -188,6 +202,14 @@ impl IkaNodeMetrics {
                 "ika_reconfig_phase",
                 "Sub-phase of the epoch-reconfiguration critical section while the reconfig \
                  watchdog is armed; 0 outside it",
+                registry,
+            )
+            .unwrap(),
+            consensus_commit_silence_seconds: register_int_gauge_with_registry!(
+                "ika_consensus_commit_silence_seconds",
+                "Seconds since this process last finished processing a consensus commit; -1 \
+                 while the commit-liveness watchdog is unarmed, held for reconfiguration, or \
+                 disabled",
                 registry,
             )
             .unwrap(),

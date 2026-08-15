@@ -90,6 +90,7 @@ use crate::metrics::IkaNodeMetrics;
 
 pub mod admin;
 mod bind_retry;
+mod commit_liveness_watchdog;
 mod handle;
 pub mod metrics;
 mod node_runner;
@@ -213,6 +214,12 @@ pub struct IkaNode {
     config: NodeConfig,
     mode: NodeMode,
     validator_components: Mutex<Option<ValidatorComponents>>,
+
+    /// Process-lifetime watchdog that exits the node when consensus commits
+    /// stop arriving outside a reconfiguration (ika #1864). `None` on a
+    /// fullnode/notifier — no consensus to be isolated from — and when the
+    /// watchdog is disabled by the environment.
+    commit_liveness: Option<Arc<commit_liveness_watchdog::CommitLivenessWatchdog>>,
 
     state: Arc<AuthorityState>,
     registry_service: RegistryService,
@@ -1270,6 +1277,20 @@ impl IkaNode {
             end_of_publish_receiver,
             uncompleted_requests_receiver,
         };
+        // Armed by the first commit this process handles, and from then on
+        // it exits the node if commits stop for longer than its bound outside
+        // a reconfiguration. Validator mode only: a fullnode or notifier has
+        // no consensus subscriptions to lose. See `commit_liveness_watchdog`
+        // for why the #2016 reconfiguration watchdog cannot cover this.
+        let commit_liveness = if mode.is_validator() {
+            commit_liveness_watchdog::CommitLivenessWatchdog::spawn(
+                ika_node_metrics.consensus_commit_silence_seconds.clone(),
+                ika_node_metrics.reconfig_phase.clone(),
+            )
+        } else {
+            None
+        };
+
         let is_committee_member = state.is_validator(&epoch_store);
         if is_committee_member && !mode.is_validator() {
             warn!(
@@ -1299,6 +1320,7 @@ impl IkaNode {
                 noa_dwallet_finalized.clone(),
                 noa_system_finalized.clone(),
                 stranded_network_keys.clone(),
+                commit_liveness.clone(),
             )
             .await?;
 
@@ -1329,6 +1351,7 @@ impl IkaNode {
             config,
             mode,
             validator_components: Mutex::new(validator_components),
+            commit_liveness,
             state,
             registry_service,
             metrics: ika_node_metrics,
@@ -1948,6 +1971,7 @@ impl IkaNode {
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+        commit_liveness: Option<Arc<commit_liveness_watchdog::CommitLivenessWatchdog>>,
     ) -> Result<ValidatorComponents> {
         let mut config_clone = config.clone();
         let consensus_config = config_clone
@@ -2011,10 +2035,16 @@ impl IkaNode {
             noa_dwallet_finalized,
             noa_system_finalized,
             stranded_network_keys,
+            commit_liveness,
         )
         .await
     }
 
+    // Already at the workspace's 20-argument threshold before the
+    // commit-liveness handle; the handle has to arrive here because this is
+    // the single funnel through which consensus (re)starts, and it is what
+    // installs the commit sink and releases the boundary hold.
+    #[allow(clippy::too_many_arguments)]
     async fn start_epoch_specific_validator_components(
         config: &NodeConfig,
         state: Arc<AuthorityState>,
@@ -2036,6 +2066,7 @@ impl IkaNode {
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+        commit_liveness: Option<Arc<commit_liveness_watchdog::CommitLivenessWatchdog>>,
     ) -> Result<ValidatorComponents> {
         // Channel for network-owned-address sign requests (sender unused after
         // pipeline→handler migration; receiver still drained by service loop).
@@ -2199,6 +2230,12 @@ impl IkaNode {
             epoch_store.clone(),
             low_scoring_authorities,
             throughput_calculator,
+            // The commit path feeds the liveness clock. The handler is
+            // rebuilt every epoch; the sink behind it is not, which is what
+            // makes the gap ACROSS a boundary measurable.
+            commit_liveness.clone().map(|watchdog| {
+                watchdog as Arc<dyn ika_core::consensus_handler::ConsensusCommitSink>
+            }),
         );
 
         info!("Starting consensus manager asynchronously");
@@ -2223,6 +2260,7 @@ impl IkaNode {
                 ika_tx_validator_metrics.clone(),
             );
             let consensus_manager = consensus_manager.clone();
+            let commit_liveness = commit_liveness.clone();
             async move {
                 consensus_manager
                     .start(
@@ -2232,6 +2270,15 @@ impl IkaNode {
                         sui_tx_validator,
                     )
                     .await;
+                // Consensus is running again, so the hold taken when it was
+                // torn down is released here and not a line earlier: the
+                // window this skips over — the handoff barrier and the
+                // manager's own startup — is legitimately long, while
+                // everything after it is exactly where a mesh join that
+                // silently establishes no subscriptions has to be caught.
+                if let Some(watchdog) = &commit_liveness {
+                    watchdog.consensus_started();
+                }
             }
         });
         let replay_waiter = consensus_manager.replay_waiter();
@@ -3003,6 +3050,15 @@ impl IkaNode {
                     self.metrics.reconfig_phase.clone(),
                     next_epoch,
                 );
+                // The commit-liveness clock covers the window this one does
+                // not, so it must not run while consensus is legitimately
+                // gone: held here, released when consensus is running again
+                // (`start_epoch_specific_validator_components`). A node that
+                // leaves the committee never releases it, which is how the
+                // watchdog stays off a node that correctly has no consensus.
+                if let Some(commit_liveness) = &self.commit_liveness {
+                    commit_liveness.consensus_stopped();
+                }
                 // Cancel the old dwallet checkpoint service & system checkpoint service tasks.
                 // Waiting for checkpoint builder to finish gracefully is not possible, because it
                 // may wait on transactions while consensus on peers have already shut down.
@@ -3108,6 +3164,7 @@ impl IkaNode {
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
                             self.stranded_network_keys.clone(),
+                            self.commit_liveness.clone(),
                         )
                         .await?,
                     )
@@ -3166,6 +3223,7 @@ impl IkaNode {
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
                             self.stranded_network_keys.clone(),
+                            self.commit_liveness.clone(),
                         )
                         .await?,
                     )
