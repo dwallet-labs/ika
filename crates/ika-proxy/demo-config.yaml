@@ -45,7 +45,18 @@ dynamic-peers:
   # Devnet: https://fullnode.devnet.sui.io:443
   # Local: http://127.0.0.1:9000
   # This field is required
-  url: http://localhost:9000
+  grpc-url: http://localhost:9000
+  sui-chain-identifier: custom
+
+  # Required for custom/local chains. Mainnet and testnet use IDs compiled
+  # into the binary and reject this override.
+  ika-unsafe-identity-override:
+    ika-package-id: '0x1'
+    ika-common-package-id: '0x2'
+    ika-dwallet-2pc-mpc-package-id: '0x3'
+    ika-system-package-id: '0x4'
+    ika-system-object-id: '0x5'
+    ika-dwallet-coordinator-object-id: '0x6'
 
   # How often to refresh the validator list (in seconds)
   # Lower values = more up-to-date but higher RPC load
@@ -120,7 +131,15 @@ histogram-address: localhost:9185
 #   password: ""
 #   pool-max-idle-per-host: 4
 # dynamic-peers:
-#   url: https://fullnode.devnet.sui.io:443
+#   grpc-url: https://fullnode.devnet.sui.io:443
+#   sui-chain-identifier: devnet
+#   ika-unsafe-identity-override: # IDs created by this devnet deployment
+#     ika-package-id: '0x...'
+#     ika-common-package-id: '0x...'
+#     ika-dwallet-2pc-mpc-package-id: '0x...'
+#     ika-system-package-id: '0x...'
+#     ika-system-object-id: '0x...'
+#     ika-dwallet-coordinator-object-id: '0x...'
 #   interval: 60
 #   hostname: localhost
 # metrics-address: localhost:9184
@@ -136,7 +155,8 @@ histogram-address: localhost:9185
 #   password: "glc_eyJ0IjoiUGFja2V0..."
 #   pool-max-idle-per-host: 16
 # dynamic-peers:
-#   url: https://fullnode.mainnet.sui.io:443
+#   grpc-url: https://fullnode.mainnet.sui.io:443
+#   sui-chain-identifier: mainnet
 #   interval: 30
 #   certificate-file: /etc/letsencrypt/live/sui-proxy.example.com/fullchain.pem
 #   private-key: /etc/letsencrypt/live/sui-proxy.example.com/privkey.pem
@@ -153,8 +173,9 @@ histogram-address: localhost:9185
 #   password: super-secret-password
 #   pool-max-idle-per-host: 12
 # dynamic-peers:
-#   url: ""  # Empty URL disables dynamic discovery
-#   interval: 0  # Zero interval disables periodic updates
+#   grpc-url: http://sui-fullnode.internal:9000
+#   sui-chain-identifier: mainnet
+#   interval: 300
 #   certificate-file: /etc/ssl/company-ca/sui-proxy.crt
 #   private-key: /etc/ssl/company-ca/sui-proxy.key
 # static-peers:
@@ -178,7 +199,8 @@ histogram-address: localhost:9185
 #   password: testnet-password
 #   pool-max-idle-per-host: 6
 # dynamic-peers:
-#   url: https://fullnode.testnet.sui.io:443
+#   grpc-url: https://fullnode.testnet.sui.io:443
+#   sui-chain-identifier: testnet
 #   interval: 45
 #   hostname: testnet-proxy.example.com
 #   # certificate-file and private-key omitted - will generate self-signed cert

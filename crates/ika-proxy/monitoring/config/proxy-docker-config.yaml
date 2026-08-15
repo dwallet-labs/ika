@@ -39,15 +39,17 @@ remote-write:
 ## Dynamic peer validation - automatically discovers validators from the blockchain
 ## This section is required for validator discovery and authentication
 dynamic-peers:
-  url: http://127.0.0.1:9000
+  grpc-url: http://127.0.0.1:9000
+  sui-chain-identifier: custom
   interval: 60
   hostname: localhost
-  ika-package-id: 0xf072acaf9052ad5697bd12f9c46e266df6bca67729562a53b581efc4f3d27e85
-  ika-common-package-id: 0xa88236a9ee6c0e45eaaa840b150f6de5d7281b0b7add542674f935b5110c7b14
-  ika-dwallet-2pc-mpc-package-id: 0x6285d1859304bb8630a5472e7ee988b8e9d97ffbcd623e68e1ad5eb95e8fe88c
-  ika-system-package-id: 0x6ea8ad06c1da7073253e57ba678032d86de692f550847863ab6153c9d3ef866b
-  ika-system-object-id: 0x77f91a4c43808619b9bdb3d65c988b5825d33febd9dbdcc8400b1d9b6bf18bca
-  ika-dwallet-coordinator-object-id: 0x784f3993a128a5935ef9c70878082d47df00eb91e6af589be3a435c0047df1e0
+  ika-unsafe-identity-override:
+    ika-package-id: '0xf072acaf9052ad5697bd12f9c46e266df6bca67729562a53b581efc4f3d27e85'
+    ika-common-package-id: '0xa88236a9ee6c0e45eaaa840b150f6de5d7281b0b7add542674f935b5110c7b14'
+    ika-dwallet-2pc-mpc-package-id: '0x6285d1859304bb8630a5472e7ee988b8e9d97ffbcd623e68e1ad5eb95e8fe88c'
+    ika-system-package-id: '0x6ea8ad06c1da7073253e57ba678032d86de692f550847863ab6153c9d3ef866b'
+    ika-system-object-id: '0x77f91a4c43808619b9bdb3d65c988b5825d33febd9dbdcc8400b1d9b6bf18bca'
+    ika-dwallet-coordinator-object-id: '0x784f3993a128a5935ef9c70878082d47df00eb91e6af589be3a435c0047df1e0'
   certificate-file: proxy.crt
   private-key: proxy.key
 
@@ -58,7 +60,8 @@ dynamic-peers:
 #  # Devnet: https://fullnode.devnet.sui.io:443
 #  # Local: http://127.0.0.1:9000
 #  # This field is required
-#  url: http://localhost:9000
+#  grpc-url: http://localhost:9000
+#  sui-chain-identifier: custom
 #
 #  # How often to refresh the validator list (in seconds)
 #  # Lower values = more up-to-date but higher RPC load
@@ -133,7 +136,8 @@ histogram-address: localhost:9185
 #   password: ""
 #   pool-max-idle-per-host: 4
 # dynamic-peers:
-#   url: https://fullnode.devnet.sui.io:443
+#   grpc-url: https://fullnode.devnet.sui.io:443
+#   sui-chain-identifier: devnet
 #   interval: 60
 #   hostname: localhost
 # metrics-address: localhost:9184
@@ -149,7 +153,8 @@ histogram-address: localhost:9185
 #   password: "glc_eyJ0IjoiUGFja2V0..."
 #   pool-max-idle-per-host: 16
 # dynamic-peers:
-#   url: https://fullnode.mainnet.sui.io:443
+#   grpc-url: https://fullnode.mainnet.sui.io:443
+#   sui-chain-identifier: mainnet
 #   interval: 30
 #   certificate-file: /etc/letsencrypt/live/sui-proxy.example.com/fullchain.pem
 #   private-key: /etc/letsencrypt/live/sui-proxy.example.com/privkey.pem
@@ -166,8 +171,9 @@ histogram-address: localhost:9185
 #   password: super-secret-password
 #   pool-max-idle-per-host: 12
 #dynamic-peers:
-#  url: ""  # Empty URL disables dynamic discovery
-#  interval: 0  # Zero interval disables periodic updates
+#  grpc-url: http://sui-fullnode.internal:9000
+#  sui-chain-identifier: mainnet
+#  interval: 300
 #  certificate-file: /etc/ssl/company-ca/sui-proxy.crt
 #  private-key: /etc/ssl/company-ca/sui-proxy.key
 # static-peers:
@@ -191,7 +197,8 @@ histogram-address: localhost:9185
 #   password: testnet-password
 #   pool-max-idle-per-host: 6
 # dynamic-peers:
-#   url: https://fullnode.testnet.sui.io:443
+#   grpc-url: https://fullnode.testnet.sui.io:443
+#   sui-chain-identifier: testnet
 #   interval: 45
 #   hostname: testnet-proxy.example.com
 #   # certificate-file and private-key omitted - will generate self-signed cert
