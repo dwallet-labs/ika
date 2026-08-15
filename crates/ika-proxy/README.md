@@ -13,7 +13,7 @@ forwarding to time-series databases.
 
 ### 🔐 **Secure Peer Validation**
 
-- **Dynamic Peer Discovery**: Automatically discovers and validates Ika validators through JSON-RPC calls to the
+- **Dynamic Peer Discovery**: Automatically discovers and validates Ika validators through gRPC calls to the
   blockchain
 - **Bridge Node Support**: Validates bridge committee members for cross-chain operations
 - **Static Peer Configuration**: Support for manually configured trusted peers
@@ -52,7 +52,7 @@ forwarding to time-series databases.
                               ▼
                        ┌─────────────────┐
                        │  Sui Blockchain │
-                       │   (JSON-RPC)    │
+                       │     (gRPC)      │
                        └─────────────────┘
 ```
 
@@ -78,7 +78,11 @@ remote-write:
 
 # Dynamic peer validation (discovers validators from blockchain)
 dynamic-peers:
-  url: https://fullnode.mainnet.ika.io:443 # Ika JSON-RPC endpoint
+  grpc-url: https://fullnode.mainnet.sui.io:443 # Sui gRPC endpoint
+  sui-chain-identifier: mainnet # Selects compiled-in Mainnet Ika IDs
+  headers: # Optional gRPC metadata; values are resolved at startup
+    x-api-key:
+      from-env: SUI_API_KEY
   interval: 30 # Polling interval in seconds
   hostname: proxy.example.com # Hostname for self-signed cert (optional)
   certificate-file: /path/to/cert.pem # Custom TLS certificate (optional)
@@ -110,7 +114,10 @@ histogram-address: localhost:9185 # Histogram relay endpoint
 
 #### Dynamic Peer Validation
 
-- **`url`**: Ika JSON-RPC endpoint for validator discovery
+- **`grpc-url`**: Sui gRPC endpoint for validator discovery
+- **`headers`**: Optional gRPC metadata values sourced from environment variables, files, or non-secret literals
+- **`sui-chain-identifier`**: Expected Sui chain (`mainnet`, `testnet`, `devnet`, or `custom`); Mainnet and Testnet select compiled-in Ika package/object IDs
+- **`ika-unsafe-identity-override`**: Required package/object IDs for Devnet/Custom chains; rejected on Mainnet/Testnet
 - **`interval`**: How often to refresh the validator list (seconds)
 - **`hostname`**: Hostname for self-signed certificate generation
 - **`certificate-file`**: Path to custom TLS certificate (PEM format)
@@ -195,8 +202,7 @@ The proxy exposes comprehensive metrics about its operation:
 
 - **`http_handler_hits`**: Request count by handler and peer
 - **`http_handler_duration_seconds`**: Request latency by handler and peer
-- **`json_rpc_state`**: JSON-RPC call success/failure counts
-- **`json_rpc_duration_seconds`**: JSON-RPC call latencies
+- **`ika_sui_client_sui_rpc_errors`**: Sui gRPC call errors by method
 - **`ika_proxy_uptime`**: Proxy uptime information
 
 ### Log Output
@@ -284,9 +290,9 @@ spec:
    - Monitor connection pool settings
 
 3. **Peer Discovery Issues**
-   - Verify JSON-RPC endpoint accessibility
+   - Verify gRPC endpoint accessibility
    - Check polling interval configuration
-   - Monitor JSON-RPC metrics for errors
+   - Monitor Sui client RPC error metrics
 
 ### Debug Mode
 

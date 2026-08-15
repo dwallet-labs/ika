@@ -273,8 +273,7 @@ pub fn create_server_cert_default_allow(hostname: String) -> Result<ServerConfig
     )
 }
 
-/// Verify clients against sui blockchain, clients that are not found in sui_getValidators
-/// will be rejected
+/// Verify clients against Ika's validator set read from Sui over gRPC.
 pub fn create_server_cert_enforce_peer(
     dynamic_peers: DynamicPeerValidationConfig,
     static_peers: Option<StaticPeerValidationConfig>,

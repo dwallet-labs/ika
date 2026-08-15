@@ -24,6 +24,7 @@
 
 use anyhow::Result;
 use clap::Parser;
+use ika_config::node::SuiChainIdentifier;
 use ika_proxy::config::ProxyConfig;
 use ika_proxy::{
     admin::{
@@ -33,9 +34,9 @@ use ika_proxy::{
     config::load,
     histogram_relay, metrics,
 };
-use ika_sui_client::SuiClient;
+use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::metrics::SuiClientMetrics;
-use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
+use ika_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
 use mysten_metrics::RegistryService;
 use prometheus::Registry;
 use std::env;
@@ -89,30 +90,16 @@ async fn main() -> Result<()> {
 
     let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
-    let ika_network_config = IkaNetworkConfig {
-        packages: IkaPackageConfig {
-            ika_package_id: config.dynamic_peers.ika_package_id,
-            ika_common_package_id: config.dynamic_peers.ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id: config.dynamic_peers.ika_dwallet_2pc_mpc_package_id,
-            ika_dwallet_2pc_mpc_package_id_v2: config
-                .dynamic_peers
-                .ika_dwallet_2pc_mpc_package_id_v2,
-            ika_system_package_id: config.dynamic_peers.ika_system_package_id,
-        },
-        objects: IkaObjectsConfig {
-            ika_system_object_id: config.dynamic_peers.ika_system_object_id,
-            ika_dwallet_coordinator_object_id: config
-                .dynamic_peers
-                .ika_dwallet_coordinator_object_id,
-        },
-    };
+    let ika_network_config = config.dynamic_peers.ika_network_config()?;
 
-    let sui_client = SuiClient::new_grpc(
-        &config.dynamic_peers.url,
+    let sui_client = SuiConnectorClient::new_grpc_with_headers(
+        &config.dynamic_peers.grpc_url,
+        &config.dynamic_peers.headers,
         sui_client_metrics,
         ika_network_config,
     )
     .await?;
+    validate_sui_chain(&sui_client, config.dynamic_peers.sui_chain_identifier).await?;
 
     let (tls_config, allower) =
         // we'll only use the dynamic peers in some cases — it makes little sense to run with the static's
@@ -159,5 +146,25 @@ async fn main() -> Result<()> {
 
     server(listener, app, Some(acceptor)).await.unwrap();
 
+    Ok(())
+}
+
+async fn validate_sui_chain(
+    sui_client: &SuiConnectorClient,
+    expected_chain: SuiChainIdentifier,
+) -> Result<()> {
+    let actual_chain = sui_client.get_chain_identifier().await?;
+    let expected_identifier = match expected_chain {
+        SuiChainIdentifier::Mainnet => Some(get_mainnet_chain_identifier().to_string()),
+        SuiChainIdentifier::Testnet => Some(get_testnet_chain_identifier().to_string()),
+        SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => None,
+    };
+    if expected_identifier
+        .as_ref()
+        .is_some_and(|identifier| identifier != &actual_chain)
+    {
+        anyhow::bail!("expected Sui chain {expected_chain}, but connected to {actual_chain}");
+    }
+    info!(%expected_chain, %actual_chain, "connected to Sui gRPC endpoint");
     Ok(())
 }

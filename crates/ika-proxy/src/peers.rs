@@ -20,14 +20,12 @@ pub struct AllowedPeer {
     pub public_key: Ed25519PublicKey,
 }
 
-/// SuiNodeProvider queries the sui blockchain and keeps a record of known validators based on the response from
-/// sui_getValidators.  The node name, public key and other info is extracted from the chain and stored in this
-/// data structure.  We pass this struct to the tls verifier and it depends on the state contained within.
-/// Handlers also use this data in an Extractor extension to check incoming clients on the http api against known keys.
+/// Queries Ika's on-chain system state over Sui gRPC and keeps the current
+/// validator identities used by the TLS verifier and HTTP handlers.
 #[derive(Clone)]
 pub struct SuiNodeProvider {
     client: Arc<ika_sui_client::SuiConnectorClient>,
-    rpc_poll_interval: Duration,
+    poll_interval: Duration,
     pub inner: SuiNodeProviderInner,
 }
 
@@ -46,7 +44,7 @@ impl Allower for SuiNodeProviderInner {
 
 impl SuiNodeProvider {
     pub fn new(
-        rpc_poll_interval: Duration,
+        poll_interval: Duration,
         static_peers: Vec<AllowedPeer>,
         client: Arc<ika_sui_client::SuiConnectorClient>,
     ) -> Self {
@@ -59,7 +57,7 @@ impl SuiNodeProvider {
         let sui_nodes = Arc::new(RwLock::new(HashMap::new()));
         Self {
             client,
-            rpc_poll_interval,
+            poll_interval,
             inner: SuiNodeProviderInner {
                 sui_nodes,
                 static_nodes,
@@ -122,10 +120,10 @@ impl SuiNodeProvider {
     pub fn poll_peer_list(&self) {
         info!("Started polling for peers using client");
 
-        let rpc_poll_interval = self.rpc_poll_interval;
+        let poll_interval = self.poll_interval;
         let cloned_self = self.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(rpc_poll_interval);
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
