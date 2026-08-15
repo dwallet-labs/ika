@@ -17,7 +17,7 @@ anyhow.workspace = true
 bcs.workspace = true
 rand_core = { version = "0.9", default-features = false }
 rand_chacha = { version = "0.9", default-features = false }
-getrandom = { version = "0.2.16", features = ["js"], optional = true } # TODO: idk why, but we need this, also this is old version
+getrandom = { version = "0.4.3", features = ["wasm_js"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 tracing-subscriber = "0.3.19"
 tracing = "0.1.41"
