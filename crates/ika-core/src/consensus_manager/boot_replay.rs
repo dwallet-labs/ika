@@ -203,3 +203,332 @@ fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedS
     }
     subdag
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::Arc;
+
+    use arc_swap::ArcSwap;
+    use consensus_core::storage::WriteBatch;
+    use consensus_core::{CommitAPI, Context, DagBuilder};
+    use prometheus::Registry;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::authority::AuthorityMetrics;
+    use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
+    use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+    use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
+    use crate::epoch::epoch_metrics::EpochMetrics;
+    use ika_types::committee::Committee;
+    use ika_types::digests::ChainIdentifier;
+    use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+    use ika_types::sui::EpochStartSystem;
+
+    const CONSENSUS_COMMITTEE_SIZE: usize = 4;
+
+    /// A consensus store on disk holding `commits` commits, of which the first
+    /// `finalized` are finalized (have a stored rejected-transaction set).
+    ///
+    /// The blocks carry no transactions: this exercises the replay pipeline —
+    /// how far it folds and what index it hands consensus — not the
+    /// transaction handling, which the epoch store's own fold tests cover.
+    fn consensus_store_with(commits: u32, finalized: u32) -> (TempDir, Arc<Context>) {
+        assert!(finalized <= commits);
+        let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
+        let context = Arc::new(context);
+        let dir = TempDir::new().unwrap();
+        let store = RocksDBStore::new(&dir.path().to_string_lossy());
+
+        let mut dag = DagBuilder::new(context.clone());
+        // Two block rounds per leader round, so `commits` leader rounds are
+        // available to be committed.
+        dag.layers(1..=(commits * 2 + 2)).build();
+        let produced = dag.get_sub_dag_and_commits(1..=commits);
+        assert!(
+            produced.len() as u32 >= commits,
+            "the test DAG produced {} commits, fewer than the {commits} requested",
+            produced.len(),
+        );
+
+        for (index, (subdag, commit)) in produced.into_iter().take(commits as usize).enumerate() {
+            let finalized_rows = if (index as u32) < finalized {
+                vec![(commit.reference(), BTreeMap::new())]
+            } else {
+                Vec::new()
+            };
+            store
+                .write(WriteBatch::new(
+                    subdag.blocks.clone(),
+                    vec![commit],
+                    Vec::new(),
+                    finalized_rows,
+                ))
+                .unwrap();
+        }
+        (dir, context)
+    }
+
+    fn test_epoch_store(
+        dir: &Path,
+        policy: DerivedEpochStatePolicy,
+    ) -> Arc<AuthorityPerEpochStore> {
+        let (committee, _keys) =
+            Committee::new_simple_test_committee_of_size(CONSENSUS_COMMITTEE_SIZE);
+        let committee = Arc::new(committee);
+        let name = *committee.names().next().unwrap();
+        AuthorityPerEpochStore::new(
+            name,
+            committee,
+            dir,
+            None,
+            EpochMetrics::new(&Registry::new()),
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+            policy,
+        )
+        .unwrap()
+    }
+
+    fn test_handler(
+        epoch_store: Arc<AuthorityPerEpochStore>,
+        context: &Context,
+    ) -> ConsensusHandler<DWalletCheckpointService> {
+        let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        ConsensusHandler::new(
+            epoch_store,
+            None,
+            None,
+            Arc::new(ArcSwap::from_pointee(HashMap::new())),
+            context.committee.clone(),
+            metrics.clone(),
+            Arc::new(ConsensusThroughputCalculator::new(None, metrics)),
+            None,
+        )
+    }
+
+    /// The index handed to consensus must never exceed what the consensus
+    /// store actually holds — that inequality, violated because the two came
+    /// from different databases, is what crash-looped a validator for a full
+    /// epoch (ika #2057). Asserted on every scenario below.
+    fn assert_replay_index_is_backed_by_the_store(consensus_dir: &Path, replay_after: CommitIndex) {
+        let store = RocksDBStore::new(&consensus_dir.to_string_lossy());
+        let last_commit_index = store
+            .read_last_commit()
+            .unwrap()
+            .map_or(0, |commit| commit.index());
+        assert!(
+            replay_after <= last_commit_index,
+            "replay_after {replay_after} is ahead of the consensus store's last commit \
+             {last_commit_index}; consensus would assert on start",
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_folds_every_finalized_commit_and_reaches_the_store_head() {
+        let (consensus_dir, context) = consensus_store_with(6, 6);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        let replayed_through =
+            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        assert_eq!(replayed_through, 6);
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            6,
+            "the fold did not advance through every replayed commit",
+        );
+        assert_replay_index_is_backed_by_the_store(consensus_dir.path(), replayed_through);
+    }
+
+    /// More commits than fit in one read batch, so the loop that reads, folds
+    /// and releases actually iterates. With a single batch the boundary
+    /// arithmetic is never exercised, and an off-by-one there silently drops a
+    /// commit's worth of effects from every table the fold writes.
+    #[tokio::test]
+    async fn replay_crosses_batch_boundaries_without_dropping_a_commit() {
+        let commits = REPLAY_BATCH_COMMITS + REPLAY_BATCH_COMMITS / 2;
+        let (consensus_dir, context) = consensus_store_with(commits, commits);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        let replayed_through =
+            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        assert_eq!(replayed_through, commits);
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            u64::from(commits),
+        );
+        // One per-round row per replayed commit: a dropped batch boundary shows
+        // up here as a hole rather than as a lower final index.
+        let rows = epoch_store
+            .tables()
+            .unwrap()
+            .classified_table_rows("dwallet_mpc_messages");
+        assert_eq!(
+            rows.len(),
+            commits as usize,
+            "the per-round stream is not dense across the batch boundary",
+        );
+    }
+
+    /// Unfinalized commits carry no stored rejected-transaction set, so folding
+    /// them here could accept a transaction peers reject. The replay must stop
+    /// below them and leave them to consensus.
+    #[tokio::test]
+    async fn replay_stops_below_the_unfinalized_tail() {
+        let (consensus_dir, context) = consensus_store_with(6, 4);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        let replayed_through =
+            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        assert_eq!(replayed_through, 4);
+        assert_replay_index_is_backed_by_the_store(consensus_dir.path(), replayed_through);
+    }
+
+    /// The consensus store wiped entirely — the second half of #2057's
+    /// recovery story. Consensus asserts that a consumer of an empty store
+    /// replays after 0, so the replay must return exactly 0 and the node must
+    /// come up on an epoch it rebuilds from nothing.
+    #[tokio::test]
+    async fn replay_of_an_empty_consensus_store_starts_the_epoch_from_nothing() {
+        let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
+        let consensus_dir = TempDir::new().unwrap();
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        let replayed_through =
+            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        assert_eq!(replayed_through, 0);
+        assert!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .get_last_consensus_stats()
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// The #2057 incident, in process: a per-epoch store that folded through
+    /// commit 8 next to a consensus store whose tail was lost at commit 5.
+    ///
+    /// The old pipeline took `replay_after` from the per-epoch store's own
+    /// record, so it asked consensus to replay after 8 against a store holding
+    /// 5 — and `CommitObserver::recover_and_send_commits` asserts
+    /// `last_commit_index > replay_after_commit_index`, aborting the process
+    /// on every boot until the epoch rolled over. Taking the index from the
+    /// consensus store itself makes that comparison unfailable: the two are
+    /// the same number.
+    #[tokio::test]
+    async fn a_consensus_store_that_lost_its_tail_replays_to_its_own_head() {
+        let (intact_dir, context) = consensus_store_with(8, 8);
+        let epoch_dir = TempDir::new().unwrap();
+
+        // The run before the storage incident: folded through commit 8.
+        {
+            let epoch_store = test_epoch_store(
+                epoch_dir.path(),
+                DerivedEpochStatePolicy::RebuildFromConsensus,
+            );
+            let mut handler = test_handler(epoch_store.clone(), &context);
+            let metrics = ConsensusManagerMetrics::new(&Registry::new());
+            let replayed_through =
+                replay_epoch_commits(intact_dir.path(), &mut handler, &metrics).await;
+            assert_eq!(replayed_through, 8);
+        }
+        let stale_watermark = {
+            let epoch_store = test_epoch_store(epoch_dir.path(), DerivedEpochStatePolicy::Retain);
+            let stale = epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index;
+            assert_eq!(stale, 8, "the per-epoch store must survive with its tally");
+            stale
+        };
+
+        // The incident: the consensus store comes back holding only 5 commits.
+        let (truncated_dir, _context) = consensus_store_with(5, 5);
+        let truncated_head = {
+            let store = RocksDBStore::new(&truncated_dir.path().to_string_lossy());
+            store.read_last_commit().unwrap().unwrap().index()
+        };
+        assert_eq!(truncated_head, 5);
+        assert!(
+            stale_watermark > u64::from(truncated_head),
+            "the fixture must reproduce the torn state: a per-epoch record ahead of the \
+             consensus store, which is what the upstream assertion aborts on",
+        );
+
+        // The new boot: wipe, replay against whatever the store still has.
+        let epoch_store = test_epoch_store(
+            epoch_dir.path(),
+            DerivedEpochStatePolicy::RebuildFromConsensus,
+        );
+        assert!(
+            epoch_store
+                .tables()
+                .unwrap()
+                .get_last_consensus_stats()
+                .unwrap()
+                .is_none(),
+            "the wipe must have removed the stale tally",
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+        let replayed_through =
+            replay_epoch_commits(truncated_dir.path(), &mut handler, &metrics).await;
+
+        assert_eq!(
+            replayed_through, truncated_head,
+            "the rebuild must reach the surviving head and hand consensus that index",
+        );
+        assert_replay_index_is_backed_by_the_store(truncated_dir.path(), replayed_through);
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            u64::from(truncated_head),
+            "derived state must be rebuilt to the surviving head, not left at the stale tally",
+        );
+    }
+}
