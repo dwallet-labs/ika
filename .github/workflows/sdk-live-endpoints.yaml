@@ -1,0 +1,141 @@
+name: SDK Live Public Endpoints
+
+# Read-only probe of the TypeScript SDK against the LIVE public Sui fullnodes
+# of mainnet and testnet.
+#
+# Why this exists: the SDK can break without anyone touching it. Public Sui
+# fullnodes dropped JSON-RPC, and the networks started emitting a newer
+# versioned MPC output variant than the bundled WASM could decode. Both
+# shipped broken for months because every other suite runs against a localnet
+# that is pinned to whatever the repo already expects. This job is the only
+# check that sees what a user actually sees.
+#
+# The probe needs no funds, no keypair, and no localnet — it only reads. A
+# fullnode that is unreachable skips the assertion rather than failing it, so
+# a Sui-side outage does not turn into a red build on an unrelated PR; any
+# error the SDK itself raises after the connection works fails the job.
+
+on:
+  schedule:
+    # 05:00 UTC daily — after the nightly heavy suites at 03:00, so a failure
+    # here is unambiguous rather than tangled up with those runs.
+    - cron: "0 5 * * *"
+  pull_request:
+    paths:
+      - "sdk/typescript/src/**"
+      # The probe's own files: a PR that loosens the skip oracle must be
+      # checked by the job that runs it.
+      - "sdk/typescript/test/live/**"
+      - "sdk/typescript/vitest.config.ts"
+      - "sdk/typescript/package.json"
+      - "sdk/ika-wasm/**"
+      - "crates/dwallet-mpc-centralized-party/**"
+      - ".github/workflows/sdk-live-endpoints.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  # Release, not dev: the probe derives protocol public parameters, and class
+  # groups crypto in a debug WASM build is too slow to be worth the wait.
+  PROFILE: release
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: "pnpm"
+
+      - name: Install wasm pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "latest"
+
+      - name: Install Sui from Github
+        run: |
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.77.2/sui-mainnet-v1.77.2-ubuntu-x86_64.tgz > sui.tgz
+          tar -xvzf sui.tgz
+          sudo cp ./sui /usr/local/bin/sui
+
+      - name: Install dependencies (builds the WASM from this revision)
+        run: pnpm install
+        working-directory: ./sdk/typescript
+
+      - name: Probe public mainnet and testnet
+        run: pnpm run test:live
+        working-directory: ./sdk/typescript
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## SDK live-endpoint probe (this revision)"
+            echo ""
+            echo "Probed \`initialize()\`, epoch reads, and protocol public parameter"
+            echo "derivation against the public mainnet and testnet fullnodes over gRPC."
+            echo ""
+            echo "Result: **${{ job.status }}**"
+            echo ""
+            echo "A failure here means this revision is broken against the live networks."
+            echo "Skipped assertions mean a fullnode was unreachable, not an SDK defect."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The job above builds everything from this revision, which is exactly the
+  # blind spot that let the last incident run for months: HEAD could decode the
+  # networks' V4-tagged outputs while the package on npm could not. This job
+  # probes what a user actually installs. It needs no Rust or Sui toolchain —
+  # the WASM comes from the tarball — and it is deliberately not run on pull
+  # requests, since it reports on the state of npm rather than on the diff.
+  published:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+
+      - name: Probe the published SDK from npm
+        run: node scripts/probe-published-sdk.mjs
+        working-directory: ./sdk/typescript
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Published SDK probe (npm \`latest\`)"
+            echo ""
+            echo "Installed \`@ika.xyz/sdk@latest\` into a scratch project and ran the same"
+            echo "reads against public mainnet and testnet."
+            echo ""
+            echo "Result: **${{ job.status }}**"
+            echo ""
+            echo "A failure here means users are broken right now. If the job above passed,"
+            echo "the fix is to publish the pending release, not to change code."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -26,10 +26,16 @@ the locations below and runs in CI; it fails the build on drift.
    ```
 3. **CI workflows that download the `sui` binary** — the release URL
    embeds the version twice:
-    - `.github/workflows/ts-integration-tests.yaml`
-    - `.github/workflows/ts-ci.yaml`
-    - `.github/workflows/system-tests-ci.yaml`
-  4. **`CLAUDE.md`** — the pinned-version line in Gotchas.
+   - `.github/workflows/ts-integration-tests.yaml`
+   - `.github/workflows/ts-ci.yaml`
+   - `.github/workflows/system-tests-ci.yaml`
+   - `.github/workflows/sdk-live-endpoints.yaml`
+
+   `scripts/check-sui-version-consistency.sh` is the enforced list — a new
+   workflow that downloads the binary must be added THERE too, or its pin
+   goes stale at the next bump with CI still green.
+
+4. **`CLAUDE.md`** — the pinned-version line in Gotchas.
 5. **msim / simtest rev** — `scripts/simtest/cargo-simtest` **and**
    `scripts/simtest/config-patch` (the coverage path in
    `scripts/simtest/codecov.sh` applies the same patch as a real diff,

@@ -21,10 +21,10 @@ Ika Client is the main entry point for interacting with the Ika protocol. It pro
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-const client = new SuiJsonRpcClient({
-	url: getJsonRpcFullnodeUrl('testnet'), // mainnet / testnet
+const client = new SuiGrpcClient({
+	baseUrl: 'https://fullnode.testnet.sui.io:443', // mainnet / testnet
 	network: 'testnet',
 });
 
@@ -35,3 +35,11 @@ const ikaClient = new IkaClient({
 
 await ikaClient.initialize(); // This will initialize the Ika Client and fetch the Ika protocol state and objects.
 ```
+
+<Info title="Use gRPC against public fullnodes">
+	Public Sui fullnodes no longer serve JSON-RPC, so a `SuiJsonRpcClient` pointed at
+	`fullnode.mainnet.sui.io` / `fullnode.testnet.sui.io` fails with `Method not found`. Ika Client
+	accepts any `ClientWithCoreApi` implementation — `SuiGrpcClient`, a GraphQL client, or
+	`SuiJsonRpcClient` against an endpoint that still serves JSON-RPC (a localnet or a private
+	fullnode).
+</Info>

@@ -116,11 +116,11 @@ pnpm add @ika.xyz/sdk
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-// Create Sui client
-const suiClient = new SuiJsonRpcClient({
-	url: getJsonRpcFullnodeUrl('testnet'),
+// Create Sui client (public fullnodes serve gRPC, not JSON-RPC)
+const suiClient = new SuiGrpcClient({
+	baseUrl: 'https://fullnode.testnet.sui.io:443',
 	network: 'testnet',
 });
 
