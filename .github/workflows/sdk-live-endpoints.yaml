@@ -23,6 +23,11 @@ on:
   pull_request:
     paths:
       - "sdk/typescript/src/**"
+      # The probe's own files: a PR that loosens the skip oracle must be
+      # checked by the job that runs it.
+      - "sdk/typescript/test/live/**"
+      - "sdk/typescript/vitest.config.ts"
+      - "sdk/typescript/package.json"
       - "sdk/ika-wasm/**"
       - "crates/dwallet-mpc-centralized-party/**"
       - ".github/workflows/sdk-live-endpoints.yaml"
@@ -86,13 +91,51 @@ jobs:
         if: always()
         run: |
           {
-            echo "## SDK live-endpoint probe"
+            echo "## SDK live-endpoint probe (this revision)"
             echo ""
             echo "Probed \`initialize()\`, epoch reads, and protocol public parameter"
             echo "derivation against the public mainnet and testnet fullnodes over gRPC."
             echo ""
             echo "Result: **${{ job.status }}**"
             echo ""
-            echo "A failure here means users hit the same error with a released SDK."
+            echo "A failure here means this revision is broken against the live networks."
             echo "Skipped assertions mean a fullnode was unreachable, not an SDK defect."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The job above builds everything from this revision, which is exactly the
+  # blind spot that let the last incident run for months: HEAD could decode the
+  # networks' V4-tagged outputs while the package on npm could not. This job
+  # probes what a user actually installs. It needs no Rust or Sui toolchain —
+  # the WASM comes from the tarball — and it is deliberately not run on pull
+  # requests, since it reports on the state of npm rather than on the diff.
+  published:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+
+      - name: Probe the published SDK from npm
+        run: node scripts/probe-published-sdk.mjs
+        working-directory: ./sdk/typescript
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Published SDK probe (npm \`latest\`)"
+            echo ""
+            echo "Installed \`@ika.xyz/sdk@latest\` into a scratch project and ran the same"
+            echo "reads against public mainnet and testnet."
+            echo ""
+            echo "Result: **${{ job.status }}**"
+            echo ""
+            echo "A failure here means users are broken right now. If the job above passed,"
+            echo "the fix is to publish the pending release, not to change code."
           } >> "$GITHUB_STEP_SUMMARY"

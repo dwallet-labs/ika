@@ -124,6 +124,16 @@ export default tseslint.config(
 		},
 	},
 
+	// Node scripts run by CI, not shipped in any bundle
+	{
+		files: ['**/scripts/**/*.mjs'],
+		languageOptions: {
+			globals: {
+				...globals.node,
+			},
+		},
+	},
+
 	// Prettier must be last
 	eslintPluginPrettierRecommended,
 );
