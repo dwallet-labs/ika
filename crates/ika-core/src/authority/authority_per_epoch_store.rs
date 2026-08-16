@@ -1091,6 +1091,25 @@ impl NetworkKeyBlobSource for AuthorityPerEpochStore {
     }
 }
 
+/// The identity and configuration an epoch store is opened with.
+///
+/// Grouped so the constructors take two arguments rather than nine, and so
+/// what varies between them — whether the derived tables are wiped — is not
+/// buried among eight values that never vary. Instantiated directly; every
+/// field is public and none is derived from another.
+pub struct EpochStoreParams {
+    pub name: AuthorityName,
+    pub committee: Arc<Committee>,
+    /// The `store` directory the per-epoch databases live under, NOT the
+    /// epoch's own directory — `AuthorityEpochTables::path` appends that.
+    pub parent_path: PathBuf,
+    pub db_options: Option<Options>,
+    pub metrics: Arc<EpochMetrics>,
+    pub epoch_start_configuration: EpochStartConfiguration,
+    pub chain_identifier: ChainIdentifier,
+    pub packages_config: IkaNetworkConfig,
+}
+
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
     pub name: AuthorityName,
@@ -2751,6 +2770,11 @@ impl AuthorityPerEpochStore {
 
     /// Opens the epoch's store, deleting every derived table on the way in.
     ///
+    /// Takes its inputs as a struct so the one DECISION at this call site —
+    /// whether the derived tables are wiped — is the thing a reader sees,
+    /// rather than the ninth positional argument behind eight pieces of
+    /// identity and configuration.
+    ///
     /// The wipe is unconditional because there is no node on which it is
     /// anything but a no-op or the right thing. Every writer of a derived
     /// table — the consensus fold, the MPC drain, the checkpoint builders, and
@@ -2760,28 +2784,9 @@ impl AuthorityPerEpochStore {
     /// writes no epoch-store table at all (its certificates and watermarks are
     /// in `DWalletCheckpointStore`, a separate database), which is why the
     /// preserved-class state-sync artifacts are not affected either.
-    #[instrument(name = "AuthorityPerEpochStore::new", level = "error", skip_all, fields(epoch = committee.epoch))]
-    pub fn new(
-        name: AuthorityName,
-        committee: Arc<Committee>,
-        parent_path: &Path,
-        db_options: Option<Options>,
-        metrics: Arc<EpochMetrics>,
-        epoch_start_configuration: EpochStartConfiguration,
-        chain_identifier: ChainIdentifier,
-        packages_config: IkaNetworkConfig,
-    ) -> IkaResult<Arc<Self>> {
-        Self::open(
-            name,
-            committee,
-            parent_path,
-            db_options,
-            metrics,
-            epoch_start_configuration,
-            chain_identifier,
-            packages_config,
-            /* wipe_derived_state */ true,
-        )
+    #[instrument(name = "AuthorityPerEpochStore::new", level = "error", skip_all, fields(epoch = params.committee.epoch))]
+    pub fn new(params: EpochStoreParams) -> IkaResult<Arc<Self>> {
+        Self::open(params, /* wipe_derived_state */ true)
     }
 
     /// Opens the store WITHOUT deleting its derived tables.
@@ -2797,16 +2802,13 @@ impl AuthorityPerEpochStore {
     /// state no validator ever reaches.
     #[cfg(test)]
     pub(crate) fn new_retaining_derived_state_for_testing(
-        name: AuthorityName,
-        committee: Arc<Committee>,
-        parent_path: &Path,
-        db_options: Option<Options>,
-        metrics: Arc<EpochMetrics>,
-        epoch_start_configuration: EpochStartConfiguration,
-        chain_identifier: ChainIdentifier,
-        packages_config: IkaNetworkConfig,
+        params: EpochStoreParams,
     ) -> IkaResult<Arc<Self>> {
-        Self::open(
+        Self::open(params, /* wipe_derived_state */ false)
+    }
+
+    fn open(params: EpochStoreParams, wipe_derived_state: bool) -> IkaResult<Arc<Self>> {
+        let EpochStoreParams {
             name,
             committee,
             parent_path,
@@ -2815,25 +2817,11 @@ impl AuthorityPerEpochStore {
             epoch_start_configuration,
             chain_identifier,
             packages_config,
-            /* wipe_derived_state */ false,
-        )
-    }
-
-    fn open(
-        name: AuthorityName,
-        committee: Arc<Committee>,
-        parent_path: &Path,
-        db_options: Option<Options>,
-        metrics: Arc<EpochMetrics>,
-        epoch_start_configuration: EpochStartConfiguration,
-        chain_identifier: ChainIdentifier,
-        packages_config: IkaNetworkConfig,
-        wipe_derived_state: bool,
-    ) -> IkaResult<Arc<Self>> {
+        } = params;
         let current_time = Instant::now();
         let epoch_id = committee.epoch;
 
-        let tables = AuthorityEpochTables::open(epoch_id, parent_path, db_options.clone());
+        let tables = AuthorityEpochTables::open(epoch_id, &parent_path, db_options.clone());
 
         // Everything below this point re-seeds in-memory state (the
         // EndOfPublish aggregator, the reconfiguration status, the freeze and
@@ -3014,7 +3002,7 @@ impl AuthorityPerEpochStore {
             committee: committee.clone(),
             protocol_config,
             tables: ArcSwapOption::new(Some(Arc::new(tables))),
-            parent_path: parent_path.to_path_buf(),
+            parent_path,
             db_options,
             epoch_alive_notify,
             user_certs_closed_notify: NotifyOnce::new(),
@@ -3108,16 +3096,16 @@ impl AuthorityPerEpochStore {
         assert_eq!(self.epoch() + 1, new_committee.epoch);
         self.record_reconfig_halt_duration_metric();
         self.record_epoch_total_duration_metric();
-        Self::new(
+        Self::new(EpochStoreParams {
             name,
-            Arc::new(new_committee),
-            &self.parent_path,
-            self.db_options.clone(),
-            self.metrics.clone(),
+            committee: Arc::new(new_committee),
+            parent_path: self.parent_path.clone(),
+            db_options: self.db_options.clone(),
+            metrics: self.metrics.clone(),
             epoch_start_configuration,
             chain_identifier,
-            self.packages_config.clone(),
-        )
+            packages_config: self.packages_config.clone(),
+        })
     }
 
     pub fn new_at_next_epoch_for_testing(&self) -> IkaResult<Arc<Self>> {
@@ -7250,17 +7238,21 @@ mod tests {
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            names[0],
-            committee,
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: names[0],
+                committee,
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration: EpochStartConfiguration::new(
+                    EpochStartSystem::new_for_testing_with_epoch(0),
+                )
+                .unwrap(),
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
         (epoch_store, dir)
     }
 
@@ -7572,17 +7564,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: names[0],
+                committee: committee.clone(),
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration,
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
 
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
         assert!(
@@ -8006,17 +7999,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: names[0],
+                committee: committee.clone(),
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration,
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
 
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
         assert!(
@@ -8166,17 +8160,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: names[0],
+                committee: committee.clone(),
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration,
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
 
         // Perpetual tables in their own tempdir, installed the way node startup
         // does — without this the replay-mint persist is a silent no-op.
@@ -8257,17 +8252,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: names[0],
+                committee: committee.clone(),
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration,
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
 
         let epoch = 0u64;
         // Attestation A and a DIFFERENT attestation B (distinct next-committee
@@ -8378,16 +8374,16 @@ mod tests {
             EpochStartSystem::new_for_testing_with_epoch(committee.epoch),
         )
         .unwrap();
-        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
+        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
             name,
             committee,
-            dir,
-            None,
-            EpochMetrics::new(&Registry::new()),
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap()
     }
 
@@ -9326,16 +9322,16 @@ mod tests {
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(epoch))
                 .unwrap();
-        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            *base_committee.names().next().unwrap(),
+        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+            name: *base_committee.names().next().unwrap(),
             committee,
-            dir,
-            None,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
             metrics,
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap()
     }
 
@@ -9850,27 +9846,27 @@ mod tests {
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
         let epoch_store = if wipe_derived_state {
-            AuthorityPerEpochStore::new(
+            AuthorityPerEpochStore::new(EpochStoreParams {
                 name,
                 committee,
-                dir,
-                None,
+                parent_path: dir.to_path_buf(),
+                db_options: None,
                 metrics,
                 epoch_start_configuration,
-                ChainIdentifier::default(),
-                IkaNetworkConfig::new_for_testing(),
-            )
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
         } else {
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
                 name,
                 committee,
-                dir,
-                None,
+                parent_path: dir.to_path_buf(),
+                db_options: None,
                 metrics,
                 epoch_start_configuration,
-                ChainIdentifier::default(),
-                IkaNetworkConfig::new_for_testing(),
-            )
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
         }
         .unwrap();
         (epoch_store, name)

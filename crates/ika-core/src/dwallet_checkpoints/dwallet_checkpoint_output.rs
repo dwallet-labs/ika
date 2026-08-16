@@ -200,6 +200,7 @@ impl CertifiedDWalletCheckpointMessageOutput for SendDWalletCheckpointToStateSyn
 mod tests {
     use super::*;
     use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+    use crate::authority::authority_per_epoch_store::EpochStoreParams;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::dwallet_checkpoints::DWalletCheckpointMetrics;
     use crate::epoch::epoch_metrics::EpochMetrics;
@@ -285,16 +286,19 @@ mod tests {
         let committee = Arc::new(committee);
         let name = *committee.names().next().unwrap();
         let epoch_dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
             name,
-            committee.clone(),
-            epoch_dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            committee: committee.clone(),
+            parent_path: epoch_dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
 
         let checkpoint_dir = tempfile::tempdir().unwrap();

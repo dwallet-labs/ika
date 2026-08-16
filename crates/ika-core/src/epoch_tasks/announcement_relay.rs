@@ -214,6 +214,7 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
 mod tests {
     use super::*;
     use crate::authority::AuthorityMetrics;
+    use crate::authority::authority_per_epoch_store::EpochStoreParams;
     use crate::authority::authority_per_epoch_store::{
         ConsensusStats, ExecutionIndices, ExecutionIndicesWithStats,
     };
@@ -262,17 +263,21 @@ mod tests {
         let committee = Arc::new(committee);
         let member = *committee.names().next().unwrap();
         let dir = tempfile::TempDir::new().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
-            member,
-            committee,
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap();
+        let epoch_store =
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
+                name: member,
+                committee,
+                parent_path: dir.path().to_path_buf(),
+                db_options: None,
+                metrics: EpochMetrics::new(&Registry::new()),
+                epoch_start_configuration: EpochStartConfiguration::new(
+                    EpochStartSystem::new_for_testing_with_epoch(0),
+                )
+                .unwrap(),
+                chain_identifier: ChainIdentifier::default(),
+                packages_config: IkaNetworkConfig::new_for_testing(),
+            })
+            .unwrap();
         std::mem::forget(dir); // keep the DB path alive for the test
 
         let joiner = AuthorityName([7; 32]);

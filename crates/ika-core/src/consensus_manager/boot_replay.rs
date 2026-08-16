@@ -234,7 +234,7 @@ mod tests {
 
     use super::*;
     use crate::authority::AuthorityMetrics;
-    use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+    use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochStoreParams};
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
@@ -293,22 +293,25 @@ mod tests {
             Committee::new_simple_test_committee_of_size(CONSENSUS_COMMITTEE_SIZE);
         let committee = Arc::new(committee);
         let name = *committee.names().next().unwrap();
+        let params = EpochStoreParams {
+            name,
+            committee,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        };
         let build = if wipe_derived_state {
             AuthorityPerEpochStore::new
         } else {
             AuthorityPerEpochStore::new_retaining_derived_state_for_testing
         };
-        build(
-            name,
-            committee,
-            dir,
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
-        .unwrap()
+        build(params).unwrap()
     }
 
     fn test_handler(

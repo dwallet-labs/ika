@@ -45,7 +45,7 @@ use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX, EpochStoreParams,
 };
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
@@ -749,16 +749,16 @@ impl IkaNode {
             ValidatorComponentMetrics::new(&registry_service.default_registry());
         let validator_component_metrics_for_reconfig = validator_component_metrics.clone();
 
-        let epoch_store = AuthorityPerEpochStore::new(
-            config.authority_name(),
-            committee_arc.clone(),
-            &config.db_path().join("store"),
-            Some(epoch_options.options),
-            EpochMetrics::new(&registry_service.default_registry()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: config.authority_name(),
+            committee: committee_arc.clone(),
+            parent_path: config.db_path().join("store"),
+            db_options: Some(epoch_options.options),
+            metrics: EpochMetrics::new(&registry_service.default_registry()),
             epoch_start_configuration,
             chain_identifier,
             packages_config,
-        )?;
+        })?;
 
         // Allow the per-epoch handoff record path to persist freshly
         // certified attestations into perpetual storage.
