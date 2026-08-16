@@ -29,6 +29,7 @@ use crate::authority::derived_epoch_state::{
     EpochStateClass, EpochStateEntry, epoch_state_registry,
 };
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::authority::round_transport::{ConsensusRoundPayload, RoundTransportSender};
 use crate::authority::{AuthorityCapabilitiesVotingResults, AuthorityMetrics, AuthorityState};
 use crate::dwallet_checkpoints::{
     BuilderDWalletCheckpointMessage, DWalletCheckpointHeight, DWalletCheckpointServiceNotify,
@@ -425,8 +426,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         checkpoint: PendingDWalletCheckpoint,
     ) -> IkaResult<()>;
 
-    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
-
     /// Publishes the consensus round the MPC service has finished consuming,
     /// and whether its catch-up gate was engaged when it finished.
     ///
@@ -448,20 +447,12 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// loop dies, which is the one case the detector exists for.
     fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool);
 
-    fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>>;
-
-    fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>>;
-
-    fn next_dwallet_internal_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>>;
+    /// The highest consensus round this node has OBSERVED — the catch-up
+    /// gate's "how far is there to go". Not the highest folded: under the
+    /// blocking round transport the fold cannot run more than the channel's
+    /// capacity ahead of the drain, so its position would understate the gap
+    /// by orders of magnitude.
+    fn observed_consensus_head_round(&self) -> Round;
 
     fn next_verified_dwallet_checkpoint_message(
         &self,
@@ -506,18 +497,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<u64>>;
 
-    /// Returns the next idle status updates after the given consensus round.
-    fn next_idle_status_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>>;
-
-    /// Returns the next Sui chain observation updates after the given consensus round.
-    fn next_sui_chain_observation_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>>;
-
     /// Assign a presign to a demand — atomically, and idempotently in the
     /// demand's identity, so the per-epoch replay every consumer performs
     /// after a restart re-reads the same assignment instead of popping a
@@ -529,24 +508,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<PresignAssignmentOutcome>;
-
-    /// Returns the next global presign requests after the given consensus round.
-    fn next_global_presign_request(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>>;
-
-    /// Returns the next NOA observations after the given consensus round.
-    fn next_noa_observation(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>>;
-
-    /// Returns the next NOA presign demands after the given consensus round.
-    fn next_noa_presign_demand(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>>;
 
     /// Reads a NOA sign demand's terminal resolution, if it has one.
     ///
@@ -746,38 +707,8 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             })));
     }
 
-    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        let tables = self.tables()?;
-        Ok(tables
-            .dwallet_mpc_messages
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(r, _)| r))
-    }
-
-    fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_mpc_messages, last_consensus_round)
-    }
-
-    fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_mpc_outputs, last_consensus_round)
-    }
-
-    fn next_dwallet_internal_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_internal_mpc_outputs, last_consensus_round)
+    fn observed_consensus_head_round(&self) -> Round {
+        self.observed_consensus_head_round.load(Ordering::Acquire)
     }
 
     fn next_verified_dwallet_checkpoint_message(
@@ -836,46 +767,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<u64>> {
         let tables = self.tables()?;
         tables.max_filled_presign_pool_slot(signature_algorithm, dwallet_network_encryption_key_id)
-    }
-
-    fn next_idle_status_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.idle_status_updates, last_consensus_round)
-    }
-
-    fn next_sui_chain_observation_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.sui_chain_observation_updates, last_consensus_round)
-    }
-
-    fn next_global_presign_request(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.global_presign_requests, last_consensus_round)
-    }
-
-    fn next_noa_observation(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.noa_observations, last_consensus_round)
-    }
-
-    fn next_noa_presign_demand(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.noa_presign_demands, last_consensus_round)
     }
 
     fn noa_presign_demand_resolution(
@@ -1127,6 +1018,26 @@ pub struct AuthorityPerEpochStore {
     // needed for re-opening epoch db.
     parent_path: PathBuf,
     db_options: Option<Options>,
+
+    /// The commit boundary hands each round's inputs to the MPC drain over
+    /// this bounded channel, BLOCKING when it is full. Absent on a node that
+    /// runs no drain (a fullnode or notifier), where the payload is dropped —
+    /// nothing downstream of the drain exists there to want it.
+    round_transport: ArcSwapOption<RoundTransportSender>,
+
+    /// The highest consensus round this node has OBSERVED, which is not the
+    /// same as the highest it has folded.
+    ///
+    /// The catch-up gate needs "how far behind is the drain", and under a
+    /// blocking transport the fold's own position cannot answer that: the
+    /// fold is never more than the channel's capacity ahead of the drain, so
+    /// a gap measured against it is pinned far below the gate's entry
+    /// threshold and the gate would silently never engage. This is fed from
+    /// the two places that see further than the fold — the boot replay
+    /// publishes the consensus store's head before it starts folding, and the
+    /// live path reports each commit on arrival, before the fold can block on
+    /// it.
+    observed_consensus_head_round: AtomicU64,
 
     consensus_notify_read: NotifyRead<SequencedConsensusTransactionKey, ()>,
 
@@ -1575,31 +1486,6 @@ pub struct AuthorityEpochTables {
     /// to upgrade, and the protocol tolerates validators disagreeing on it.
     override_protocol_upgrade_buffer_stake: DBMap<u64, u64>,
 
-    /// Holds all the DWallet MPC related messages that have been
-    /// received since the beginning of the epoch.
-    /// The key is the consensus round number,
-    /// the value is the dWallet-mpc messages that have been received in that
-    /// round.
-    ///
-    /// write-discipline: commit-batched — this is the dense per-round driver
-    /// the `DWalletMPCService` replay advances on; a round present here without
-    /// its commit's other streams trips the replay's round-equality check.
-    #[default_options_override_fn = "dwallet_mpc_messages_table_default_config"]
-    dwallet_mpc_messages: DBMap<Round, Vec<DWalletMPCMessage>>,
-    /// Consensus round -> Output.
-    ///
-    /// write-discipline: commit-batched — replayed in lockstep with
-    /// `dwallet_mpc_messages` by the MPC service.
-    #[default_options_override_fn = "dwallet_mpc_outputs_table_default_config"]
-    dwallet_mpc_outputs: DBMap<Round, Vec<DWalletMPCOutput>>,
-    /// Consensus round -> Output.
-    ///
-    /// write-discipline: commit-batched — same round-aligned replay as
-    /// `dwallet_mpc_outputs` (written only while `internal_presign_sessions`
-    /// is live, which the replay reads gate on identically).
-    #[default_options_override_fn = "dwallet_internal_mpc_outputs_table_default_config"]
-    dwallet_internal_mpc_outputs: DBMap<Round, Vec<DWalletInternalMPCOutput>>,
-
     /// Internal presign pools, keyed by (network_encryption_key_id, session_sequence_number).
     /// Each entry contains presigns generated by that session, along with the session identifier.
     /// Presigns are consumed in order (lowest session sequence number first) within a given key ID.
@@ -1712,44 +1598,6 @@ pub struct AuthorityEpochTables {
     /// replayed request returns the identical presign; protects the
     /// checkpoint-message bytes that must match across the committee (#1934).
     served_global_presigns: DBMap<u64, (SessionIdentifier, u16, Vec<u8>)>,
-
-    /// Idle status updates by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    idle_status_updates: DBMap<Round, Vec<IdleStatusUpdate>>,
-
-    /// Sui chain observation updates by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    sui_chain_observation_updates: DBMap<Round, Vec<SuiChainObservationUpdate>>,
-
-    /// Global presign requests by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    global_presign_requests: DBMap<Round, Vec<ConsensusGlobalPresignRequest>>,
-
-    /// NOA checkpoint observations by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
-
-    /// NOA sign presign demands by consensus round. Drained in consensus order
-    /// to assign each demand a presign identically on every validator.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages`; the drain that assigns presigns walks this table
-    /// in consensus order, so a round persisted without its commit would let
-    /// two validators drain different demand sequences.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
 
     /// Terminal resolution of each NOA sign demand, keyed by the demand's
     /// `demand_id` digest: the presign assigned to it, or a marker that the
@@ -2040,12 +1888,6 @@ epoch_state_registry! {
     Preserved override_protocol_upgrade_buffer_stake:
         "an operator-set per-node knob written over the admin interface; no commit \
          carries it",
-    Derived dwallet_mpc_messages:
-        "a filter of the commit's transactions",
-    Derived dwallet_mpc_outputs:
-        "a filter of the commit's transactions",
-    Derived dwallet_internal_mpc_outputs:
-        "a filter of the commit's transactions",
     Preserved internal_presign_pool_ecdsa_secp256k1:
         "presign material this node computed; the replay does not re-run the \
          cryptography (the catch-up gate suppresses it), and the pops that consume \
@@ -2078,16 +1920,6 @@ epoch_state_registry! {
          number returns the identical bytes; without it the replay re-pops a \
          different presign and this node's checkpoint message stops matching the \
          committee's (#1934)",
-    Derived idle_status_updates:
-        "a filter of the commit's transactions",
-    Derived sui_chain_observation_updates:
-        "a filter of the commit's transactions",
-    Derived global_presign_requests:
-        "a filter of the commit's transactions",
-    Derived noa_observations:
-        "a filter of the commit's transactions",
-    Derived noa_presign_demands:
-        "a filter of the commit's transactions",
     Preserved noa_presign_demand_resolutions:
         "binds a demand to a presign popped from the preserved pool, and records \
          the demands the park bound abandoned; a wipe would re-pop for demands the \
@@ -2186,31 +2018,7 @@ fn pending_checkpoints_table_default_config() -> DBOptions {
         .optimize_for_large_values_no_scan(1 << 10)
 }
 
-fn dwallet_mpc_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn dwallet_mpc_outputs_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn dwallet_internal_mpc_outputs_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
 fn internal_presign_pool_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn internal_sessions_status_updates_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -3031,6 +2839,8 @@ impl AuthorityPerEpochStore {
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
             self_blob_unhealthy_warned: AtomicBool::new(false),
             max_processed_commit_timestamp_ms: AtomicU64::new(0),
+            round_transport: ArcSwapOption::empty(),
+            observed_consensus_head_round: AtomicU64::new(0),
         });
 
         s.update_buffer_stake_metric();
@@ -3066,6 +2876,24 @@ impl AuthorityPerEpochStore {
         // When the logic to release DB handles becomes obsolete, it may still be useful
         // to make sure AuthorityEpochTables is not used after the next epoch starts.
         self.tables.store(None);
+    }
+
+    /// Installs the bounded round transport. Must happen before the first
+    /// commit is folded, or the drain misses every round folded before it.
+    pub fn install_round_transport(&self, sender: Arc<RoundTransportSender>) {
+        self.round_transport.store(Some(sender));
+    }
+
+    /// The installed round transport, if this node runs an MPC drain.
+    pub fn round_transport(&self) -> Option<Arc<RoundTransportSender>> {
+        self.round_transport.load_full()
+    }
+
+    /// Records a consensus round this node has observed. Monotone, so an
+    /// out-of-order report cannot walk the head backwards.
+    pub fn record_observed_consensus_head_round(&self, round: Round) {
+        self.observed_consensus_head_round
+            .fetch_max(round, Ordering::AcqRel);
     }
 
     pub fn get_parent_path(&self) -> PathBuf {
@@ -5583,9 +5411,20 @@ impl AuthorityPerEpochStore {
             self.write_pending_system_checkpoint(&mut output, &pending_system_checkpoint)?;
         }
 
+        // Take the drain's inputs before the batch, hand them over after it.
+        // After, so the drain never sees a round whose commit did not land;
+        // outside the batch, so a wait on the drain does not hold a write
+        // batch open.
+        let round_payload = output.take_round_payload();
+
         let mut batch = self.db_batch()?;
         output.write_to_batch(self, &mut batch)?;
         batch.write()?;
+
+        if let Some(transport) = self.round_transport() {
+            // BLOCKS while the drain is behind — see `round_transport`.
+            transport.send(round_payload).await;
+        }
 
         // Only after batch is written, notify checkpoint service to start building any new
         // pending checkpoints.
@@ -6906,6 +6745,33 @@ impl ConsensusCommitOutput {
     /// which includes the MPC messages, outputs and verified checkpoint messages.
     ///
     /// We depend upon this batch writing logic, in `last_dwallet_mpc_message_round()` which should be the same for the outputs and verified checkpoint messages as well.
+    /// Moves this commit's drain inputs out of the output so they can be
+    /// handed to the MPC drain over the round transport.
+    ///
+    /// Everything here is MOVED: none of it is written to a table any more.
+    /// The two verified-message sets are the fold's own output and are also
+    /// consumed in-memory by the checkpoint path in the same function, which
+    /// is why they are cloned there rather than here.
+    pub(crate) fn take_round_payload(&mut self) -> ConsensusRoundPayload {
+        ConsensusRoundPayload {
+            round: self.consensus_round,
+            mpc_messages: std::mem::take(&mut self.dwallet_mpc_round_messages),
+            mpc_outputs: std::mem::take(&mut self.dwallet_mpc_round_outputs),
+            internal_mpc_outputs: std::mem::take(&mut self.dwallet_internal_mpc_round_outputs),
+            verified_dwallet_checkpoint_messages: std::mem::take(
+                &mut self.verified_dwallet_checkpoint_messages,
+            ),
+            verified_system_checkpoint_messages: std::mem::take(
+                &mut self.verified_system_checkpoint_messages,
+            ),
+            idle_status_updates: std::mem::take(&mut self.idle_status_updates),
+            sui_chain_observation_updates: std::mem::take(&mut self.sui_chain_observation_updates),
+            global_presign_requests: std::mem::take(&mut self.global_presign_requests),
+            noa_observations: std::mem::take(&mut self.noa_observations),
+            noa_presign_demands: std::mem::take(&mut self.noa_presign_demands),
+        }
+    }
+
     pub fn write_to_batch(
         self,
         epoch_store: &AuthorityPerEpochStore,
@@ -6913,29 +6779,21 @@ impl ConsensusCommitOutput {
     ) -> IkaResult {
         let tables = epoch_store.tables()?;
 
-        // Streams added after mainnet-v1.1.8 are persisted only once the protocol
-        // feature that introduced them is live, gated on the same flag the
-        // `DWalletMPCService` replay reads gate on. This keeps the on-disk
-        // consensus-output schema at a given protocol version identical to what an
-        // older binary writes: without it, a newer binary replaying an older
-        // binary's history (a rolling mainnet-v1.1.8 -> dev binary swap) finds
-        // these tables sparse where the dense per-round driver
-        // (`dwallet_mpc_messages`) expects them aligned, and the replay
-        // round-equality check trips.
-        let internal_presign = epoch_store
-            .protocol_config()
-            .internal_presign_sessions_enabled();
+        // The last two per-round tables. The eight projection streams they
+        // used to sit beside are gone: the MPC drain receives every round's
+        // inputs over the bounded channel now
+        // (`dev-docs/conventions/consensus-output-consumption.md`), so
+        // nothing polls a table per round and the dense-stream alignment
+        // these writes were gated to preserve no longer has a reader.
+        //
+        // NOTE: with the drain fed by the channel, these two have NO reader
+        // left either — checkpoint construction consumes the in-memory values
+        // in this same function via `pending_system_checkpoints`, never the
+        // tables. They are retained pending a decision on removing them; if
+        // that decision is to keep them, it needs a stated consumer, because
+        // an unread table is write amplification with a schema.
         let noa = epoch_store.protocol_config().noa_checkpoints();
 
-        // Written by every binary including mainnet-v1.1.8 — dense, one per round.
-        batch.insert_batch(
-            &tables.dwallet_mpc_messages,
-            [(self.consensus_round, self.dwallet_mpc_round_messages)],
-        )?;
-        batch.insert_batch(
-            &tables.dwallet_mpc_outputs,
-            [(self.consensus_round, self.dwallet_mpc_round_outputs)],
-        )?;
         batch.insert_batch(
             &tables.verified_dwallet_checkpoint_messages,
             [(
@@ -6943,31 +6801,6 @@ impl ConsensusCommitOutput {
                 self.verified_dwallet_checkpoint_messages,
             )],
         )?;
-        // `network_key_data_messages` (the consensus network-key vote stream)
-        // is removed on this branch — the handoff cert supersedes it.
-
-        // Internal presign & sign sessions (#1623): internal MPC outputs, global
-        // presign requests, and idle-status (presign-pool) updates.
-        if internal_presign {
-            batch.insert_batch(
-                &tables.dwallet_internal_mpc_outputs,
-                [(
-                    self.consensus_round,
-                    self.dwallet_internal_mpc_round_outputs,
-                )],
-            )?;
-            batch.insert_batch(
-                &tables.global_presign_requests,
-                [(self.consensus_round, self.global_presign_requests)],
-            )?;
-            batch.insert_batch(
-                &tables.idle_status_updates,
-                [(self.consensus_round, self.idle_status_updates)],
-            )?;
-        }
-
-        // NOA signed-checkpoint cluster (#1664/#1672): system-checkpoint messages,
-        // NOA observations, and the Sui-chain-observation context they consume.
         if noa {
             batch.insert_batch(
                 &tables.verified_system_checkpoint_messages,
@@ -6975,18 +6808,6 @@ impl ConsensusCommitOutput {
                     self.consensus_round,
                     self.verified_system_checkpoint_messages,
                 )],
-            )?;
-            batch.insert_batch(
-                &tables.noa_observations,
-                [(self.consensus_round, self.noa_observations)],
-            )?;
-            batch.insert_batch(
-                &tables.noa_presign_demands,
-                [(self.consensus_round, self.noa_presign_demands)],
-            )?;
-            batch.insert_batch(
-                &tables.sui_chain_observation_updates,
-                [(self.consensus_round, self.sui_chain_observation_updates)],
             )?;
         }
 
@@ -7130,6 +6951,9 @@ mod tests {
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::authority::derived_epoch_state::EpochStateSnapshot;
     use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef};
+    use ika_types::supported_protocol_versions::{
+        SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
+    };
     use tokio::time::advance;
 
     /// `next_round_row` must return the first row STRICTLY after the anchor —
@@ -7140,16 +6964,22 @@ mod tests {
     /// per-round stream would skip the same round in lockstep, the
     /// dense-stream alignment checks (which compare the streams to each
     /// other) could never catch it.
+    ///
+    /// Retargeted at `verified_dwallet_checkpoint_messages` now that the
+    /// eight projection streams are gone. `next_round_row`'s only remaining
+    /// consumers are the two `next_verified_*` accessors, which themselves
+    /// have no caller since the drain moved to the channel — if those go, so
+    /// do the helper and this test.
     #[tokio::test]
     async fn next_round_row_does_not_skip_a_live_round_when_the_anchor_row_is_absent() {
         let dir = tempfile::tempdir().unwrap();
         let tables = AuthorityEpochTables::open(0, dir.path(), None);
-        let messages = &tables.dwallet_mpc_messages;
+        let messages = &tables.verified_dwallet_checkpoint_messages;
 
         // Rounds 1, 2, 3, 6, 7 present — a gap at 4..=5.
         for round in [1u64, 2, 3, 6, 7] {
             messages
-                .insert(&round, &Vec::<DWalletMPCMessage>::new())
+                .insert(&round, &Vec::<DWalletCheckpointMessageKind>::new())
                 .unwrap();
         }
 
@@ -9886,6 +9716,30 @@ mod tests {
         for round in 1..=rounds {
             let session_identifier = SessionIdentifier::new(SessionType::User, [round as u8; 32]);
             let transactions = vec![
+                // Still writes a table: the protocol-upgrade vote tally.
+                // Kept in the fixture because the MPC kinds below no longer
+                // land in the epoch store at all — they go to the drain over
+                // the round channel — and without a table-writing kind the
+                // breadth checks in these tests would go vacuous.
+                ConsensusTransaction::new_capability_notification_v1(AuthorityCapabilitiesV1 {
+                    authority: author,
+                    // Built by hand rather than through `new`, which stamps
+                    // the generation from the wall clock: two folds of "the
+                    // same" commit would then carry different transactions
+                    // and the determinism comparison would fail on the
+                    // fixture rather than on the system. (It did, the first
+                    // time — which is the check working.)
+                    generation: 7,
+                    supported_protocol_versions:
+                        SupportedProtocolVersionsWithHashes::from_supported_versions(
+                            SupportedProtocolVersions {
+                                min: ProtocolVersion::MIN,
+                                max: ProtocolVersion::MAX,
+                            },
+                            Chain::Unknown,
+                        ),
+                    move_contracts_to_upgrade: Vec::new(),
+                }),
                 ConsensusTransaction::new_dwallet_mpc_message(
                     author,
                     session_identifier,
@@ -9982,8 +9836,16 @@ mod tests {
             .map(|entry| entry.field)
             .filter(|field| !after[field].is_empty())
             .collect();
+        // Five, not the eight this asserted before the round channel landed:
+        // the eight projection tables are gone, so a commit's MPC content
+        // reaches the drain over the channel and writes nothing here. What is
+        // left still spans four different kinds of write — the processed-marker
+        // set, the running stats, a fold output, a vote tally and the epoch
+        // clock anchor — which is what keeps the check meaningful. If it drops
+        // further, add a table-writing transaction kind to the fixture rather
+        // than lowering this.
         assert!(
-            written.len() >= 8,
+            written.len() >= 5,
             "the commit boundary wrote only {} tables ({written:?}); this check would be \
              near-vacuous",
             written.len(),
@@ -10034,7 +9896,7 @@ mod tests {
         // Guards against the whole assertion below passing because the fold
         // wrote nothing at all.
         assert!(
-            populated_derived >= 8,
+            populated_derived >= 5,
             "the fold populated only {populated_derived} derived tables; the wipe assertion \
              would be near-vacuous",
         );
@@ -10099,7 +9961,7 @@ mod tests {
             })
             .count();
         assert!(
-            non_empty_first >= 8,
+            non_empty_first >= 5,
             "only {non_empty_first} derived tables held rows after the first fold; the \
              comparison below would be near-vacuous",
         );

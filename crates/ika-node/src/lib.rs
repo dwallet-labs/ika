@@ -2190,8 +2190,19 @@ impl IkaNode {
             >
         });
 
+        // The bounded channel that carries every consensus round from the
+        // fold to the MPC drain. Installed on the epoch store BEFORE consensus
+        // starts (which happens further down, and only after this function
+        // returns), so no commit is ever folded without a drain attached to
+        // receive it.
+        let (round_sender, round_receiver) = ika_core::authority::round_transport::round_transport(
+            ika_core::authority::round_transport::DEFAULT_ROUND_CHANNEL_CAPACITY,
+        );
+        epoch_store.install_round_transport(round_sender);
+
         let mut dwallet_mpc_service = DWalletMPCService::new(
             epoch_store.clone(),
+            round_receiver,
             dwallet_mpc_service_exit_receiver,
             EpochStoreSubmitToConsensus::new(epoch_store.clone(), consensus_adapter.clone()),
             config.clone(),

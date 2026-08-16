@@ -71,6 +71,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Mirrors the real store's field so the MPC service's progress
     /// publication is exercised by the integration tests rather than stubbed.
     pub(crate) mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
+    /// The highest consensus round the harness has handed to the service —
+    /// the catch-up gate's "how far is there to go". Mirrors the real store's
+    /// observed head, which production feeds from the boot replay's target
+    /// and from commit arrival.
+    pub(crate) observed_consensus_head_round: std::sync::atomic::AtomicU64,
     /// The catch-up gate state the MPC service published with the round above.
     /// The real store holds it to decide whether an outsized lag is explained;
     /// mirrored here so a test can prove the service publishes it at all.
@@ -209,6 +214,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
+            observed_consensus_head_round: std::sync::atomic::AtomicU64::new(0),
             mpc_reported_catching_up: std::sync::atomic::AtomicBool::new(false),
             round_to_idle_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_sui_chain_observation_updates: Arc::new(Mutex::new(HashMap::from([(
@@ -241,43 +247,15 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(())
     }
 
+    fn observed_consensus_head_round(&self) -> Round {
+        self.observed_consensus_head_round.load(Ordering::Acquire)
+    }
+
     fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
         self.mpc_consumed_consensus_round
             .store(round, std::sync::atomic::Ordering::Relaxed);
         self.mpc_reported_catching_up
             .store(catching_up, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        Ok(self.round_to_messages.lock().unwrap().keys().max().copied())
-    }
-
-    fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        let round_to_messages = self.round_to_messages.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_messages
-                .get(&0)
-                .map(|messages| (0, messages.clone())));
-        }
-        Ok(round_to_messages
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
-    }
-
-    fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        let round_to_outputs = self.round_to_outputs.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_outputs.get(&0).map(|outputs| (0, outputs.clone())));
-        }
-        Ok(round_to_outputs
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|outputs| (last_consensus_round.unwrap() + 1, outputs.clone())))
     }
 
     fn next_verified_dwallet_checkpoint_message(
@@ -314,21 +292,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(round_to_verified_system_checkpoint
             .get(&(last_consensus_round.unwrap() + 1))
             .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
-    }
-
-    fn next_dwallet_internal_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
-        let round_to_internal_outputs = self.round_to_internal_outputs.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_internal_outputs
-                .get(&0)
-                .map(|outputs| (0, outputs.clone())));
-        }
-        Ok(round_to_internal_outputs
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|outputs| (last_consensus_round.unwrap() + 1, outputs.clone())))
     }
 
     fn insert_presigns(
@@ -442,68 +405,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .lock()
             .unwrap()
             .contains_key(&(presign_session_id, presign_blending_index)))
-    }
-
-    fn next_idle_status_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
-        let map = self.round_to_idle_status_updates.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(map.get(&0).map(|updates| (0, updates.clone())));
-        }
-        Ok(map
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
-    }
-
-    fn next_sui_chain_observation_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
-        let map = self.round_to_sui_chain_observation_updates.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(map.get(&0).map(|updates| (0, updates.clone())));
-        }
-        Ok(map
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
-    }
-
-    fn next_global_presign_request(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>> {
-        let store = self.round_to_global_presign_requests.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(store.get(&0).map(|v| (0, v.clone())));
-        }
-        let next = last_consensus_round.unwrap() + 1;
-        Ok(store.get(&next).map(|v| (next, v.clone())))
-    }
-
-    fn next_noa_observation(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>> {
-        let store = self.round_to_noa_observations.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(store.get(&0).map(|v| (0, v.clone())));
-        }
-        let next = last_consensus_round.unwrap() + 1;
-        Ok(store.get(&next).map(|v| (next, v.clone())))
-    }
-
-    fn next_noa_presign_demand(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
-        let store = self.round_to_noa_presign_demands.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(store.get(&0).map(|v| (0, v.clone())));
-        }
-        let next = last_consensus_round.unwrap() + 1;
-        Ok(store.get(&next).map(|v| (next, v.clone())))
     }
 
     fn noa_presign_demand_resolution(

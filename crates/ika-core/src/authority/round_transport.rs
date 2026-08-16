@@ -45,7 +45,7 @@ use ika_types::messages_dwallet_mpc::{
     SuiChainObservationUpdate,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
-use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::warn;
 
@@ -177,6 +177,20 @@ impl RoundTransportReceiver {
     pub async fn recv(&mut self) -> Option<ConsensusRoundPayload> {
         let payload = self.receiver.recv().await;
         if payload.is_some() {
+            self.received.fetch_add(1, Ordering::Relaxed);
+        }
+        payload
+    }
+
+    /// The next round if one is already queued.
+    ///
+    /// The drain uses this rather than `recv` because it runs inside a
+    /// service iteration with other work to do; blocking here would stall
+    /// that work behind the fold. Falling behind is expressed by the fold
+    /// blocking on US, not by us waiting on it.
+    pub fn try_recv(&mut self) -> Result<ConsensusRoundPayload, TryRecvError> {
+        let payload = self.receiver.try_recv();
+        if payload.is_ok() {
             self.received.fetch_add(1, Ordering::Relaxed);
         }
         payload

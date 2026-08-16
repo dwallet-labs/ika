@@ -472,12 +472,16 @@ mod tests {
                 .sub_dag_index,
             u64::from(commits),
         );
-        // One per-round row per replayed commit: a dropped batch boundary shows
-        // up here as a hole rather than as a lower final index.
+        // One row per replayed commit: a dropped batch boundary shows up here
+        // as a hole rather than as a lower final index.
+        // `verified_dwallet_checkpoint_messages` is the dense per-round table
+        // now that the eight projection streams are gone — the MPC content
+        // that used to serve this purpose goes to the drain over the channel
+        // and leaves nothing on disk to count.
         let rows = epoch_store
             .tables()
             .unwrap()
-            .classified_table_rows("dwallet_mpc_messages");
+            .classified_table_rows("verified_dwallet_checkpoint_messages");
         assert_eq!(
             rows.len(),
             commits as usize,
@@ -518,8 +522,13 @@ mod tests {
             .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
             .collect();
         let populated = first.values().filter(|rows| !rows.is_empty()).count();
+        // Three: the processed markers, the running stats and the epoch clock
+        // anchor. The synthetic DAG's commits carry no ika transactions, so
+        // nothing vote- or content-driven is written; the breadth this run
+        // covers is the PATH, and the epoch store's own double-fold test
+        // covers the tables.
         assert!(
-            populated >= 4,
+            populated >= 3,
             "only {populated} tables held rows after the first fold; the comparison below \
              would be near-vacuous",
         );

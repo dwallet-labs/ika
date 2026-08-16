@@ -11,6 +11,7 @@ use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStoreTrait, NoaPresignDemandResolution, PresignAssignmentOutcome,
     PresignDemand,
 };
+use crate::authority::round_transport::{ConsensusRoundPayload, RoundTransportReceiver};
 use crate::authority::{AuthorityState, AuthorityStateTrait};
 use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_checkpoints::{
@@ -48,7 +49,6 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::error::IkaError;
 use ika_types::message::{
     DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
     EncryptedUserShareOutput, MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
@@ -78,6 +78,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
+use tokio::sync::mpsc::error::TryRecvError;
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
@@ -154,6 +155,10 @@ fn diagnostic_output_digest(message: &ConsensusTransaction) -> Option<[u8; 32]> 
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+    /// Where this service's per-round inputs arrive from: the bounded channel
+    /// the consensus fold feeds. `None` on a process that folds commits but
+    /// runs no drain.
+    pub(crate) round_receiver: Option<RoundTransportReceiver>,
     dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
     dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
@@ -245,6 +250,7 @@ impl DWalletMPCService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        round_receiver: RoundTransportReceiver,
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
@@ -324,6 +330,7 @@ impl DWalletMPCService {
         Self {
             last_read_consensus_round: None,
             epoch_store: epoch_store.clone(),
+            round_receiver: Some(round_receiver),
             dwallet_submit_to_consensus: consensus_adapter,
             state,
             dwallet_checkpoint_service,
@@ -394,6 +401,7 @@ impl DWalletMPCService {
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: epoch_store.clone(),
+            round_receiver: None,
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
@@ -1205,400 +1213,66 @@ impl DWalletMPCService {
     }
 
     async fn process_consensus_rounds_from_storage(&mut self) {
-        // `EpochEnded` from a per-epoch-store read is the normal reconfiguration
-        // boundary: the store's tables were swapped out from under this
-        // (per-epoch) service while it was mid-iteration. Stop the iteration
-        // gracefully — the loop's sleep and the service teardown take over —
-        // instead of panicking, which crashed the node and stalled reconfiguration
-        // under churn. Nothing useful is left to process for the ended epoch;
-        // other results pass through to the caller's existing handling unchanged.
-        macro_rules! stop_on_epoch_end {
-            ($read:expr) => {
-                match $read {
-                    Err(IkaError::EpochEnded(ended_epoch)) => {
-                        info!(
-                            ended_epoch,
-                            "epoch ended while reading the per-epoch DWallet MPC store; \
-                             stopping this service iteration gracefully"
-                        );
-                        return;
-                    }
-                    other => other,
-                }
-            };
+        // Rounds arrive over the bounded channel the commit boundary feeds;
+        // there is no per-round table to poll, and no round-equality check to
+        // make across ten streams, because a round is now one message.
+        //
+        // `try_recv`, not `recv`: this runs inside the service's 20ms
+        // iteration, which has other per-iteration work to do (computation
+        // spawning, chain polls, submissions). Blocking here would stall all
+        // of it behind the fold. Drain what has arrived, then let the caller
+        // continue — the fold blocks on US when we fall behind, which is the
+        // backpressure this design is built on.
+        if self.round_receiver.is_none() {
+            // No transport installed: this process folds commits but runs no
+            // drain. Nothing to do.
+            return;
         }
 
-        // The last consensus round for MPC messages is also the last one for MPC outputs and verified dWallet checkpoint messages,
-        // as they are all written in an atomic batch manner as part of committing the consensus commit outputs.
-        let last_consensus_round = if let Ok(last_consensus_round) =
-            stop_on_epoch_end!(self.epoch_store.last_dwallet_mpc_message_round())
-        {
-            if let Some(last_consensus_round) = last_consensus_round {
-                last_consensus_round
-            } else {
-                // No new-epoch consensus round has committed yet (the transient
-                // window right after epoch entry). Return and let the outer
-                // loop's READ_INTERVAL_MS poll re-check, rather than sleeping
-                // here — that extra sleep added seconds of latency to every
-                // epoch-bootstrap step. Logged at debug so the fast re-check
-                // can't flood the log during a stuck boundary; the
-                // end-of-publish-gate WARN is the wedge signal there.
-                debug!("No consensus round from DB yet; awaiting the first new-epoch round.");
-                return;
-            }
-        } else {
-            error!("failed to get last consensus round from DB");
-            panic!("failed to get last consensus round from DB");
-        };
-
-        // Feed the catch-up gate (issue #2023) BEFORE draining: the tip just
-        // read is the head of the persisted per-round stream, and the cursor
-        // is where this service's processing stands — their distance is the
-        // backlog this iteration is about to drain. The gate this updates is
-        // consulted later in the iteration, at the computation spawn
-        // decision in `perform_cryptographic_computation`.
+        // Feed the catch-up gate BEFORE draining, against the highest round
+        // this node has OBSERVED rather than the highest it has folded. Under
+        // a blocking transport the fold is never more than the channel's
+        // capacity ahead of us, so a gap measured against the fold would be
+        // pinned below the gate's entry threshold and the gate would never
+        // engage. The observed head comes from the boot replay (which reads
+        // the consensus store's head before folding anything) and from
+        // commit arrival on the live path.
+        let observed_head = self.epoch_store.observed_consensus_head_round();
         self.dwallet_mpc_manager
-            .observe_consensus_round_gap(last_consensus_round, self.last_read_consensus_round);
+            .observe_consensus_round_gap(observed_head, self.last_read_consensus_round);
 
-        while Some(last_consensus_round) > self.last_read_consensus_round {
+        loop {
+            // Borrow the receiver only for the receive, so the rest of the
+            // loop body can use `self` mutably.
+            let payload = match self.round_receiver.as_mut() {
+                Some(receiver) => match receiver.try_recv() {
+                    Ok(payload) => payload,
+                    // Nothing queued: we are caught up with the fold for now.
+                    Err(TryRecvError::Empty) => return,
+                    // The fold dropped its sender — the epoch is over.
+                    Err(TryRecvError::Disconnected) => {
+                        info!("the consensus fold closed the round channel; ending this iteration");
+                        return;
+                    }
+                },
+                None => return,
+            };
+
             self.number_of_consensus_rounds += 1;
 
-            let mpc_messages = stop_on_epoch_end!(
-                self.epoch_store
-                    .next_dwallet_mpc_message(self.last_read_consensus_round)
-            );
-            let (mpc_messages_consensus_round, mpc_messages) = match mpc_messages {
-                Ok(mpc_messages) => {
-                    if let Some(mpc_messages) = mpc_messages {
-                        mpc_messages
-                    } else {
-                        error!("failed to get mpc messages, None value");
-                        panic!("failed to get mpc messages, None value");
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load DWallet MPC messages from the local DB"
-                    );
-
-                    panic!("failed to load DWallet MPC messages from the local DB");
-                }
-            };
-
-            let mpc_outputs = stop_on_epoch_end!(
-                self.epoch_store
-                    .next_dwallet_mpc_output(self.last_read_consensus_round)
-            );
-
-            let (external_mpc_outputs_consensus_round, external_mpc_outputs) = match mpc_outputs {
-                Ok(mpc_outputs) => {
-                    if let Some(mpc_outputs) = mpc_outputs {
-                        mpc_outputs
-                    } else {
-                        error!("failed to get mpc outputs, None value");
-                        panic!("failed to get mpc outputs, None value");
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load DWallet MPC outputs from the local DB"
-                    );
-                    panic!("failed to load DWallet MPC outputs from the local DB");
-                }
-            };
-
-            // Internal presign sessions are a v4 feature
-            // (`internal_presign_sessions_enabled`), and only a binary with the
-            // feature live ever writes `dwallet_internal_mpc_outputs` records.
-            // The round assertion below assumes a *dense* stream — one record
-            // per processed consensus round — which holds only when every round
-            // in the replayed history was produced by such a binary. While the
-            // feature is disabled the stream is empty; worse, when replaying a
-            // history whose earlier rounds were produced by a binary that never
-            // wrote internal outputs (a pre-v4 node, e.g. during a rolling
-            // protocol/binary upgrade) the stream is *sparse*:
-            // `next_dwallet_internal_mpc_output` returns the next future record,
-            // whose round is ahead of the round being processed, and the
-            // dense-stream assertion trips. Gate the read on the same feature
-            // flag that gates instantiation so a node ignores the internal-output
-            // stream until internal presign is actually live.
-            let internal_mpc_outputs = if self.protocol_config.internal_presign_sessions_enabled() {
-                let mpc_outputs = stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_dwallet_internal_mpc_output(self.last_read_consensus_round)
-                );
-
-                match mpc_outputs {
-                    Ok(Some((round, outputs))) => {
-                        // Validate round matches
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?mpc_messages_consensus_round,
-                                ?round,
-                                "consensus round mismatch for internal MPC outputs"
-                            );
-                            panic!("consensus round mismatch for internal MPC outputs");
-                        }
-                        outputs
-                    }
-                    Ok(None) => {
-                        // No internal MPC outputs for this round - use empty list.
-                        // This can happen during initialization or when no internal outputs are generated.
-                        Vec::new()
-                    }
-                    Err(e) => {
-                        error!(
-                            error=?e,
-                            last_read_consensus_round=self.last_read_consensus_round,
-                            "failed to load internal DWallet MPC outputs from the local DB"
-                        );
-                        panic!("failed to load DWallet MPC outputs from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            let verified_dwallet_checkpoint_messages = stop_on_epoch_end!(
-                self.epoch_store
-                    .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round)
-            );
-            let verified_dwallet_checkpoint_messages = match verified_dwallet_checkpoint_messages {
-                Ok(Some((round, messages))) => {
-                    // Validate round matches
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?mpc_messages_consensus_round,
-                            ?round,
-                            "consensus round mismatch for verified checkpoint messages"
-                        );
-                        panic!("consensus round mismatch for verified checkpoint messages");
-                    }
-                    messages
-                }
-                Ok(None) => {
-                    // No verified checkpoint messages for this round - use empty list.
-                    // This is expected during initialization or internal-only rounds, where no
-                    // checkpoint messages need to be produced. The old code would panic in this case.
-                    Vec::new()
-                }
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load verified dwallet checkpoint messages from the local DB"
-                    );
-                    panic!("failed to load verified dwallet checkpoint messages from the local DB");
-                }
-            };
-
-            // System-checkpoint messages back NOA (Network-Owned-Address) signing,
-            // introduced with the NOA signed-checkpoint infrastructure. Gate the
-            // read on the same `noa_checkpoints` flag that gates writing this
-            // stream, so a node whose history was produced before the feature was
-            // live (e.g. a mainnet-v1.1.8 -> dev rolling swap replaying v1.1.8's
-            // rounds) skips the stream the older binary never wrote, instead of
-            // tripping the dense-per-round alignment check below.
-            let verified_system_checkpoint_messages = if self.protocol_config.noa_checkpoints() {
-                let verified_system_checkpoint_messages = stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_verified_system_checkpoint_message(self.last_read_consensus_round)
-                );
-                match verified_system_checkpoint_messages {
-                    Ok(Some((round, messages))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?mpc_messages_consensus_round,
-                                ?round,
-                                "consensus round mismatch for verified system checkpoint messages"
-                            );
-                            panic!(
-                                "consensus round mismatch for verified system checkpoint messages"
-                            );
-                        }
-                        messages
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(
-                            error=?e,
-                            last_read_consensus_round=self.last_read_consensus_round,
-                            "failed to load verified system checkpoint messages from the local DB"
-                        );
-                        panic!(
-                            "failed to load verified system checkpoint messages from the local DB"
-                        );
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // Idle-status updates drive the internal presign pool (idle-fill),
-            // introduced with internal presign & sign sessions. Gate on the same
-            // flag that gates writing them so pre-feature history (v1.1.8 rounds)
-            // is skipped rather than tripping the alignment check.
-            let idle_status_updates = if self.protocol_config.internal_presign_sessions_enabled() {
-                match stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_idle_status_update(self.last_read_consensus_round)
-                ) {
-                    Ok(Some((round, updates))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?round,
-                                ?mpc_messages_consensus_round,
-                                "idle status updates consensus round does not match MPC messages consensus round"
-                            );
-                            panic!(
-                                "idle status updates consensus round does not match MPC messages consensus round"
-                            );
-                        }
-                        updates
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(error=?e, "failed to load idle status updates from the local DB");
-                        panic!("failed to load idle status updates from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // Sui-chain observations supply the agreed chain context the NOA
-            // system-checkpoint handler consumes, so they belong to the NOA
-            // cluster — gate on `noa_checkpoints` like the system-checkpoint read.
-            let sui_chain_observation_updates = if self.protocol_config.noa_checkpoints() {
-                match stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_sui_chain_observation_update(self.last_read_consensus_round)
-                ) {
-                    Ok(Some((round, updates))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?round,
-                                ?mpc_messages_consensus_round,
-                                "sui chain observation updates consensus round does not match MPC messages consensus round"
-                            );
-                            panic!(
-                                "sui chain observation updates consensus round does not match MPC messages consensus round"
-                            );
-                        }
-                        updates
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(error=?e, "failed to load sui chain observation updates from the local DB");
-                        panic!("failed to load sui chain observation updates from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // Global presign requests were introduced with internal presign &
-            // sign sessions — gate on the same flag that gates writing them.
-            let presign_request_messages = if self
-                .protocol_config
-                .internal_presign_sessions_enabled()
-            {
-                match stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_global_presign_request(self.last_read_consensus_round)
-                ) {
-                    Ok(Some((round, msgs))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?round,
-                                ?mpc_messages_consensus_round,
-                                "presign requests consensus round mismatch"
-                            );
-                            panic!("presign requests consensus round mismatch");
-                        }
-                        msgs
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(error=?e, "failed to load global presign requests from the local DB");
-                        panic!("failed to load global presign requests from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // NOA observations belong to the NOA cluster — gate on `noa_checkpoints`.
-            let noa_observation_messages = if self.protocol_config.noa_checkpoints() {
-                match stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_noa_observation(self.last_read_consensus_round)
-                ) {
-                    Ok(Some((round, msgs))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?round,
-                                ?mpc_messages_consensus_round,
-                                "NOA observations consensus round mismatch"
-                            );
-                            panic!("NOA observations consensus round mismatch");
-                        }
-                        msgs
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(error=?e, "failed to load NOA observations from the local DB");
-                        panic!("failed to load NOA observations from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            // NOA presign demands belong to the NOA cluster — gate on `noa_checkpoints()`.
-            let noa_presign_demand_messages = if self.protocol_config.noa_checkpoints() {
-                match stop_on_epoch_end!(
-                    self.epoch_store
-                        .next_noa_presign_demand(self.last_read_consensus_round)
-                ) {
-                    Ok(Some((round, msgs))) => {
-                        if round != mpc_messages_consensus_round {
-                            error!(
-                                ?round,
-                                ?mpc_messages_consensus_round,
-                                "NOA presign demands consensus round mismatch"
-                            );
-                            panic!("NOA presign demands consensus round mismatch");
-                        }
-                        msgs
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        error!(error=?e, "failed to load NOA presign demands from the local DB");
-                        panic!("failed to load NOA presign demands from the local DB");
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-
-            if mpc_messages_consensus_round != external_mpc_outputs_consensus_round {
-                error!(
-                    ?mpc_messages_consensus_round,
-                    ?external_mpc_outputs_consensus_round,
-                    "the consensus rounds of MPC messages and external MPC outputs do not match"
-                );
-
-                panic!(
-                    "the consensus rounds of MPC messages and external MPC outputs do not match"
-                );
-            }
-
-            let consensus_round = mpc_messages_consensus_round;
+            let ConsensusRoundPayload {
+                round: consensus_round,
+                mpc_messages,
+                mpc_outputs: external_mpc_outputs,
+                internal_mpc_outputs,
+                verified_dwallet_checkpoint_messages,
+                verified_system_checkpoint_messages,
+                idle_status_updates,
+                sui_chain_observation_updates,
+                global_presign_requests: presign_request_messages,
+                noa_observations: noa_observation_messages,
+                noa_presign_demands: noa_presign_demand_messages,
+            } = payload;
 
             if self.last_read_consensus_round >= Some(consensus_round) {
                 ika_types::report_invariant_violation!(
