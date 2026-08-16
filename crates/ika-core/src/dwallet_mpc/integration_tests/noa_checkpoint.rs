@@ -130,32 +130,43 @@ fn install_dwallet_handlers_with_log_submitter(
     flags
 }
 
-/// Hand every validator a round carrying these dWallet checkpoint messages —
-/// the fold's own output, which now reaches the drain in the round payload
-/// rather than through a table.
+/// Hand every validator ONE round carrying these checkpoint messages — the
+/// fold's own output, which now reaches the drain in the round payload rather
+/// than through a table.
+///
+/// Both kinds go in the same payload because a round is now one message. The
+/// tables this replaced were keyed by round, so writing the dWallet kind and
+/// the system kind for round N was two writes the drain read back as one
+/// round; sending two payloads for round N instead is a duplicate round, and
+/// the drain rejects it.
+async fn inject_checkpoint_messages(
+    test_state: &IntegrationTestState,
+    round: u64,
+    dwallet_messages: Vec<DWalletCheckpointMessageKind>,
+    system_messages: Vec<SystemCheckpointMessageKind>,
+) {
+    for epoch_store in &test_state.epoch_stores {
+        let mut payload = utils::empty_round_payload(round);
+        payload.verified_dwallet_checkpoint_messages = dwallet_messages.clone();
+        payload.verified_system_checkpoint_messages = system_messages.clone();
+        epoch_store.deliver_round(payload).await;
+    }
+}
+
 async fn inject_dwallet_checkpoint_messages(
     test_state: &IntegrationTestState,
     round: u64,
     messages: Vec<DWalletCheckpointMessageKind>,
 ) {
-    for epoch_store in &test_state.epoch_stores {
-        let mut payload = utils::empty_round_payload(round);
-        payload.verified_dwallet_checkpoint_messages = messages.clone();
-        epoch_store.deliver_round(payload).await;
-    }
+    inject_checkpoint_messages(test_state, round, messages, Vec::new()).await;
 }
 
-/// The same for system checkpoint messages.
 async fn inject_system_checkpoint_messages(
     test_state: &IntegrationTestState,
     round: u64,
     messages: Vec<SystemCheckpointMessageKind>,
 ) {
-    for epoch_store in &test_state.epoch_stores {
-        let mut payload = utils::empty_round_payload(round);
-        payload.verified_system_checkpoint_messages = messages.clone();
-        epoch_store.deliver_round(payload).await;
-    }
+    inject_checkpoint_messages(test_state, round, Vec::new(), messages).await;
 }
 
 fn all_flags_true(flags: &[Arc<AtomicBool>]) -> bool {
@@ -247,6 +258,11 @@ async fn test_noa_checkpoint_dwallet_e2e() {
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(42)],
     )
     .await;
+    // Delivery order IS the round sequence now that rounds cross a channel
+    // instead of being written to round-keyed tables, so the counter has to
+    // move past anything injected ahead of it or the next distribution would
+    // hand the drain a round it has already consumed.
+    test_state.consensus_round = checkpoint_round as usize + 1;
 
     info!(
         checkpoint_round,
@@ -298,6 +314,11 @@ async fn test_noa_checkpoint_multiple_sequential() {
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(20)],
     )
     .await;
+    // Delivery order IS the round sequence now that rounds cross a channel
+    // instead of being written to round-keyed tables, so the counter has to
+    // move past anything injected ahead of it or the next distribution would
+    // hand the drain a round it has already consumed.
+    test_state.consensus_round = second_round as usize + 1;
     info!(
         first_round,
         second_round, "Injected both checkpoint batches"
@@ -353,6 +374,11 @@ async fn test_noa_checkpoint_buffered_context() {
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(99)],
     )
     .await;
+    // Delivery order IS the round sequence now that rounds cross a channel
+    // instead of being written to round-keyed tables, so the counter has to
+    // move past anything injected ahead of it or the next distribution would
+    // hand the drain a round it has already consumed.
+    test_state.consensus_round = buffered_round as usize + 1;
     info!(buffered_round, "Injected messages without context");
 
     // Advance several rounds — messages should buffer in the service (no sign requests
@@ -391,6 +417,11 @@ async fn test_noa_checkpoint_buffered_context() {
         )],
     )
     .await;
+    // Delivery order IS the round sequence now that rounds cross a channel
+    // instead of being written to round-keyed tables, so the counter has to
+    // move past anything injected ahead of it or the next distribution would
+    // hand the drain a round it has already consumed.
+    test_state.consensus_round = flush_round as usize + 1;
     info!(
         flush_round,
         "Injected flush-trigger message after context set"
@@ -447,6 +478,11 @@ async fn test_noa_checkpoint_chain_failure_retry() {
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(77)],
     )
     .await;
+    // Delivery order IS the round sequence now that rounds cross a channel
+    // instead of being written to round-keyed tables, so the counter has to
+    // move past anything injected ahead of it or the next distribution would
+    // hand the drain a round it has already consumed.
+    test_state.consensus_round = checkpoint_round as usize + 1;
     info!(
         checkpoint_round,
         "Injected checkpoint for failure/retry test"
@@ -508,20 +544,15 @@ async fn test_noa_checkpoint_both_handlers() {
 
     // Inject DWallet checkpoint messages at round N+1.
     let checkpoint_round = (test_state.consensus_round + 1) as u64;
-    inject_dwallet_checkpoint_messages(
+    // Both kinds ride the SAME round payload: one round is one message.
+    inject_checkpoint_messages(
         &test_state,
         checkpoint_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(55)],
-    )
-    .await;
-
-    // Inject System checkpoint messages at the same round.
-    inject_system_checkpoint_messages(
-        &test_state,
-        checkpoint_round,
         vec![SystemCheckpointMessageKind::SetEpochDurationMs(86_400_000)],
     )
     .await;
+    test_state.consensus_round = checkpoint_round as usize + 1;
 
     info!(
         checkpoint_round,

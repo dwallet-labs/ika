@@ -262,6 +262,24 @@ impl TestingAuthorityPerEpochStore {
     /// Hands one round to this validator's drain over the real transport —
     /// the harness standing in for the consensus fold.
     pub(crate) async fn deliver_round(&self, payload: ConsensusRoundPayload) {
+        // A round is ONE message now, and delivery order IS the sequence. The
+        // tables this replaced were keyed by round, so a test could write
+        // round N twice (two kinds of message, say) or write N after N+1 and
+        // the drain still read one ascending stream. Over the channel both are
+        // duplicate or backwards rounds, and the drain panics on them —
+        // several rounds later, in production code, naming neither the test
+        // nor the call site that did it. Fail here instead, where the mistake
+        // is.
+        if let Some(last) = self.delivered_rounds.lock().unwrap().last() {
+            assert!(
+                payload.round > last.round,
+                "harness delivered round {} after round {}: rounds cross a channel, so each \
+                 must be sent exactly once, in ascending order — put everything a round \
+                 carries into ONE payload",
+                payload.round,
+                last.round,
+            );
+        }
         self.delivered_rounds
             .lock()
             .unwrap()
@@ -276,6 +294,18 @@ impl TestingAuthorityPerEpochStore {
         self.round_sender.load_full().send(payload).await;
     }
 
+    /// The lowest round this store has not yet delivered — the harness's own
+    /// record of where the sequence is, rather than a number a test carried
+    /// through several helpers and may have let go stale.
+    pub(crate) fn next_undelivered_round(&self) -> Round {
+        self.delivered_rounds
+            .lock()
+            .unwrap()
+            .last()
+            .map(|last| last.round + 1)
+            .unwrap_or(0)
+    }
+
     /// Re-feeds every round this store ever delivered, in order, into the
     /// transport a restarted service is holding — the harness's boot replay.
     ///
@@ -286,6 +316,12 @@ impl TestingAuthorityPerEpochStore {
     /// first time — which is the property the real replay provides by folding
     /// the same commits.
     pub(crate) async fn replay_recorded_rounds(&self) {
+        // Sends straight down the transport rather than through
+        // `deliver_round`: this deliberately re-sends rounds already
+        // delivered once, which is what a replay IS, and the ascending
+        // check there guards live distribution — where a repeat is a test
+        // bug. The drain on the other end is a fresh one whose cursor starts
+        // unset, so what it sees is still one ascending stream.
         let rounds = self.replayable_rounds.lock().unwrap().clone();
         let sender = self.round_sender.load_full();
         for payload in rounds {
@@ -1931,7 +1967,19 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
     /// that cannot finish without future consensus rounds — blocking until ALL
     /// computations are idle would deadlock.
     const POLLS_PER_ROUND: usize = 20;
-    let mut consensus_round = start_consensus_round;
+    // Start from whichever is further along: the round the caller passed, or
+    // the first round nothing has delivered yet. A caller that took its number
+    // from a helper which itself delivered rounds would otherwise re-send one,
+    // and a re-sent round is a duplicate on a channel where it was merely an
+    // idempotent re-write on the round-keyed tables this replaced.
+    let mut consensus_round = start_consensus_round.max(
+        test_state
+            .epoch_stores
+            .iter()
+            .map(|store| store.next_undelivered_round())
+            .max()
+            .unwrap_or(start_consensus_round),
+    );
     for round_idx in 0..MAX_WAIT_ROUNDS {
         send_advance_results_between_parties(
             &test_state.committee,
