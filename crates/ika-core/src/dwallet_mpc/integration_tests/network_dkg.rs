@@ -392,7 +392,7 @@ pub(crate) async fn create_network_key_test(
     // (the completion run processed `consensus_round - 1` inside
     // `advance_mpc_flow_until_completion`, and `consensus_round` was already distributed
     // there on the return path). The first service loop run below will process
-    // `consensus_round` from storage, setting `last_read = consensus_round`.
+    // `consensus_round` off the round channel, setting `last_read = consensus_round`.
     // We therefore distribute the key data status updates at `consensus_round + 1` so
     // that the second service loop run can read the new round and install the key.
     for service in test_state.dwallet_mpc_services.iter_mut() {

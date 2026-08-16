@@ -74,7 +74,7 @@ use tracing::warn;
 pub const DEFAULT_ROUND_CHANNEL_CAPACITY: usize = 1024;
 
 /// One consensus round's inputs to the MPC drain, in one message — the whole
-/// of what `process_consensus_rounds_from_storage` consumes.
+/// of what `drain_consensus_rounds` consumes.
 ///
 /// Owned rather than referenced, because it crosses a channel: the fold is
 /// free of it the moment the drain has it, and its cost is bounded by the

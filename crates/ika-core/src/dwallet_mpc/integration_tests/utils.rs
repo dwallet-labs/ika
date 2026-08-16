@@ -1181,7 +1181,7 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
         tokio::time::sleep(Duration::from_millis(100)).await;
         // Run service loop to collect completed rayon results from the
         // channel and submit them to consensus.  Without new consensus
-        // rounds in the epoch store, `process_consensus_rounds_from_storage`
+        // rounds queued on the round channel, `drain_consensus_rounds`
         // is a no-op, so only `process_cryptographic_computations` does work.
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;

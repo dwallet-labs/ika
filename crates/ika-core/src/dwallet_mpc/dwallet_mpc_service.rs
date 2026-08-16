@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! This module contains the DWalletMPCService struct.
-//! It is responsible to read DWallet MPC messages from the
-//! local DB every [`READ_INTERVAL_MS`] seconds
-//! and forward them to the [`DWalletMPCManager`].
+//! It is responsible for draining each consensus round's DWallet MPC messages
+//! off the bounded channel the consensus fold feeds
+//! (`authority::round_transport`), every [`READ_INTERVAL_MS`] milliseconds,
+//! and forwarding them to the [`DWalletMPCManager`].
+//!
+//! Nothing on this path reads a per-round table: the rounds arrive in memory,
+//! and a drain that falls behind blocks the fold rather than accumulating
+//! rows behind it.
 
 use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::{
@@ -103,7 +108,7 @@ pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
 /// and blocks that epoch's NOA checkpoint finalization.
 ///
 /// Rounds, not wall clock, so the drop decision is identical on every
-/// validator (see the drain in `process_consensus_rounds_from_storage`).
+/// validator (see `DWalletMPCService::drain_consensus_rounds`).
 ///
 /// The value is ~1 hour of mainnet consensus at ~19.5 rounds/s (the rate the
 /// catch-up gate is calibrated against — see `CATCH_UP_ENTER_GAP_ROUNDS`).
@@ -604,9 +609,8 @@ impl DWalletMPCService {
 
     /// Starts the DWallet MPC service.
     ///
-    /// This service periodically reads DWallet MPC messages from the local database
-    /// at intervals defined by [`READ_INTERVAL_SECS`] seconds.
-    /// The messages are then forwarded to the
+    /// This service drains DWallet MPC messages off the consensus fold's round
+    /// channel every [`READ_INTERVAL_MS`] milliseconds and forwards them to the
     /// [`DWalletMPCManager`] for processing.
     ///
     /// The service automatically terminates when an epoch switch occurs.
@@ -711,7 +715,7 @@ impl DWalletMPCService {
             .adopt_cert_verified_keys(&overlay_snapshot);
         self.dwallet_mpc_manager.instantiate_adopted_network_keys();
 
-        self.process_consensus_rounds_from_storage().await;
+        self.drain_consensus_rounds().await;
         // Network-key instantiations complete asynchronously on the rayon
         // pool; poll them once per ITERATION (not per consensus round) so
         // a completed key installs even when no new rounds arrived. Requests
@@ -778,7 +782,7 @@ impl DWalletMPCService {
 
         // Announce a presign demand for each pending request so every validator
         // assigns it a presign in the same consensus-delivery order (the drain
-        // in `process_consensus_rounds_from_storage`). Gated on `noa_checkpoints()`
+        // in `drain_consensus_rounds`). Gated on `noa_checkpoints()`
         // for wire safety — the `NOAPresignDemand` consensus kind must never
         // reach a peer that predates it — and on the signing network key being
         // known (the demand carries its id, and the presign pool is keyed by it;
@@ -1212,7 +1216,7 @@ impl DWalletMPCService {
         Ok(rejected_sessions)
     }
 
-    async fn process_consensus_rounds_from_storage(&mut self) {
+    async fn drain_consensus_rounds(&mut self) {
         // Rounds arrive over the bounded channel the commit boundary feeds;
         // there is no per-round table to poll, and no round-equality check to
         // make across ten streams, because a round is now one message.

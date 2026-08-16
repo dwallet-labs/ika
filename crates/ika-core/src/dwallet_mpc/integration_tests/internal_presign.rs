@@ -350,7 +350,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
     // Run 16 rounds, verifying exact instantiation predictions each round.
     //
-    // Key timing: within `process_consensus_rounds_from_storage`:
+    // Key timing: within `drain_consensus_rounds`:
     //   1. number_of_consensus_rounds += 1
     //   2. process status updates → update network_is_idle
     //   3. instantiate_internal_presign_sessions (reads pool from epoch_store)
