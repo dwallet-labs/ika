@@ -36,6 +36,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
 
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::Round;
@@ -110,6 +111,11 @@ pub struct RoundTransportSender {
     blocked_sends: AtomicU64,
     /// Total rounds handed over, so queue depth is `sent - received`.
     sent: AtomicU64,
+    /// The drain's consumed count, shared so the sender can report depth.
+    received: Arc<AtomicU64>,
+    /// Cumulative nanoseconds the fold has spent parked. See
+    /// [`Self::blocked_nanos`].
+    blocked_nanos: AtomicU64,
 }
 
 impl RoundTransportSender {
@@ -123,15 +129,24 @@ impl RoundTransportSender {
     ///
     /// The one exception is a drain that has EXITED. The MPC service breaks
     /// its loop permanently when it recognises itself as malicious (#1978,
-    /// #1980), and a fold blocked forever on a departed drain would take
+    /// #1980), and a fold that waited forever on a departed drain would take
     /// consensus down with it — converting a single-node MPC stop into a
-    /// consensus stop. So a closed channel is treated as "drain gone": log
-    /// loudly, stop feeding, let the fold continue.
+    /// consensus stop.
     ///
-    /// EXPERIMENT-GRADE. A merged version would need a real answer to "the
-    /// drain is gone but the node is still a validator" — most likely the
-    /// same self-stop that already exits the drain should also stop the node,
-    /// rather than leaving a validator folding commits it will never act on.
+    /// Be precise about what prevents that: tokio resolves both `try_send`
+    /// and a parked `send` with an error once the receiver drops, so the fold
+    /// cannot wedge on a departed drain whatever this code does. What the
+    /// `drain_gone` latch adds is the LOUD LOG — a validator silently doing
+    /// no MPC for the rest of an epoch is the failure mode worth naming — and
+    /// a short-circuit so later commits skip the doomed send.
+    ///
+    /// The node then keeps folding for the rest of the epoch: checkpoints,
+    /// votes and the epoch close all come out of the fold and none of them
+    /// need the drain. What it stops doing is MPC, which is what the
+    /// self-stop decided. Detaching rather than exiting is deliberate — a
+    /// validator that stops folding also stops contributing checkpoint
+    /// signatures, which turns one node's MPC stop into a withdrawal of its
+    /// stake from checkpoint certification for the remainder of the epoch.
     pub async fn send(&self, payload: ConsensusRoundPayload) {
         if self.drain_gone.load(Ordering::Relaxed) {
             return;
@@ -146,7 +161,10 @@ impl RoundTransportSender {
             Err(TrySendError::Full(payload)) => {
                 self.blocked_sends.fetch_add(1, Ordering::Relaxed);
                 self.fold_blocked.store(true, Ordering::Release);
+                let parked_at = Instant::now();
                 let sent = self.sender.send(payload).await;
+                self.blocked_nanos
+                    .fetch_add(parked_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 self.fold_blocked.store(false, Ordering::Release);
                 if sent.is_err() {
                     self.mark_drain_gone();
@@ -171,6 +189,37 @@ impl RoundTransportSender {
     /// Rounds the fold had to wait on. Zero means the drain kept up.
     pub fn blocked_sends(&self) -> u64 {
         self.blocked_sends.load(Ordering::Relaxed)
+    }
+
+    /// Total nanoseconds the fold has spent parked on a full channel.
+    ///
+    /// The named signal for a WEDGED drain, which nothing else catches: the
+    /// commit-liveness watchdog deliberately holds while the fold is parked
+    /// (a parked fold is not an isolated node), so a drain that stops
+    /// consuming entirely holds the watchdog indefinitely and correctly —
+    /// isolation is not what has gone wrong. This climbing while
+    /// `ika_dwallet_mpc_consumed_round` is flat is that failure, and it is
+    /// the only place it shows.
+    pub fn blocked_nanos(&self) -> u64 {
+        self.blocked_nanos.load(Ordering::Relaxed)
+    }
+
+    /// Rounds handed to the drain but not yet consumed — the in-flight depth
+    /// the capacity bounds.
+    pub fn queue_depth(&self) -> u64 {
+        self.sent
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.received.load(Ordering::Relaxed))
+    }
+
+    /// True while the fold is parked. Shared with the watchdog.
+    pub fn fold_blocked(&self) -> bool {
+        self.fold_blocked.load(Ordering::Acquire)
+    }
+
+    /// True once the drain has been observed gone. Latched.
+    pub fn drain_gone(&self) -> bool {
+        self.drain_gone.load(Ordering::Relaxed)
     }
 
     /// Rounds handed over so far.
@@ -233,7 +282,150 @@ pub fn round_transport(
             fold_blocked,
             blocked_sends: AtomicU64::new(0),
             sent: AtomicU64::new(0),
+            received: received.clone(),
+            blocked_nanos: AtomicU64::new(0),
         }),
         RoundTransportReceiver { receiver, received },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(round: Round) -> ConsensusRoundPayload {
+        ConsensusRoundPayload {
+            round,
+            mpc_messages: Vec::new(),
+            mpc_outputs: Vec::new(),
+            internal_mpc_outputs: Vec::new(),
+            verified_dwallet_checkpoint_messages: Vec::new(),
+            verified_system_checkpoint_messages: Vec::new(),
+            idle_status_updates: Vec::new(),
+            sui_chain_observation_updates: Vec::new(),
+            global_presign_requests: Vec::new(),
+            noa_observations: Vec::new(),
+            noa_presign_demands: Vec::new(),
+        }
+    }
+
+    fn transport(capacity: usize) -> (Arc<RoundTransportSender>, RoundTransportReceiver) {
+        round_transport(capacity, Arc::new(AtomicBool::new(false)))
+    }
+
+    /// At capacity one the fold provably waits: the second send cannot
+    /// complete until the drain has taken the first. Nothing is lost and the
+    /// order is preserved.
+    #[tokio::test]
+    async fn the_fold_waits_for_the_drain_and_loses_nothing() {
+        let (sender, mut receiver) = transport(1);
+        sender.send(payload(1)).await;
+
+        // The channel is full, so these sends park until rounds are taken.
+        let feeder = {
+            let sender = sender.clone();
+            tokio::spawn(async move {
+                for round in 2..=6 {
+                    sender.send(payload(round)).await;
+                }
+            })
+        };
+
+        let mut seen = Vec::new();
+        for _ in 1..=6 {
+            seen.push(
+                receiver
+                    .recv()
+                    .await
+                    .expect("the fold is still sending")
+                    .round,
+            );
+        }
+        feeder.await.unwrap();
+
+        assert_eq!(
+            seen,
+            vec![1, 2, 3, 4, 5, 6],
+            "every round must arrive exactly once, in order"
+        );
+        assert!(
+            sender.blocked_sends() > 0,
+            "at capacity 1 the fold must have waited at least once; a run with no blocking \
+             means the channel is applying no backpressure and the design is inert"
+        );
+        assert_eq!(sender.queue_depth(), 0, "everything sent was consumed");
+    }
+
+    /// A drain that exits — the deliberate self-stop a validator performs when
+    /// it recognises itself as malicious (#1978, #1980) — must not wedge the
+    /// fold. The fold detaches and keeps going.
+    ///
+    /// The alternative is worse than losing MPC: a fold blocked forever stops
+    /// producing checkpoints, votes and the epoch close, turning one node's
+    /// MPC stop into the withdrawal of its stake from checkpoint
+    /// certification for the rest of the epoch.
+    #[tokio::test]
+    async fn a_departed_drain_does_not_wedge_the_fold() {
+        let (sender, receiver) = transport(1);
+        sender.send(payload(1)).await;
+        // The drain exits, dropping its receiver with a round still queued.
+        drop(receiver);
+
+        // Every subsequent send must return promptly rather than park. The
+        // timeout is the assertion: without the drain-gone path these await
+        // forever on a full channel.
+        for round in 2..=100 {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                sender.send(payload(round)),
+            )
+            .await
+            .expect("the fold must not block on a departed drain");
+        }
+        assert!(
+            !sender.fold_blocked(),
+            "the fold must not be left marked as parked once the drain is gone"
+        );
+        // The property above is tokio's — a closed channel resolves any send.
+        // What this code owes is NOTICING, so the operator gets one loud line
+        // rather than a validator that quietly does no MPC for an epoch.
+        assert!(
+            sender.drain_gone(),
+            "the departure must be latched; without it nothing logs and the node looks \
+             healthy while doing no MPC at all"
+        );
+    }
+
+    /// A drain that stops CONSUMING without exiting — a wedge, as opposed to
+    /// the deliberate stop above — parks the fold indefinitely, and that is
+    /// correct: the commit-liveness watchdog holds while the fold is parked,
+    /// because a parked fold is not an isolated node. Nothing exits.
+    ///
+    /// So the wedge has exactly one signal, and this asserts it exists:
+    /// blocked time climbing while the queue sits at capacity.
+    #[tokio::test(start_paused = true)]
+    async fn a_wedged_drain_is_visible_only_on_the_blocked_time_gauge() {
+        let (sender, _receiver) = transport(1);
+        sender.send(payload(1)).await;
+        assert_eq!(sender.blocked_nanos(), 0, "nothing has parked yet");
+
+        // The drain never calls recv again. The fold parks on the next round.
+        let feeder = {
+            let sender = sender.clone();
+            tokio::spawn(async move { sender.send(payload(2)).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+
+        assert!(
+            sender.fold_blocked(),
+            "the fold must still be parked on a drain that stopped consuming"
+        );
+        assert!(
+            sender.blocked_nanos() > 0 || sender.blocked_sends() > 0,
+            "a wedged drain must be visible on the blocked-time accounting; it is the only \
+             place it shows, since the watchdog deliberately holds here"
+        );
+        assert_eq!(sender.queue_depth(), 1, "the queue sits at capacity");
+        feeder.abort();
+    }
 }

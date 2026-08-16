@@ -454,6 +454,10 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// by orders of magnitude.
     fn observed_consensus_head_round(&self) -> Round;
 
+    /// The round transport, for publishing its depth and blocked-time
+    /// gauges. `None` on a node that folds but runs no drain.
+    fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>>;
+
     fn next_verified_dwallet_checkpoint_message(
         &self,
         last_consensus_round: Option<Round>,
@@ -709,6 +713,10 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
 
     fn observed_consensus_head_round(&self) -> Round {
         self.observed_consensus_head_round.load(Ordering::Acquire)
+    }
+
+    fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>> {
+        self.round_transport()
     }
 
     fn next_verified_dwallet_checkpoint_message(

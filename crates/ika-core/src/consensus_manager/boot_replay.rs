@@ -89,6 +89,18 @@ pub(crate) async fn replay_epoch_commits(
         return 0;
     }
 
+    // Publish the head's leader round BEFORE folding anything: it is the
+    // catch-up gate's "how far is there to go", and during replay nothing
+    // else can supply it (the replay's own arrivals advance at the drain's
+    // pace once the round channel fills).
+    if let Some(head) = store
+        .scan_commits((replay_through..=replay_through).into())
+        .expect("scanning the consensus store's head commit must not fail")
+        .first()
+    {
+        handler.publish_observed_consensus_head(head.leader().round as u64);
+    }
+
     info!(
         replay_through,
         unfinalized_tail,
@@ -237,6 +249,7 @@ mod tests {
 
     use super::*;
     use crate::authority::AuthorityMetrics;
+    use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
     use crate::authority::authority_per_epoch_store::{
         AuthorityPerEpochStore, EPOCH_STATE_REGISTRY, EpochStoreParams,
     };
@@ -562,6 +575,49 @@ mod tests {
                 entry.class,
             );
         }
+    }
+
+    /// The boot replay must publish the consensus store's head round before it
+    /// folds anything.
+    ///
+    /// This is the catch-up gate's only usable input during replay. The gate
+    /// engages at a 5,000-round gap and the fold can never be more than the
+    /// round channel's capacity (1,024) ahead of the drain, so a gap measured
+    /// against the fold — or against the replay's own arrivals, which are its
+    /// folds — is pinned below the threshold and the gate silently stops
+    /// engaging. Nothing else fails when that happens: the node just spawns
+    /// cryptography while hundreds of thousands of rounds behind, which is
+    /// exactly what #2023 built the gate to prevent.
+    #[tokio::test]
+    async fn the_replay_publishes_the_store_head_before_folding() {
+        let (consensus_dir, context) = consensus_store_with(6, 6);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        assert_eq!(
+            epoch_store.observed_consensus_head_round(),
+            0,
+            "nothing observed before the replay starts",
+        );
+
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+
+        let head = epoch_store.observed_consensus_head_round();
+        assert!(
+            head > 0,
+            "the replay published no head; the catch-up gate would compute a zero gap and              never engage",
+        );
+        // The head is the LAST commit's leader round, so it must be at least
+        // as high as every round the fold went on to process.
+        assert!(
+            head >= epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .last_committed_round,
+            "the published head must not trail the rounds the replay folded",
+        );
     }
 
     /// A commit below the last finalized one but missing its rejected-transaction

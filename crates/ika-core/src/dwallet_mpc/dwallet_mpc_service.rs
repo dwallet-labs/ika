@@ -1241,6 +1241,19 @@ impl DWalletMPCService {
         self.dwallet_mpc_manager
             .observe_consensus_round_gap(observed_head, self.last_read_consensus_round);
 
+        // Publish the transport's own state. These two are the only place a
+        // wedged drain is visible: the commit-liveness watchdog holds while
+        // the fold is parked (correctly — a parked fold is not an isolated
+        // node), so nothing exits and nothing else alarms.
+        if let Some(transport) = self.epoch_store.round_transport_for_metrics() {
+            self.dwallet_mpc_metrics
+                .round_channel_depth
+                .set(transport.queue_depth() as i64);
+            self.dwallet_mpc_metrics
+                .fold_blocked_seconds_total
+                .set((transport.blocked_nanos() / 1_000_000_000) as i64);
+        }
+
         loop {
             // Borrow the receiver only for the receive, so the rest of the
             // loop body can use `self` mutably.

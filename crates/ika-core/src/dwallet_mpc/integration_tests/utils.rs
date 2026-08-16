@@ -247,6 +247,14 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(())
     }
 
+    fn round_transport_for_metrics(
+        &self,
+    ) -> Option<Arc<crate::authority::round_transport::RoundTransportSender>> {
+        // The harness drives the service's round consumption directly rather
+        // than through a transport, so there is nothing to report.
+        None
+    }
+
     fn observed_consensus_head_round(&self) -> Round {
         self.observed_consensus_head_round.load(Ordering::Acquire)
     }

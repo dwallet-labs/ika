@@ -224,9 +224,27 @@ impl<C> ConsensusHandler<C> {
     /// drain never reads as consensus silence. Boot replay reports too, which
     /// is what arms the watchdog on a node whose whole start is replay.
     pub(crate) fn report_commit_received(&self, consensus_commit: &impl ConsensusCommitAPI) {
+        let round = consensus_commit.leader_round();
+        // Also the catch-up gate's view of how far there is to go. Recorded
+        // here, on arrival, because the fold's own position cannot answer it:
+        // the fold is never more than the round channel's capacity ahead of
+        // the drain.
+        self.epoch_store.record_observed_consensus_head_round(round);
         if let Some(sink) = &self.commit_sink {
-            sink.commit_received(consensus_commit.leader_round());
+            sink.commit_received(round);
         }
+    }
+
+    /// Publishes the consensus store's head before the boot replay folds
+    /// anything.
+    ///
+    /// Arrival reporting alone is not enough during replay: the replay's
+    /// arrivals ARE its folds, so under a blocking transport they advance
+    /// only as fast as the drain and the gate would see a gap no larger than
+    /// the channel. Publishing the target up front is what lets the gate see
+    /// the real backlog — the hundreds of thousands of rounds it exists for.
+    pub(crate) fn publish_observed_consensus_head(&self, round: u64) {
+        self.epoch_store.record_observed_consensus_head_round(round);
     }
 }
 

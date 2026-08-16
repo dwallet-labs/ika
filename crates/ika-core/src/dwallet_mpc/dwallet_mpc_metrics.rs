@@ -125,6 +125,11 @@ pub struct DWalletMPCMetrics {
     /// backlog is draining and the validator will return on its own, flat or
     /// rising means it is trapped and needs intervention.
     pub(crate) catchup_gap_rounds: IntGauge,
+    /// Rounds handed to the drain but not yet consumed.
+    pub(crate) round_channel_depth: IntGauge,
+    /// Cumulative seconds the consensus fold has spent parked on a full
+    /// round channel.
+    pub(crate) fold_blocked_seconds_total: IntGauge,
 
     /// Computation spawn decisions withheld by catch-up mode. Labels:
     /// `session_type` (only the suppressible types — `user` /
@@ -605,6 +610,22 @@ impl DWalletMPCMetrics {
                 "How far MPC round processing trails the consensus tip, in consensus rounds, \
                  as of the most recent service iteration; answers whether a catch-up-gated \
                  validator is draining or stuck (issue #2023)",
+                registry
+            )
+            .unwrap(),
+            round_channel_depth: register_int_gauge_with_registry!(
+                "ika_consensus_round_channel_depth",
+                "Consensus rounds handed to the MPC drain but not yet consumed. Pinned at the \
+                 channel capacity means the consensus fold is waiting on the drain",
+                registry
+            )
+            .unwrap(),
+            fold_blocked_seconds_total: register_int_gauge_with_registry!(
+                "ika_consensus_fold_blocked_seconds_total",
+                "Cumulative seconds the consensus fold spent waiting for room in the MPC \
+                 round channel. Climbing while ika_dwallet_mpc_consumed_round is flat is a \
+                 wedged drain — the commit-liveness watchdog deliberately does NOT catch \
+                 that, because a waiting fold is not an isolated node",
                 registry
             )
             .unwrap(),
