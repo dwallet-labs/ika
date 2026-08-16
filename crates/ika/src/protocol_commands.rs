@@ -173,7 +173,7 @@ pub enum IkaProtocolCommandResponse {
 impl IkaProtocolCommand {
     pub async fn execute(
         self,
-        context: &mut impl TransactionContext,
+        context: &impl TransactionContext,
     ) -> Result<IkaProtocolCommandResponse, anyhow::Error> {
         let response = match self {
             IkaProtocolCommand::SetApprovedUpgradeByCap {

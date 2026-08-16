@@ -294,9 +294,8 @@ impl IkaCommand {
                         let config_path = config
                             .or(client_config)
                             .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                        let mut context =
-                            SdkTransactionContext::from_sui_client_config(&config_path)?;
-                        cmd.execute(&mut context).await?.print(!use_json);
+                        let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
+                        cmd.execute(&context).await?.print(!use_json);
                     }
                     None => {
                         // Print help
@@ -318,9 +317,9 @@ impl IkaCommand {
                 let config_path = config
                     .or(client_config)
                     .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                let mut context = SdkTransactionContext::from_sui_client_config(&config_path)?;
+                let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!use_json);
+                    cmd.execute(&context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
@@ -332,8 +331,8 @@ impl IkaCommand {
             IkaCommand::DWallet { cmd } => {
                 let config_path =
                     client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                let mut context = SdkTransactionContext::from_sui_client_config(&config_path)?;
-                cmd.execute(&mut context, json, quiet, _ika_config, _gas_budget)
+                let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
+                cmd.execute(&context, json, quiet, _ika_config, _gas_budget)
                     .await
             }
             #[cfg(feature = "protocol-commands")]

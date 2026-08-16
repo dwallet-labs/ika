@@ -49,7 +49,7 @@ use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
 use sui_rpc::proto;
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_sdk::wallet_context::WalletContext;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
+use sui_types::base_types::{ObjectID, SequenceNumber, SuiAddress};
 use sui_types::coin::TreasuryCap;
 use sui_types::crypto::{SignatureScheme, SuiKeyPair};
 use sui_types::effects::TransactionEffectsAPI;
@@ -128,16 +128,7 @@ pub async fn fund_address_from_faucet(
     address: SuiAddress,
     sui_faucet_url: String,
 ) -> Result<(), anyhow::Error> {
-    request_tokens_from_faucet(address, sui_faucet_url)
-        .await
-        .map(|_| ())
-        .or_else(|e| {
-            if e.to_string().contains("200 OK") {
-                Ok(())
-            } else {
-                Err(e)
-            }
-        })
+    request_tokens_from_faucet(address, sui_faucet_url).await
 }
 
 /// Faucet-fund `address` until its total SUI gas balance is at least
@@ -280,7 +271,7 @@ pub async fn init_ika_on_sui(
 
     let mut context = WalletContext::new(&config_path)?;
 
-    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
+    let client = TransactionContext::grpc_client(&context)?;
 
     // The publisher pays for the whole bootstrap (4 package publishes, system
     // init, genesis staking) and observed runs have ended bootstrap with only
@@ -315,17 +306,7 @@ pub async fn init_ika_on_sui(
     futures::future::join_all(request_tokens_from_faucet_futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        // Temporary workaround for the faucet returning 200 OK, but it seems as an error
-        // since the new faucet api changed
-        // TODO: Remove this workaround when we move to the new sui version and new faucet api
-        .or_else(|e| {
-            if e.to_string().contains("200 OK") {
-                Ok(vec![])
-            } else {
-                Err(e)
-            }
-        })?;
+        .collect::<Result<Vec<_>, _>>()?;
     let contract_paths = setup_contract_paths(Chain::Devnet)?;
 
     let packages = publish_ika_packages(
@@ -337,7 +318,7 @@ pub async fn init_ika_on_sui(
     .await?;
 
     let system = initialize_ika_system(
-        &mut context,
+        &context,
         client.clone(),
         publisher_address,
         &packages,
@@ -440,7 +421,7 @@ pub async fn publish_ika_packages(
 /// Assumes [`publish_ika_packages`] has already published the packages and minted
 /// the IKA supply, and that each validator address has been funded with gas.
 pub async fn initialize_ika_system(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     publisher_address: SuiAddress,
     packages: &PublishedIkaPackages,
@@ -619,7 +600,7 @@ pub async fn initialize_ika_system(
 
 pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
@@ -669,7 +650,7 @@ pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let _ = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let _ = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     Ok(())
 }
@@ -741,7 +722,7 @@ impl GenesisGlobalPresignConfig {
 
 pub async fn set_global_presign_config(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -798,7 +779,7 @@ pub async fn set_global_presign_config(
     );
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(publisher_address, tx_kind, context).await?;
     if response.effects.status().is_ok() {
         println!(
             "Transaction executed successfully. {:?}",
@@ -815,7 +796,7 @@ pub async fn set_global_presign_config(
 
 pub async fn ika_system_initialize(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1071,7 +1052,7 @@ pub async fn ika_system_initialize(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     if response.effects.status().is_ok() {
         println!(
@@ -1115,7 +1096,7 @@ pub async fn ika_system_initialize(
 
 pub async fn ika_system_set_witness_approving_advance_epoch(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1161,7 +1142,7 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     if !response.effects.status().is_ok() {
         return Err(anyhow::Error::msg(format!(
@@ -1175,7 +1156,7 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
 
 pub async fn ika_system_add_upgrade_cap_by_cap(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1240,7 +1221,7 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     if !response.effects.status().is_ok() {
         return Err(anyhow::Error::msg(format!(
@@ -1254,7 +1235,7 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
 
 pub async fn init_initialize(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_common_package_id: ObjectID,
     ika_system_package_id: ObjectID,
@@ -1314,7 +1295,7 @@ pub async fn init_initialize(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     let system_type = System::type_(ika_system_package_id.into());
     let ika_system_object_id =
@@ -1350,7 +1331,7 @@ pub async fn init_initialize(
 
 pub async fn request_add_validator(
     validator_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1378,7 +1359,7 @@ pub async fn request_add_validator(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let _ = execute_sui_transaction(validator_address, tx_kind, context, vec![]).await?;
+    let _ = execute_sui_transaction(validator_address, tx_kind, context).await?;
 
     Ok(())
 }
@@ -1390,7 +1371,7 @@ pub async fn request_add_validator(
 /// boundary; the on-chain logic moves it out at the next reconfiguration.
 pub async fn request_remove_validator(
     validator_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1418,14 +1399,14 @@ pub async fn request_remove_validator(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let _ = execute_sui_transaction(validator_address, tx_kind, context, vec![]).await?;
+    let _ = execute_sui_transaction(validator_address, tx_kind, context).await?;
 
     Ok(())
 }
 
 pub async fn stake_ika(
     publisher_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1440,7 +1421,7 @@ pub async fn stake_ika(
         mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
-    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
+    let client = context.grpc_client()?;
 
     let ika_supply_ref = client.get_object_ref(ika_supply_id).await?;
 
@@ -1470,7 +1451,7 @@ pub async fn stake_ika(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let _ = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
+    let _ = execute_sui_transaction(publisher_address, tx_kind, context).await?;
 
     Ok(())
 }
@@ -1496,7 +1477,7 @@ pub async fn minted_ika(
 
 pub async fn request_add_validator_candidate(
     validator_address: SuiAddress,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     validator_initialization_metadata: &ValidatorInfo,
     ika_system_package_id: ObjectID,
     ika_common_package_id: ObjectID,
@@ -1607,7 +1588,7 @@ pub async fn request_add_validator_candidate(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let response = execute_sui_transaction(validator_address, tx_kind, context, vec![]).await?;
+    let response = execute_sui_transaction(validator_address, tx_kind, context).await?;
 
     let validator_cap_type = StructTag {
         address: ika_common_package_id.into(),
@@ -1619,9 +1600,7 @@ pub async fn request_add_validator_candidate(
     let validator_cap_id = find_created_object_by_type(&response, &validator_cap_type)
         .expect("ValidatorCap object not found");
 
-    let validator_cap_object = SuiGrpcClient::connect(context.rpc_url()?)?
-        .get_object(validator_cap_id)
-        .await?;
+    let validator_cap_object = context.grpc_client()?.get_object(validator_cap_id).await?;
     let validator_cap_bcs = validator_cap_object
         .data
         .try_as_move()
@@ -1886,17 +1865,12 @@ const DEFAULT_GAS_BUDGET: u64 = 5_000_000_000; // 5 SUI
 pub(crate) async fn create_sui_transaction(
     signer: SuiAddress,
     tx_kind: TransactionKind,
-    context: &mut impl TransactionContext,
-    gas_payment: Vec<ObjectRef>,
+    context: &impl TransactionContext,
 ) -> Result<Transaction, anyhow::Error> {
-    anyhow::ensure!(
-        gas_payment.is_empty(),
-        "explicit gas payment is not supported by the standalone builder path"
-    );
     let TransactionKind::ProgrammableTransaction(programmable_transaction) = tx_kind else {
         anyhow::bail!("standalone builder path requires a programmable transaction")
     };
-    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
+    let client = context.grpc_client()?;
     let tx_data = build_transaction_data(
         &client,
         signer,
@@ -1911,11 +1885,10 @@ pub(crate) async fn create_sui_transaction(
 pub(crate) async fn execute_sui_transaction(
     signer: SuiAddress,
     tx_kind: TransactionKind,
-    context: &mut impl TransactionContext,
-    gas_payment: Vec<ObjectRef>,
+    context: &impl TransactionContext,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
-    let transaction = create_sui_transaction(signer, tx_kind, context, gas_payment).await?;
+    let client = context.grpc_client()?;
+    let transaction = create_sui_transaction(signer, tx_kind, context).await?;
     client
         .execute_transaction_and_wait(&transaction)
         .await

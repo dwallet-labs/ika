@@ -20,6 +20,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 itertools.workspace = true
 prometheus.workspace = true
+reqwest.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full", "tracing", "test-util"] }
 tracing.workspace = true

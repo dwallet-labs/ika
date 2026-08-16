@@ -17,27 +17,32 @@
 //! create → presign → sign, parsing each `--json` result.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::Config;
+use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::faucet::request_tokens_from_faucet;
 use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transaction_builder::build_transaction_data;
 use ika_types::ika_coin::INKU_PER_IKA;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use ika_types::sui::DWalletCoordinatorInner;
 use move_core_types::language_storage::StructTag;
 use rand::rngs::OsRng;
 use serde::Serialize;
 use shared_crypto::intent::{Intent, IntentMessage};
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore, Keystore};
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
-use sui_transaction_builder::{ObjectInput, TransactionBuilder};
 use sui_types::base_types::SuiAddress;
 use sui_types::coin::Coin;
 use sui_types::crypto::{Signature, SuiKeyPair, get_key_pair_from_rng};
 use sui_types::effects::TransactionEffectsAPI;
-use sui_types::transaction::{Transaction, TransactionData};
+use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
+use sui_types::transaction::{CallArg, Command, ObjectArg, Transaction};
 
 const ENV_ALIAS: &str = "localnet";
 const FUND_GAS_BUDGET: u64 = 100_000_000;
@@ -135,7 +140,7 @@ impl WorkloadDriver {
         let file = IkaConfigFile {
             envs: HashMap::from([(ENV_ALIAS.to_string(), network_config.clone())]),
         };
-        std::fs::write(
+        fs::write(
             &ika_config,
             serde_yaml::to_string(&file).context("serialize ika config")?,
         )
@@ -155,10 +160,6 @@ impl WorkloadDriver {
     /// User `completed_sessions_count` from the coordinator — the on-chain truth
     /// for whether a user session (e.g. a sign) has finished.
     async fn user_completed_count(&self) -> Result<u64> {
-        use ika_sui_client::SuiClient as IkaClient;
-        use ika_sui_client::metrics::SuiClientMetrics;
-        use ika_types::sui::DWalletCoordinatorInner;
-
         let ika = IkaClient::new_grpc(
             &self.grpc_url,
             SuiClientMetrics::new_for_testing(),
@@ -180,11 +181,11 @@ impl WorkloadDriver {
         self.user_address
     }
 
-    pub fn client_config_path(&self) -> &std::path::Path {
+    pub fn client_config_path(&self) -> &Path {
         &self.client_config
     }
 
-    pub fn ika_config_path(&self) -> &std::path::Path {
+    pub fn ika_config_path(&self) -> &Path {
         &self.ika_config
     }
 
@@ -230,7 +231,7 @@ impl WorkloadDriver {
                 Err(e) if is_transient(&e) => {
                     tracing::debug!(attempt, error = %e, "transient, retrying ika dwallet call");
                     last_err = Some(e);
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
                 Err(e) => return Err(e),
             }
@@ -468,35 +469,21 @@ async fn transfer_one_ika(
             Some(coin) => coin.compute_object_reference(),
             None => bail!("publisher {publisher_address} owns no {ika_type}"),
         };
-        let sdk_object = |object_ref: sui_types::base_types::ObjectRef| -> Result<ObjectInput> {
-            Ok(ObjectInput::owned(
-                object_ref.0.to_string().parse()?,
-                object_ref.1.value(),
-                object_ref.2.to_string().parse()?,
-            ))
-        };
-        let gas_price = client.get_reference_gas_price().await?;
-        let gas_payment = client
-            .select_gas_coins(publisher_address, FUND_GAS_BUDGET)
-            .await?;
-        let mut transaction_builder = TransactionBuilder::new();
-        let ika_coin = transaction_builder.object(sdk_object(ika_coin)?);
-        let amount = transaction_builder.pure(&WORKLOAD_USER_IKA_INKU);
-        let transferred_coin = transaction_builder.split_coins(ika_coin, vec![amount]);
-        let recipient =
-            transaction_builder.pure(&recipient.to_string().parse::<sui_sdk_types::Address>()?);
-        transaction_builder.transfer_objects(transferred_coin, recipient);
-        transaction_builder.set_sender(publisher_address.to_string().parse()?);
-        transaction_builder.set_gas_budget(FUND_GAS_BUDGET);
-        transaction_builder.set_gas_price(gas_price);
-        transaction_builder.add_gas_objects(
-            gas_payment
-                .into_iter()
-                .map(sdk_object)
-                .collect::<Result<Vec<_>>>()?,
-        );
-        let sdk_transaction = transaction_builder.try_build()?;
-        let tx_data = TransactionData::try_from(sdk_transaction)?;
+        let mut transaction_builder = ProgrammableTransactionBuilder::new();
+        let ika_coin =
+            transaction_builder.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin)))?;
+        let amount = transaction_builder.pure(WORKLOAD_USER_IKA_INKU)?;
+        let transferred_coin =
+            transaction_builder.command(Command::SplitCoins(ika_coin, vec![amount]));
+        let recipient = transaction_builder.pure(recipient)?;
+        transaction_builder.command(Command::TransferObjects(vec![transferred_coin], recipient));
+        let tx_data = build_transaction_data(
+            &client,
+            publisher_address,
+            FUND_GAS_BUDGET,
+            transaction_builder.finish(),
+        )
+        .await?;
         let signature = Signature::new_secure(
             &IntentMessage::new(Intent::sui_transaction(), &tx_data),
             publisher,

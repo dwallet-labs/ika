@@ -1902,7 +1902,7 @@ impl ClusterOfProcesses {
             "request_add_validator_candidate",
             request_add_validator_candidate(
                 joiner_address,
-                &mut self.wallet,
+                &self.wallet,
                 &metadata,
                 self.packages.ika_system_package_id,
                 self.packages.ika_common_package_id,
@@ -1916,7 +1916,7 @@ impl ClusterOfProcesses {
             "stake_ika",
             stake_ika(
                 self.publisher_address,
-                &mut self.wallet,
+                &self.wallet,
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
                 self.system.init_system_shared_version,
@@ -1931,7 +1931,7 @@ impl ClusterOfProcesses {
             "request_add_validator",
             request_add_validator(
                 joiner_address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
@@ -2056,7 +2056,7 @@ impl ClusterOfProcesses {
             "request_remove_validator",
             request_remove_validator(
                 slot.address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
@@ -2082,7 +2082,7 @@ impl ClusterOfProcesses {
             "set_global_presign_config",
             set_global_presign_config(
                 self.publisher_address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,

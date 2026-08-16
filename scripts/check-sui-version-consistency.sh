@@ -21,6 +21,41 @@ fi
 tag=$(echo "$tags" | head -1)
 echo "root Cargo.toml Sui pin: $tag"
 
+# The standalone SDK is a coordinated four-crate pin. A partial bump can
+# compile while mixing protobuf, transaction, signing, and wire-type surfaces.
+sdk_crates='sui-crypto sui-rpc sui-sdk-types sui-transaction-builder'
+sdk_revs=''
+for crate in $sdk_crates; do
+    line=$(grep -E "^${crate} = .*MystenLabs/sui-rust-sdk.git" Cargo.toml || true)
+    if [ -z "$line" ]; then
+        echo "ERROR: Cargo.toml has no standalone SDK pin for $crate" >&2
+        fail=1
+        continue
+    fi
+    count=$(echo "$line" | grep -c . || true)
+    if [ "$count" -ne 1 ]; then
+        echo "ERROR: Cargo.toml has $count standalone SDK dependency lines for $crate" >&2
+        fail=1
+        continue
+    fi
+    rev=$(echo "$line" | grep -oE 'rev = "[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}' || true)
+    if [ -z "$rev" ]; then
+        echo "ERROR: $crate must pin sui-rust-sdk with one full 40-character rev" >&2
+        fail=1
+        continue
+    fi
+    sdk_revs="${sdk_revs}${rev}\n"
+done
+sdk_revs=$(printf '%b' "$sdk_revs" | grep -v '^$' | sort -u || true)
+sdk_rev_count=$(echo "$sdk_revs" | grep -c . || true)
+if [ "$sdk_rev_count" -ne 1 ]; then
+    echo "ERROR: standalone SDK crates pin $sdk_rev_count distinct revisions:" >&2
+    echo "$sdk_revs" >&2
+    fail=1
+else
+    echo "root Cargo.toml sui-rust-sdk pin: $sdk_revs"
+fi
+
 # Every other location must carry the same tag (same flavor, same version).
 # Compare whatever tags a file carries against the root pin.
 compare_tags() {

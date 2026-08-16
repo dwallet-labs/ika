@@ -18,14 +18,25 @@ adapter when a read is generally useful; keep trust-sensitive reads on the
 `SuiTransport` abstraction so peer-only and verified-read modes continue to
 work.
 
-Transaction execution uses
+Interactive transaction execution uses
 `sui_rpc::Client::execute_transaction_and_wait_for_checkpoint`. A successful
-return provides read-your-writes consistency and handles duplicate-submission
-races. Do not replace it with the raw execution RPC while retaining an
-`and_wait` name.
+return normally provides read-your-writes consistency and handles
+duplicate-submission races. When checkpoint observation fails after execution,
+the adapter preserves and returns the successful effects instead of reporting
+the committed transaction as failed.
 
-Faucet calls use `sui_rpc::faucet::FaucetClient` through Ika's shared adapter.
-The adapter accepts both legacy `/gas` URLs and service-root URLs.
+The notifier's serialized writer uses the raw execution RPC with a submission
+deadline and returns as soon as effects are available. It must not hold the
+global writer lock while waiting for checkpoint inclusion: checkpoint lag is a
+read-side observability concern, and a lagging checkpoint stream cannot make a
+committed notifier transaction safe to retry.
+
+Faucet service-root and `/v2/gas` calls use
+`sui_rpc::faucet::FaucetClient` through Ika's shared adapter. Exact legacy
+`/gas` and `/v1/gas` URLs use a narrow compatibility HTTP request because the
+standalone client otherwise appends `/v2/gas`. The legacy local faucet can
+return an error-shaped body after a successful drip, so its HTTP status is the
+delivery result.
 
 ## Wallet and transaction construction
 
@@ -43,6 +54,14 @@ selection, simulation, and execution-failure checking. New self-contained
 transaction constructors should use the standalone builder directly. Existing
 protocol constructors can be converted incrementally; the replay boundary
 keeps their command and argument semantics unchanged in the meantime.
+
+The RPC endpoint finalizes object references, gas payment, gas price, and the
+simulation-estimated gas budget. Before signing, the adapter compares the
+returned transaction kind, inputs, and commands with the locally canonicalized
+PTB. Gas metadata may differ, and simulation may downgrade a conservatively
+mutable shared input to immutable after inspecting the Move signature; object
+identity, versions, pure values, and commands may not differ. This check is a
+security boundary: never sign an endpoint-returned transaction without it.
 
 The root workspace pins `sui-crypto`, `sui-rpc`, `sui-sdk-types`, and
 `sui-transaction-builder` to the exact `sui-rust-sdk` revision used by the

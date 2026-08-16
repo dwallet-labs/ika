@@ -342,7 +342,7 @@ async fn init_env(
     )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
-    let mut context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
+    let context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
     let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let mut initiation_parameters = InitiationParameters::new();
@@ -355,7 +355,7 @@ async fn init_env(
 
     let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_common_package_id.unwrap(),
         publish_config.ika_system_package_id,
@@ -386,7 +386,7 @@ async fn init_env(
 
     ika_system_set_witness_approving_advance_epoch(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_system_package_id,
         ika_system_object_id,
@@ -417,7 +417,7 @@ async fn init_env(
 
     ika_system_add_upgrade_cap_by_cap(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_system_package_id,
         ika_system_object_id,
@@ -496,14 +496,14 @@ async fn initialize_system(
     )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
-    let mut context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
+    let context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
     let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let initiation_parameters = InitiationParameters::new();
 
     let (dwallet_coordinator_object_id, dwallet_initial_shared_version) = ika_system_initialize(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         ika_system_package_id,
         ika_system_object_id,
@@ -521,7 +521,7 @@ async fn initialize_system(
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         ika_system_package_id,
         ika_dwallet_2pc_mpc_package_id,

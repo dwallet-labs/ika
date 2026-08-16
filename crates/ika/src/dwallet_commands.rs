@@ -819,7 +819,7 @@ fn tx_response_to_output(response: &ExecutedTransaction) -> IkaDWalletCommandRes
 
 /// Find the first created object whose type name contains `type_substr`.
 async fn find_created_object_by_type(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     response: &ExecutedTransaction,
     type_substr: &str,
 ) -> Option<ObjectID> {
@@ -830,7 +830,7 @@ async fn find_created_object_by_type(
         .map(|(reference, _)| reference.0)
         .collect();
 
-    let grpc_client = create_grpc_client(context).await.ok()?;
+    let grpc_client = context.grpc_client().ok()?;
     for obj_id in created_ids {
         if let Ok(obj) = grpc_client.get_object(obj_id).await
             && let Some(move_obj) = obj.data.try_as_move()
@@ -854,7 +854,7 @@ async fn fetch_tx_events(
     context: &impl TransactionContext,
     digest: &str,
 ) -> Option<Vec<(String, serde_json::Value)>> {
-    let grpc_client = create_grpc_client(context).await.ok()?;
+    let grpc_client = context.grpc_client().ok()?;
     let tx_digest: sui_types::digests::TransactionDigest = digest.parse().ok()?;
     let transaction = grpc_client.get_transaction(&tx_digest).await.ok()?;
     let events = transaction.events?;
@@ -946,7 +946,7 @@ async fn poll_sign_session(
     context: &impl TransactionContext,
     sign_session_id: ObjectID,
 ) -> Result<SignSessionResult> {
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
     let poll_interval = std::time::Duration::from_secs(3);
     let timeout = std::time::Duration::from_secs(300);
     let start = std::time::Instant::now();
@@ -1236,7 +1236,7 @@ fn derive_encryption_keys(
 ///
 /// Address-based formula: `seed = keccak256(keypair_bytes || index_le_bytes)`
 fn resolve_seed(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     seed_file: Option<PathBuf>,
     address: Option<SuiAddress>,
     index: u32,
@@ -1272,13 +1272,6 @@ fn resolve_seed(
     let mut seed = [0u8; 32];
     seed.copy_from_slice(digest.as_ref());
     Ok(seed)
-}
-
-/// Get the active Sui gRPC client.
-async fn create_grpc_client(context: &impl TransactionContext) -> Result<SuiGrpcClient> {
-    SuiGrpcClient::new(context.rpc_url()?)
-        .await
-        .context("Failed to create Sui gRPC client")
 }
 
 /// Create a SuiConnectorClient for read-only queries (coordinator, network keys, pricing).
@@ -1399,7 +1392,7 @@ async fn find_ika_coin(
 /// SUI coin: passed through as-is. When `None`, the transaction functions use the
 /// gas coin directly (like the TypeScript SDK's `transaction.gas`).
 async fn resolve_payment_coins(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     config: &IkaNetworkConfig,
     payment: &PaymentArgs,
 ) -> Result<ika_dwallet_transactions::PaymentCoinArgs> {
@@ -1407,7 +1400,7 @@ async fn resolve_payment_coins(
         Some(id) => id,
         None => {
             let owner = context.active_address()?;
-            let grpc_client = create_grpc_client(context).await?;
+            let grpc_client = context.grpc_client()?;
             match find_ika_coin(&grpc_client, owner, config).await {
                 Ok(id) => id,
                 Err(_) => {
@@ -1447,7 +1440,7 @@ async fn is_presign_cap_verified(
     context: &impl TransactionContext,
     presign_cap_id: ObjectID,
 ) -> Result<bool> {
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
     let object = grpc_client.get_object(presign_cap_id).await?;
     let type_str = object
         .data
@@ -1506,7 +1499,7 @@ async fn fetch_dwallet_metadata(
     context: &impl TransactionContext,
     dwallet_id: ObjectID,
 ) -> Result<DWalletMetadata> {
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
     let fields = fetch_object_fields(&grpc_client, dwallet_id).await?;
 
     let curve = fields
@@ -1556,7 +1549,7 @@ async fn fetch_presign_output(
     context: &impl TransactionContext,
     presign_cap_id: ObjectID,
 ) -> Result<Vec<u8>> {
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
 
     // 1. Read the VerifiedPresignCap to get presign_id
     let cap_fields = fetch_object_fields(&grpc_client, presign_cap_id).await?;
@@ -1629,7 +1622,7 @@ fn extract_u32_from_json(value: &serde_json::Value) -> Option<u32> {
 impl IkaDWalletCommand {
     pub async fn execute(
         self,
-        context: &mut impl TransactionContext,
+        context: &impl TransactionContext,
         json: bool,
         quiet: bool,
         global_ika_config: Option<PathBuf>,
@@ -1772,7 +1765,7 @@ impl IkaDWalletCommand {
                         eprintln!("DKG transaction submitted. Waiting for network to process...");
                     }
 
-                    let grpc_client = create_grpc_client(context).await?;
+                    let grpc_client = context.grpc_client()?;
 
                     // Poll until DKG completes (public_output appears, up to 5 minutes)
                     let fields = poll_dwallet_until_dkg_complete(&grpc_client, did, 300)
@@ -2337,7 +2330,7 @@ impl IkaDWalletCommand {
 
                 // Identify presign caps among created objects
                 let mut presign_cap_ids = Vec::new();
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 for obj_id in &created_ids {
                     if let Ok(obj) = grpc_client.get_object(*obj_id).await
                         && let Some(move_obj) = obj.data.try_as_move()
@@ -2588,7 +2581,7 @@ impl IkaDWalletCommand {
                         );
                     }
 
-                    let grpc_client = create_grpc_client(context).await?;
+                    let grpc_client = context.grpc_client()?;
                     let fields = poll_dwallet_until_dkg_complete(&grpc_client, did, 300)
                         .await
                         .context("Failed waiting for imported key verification")?;
@@ -2729,7 +2722,7 @@ impl IkaDWalletCommand {
                 encryption_key_id,
                 tx: _,
             } => {
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 let fields = fetch_object_fields(&grpc_client, encryption_key_id).await?;
                 IkaDWalletCommandResponse::Get {
                     dwallet: serde_json::json!({
@@ -2740,7 +2733,7 @@ impl IkaDWalletCommand {
             }
 
             IkaDWalletCommand::Get { dwallet_id, tx: _ } => {
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 let (_, json_value) = grpc_client.get_object_with_json(dwallet_id).await?;
                 let json_value = json_value.ok_or_else(|| {
                     anyhow::anyhow!("No content for dWallet object: {dwallet_id}")
@@ -2778,7 +2771,7 @@ impl IkaDWalletCommand {
             }
 
             IkaDWalletCommand::List { tx: _ } => {
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 let owner = context.active_address()?;
 
                 // Query all owned objects of type DWalletCap
@@ -2802,7 +2795,7 @@ impl IkaDWalletCommand {
             }
 
             IkaDWalletCommand::ListPresigns { tx: _ } => {
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 let owner = context.active_address()?;
 
                 let mut verified = Vec::new();
@@ -2914,7 +2907,7 @@ impl IkaDWalletCommand {
                 .await?;
                 let protocol_pp = network_key_info.protocol_public_parameters;
 
-                let grpc_client = create_grpc_client(context).await?;
+                let grpc_client = context.grpc_client()?;
                 let encrypted_share = fetch_encrypted_share_for_dwallet(
                     &grpc_client,
                     context,
@@ -3146,7 +3139,7 @@ async fn poll_presign_until_complete(
     presign_id: ObjectID,
     timeout_secs: u64,
 ) -> Result<()> {
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let mut interval_ms = 2000u64;
@@ -3184,7 +3177,7 @@ async fn poll_presign_until_complete(
 
 /// Wait for a presign to complete, then verify the cap. Returns the verified cap ID.
 async fn wait_and_verify_presign(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     config: &IkaNetworkConfig,
     presign_id: ObjectID,
     unverified_cap_id: ObjectID,
@@ -3224,7 +3217,7 @@ async fn wait_and_verify_presign(
 /// 3. On-chain decryption — fetch the encrypted share from the dWallet object, derive the
 ///    decryption key from the user's Sui keystore, and decrypt locally.
 async fn resolve_secret_share(
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     secret_share_file: Option<PathBuf>,
     secret_share_hex: Option<String>,
     dwallet_id: Option<ObjectID>,
@@ -3257,7 +3250,7 @@ async fn resolve_secret_share(
         eprintln!("No secret share provided. Decrypting from on-chain encrypted share...");
     }
 
-    let grpc_client = create_grpc_client(context).await?;
+    let grpc_client = context.grpc_client()?;
     let encrypted_share_and_proof =
         fetch_encrypted_share_for_dwallet(&grpc_client, context, dwallet_id, curve_id, seed)
             .await?;
@@ -3286,7 +3279,7 @@ async fn resolve_secret_share(
 /// (not the Sui wallet address), so we compute it from seed args.
 async fn fetch_encrypted_share_for_dwallet(
     grpc_client: &SuiGrpcClient,
-    context: &mut impl TransactionContext,
+    context: &impl TransactionContext,
     dwallet_id: ObjectID,
     curve_id: u32,
     seed: &SeedArgs,
