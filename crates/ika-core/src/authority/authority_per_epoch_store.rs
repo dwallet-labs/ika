@@ -2796,7 +2796,6 @@ impl AuthorityPerEpochStore {
     /// wipe and replay. Using this outside such a test would assert against a
     /// state no validator ever reaches.
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_retaining_derived_state_for_testing(
         name: AuthorityName,
         committee: Arc<Committee>,
@@ -2820,7 +2819,6 @@ impl AuthorityPerEpochStore {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn open(
         name: AuthorityName,
         committee: Arc<Committee>,
