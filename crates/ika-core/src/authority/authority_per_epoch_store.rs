@@ -7128,6 +7128,7 @@ impl From<LockDetails> for LockDetailsWrapper {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::authority::derived_epoch_state::EpochStateSnapshot;
     use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef};
     use tokio::time::advance;
 
@@ -9941,10 +9942,7 @@ mod tests {
     }
 
     /// The serialized contents of every classified table, keyed by name.
-    #[allow(clippy::type_complexity)]
-    fn classified_table_snapshot(
-        tables: &AuthorityEpochTables,
-    ) -> BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>> {
+    fn classified_table_snapshot(tables: &AuthorityEpochTables) -> EpochStateSnapshot {
         EPOCH_STATE_REGISTRY
             .iter()
             .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))

@@ -61,6 +61,14 @@ impl fmt::Display for EpochStateClass {
     }
 }
 
+/// Every classified table's rows, each key and value serialized, keyed by
+/// field name — the state of one epoch store in a form two runs can be
+/// compared in. Serialized rather than typed because the comparison spans
+/// tables of different types and the property is byte-identity.
+#[cfg(test)]
+pub(crate) type EpochStateSnapshot =
+    std::collections::BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>>;
+
 /// One row of the audit table: the `AuthorityEpochTables` field name, its
 /// class, and the one-line reason a reader can check against the code.
 #[derive(Debug, Clone, Copy)]

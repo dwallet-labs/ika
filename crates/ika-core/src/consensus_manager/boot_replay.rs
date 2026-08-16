@@ -237,6 +237,7 @@ mod tests {
     use crate::authority::authority_per_epoch_store::{
         AuthorityPerEpochStore, EPOCH_STATE_REGISTRY, EpochStoreParams,
     };
+    use crate::authority::derived_epoch_state::EpochStateSnapshot;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
@@ -509,7 +510,7 @@ mod tests {
         assert_eq!(folded, 7);
 
         let tables = epoch_store.tables().unwrap();
-        let first: BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>> = EPOCH_STATE_REGISTRY
+        let first: EpochStateSnapshot = EPOCH_STATE_REGISTRY
             .iter()
             .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
             .collect();
