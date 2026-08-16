@@ -710,11 +710,21 @@ impl DWalletMPCService {
                     .round_channel_depth
                     .set(transport.queue_depth() as i64);
 
+                // Clamp the high-water instead of assigning: a reader landing
+                // inside `ParkGuard::drop` — between the park stamp's
+                // `swap(0)` and the elapsed time's `fetch_add` — sees a
+                // transient DIP (the completed total without the just-closed
+                // park). Assigning the dipped value would rewind
+                // `published_blocked_seconds`, and the next sample would
+                // re-add the already-counted open interval — a one-time
+                // overcount on the one signal that has no second opinion.
+                // `saturating_sub` already zeroes the dipped delta; the max
+                // keeps the baseline from rewinding.
                 let blocked_seconds = transport.blocked_nanos() / 1_000_000_000;
                 dwallet_mpc_metrics
                     .fold_blocked_seconds_total
                     .inc_by(blocked_seconds.saturating_sub(published_blocked_seconds));
-                published_blocked_seconds = blocked_seconds;
+                published_blocked_seconds = published_blocked_seconds.max(blocked_seconds);
 
                 let blocked_sends = transport.blocked_sends();
                 dwallet_mpc_metrics

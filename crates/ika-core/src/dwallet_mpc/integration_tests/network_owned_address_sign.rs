@@ -1946,3 +1946,70 @@ async fn test_restart_does_not_resurrect_a_dropped_noa_presign_demand() {
         "the dropped demand must not sit in the rebuilt queue either"
     );
 }
+
+/// With `noa_checkpoints` OFF — every live network today — a sequenced NOA
+/// presign demand must be INERT at the drain. Acting on it pops the SHARED
+/// internal presign pool (`assign_presign_for_demand`), so a binary that
+/// processed demands while its peers' flag is off would drain a pool no peer
+/// draws on and answer demands no peer answers: a consensus-visible divergence
+/// decided by the binary rather than the protocol version — the class this
+/// repo rules out outright.
+///
+/// This test exists because nothing else pins the gate: every flag-off suite
+/// delivers empty NOA vectors, so deleting the drain's `noa_checkpoints()`
+/// gate flips no other test. Fault-validated by exactly that deletion.
+#[tokio::test]
+#[cfg(test)]
+async fn test_noa_presign_demand_is_inert_while_the_flag_is_off() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    // The DEFAULT guard: `noa_checkpoints` stays off, as on mainnet/testnet.
+    let _guard = utils::create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let announcing_authority = test_state
+        .committee
+        .names()
+        .nth(1)
+        .copied()
+        .expect("committee has a second member");
+    let demand_id = checkpoint_demand_id(9);
+    let demand = ConsensusNOAPresignDemand {
+        authority: announcing_authority,
+        demand_id: demand_id.clone(),
+        network_encryption_key_id: network_key_id,
+    };
+
+    // One round carrying the demand, delivered over the real transport to the
+    // target validator, then drained.
+    let round = test_state.consensus_round as u64;
+    let mut payload = utils::empty_round_payload(round);
+    payload.noa_presign_demands = vec![demand];
+    test_state.epoch_stores[PARK_TEST_TARGET]
+        .deliver_round(payload)
+        .await;
+    test_state.consensus_round += 1;
+    for _ in 0..3 {
+        test_state.dwallet_mpc_services[PARK_TEST_TARGET]
+            .run_service_loop_iteration()
+            .await;
+    }
+
+    assert_eq!(
+        test_state.dwallet_mpc_services[PARK_TEST_TARGET].parked_noa_presign_demand_count(),
+        0,
+        "a NOA presign demand sequenced while `noa_checkpoints` is off must never \
+         enter the assignment queue — acting on it is a binary-decided, \
+         consensus-visible divergence"
+    );
+    assert!(
+        !test_state.epoch_stores[PARK_TEST_TARGET]
+            .has_noa_presign_demand_resolution(&demand_id)
+            .expect("read resolution"),
+        "nor may it have been assigned or dropped: the whole stream is inert \
+         until the protocol version turns it on"
+    );
+}
