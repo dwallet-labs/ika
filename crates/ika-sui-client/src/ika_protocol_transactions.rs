@@ -22,6 +22,7 @@ use sui_types::collection_types::Entry;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg};
 
+use crate::grpc::SuiGrpcClient;
 use crate::transport::ExecutedTransaction;
 
 const VERIFY_PROTOCOL_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_protocol_cap");
@@ -49,11 +50,8 @@ pub async fn set_approved_upgrade_by_cap(
     digest: Option<Vec<u8>>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let package_id = ptb.input(CallArg::Pure(bcs::to_bytes(&package_id)?))?;
@@ -227,15 +225,12 @@ pub async fn try_migrate_system_by_cap(
     ika_system_object_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let sender = context.active_address()?;
 
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     add_ika_system_command_to_ptb(
         context,
@@ -541,11 +536,8 @@ pub async fn get_verified_protocol_cap(
     protocol_cap_id: ObjectID,
     ptb: &mut ProgrammableTransactionBuilder,
 ) -> Result<Argument, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     let args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         protocol_cap_ref,

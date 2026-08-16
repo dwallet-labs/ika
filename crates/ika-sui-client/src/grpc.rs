@@ -64,6 +64,15 @@ pub struct ObjectPage {
 }
 
 impl SuiGrpcClient {
+    /// Creates a lazy standalone SDK client without probing the endpoint.
+    ///
+    /// Wallet-backed transaction builders use this when they already know the
+    /// active environment and want to resolve inputs or submit a transaction
+    /// without constructing Sui main's compatibility client.
+    pub fn connect(endpoint: impl Into<String>) -> Result<Self, TransportError> {
+        Self::connect_with_headers(endpoint, &SuiGrpcHeaders::new())
+    }
+
     /// Connects (lazily) and probes the endpoint by fetching the chain id.
     pub async fn new(endpoint: impl Into<String>) -> Result<Self, TransportError> {
         Self::new_with_headers(endpoint, &SuiGrpcHeaders::new()).await
@@ -75,18 +84,25 @@ impl SuiGrpcClient {
         endpoint: impl Into<String>,
         headers: &SuiGrpcHeaders,
     ) -> Result<Self, TransportError> {
+        let client = Self::connect_with_headers(endpoint, headers)?;
+        let _ = client.get_chain_identifier().await?;
+        Ok(client)
+    }
+
+    fn connect_with_headers(
+        endpoint: impl Into<String>,
+        headers: &SuiGrpcHeaders,
+    ) -> Result<Self, TransportError> {
         let endpoint = endpoint.into();
         let headers = resolve_grpc_headers(headers)?;
         let rpc = SuiRpcClient::new(endpoint.as_str())
             .map_err(|e| TransportError::Network(format!("connect {endpoint}: {e}")))?
             .with_headers(headers);
-        let client = Self {
+        Ok(Self {
             rpc,
             endpoint,
             gate: Arc::new(RateLimitGate::unmetered()),
-        };
-        let _ = client.get_chain_identifier().await?;
-        Ok(client)
+        })
     }
 
     /// Put this client behind the endpoint's shared rate-limit gate.
@@ -150,6 +166,125 @@ impl SuiGrpcClient {
 
     pub async fn get_object(&self, object_id: ObjectID) -> Result<Object, TransportError> {
         SuiTransport::get_object(self, object_id).await
+    }
+
+    pub async fn get_object_ref(&self, object_id: ObjectID) -> Result<ObjectRef, TransportError> {
+        self.get_object(object_id)
+            .await
+            .map(|object| object.compute_object_reference())
+    }
+
+    pub async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
+        SuiWriter::get_reference_gas_price(self).await
+    }
+
+    pub async fn list_owned_gas_coins(
+        &self,
+        address: SuiAddress,
+    ) -> Result<Vec<ObjectRef>, TransportError> {
+        SuiWriter::list_owned_gas_coins(self, address).await
+    }
+
+    pub async fn select_gas_coins(
+        &self,
+        address: SuiAddress,
+        amount: u64,
+    ) -> Result<Vec<ObjectRef>, TransportError> {
+        let address = address
+            .to_string()
+            .parse()
+            .map_err(|e| TransportError::Encoding(format!("decode gas owner: {e}")))?;
+        let gas_type = GAS::type_()
+            .to_canonical_string(true)
+            .parse()
+            .map_err(|e| TransportError::Encoding(format!("decode SUI type: {e}")))?;
+        let rpc = self.rpc.clone();
+        let objects = self
+            .gated(async move {
+                rpc.select_coins(&address, &gas_type, amount, &[])
+                    .await
+            })
+            .await?;
+        if objects.len() > MAX_GAS_PAYMENT_OBJECTS {
+            return Err(TransportError::Network(format!(
+                "gas selection requires {} objects, exceeding Sui's limit of {MAX_GAS_PAYMENT_OBJECTS}",
+                objects.len()
+            )));
+        }
+        objects
+            .into_iter()
+            .map(|object| {
+                Ok((
+                    object.object_id().parse().map_err(|e| {
+                        TransportError::Encoding(format!("decode gas object id: {e}"))
+                    })?,
+                    object.version().into(),
+                    object.digest().parse().map_err(|e| {
+                        TransportError::Encoding(format!("decode gas object digest: {e}"))
+                    })?,
+                ))
+            })
+            .collect()
+    }
+
+    pub async fn execute_transaction_and_wait(
+        &self,
+        transaction: &Transaction,
+    ) -> Result<ExecutedTransaction, TransportError> {
+        let mut rpc = self.rpc.clone();
+        let request = Self::execute_transaction_request(transaction)?;
+        // Admission happens before the request deadline starts, so a shared
+        // cooldown does not consume the submission's own timeout.
+        self.gate.wait_for_capacity().await;
+        let response = match tokio::time::timeout(
+            SUBMIT_TIMEOUT,
+            rpc.execution_client().execute_transaction(request),
+        )
+        .await
+        {
+            Err(_) => {
+                return Err(TransportError::Network(format!(
+                    "execute_transaction exceeded {SUBMIT_TIMEOUT:?} with no response"
+                )));
+            }
+            Ok(Ok(response)) => {
+                self.gate.note_success();
+                response.into_inner()
+            }
+            Ok(Err(status)) => {
+                self.gate.note_status(&status);
+                return Err(Self::rpc_err(status));
+            }
+        };
+        Self::decode_executed_transaction(response.transaction())
+    }
+
+    pub async fn simulate_transaction(
+        &self,
+        transaction: &TransactionData,
+        do_gas_selection: bool,
+    ) -> Result<ExecutedTransaction, TransportError> {
+        let mut request = proto::SimulateTransactionRequest::default();
+        request.set_checks(proto::simulate_transaction_request::TransactionChecks::Enabled);
+        request.set_do_gas_selection(do_gas_selection);
+        let mut transaction_proto = proto::Transaction::default();
+        transaction_proto.bcs = Some(
+            proto::Bcs::serialize(transaction)
+                .map_err(|e| TransportError::Encoding(format!("encode transaction: {e}")))?,
+        );
+        request.transaction = Some(transaction_proto);
+        request.read_mask = Some(Self::executed_transaction_read_mask());
+
+        let mut rpc = self.rpc.clone();
+        self.gated(async move {
+            rpc.execution_client()
+                .simulate_transaction(request)
+                .await
+        })
+        .await
+        .and_then(|response| {
+            Self::decode_executed_transaction(response.into_inner().transaction())
+        })
     }
 
     pub async fn get_object_with_json(
@@ -948,37 +1083,9 @@ impl SuiWriter for SuiGrpcClient {
         &self,
         tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError> {
-        let mut rpc = self.rpc.clone();
-        // Bounded because the notifier holds its serial submission lock across
-        // this call: the underlying client configures a connect timeout and
-        // keepalives but no per-request deadline, so an upstream that accepts
-        // the request and never answers would stall every notifier write
-        // behind it, with no watchdog able to fire.
-        let request = Self::execute_transaction_request(tx)?;
-        // Admission happens before the request deadline starts, so a shared
-        // cooldown does not consume the submission's own timeout.
-        self.gate.wait_for_capacity().await;
-        let executed = match tokio::time::timeout(
-            SUBMIT_TIMEOUT,
-            rpc.execution_client().execute_transaction(request),
-        )
-        .await
-        {
-            Err(_) => {
-                return Err(TransportError::Network(format!(
-                    "execute_transaction exceeded {SUBMIT_TIMEOUT:?} with no response"
-                )));
-            }
-            Ok(Ok(executed)) => {
-                self.gate.note_success();
-                executed.into_inner()
-            }
-            Ok(Err(status)) => {
-                self.gate.note_status(&status);
-                return Err(Self::rpc_err(status));
-            }
-        };
-        let executed = Self::decode_executed_transaction(executed.transaction())?;
+        // Bounded by `execute_transaction_and_wait` because the notifier holds
+        // its serial submission lock across this call.
+        let executed = self.execute_transaction_and_wait(tx).await?;
         Ok(SubmittedTransaction {
             digest: *tx.digest(),
             effects: executed.effects,

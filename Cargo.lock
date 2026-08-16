@@ -7223,11 +7223,9 @@ dependencies = [
  "serde",
  "serde_json",
  "shared-crypto",
- "sui",
  "sui-config",
  "sui-keys",
  "sui-rpc",
- "sui-rpc-api",
  "sui-sdk",
  "sui-sdk-types",
  "sui-storage",
@@ -7290,7 +7288,6 @@ dependencies = [
  "sui-keys",
  "sui-macros",
  "sui-rpc",
- "sui-rpc-api",
  "sui-sdk",
  "sui-simulator",
  "sui-types",
@@ -7415,8 +7412,9 @@ dependencies = [
  "shared-crypto",
  "sui-config",
  "sui-keys",
- "sui-rpc-api",
  "sui-sdk",
+ "sui-sdk-types",
+ "sui-transaction-builder 0.3.2",
  "sui-types",
  "telemetry-subscribers",
  "tempfile",
@@ -14184,7 +14182,7 @@ dependencies = [
  "sui-source-verification",
  "sui-swarm",
  "sui-swarm-config",
- "sui-transaction-builder",
+ "sui-transaction-builder 0.0.0",
  "sui-types",
  "tabled",
  "tap",
@@ -15210,7 +15208,7 @@ dependencies = [
  "sui-open-rpc",
  "sui-protocol-config",
  "sui-storage",
- "sui-transaction-builder",
+ "sui-transaction-builder 0.0.0",
  "sui-types",
  "tap",
  "thiserror 1.0.69",
@@ -15978,7 +15976,7 @@ dependencies = [
  "sui-rpc",
  "sui-rpc-cursor",
  "sui-sdk-types",
- "sui-transaction-builder",
+ "sui-transaction-builder 0.0.0",
  "sui-transaction-checks",
  "sui-types",
  "tap",
@@ -16063,7 +16061,7 @@ dependencies = [
  "sui-rpc",
  "sui-rpc-api",
  "sui-sdk-types",
- "sui-transaction-builder",
+ "sui-transaction-builder 0.0.0",
  "sui-types",
  "thiserror 1.0.69",
  "tokio",
@@ -16363,6 +16361,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sui-transaction-builder"
+version = "0.3.2"
+source = "git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8#5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8"
+dependencies = [
+ "async-trait",
+ "bcs",
+ "futures",
+ "serde",
+ "sui-rpc",
+ "sui-sdk-types",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "sui-transaction-checks"
 version = "0.1.0"
 source = "git+https://github.com/MystenLabs/sui?tag=mainnet-v1.77.2#51d177ad7d65102fc368b582408f466d97b31548"
@@ -16574,6 +16586,17 @@ name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",

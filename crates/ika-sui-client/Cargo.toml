@@ -35,14 +35,12 @@ sui-storage.workspace = true
 object_store.workspace = true
 
 prost-types.workspace = true
-sui-rpc-api.workspace = true
 sui-rpc.workspace = true
 sui-sdk-types.workspace = true
 sui-sdk.workspace = true
 tonic.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
-sui.workspace = true
 sui-keys.workspace = true
 dwallet-mpc-types.workspace = true
 

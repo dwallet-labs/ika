@@ -35,8 +35,6 @@ use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use serde::Serialize;
 use shared_crypto::intent::Intent;
-use sui::client_commands::{SuiClientCommandResult, execute_dry_run};
-use sui::fire_drill::get_gas_obj_ref;
 use sui_keys::keystore::AccountKeystore;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
@@ -44,10 +42,11 @@ use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
 use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction, TransactionKind};
+use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use sui_types::transaction::{Command, TransactionData};
 use sui_types::{MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID};
 
+use crate::grpc::SuiGrpcClient;
 use crate::transport::ExecutedTransaction;
 #[derive(Serialize)]
 pub struct BecomeCandidateValidatorData {
@@ -114,8 +113,7 @@ pub async fn request_add_validator_candidate(
 
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = context
-        .grpc_client()?
+    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
         .get_object(ika_system_object_id)
         .await
         .map(|o| o.owner().clone())
@@ -250,7 +248,7 @@ pub async fn request_add_validator_candidate(
         .map(|(reference, _)| reference.0)
         .collect::<Vec<_>>();
 
-    let mut grpc_client = context.grpc_client()?;
+    let grpc_client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
     let mut validator_cap_id: Option<ObjectID> = None;
     let mut validator_operation_cap_id: Option<ObjectID> = None;
     let mut validator_commission_cap_id: Option<ObjectID> = None;
@@ -279,8 +277,7 @@ pub async fn request_add_validator_candidate(
         "failed to get validator commission cap object id",
     ))?;
 
-    let validator_cap_obj = context
-        .grpc_client()?
+    let validator_cap_obj = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
         .get_object(validator_cap_id)
         .await
         .map_err(|e| anyhow::anyhow!("failed to get validator cap object: {e}"))?;
@@ -311,11 +308,8 @@ pub async fn stake_ika(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
-    let client = context.grpc_client()?;
-    let ika_supply_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_supply_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let ika_supply_ref = client.get_object_ref(ika_supply_id).await?;
 
     let ika_supply_id_arg =
         ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_supply_ref)))?;
@@ -354,11 +348,8 @@ pub async fn request_add_validator(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -389,11 +380,8 @@ pub async fn request_remove_validator(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -420,11 +408,8 @@ pub async fn request_remove_validator_candidate(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -457,11 +442,8 @@ pub async fn set_next_commission(
     new_commission_rate: u16,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let new_commission_rate = ptb.input(CallArg::Pure(bcs::to_bytes(&new_commission_rate)?))?;
@@ -497,11 +479,8 @@ pub async fn withdraw_stake(
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let staked_ika_ref = client
-        .transaction_builder()
-        .get_object_ref(staked_ika_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(staked_ika_ref)))?];
@@ -533,11 +512,8 @@ pub async fn request_withdraw_stake(
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let staked_ika_ref = client
-        .transaction_builder()
-        .get_object_ref(staked_ika_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(staked_ika_ref)))?];
@@ -568,11 +544,8 @@ pub async fn report_validator(
     reportee_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let reportee_id = ptb.input(CallArg::Pure(bcs::to_bytes(&reportee_id)?))?;
@@ -609,11 +582,8 @@ pub async fn undo_report_validator(
     reportee_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let reportee_id = ptb.input(CallArg::Pure(bcs::to_bytes(&reportee_id)?))?;
@@ -649,11 +619,8 @@ pub async fn rotate_operation_cap(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -710,61 +677,31 @@ pub(crate) async fn construct_unsigned_txn(
     gas_budget: u64,
     ptb: ProgrammableTransactionBuilder,
 ) -> IkaResult<TransactionData> {
-    let sui_client = context.grpc_client().map_err(|_| IkaError::SuiSDKError)?;
-    let gas_price = context
+    let sui_client = SuiGrpcClient::connect(
+        &context
+            .get_active_env()
+            .map_err(|_| IkaError::SuiSDKError)?
+            .rpc,
+    )
+    .map_err(|_| IkaError::SuiSDKError)?;
+    let gas_price = sui_client
         .get_reference_gas_price()
         .await
         .map_err(|_| IkaError::SuiSDKError)?;
 
-    let tx = ptb.finish();
-    let tx_kind = TransactionKind::ProgrammableTransaction(tx.clone());
-
-    let dry_run = execute_dry_run(
-        context,
-        sender,
-        tx_kind.clone(),
-        None,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
-    if let SuiClientCommandResult::DryRun(dry_run) = dry_run
-        && dry_run.transaction.effects.status().is_err()
-    {
-        let err_msg = format!("{:?}", dry_run.transaction.effects.status());
-        tracing::debug!(?dry_run.transaction.effects, "Dry run failed");
+    let transaction =
+        TransactionData::new_programmable(sender, vec![], ptb.finish(), gas_budget, gas_price);
+    let simulation = sui_client
+        .simulate_transaction(&transaction, true)
+        .await
+        .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
+    if simulation.effects.status().is_err() {
+        let err_msg = format!("{:?}", simulation.effects.status());
+        tracing::debug!(?simulation.effects, "Dry run failed");
         return Err(IkaError::DryRunFailed(err_msg));
-    };
+    }
 
-    let gas_budget = sui::client_commands::estimate_gas_budget(
-        context,
-        sender,
-        tx_kind,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .unwrap_or(gas_budget);
-
-    let rgp = sui_client
-        .get_reference_gas_price()
-        .await
-        .map_err(|_| IkaError::SuiSDKError)?;
-
-    let gas_obj_ref = get_gas_obj_ref(sender, &sui_client, gas_budget)
-        .await
-        .map_err(|_| IkaError::SuiSDKError)?;
-
-    Ok(TransactionData::new_programmable(
-        sender,
-        vec![gas_obj_ref],
-        tx,
-        gas_budget,
-        rgp,
-    ))
+    Ok(simulation.transaction)
 }
 
 pub async fn execute_transaction(
@@ -779,10 +716,10 @@ pub async fn execute_transaction(
         .sign_secure(&sender, &tx_data, Intent::sui_transaction())
         .await?;
     let transaction = Transaction::from_data(tx_data, vec![signature]);
-    context
-        .execute_transaction_may_fail(transaction)
+    SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+        .execute_transaction_and_wait(&transaction)
         .await
-        .map(ExecutedTransaction::from_sui)
+        .map_err(Into::into)
 }
 
 pub async fn call_ika_system(
@@ -817,11 +754,8 @@ pub async fn rotate_commission_cap(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -856,11 +790,8 @@ pub async fn collect_commission(
     amount: Option<u64>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_commission_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_commission_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let amount = ptb.input(CallArg::Pure(bcs::to_bytes(&amount)?))?;
@@ -899,11 +830,8 @@ pub async fn set_validator_name(
     name: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let name = ptb.input(CallArg::Pure(bcs::to_bytes(&name)?))?;
@@ -969,11 +897,8 @@ pub async fn set_validator_metadata(
     metadata: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let metadata = ptb.input(CallArg::Pure(bcs::to_bytes(&metadata)?))?;
@@ -1010,11 +935,8 @@ pub async fn set_next_epoch_network_address(
     network_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let network_address = ptb.input(CallArg::Pure(bcs::to_bytes(&network_address)?))?;
@@ -1051,11 +973,8 @@ pub async fn set_next_epoch_p2p_address(
     p2p_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let p2p_address = ptb.input(CallArg::Pure(bcs::to_bytes(&p2p_address)?))?;
@@ -1092,11 +1011,8 @@ pub async fn set_next_epoch_consensus_address(
     consensus_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let consensus_address = ptb.input(CallArg::Pure(bcs::to_bytes(&consensus_address)?))?;
@@ -1134,11 +1050,8 @@ pub async fn set_next_epoch_protocol_pubkey_bytes(
     proof_of_possession_bytes: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let protocol_pubkey = ptb.input(CallArg::Pure(bcs::to_bytes(&protocol_pubkey)?))?;
@@ -1178,11 +1091,8 @@ pub async fn set_next_epoch_network_pubkey_bytes(
     network_pubkey: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let network_pubkey = ptb.input(CallArg::Pure(bcs::to_bytes(&network_pubkey)?))?;
@@ -1219,11 +1129,8 @@ pub async fn set_next_epoch_consensus_pubkey_bytes(
     consensus_pubkey_bytes: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let consensus_pubkey_bytes =
@@ -1260,11 +1167,8 @@ pub async fn verify_validator_cap(
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1296,11 +1200,8 @@ pub async fn verify_operation_cap(
     validator_operation_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1332,11 +1233,8 @@ pub async fn verify_commission_cap(
     validator_commission_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_commission_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_commission_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1366,11 +1264,8 @@ pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
     validator_operation_cap_id: ObjectID,
     next_mpc_data: &VersionedMPCData,
 ) -> Result<(ProgrammableTransactionBuilder, Argument), anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let store_mcp_data_in_table_vec = store_mcp_data_in_table_vec(&mut ptb, next_mpc_data)?;
@@ -1504,11 +1399,8 @@ pub async fn set_pricing_vote(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         validator_operation_cap_ref,
@@ -1611,8 +1503,7 @@ pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
 ) -> anyhow::Result<CallArg> {
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = context
-        .grpc_client()?
+    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
         .get_object(ika_dwallet_2pc_mpc_coordinator_object_id)
         .await
         .map(|o| o.owner().clone())
@@ -1638,8 +1529,7 @@ pub async fn add_ika_system_command_to_ptb(
 ) -> anyhow::Result<Argument> {
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = context
-        .grpc_client()?
+    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
         .get_object(ika_system_object_id)
         .await
         .map(|o| o.owner().clone())

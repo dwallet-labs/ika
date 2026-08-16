@@ -29,6 +29,7 @@ use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg};
 
+use crate::grpc::SuiGrpcClient;
 use crate::ika_validator_transactions::{
     construct_unsigned_txn, execute_transaction, get_dwallet_2pc_mpc_coordinator_call_arg,
 };
@@ -52,15 +53,12 @@ impl PaymentCoinArgs {
         ptb: &mut ProgrammableTransactionBuilder,
         context: &WalletContext,
     ) -> Result<(Argument, Argument), Error> {
-        let client = context.grpc_client()?;
-        let ika_coin_ref = client
-            .transaction_builder()
-            .get_object_ref(self.ika_coin_id)
-            .await?;
+        let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+        let ika_coin_ref = client.get_object_ref(self.ika_coin_id).await?;
         let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
         let sui_coin_arg = match self.sui_coin_id {
             Some(id) => {
-                let sui_coin_ref = client.transaction_builder().get_object_ref(id).await?;
+                let sui_coin_ref = client.get_object_ref(id).await?;
                 ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?
             }
             None => Argument::GasCoin,
@@ -181,11 +179,8 @@ pub async fn request_dwallet_dkg(
     let sign_during_dkg_arg = match sign_during_dkg {
         Some(params) => {
             // Get the verified presign cap as owned object
-            let client = context.grpc_client()?;
-            let presign_cap_ref = client
-                .transaction_builder()
-                .get_object_ref(params.presign_cap_id)
-                .await?;
+            let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+            let presign_cap_ref = client.get_object_ref(params.presign_cap_id).await?;
             let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
                 presign_cap_ref,
             )))?;
@@ -300,11 +295,8 @@ pub async fn request_dwallet_dkg_with_public_share(
 
     let sign_during_dkg_arg = match sign_during_dkg {
         Some(params) => {
-            let client = context.grpc_client()?;
-            let presign_cap_ref = client
-                .transaction_builder()
-                .get_object_ref(params.presign_cap_id)
-                .await?;
+            let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+            let presign_cap_ref = client.get_object_ref(params.presign_cap_id).await?;
             let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
                 presign_cap_ref,
             )))?;
@@ -682,11 +674,8 @@ pub async fn verify_presign_cap(
         .await?,
     )?;
 
-    let client = context.grpc_client()?;
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(presign_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let presign_cap_ref = client.get_object_ref(presign_cap_id).await?;
     let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -744,11 +733,8 @@ pub async fn request_sign_tx(
     )?;
 
     // Get dwallet_cap as owned object
-    let client = context.grpc_client()?;
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;
@@ -765,10 +751,7 @@ pub async fn request_sign_tx(
     )?;
 
     // Get presign cap and optionally verify it in the PTB
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -882,11 +865,8 @@ pub async fn request_imported_key_sign_tx(
     )?;
 
     // Get imported key dwallet cap as owned object
-    let client = context.grpc_client()?;
-    let cap_ref = client
-        .transaction_builder()
-        .get_object_ref(imported_key_dwallet_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let cap_ref = client.get_object_ref(imported_key_dwallet_cap_id).await?;
     let cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(cap_ref)))?;
 
     // Approve imported key message
@@ -901,10 +881,7 @@ pub async fn request_imported_key_sign_tx(
     )?;
 
     // Get presign cap and optionally verify it in the PTB
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -985,11 +962,8 @@ pub async fn request_future_sign_tx(
 
     let dwallet_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&dwallet_id)?))?;
 
-    let client = context.grpc_client()?;
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -1298,11 +1272,8 @@ pub async fn approve_message_tx(
         .await?,
     )?;
 
-    let client = context.grpc_client()?;
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;
@@ -1448,11 +1419,8 @@ pub async fn request_future_sign_fulfill_tx(
     )?;
 
     // Verify the partial user signature cap
-    let client = context.grpc_client()?;
-    let partial_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(partial_user_signature_cap_id)
-        .await?;
+    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let partial_cap_ref = client.get_object_ref(partial_user_signature_cap_id).await?;
     let partial_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         partial_cap_ref,
     )))?;
@@ -1465,10 +1433,7 @@ pub async fn request_future_sign_fulfill_tx(
     );
 
     // Create message approval
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;

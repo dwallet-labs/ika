@@ -17,10 +17,10 @@ the locations below and runs in CI; it fails the build on drift.
    sed -i "" "s/mainnet-v<OLD>/mainnet-v<NEW>/g" Cargo.toml   # adjust flavor if moving to/from testnet-v
    cargo update   # refresh Cargo.lock for the new revs
    ```
-   Also copy the `sui-rust-sdk` revision used by that Sui tag into both
-   `sui-rpc` and `sui-sdk-types`. Keeping the old SDK revision can compile
-   while silently desynchronizing the client protobuf/BCS surface from the
-   fullnode implementation.
+   Also copy the `sui-rust-sdk` revision used by that Sui tag into `sui-rpc`,
+   `sui-sdk-types`, and `sui-transaction-builder`. Keeping the old SDK revision
+   can compile while silently desynchronizing the client protobuf/BCS and
+   transaction-building surfaces from the fullnode implementation.
 2. **Excluded workspaces** — `sdk/ika-wasm` (and any other
    workspace-excluded package) has its own `Cargo.lock` that must be
    regenerated; its manifests resolve `workspace = true` deps against

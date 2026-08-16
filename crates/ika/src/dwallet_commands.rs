@@ -831,7 +831,7 @@ async fn find_created_object_by_type(
         .map(|(reference, _)| reference.0)
         .collect();
 
-    let mut grpc_client = context.grpc_client().ok()?;
+    let grpc_client = create_grpc_client(context).await.ok()?;
     for obj_id in created_ids {
         if let Ok(obj) = grpc_client.get_object(obj_id).await
             && let Some(move_obj) = obj.data.try_as_move()
@@ -2339,7 +2339,7 @@ impl IkaDWalletCommand {
 
                 // Identify presign caps among created objects
                 let mut presign_cap_ids = Vec::new();
-                let mut grpc_client = context.grpc_client()?;
+                let grpc_client = create_grpc_client(context).await?;
                 for obj_id in &created_ids {
                     if let Ok(obj) = grpc_client.get_object(*obj_id).await
                         && let Some(move_obj) = obj.data.try_as_move()

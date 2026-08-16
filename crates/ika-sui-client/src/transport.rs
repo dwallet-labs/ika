@@ -23,10 +23,9 @@ use sui_types::transaction::{Transaction, TransactionData};
 
 /// A Sui transaction together with its execution result.
 ///
-/// This keeps Ika's public client surface independent of Sui main's
-/// `sui-rpc-api` compatibility wrapper. The direct gRPC implementation fills
-/// it from `sui-rust-sdk` protobuf responses; wallet-backed command paths can
-/// convert the legacy result while they still depend on Sui's `WalletContext`.
+/// This keeps Ika's public client surface independent of Sui main's RPC
+/// compatibility wrapper. The direct gRPC implementation fills it from
+/// `sui-rust-sdk` protobuf responses.
 #[derive(Clone, Debug, Serialize)]
 pub struct ExecutedTransaction {
     pub transaction: TransactionData,
@@ -39,29 +38,10 @@ pub struct ExecutedTransaction {
     pub balance_changes: Vec<sui_sdk_types::BalanceChange>,
     pub checkpoint: Option<u64>,
     #[serde(skip)]
-    pub(crate) timestamp_ms: Option<u64>,
+    pub timestamp_ms: Option<u64>,
 }
 
 impl ExecutedTransaction {
-    /// Compatibility bridge for wallet operations that still return the
-    /// Sui-main wrapper type. Keep this at the wallet boundary; network calls
-    /// construct this type directly from `sui-rust-sdk` responses.
-    pub fn from_sui(value: sui_rpc_api::client::ExecutedTransaction) -> Self {
-        let timestamp_ms = value.timestamp_ms();
-        Self {
-            transaction: value.transaction,
-            signatures: value.signatures,
-            effects: value.effects,
-            clever_error: value.clever_error,
-            events: value.events,
-            event_json: value.event_json,
-            changed_objects: value.changed_objects,
-            balance_changes: value.balance_changes,
-            checkpoint: value.checkpoint,
-            timestamp_ms,
-        }
-    }
-
     pub fn get_new_package_obj(&self) -> Option<ObjectRef> {
         use sui_rpc::proto::sui::rpc::v2::changed_object::OutputObjectState;
 

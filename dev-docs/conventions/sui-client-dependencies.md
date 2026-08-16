@@ -18,30 +18,40 @@ adapter when a read is generally useful; keep trust-sensitive reads on the
 `SuiTransport` abstraction so peer-only and verified-read modes continue to
 work.
 
-The root workspace pins `sui-rpc` and `sui-sdk-types` to the exact
-`sui-rust-sdk` revision used by the pinned Sui main tag. A Sui version bump must
-copy the new revision from Sui's workspace and update both pins together. Check
-that Cargo resolves one copy of each SDK crate:
+Wallet-backed transaction paths also use this adapter for object-reference and
+gas selection, simulation, and execution. `WalletContext` remains the source of
+the active environment and keystore, but its Sui-main gRPC client must not be
+used for network operations.
+
+Use standalone `sui-transaction-builder` for self-contained transaction shapes
+that do not depend on Sui-main Move/execution types. Ika's protocol transaction
+modules still use Sui's core `ProgrammableTransactionBuilder` because their
+public and internal APIs are built around `sui_types::TransactionData`; their
+network resolution and submission nevertheless go through the standalone SDK.
+
+The root workspace pins `sui-rpc`, `sui-sdk-types`, and
+`sui-transaction-builder` to the exact `sui-rust-sdk` revision used by the
+pinned Sui main tag. A Sui version bump must copy the new revision from Sui's
+workspace and update all pins together. Check that Cargo resolves one copy of
+each SDK crate:
 
 ```bash
-cargo tree -d | rg 'sui-(rpc|sdk-types)'
+cargo tree -d | rg 'sui-(rpc|sdk-types|transaction-builder)'
 ```
 
-## Retained Sui main client dependencies
+## Retained Sui main boundaries
 
-Direct `sui-rpc-api` use is limited to compatibility boundaries that do not yet
-have a standalone replacement in this repository:
+Ika has no direct `sui-rpc-api` dependency. The remaining Sui-main client
+boundary is Move package publication in `ika-swarm-config`, which calls
+`SuiClientCommands::TestPublish`. That command owns package compilation,
+dependency verification, wallet signing, publication, and the `Pub.<env>.toml`
+state used by the local bootstrap. Replacing it is a package-publication
+rewrite, not an RPC-client substitution.
 
-- `ika-sui-client/src/transport.rs:ExecutedTransaction::from_sui` converts the
-  result returned by Sui's `WalletContext` into Ika's client result type.
-- `ika-swarm-config` uses Sui's wallet-aware transaction builder while creating
-  and publishing the local network contracts.
-- `ika-upgrade-test/src/workload.rs` uses the same transaction builder to fund
-  the upgrade workload account.
-
-Do not use `sui-rpc-api::Client` for endpoint probes, object reads, checkpoint
-reads, transaction lookups, subscriptions, or submissions through Ika's node
-transport. Those operations belong on the standalone SDK adapter.
+Do not introduce `sui-rpc-api::Client` for endpoint probes, object or checkpoint
+reads, transaction lookups, input resolution, gas selection, simulation,
+subscriptions, or submission. Those operations belong on the standalone SDK
+adapter.
 
 `sui-sdk`, `sui-types`, and other Sui main crates remain necessary for wallet
 configuration/signing, programmable transaction construction, Move packages,

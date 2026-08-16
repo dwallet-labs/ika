@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use ika_config::initiation::InitiationParameters;
 use ika_protocol_config::Chain;
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_swarm_config::sui_client::{
     ika_system_add_upgrade_cap_by_cap, ika_system_initialize,
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap,
@@ -300,7 +301,7 @@ async fn mint_tokens(
     println!("Using publisher address: {publisher_address}");
 
     let context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let ika_supply_id = minted_ika(
         publisher_address,
@@ -342,7 +343,7 @@ async fn init_env(
     println!("Using SUI configuration from: {sui_config_path:?}");
 
     let mut context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let mut initiation_parameters = InitiationParameters::new();
     if let Some(epoch_duration_ms) = epoch_duration_ms {
@@ -496,7 +497,7 @@ async fn initialize_system(
     println!("Using SUI configuration from: {sui_config_path:?}");
 
     let mut context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let initiation_parameters = InitiationParameters::new();
 

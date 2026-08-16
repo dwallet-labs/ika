@@ -315,7 +315,7 @@ impl IkaTestCluster {
             .await
         );
 
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         retry_on_object_contention!(
             "request_add_validator",
             request_add_validator(
@@ -375,7 +375,7 @@ impl IkaTestCluster {
                 .account_key_pair
                 .public(),
         );
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         retry_on_object_contention!(
             "request_remove_validator",
             request_remove_validator(
@@ -428,7 +428,7 @@ impl IkaTestCluster {
     /// the actual MPC takes another epoch boundary to settle —
     /// callers typically pair this with `wait_for_new_network_key`.
     pub async fn request_network_key_dkg(&mut self) -> Result<()> {
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
             self.publisher_address,
             self.test_cluster.wallet_mut(),
@@ -1413,7 +1413,7 @@ impl IkaTestClusterBuilder {
         // contracts temp dir so the pubfile lives and dies with that TempDir.
         std::env::set_current_dir(contract_paths.contracts_dir.path())?;
 
-        let client = test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&sui_grpc_url)?;
 
         let packages = publish_ika_packages(
             test_cluster.wallet_mut(),
