@@ -4,12 +4,14 @@
 //! The consensus fold hands each round's inputs to the MPC drain over a
 //! bounded channel, and BLOCKS when that channel is full.
 //!
-//! This replaces the eight per-round projection tables
-//! (`dwallet_mpc_messages` and friends), which no longer exist. The two
-//! fold-OUTPUT tables (`verified_dwallet_checkpoint_messages`,
-//! `verified_system_checkpoint_messages`) are still written, because
-//! checkpoint construction reads them independently of the drain — the drain
-//! receives their content over the channel like everything else.
+//! This replaces all ten per-round projection tables
+//! (`dwallet_mpc_messages` and friends), none of which exist any more. That
+//! includes the two the fold itself produced,
+//! `verified_dwallet_checkpoint_messages` and
+//! `verified_system_checkpoint_messages`: checkpoint construction never read
+//! either table — it takes the same values in memory, on the pending-checkpoint
+//! path — so once the drain reads them off this channel nothing was left that
+//! read the rows.
 //!
 //! # What blocking buys and what it costs
 //!
@@ -71,12 +73,12 @@ use tracing::warn;
 /// enough that a sustained backlog is felt rather than hoarded.
 pub const DEFAULT_ROUND_CHANNEL_CAPACITY: usize = 1024;
 
-/// One consensus round's inputs to the MPC drain — exactly what
-/// `process_consensus_rounds_from_storage` reads from the ten per-round
-/// tables today, in one message.
+/// One consensus round's inputs to the MPC drain, in one message — the whole
+/// of what `process_consensus_rounds_from_storage` consumes.
 ///
-/// Deliberately owned rather than referenced: it crosses a channel, and the
-/// point of the experiment is to find out what carrying it costs.
+/// Owned rather than referenced, because it crosses a channel: the fold is
+/// free of it the moment the drain has it, and its cost is bounded by the
+/// channel capacity rather than by how far behind the drain has fallen.
 pub struct ConsensusRoundPayload {
     pub round: Round,
     pub mpc_messages: Vec<DWalletMPCMessage>,

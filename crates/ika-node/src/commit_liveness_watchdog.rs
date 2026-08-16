@@ -431,6 +431,7 @@ impl ConsensusCommitSink for CommitLivenessWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ika_core::authority::round_transport::{ConsensusRoundPayload, round_transport};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const BOUND: Duration = Duration::from_secs(900);
@@ -729,6 +730,83 @@ mod tests {
             fired.load(Ordering::SeqCst),
             "silence after the burst clears must still exit the node"
         );
+    }
+
+    /// The same hazard driven end to end: a REAL round channel, filled by
+    /// real sends, holding a real watchdog.
+    ///
+    /// The test above sets the shared flag by hand, so it proves the watchdog
+    /// honours the flag but not that anything ever sets it. This wires the two
+    /// halves together the way the node does — one `Arc<AtomicBool>` handed to
+    /// both — so that removing either end (the transport's store, or the
+    /// watchdog's load) exits a node whose only problem is a slow drain.
+    #[tokio::test(start_paused = true)]
+    async fn a_full_round_channel_holds_the_watchdog_while_commits_queue() {
+        let (fired, on_breach) = flag();
+        let fold_blocked = Arc::new(AtomicBool::new(false));
+        let watchdog = CommitLivenessWatchdog::spawn_with(
+            gauge("test_full_channel_commit_silence_seconds"),
+            gauge("test_full_channel_reconfig_phase"),
+            Some(BOUND),
+            on_breach,
+            fold_blocked.clone(),
+        )
+        .expect("an enabled watchdog spawns");
+        // Capacity one so the second round provably parks the fold.
+        let (sender, mut receiver) = round_transport(1, fold_blocked);
+
+        watchdog.commit_received(1_234);
+        sender.send(round_payload(1)).await;
+
+        // Rounds 2..=8 queue behind a drain that is not consuming. The fold
+        // parks on the first of them and stamps no further arrivals.
+        let fold = {
+            let sender = sender.clone();
+            tokio::spawn(async move {
+                for round in 2..=8 {
+                    sender.send(round_payload(round)).await;
+                }
+            })
+        };
+        tokio::time::sleep(Duration::from_secs(4 * BOUND.as_secs())).await;
+
+        assert!(
+            sender.fold_blocked(),
+            "capacity is one and nothing has been consumed; the fold must be parked"
+        );
+        assert!(
+            !fired.load(Ordering::SeqCst),
+            "a node whose fold is parked on a full round channel is not an isolated node, and \
+             must not be exited however long the queue takes to clear"
+        );
+
+        // The drain catches up. The hold must lift with it, not outlive it.
+        for _ in 1..=8 {
+            receiver.recv().await.expect("the fold is still sending");
+        }
+        fold.await.unwrap();
+        assert!(!sender.fold_blocked(), "the hold lifts when the fold does");
+        tokio::time::sleep(Duration::from_secs(2 * BOUND.as_secs())).await;
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "silence once the queue has cleared is ordinary commit silence and must still exit"
+        );
+    }
+
+    fn round_payload(round: u64) -> ConsensusRoundPayload {
+        ConsensusRoundPayload {
+            round,
+            mpc_messages: Vec::new(),
+            mpc_outputs: Vec::new(),
+            internal_mpc_outputs: Vec::new(),
+            verified_dwallet_checkpoint_messages: Vec::new(),
+            verified_system_checkpoint_messages: Vec::new(),
+            idle_status_updates: Vec::new(),
+            sui_chain_observation_updates: Vec::new(),
+            global_presign_requests: Vec::new(),
+            noa_observations: Vec::new(),
+            noa_presign_demands: Vec::new(),
+        }
     }
 
     #[tokio::test(start_paused = true)]
