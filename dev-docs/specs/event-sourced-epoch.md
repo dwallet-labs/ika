@@ -49,6 +49,31 @@ assumption. If a table cannot be re-derived, that is not a replay problem;
 it is a table that was never a function of consensus, and it belongs on the
 preserved side of the audit.
 
+It is also not a new architecture. **Sui is already event-sourced**; what it
+keeps is a durable *snapshot* taken only at boundaries it has proven safe.
+Its consensus output is quarantined and flushed only once the checkpoint
+queue has drained below the certified watermark; everything above that
+watermark is re-replayed on boot through a deliberately side-effect-free
+path (`sui-core/src/consensus_handler.rs:1009`
+`handle_prior_consensus_commit`), and it even *rewinds* its replay point by
+`consensus_num_requested_prior_commits_at_startup`
+(`sui-protocol-config/src/lib.rs:2283`, used at
+`sui-core/src/consensus_manager/mod.rs:302`) to widen the window it
+re-derives rather than trusts. Consensus-core does the same thing in
+miniature for its own leader schedule: `LeaderScheduleV3::from_store`
+(`consensus/core/src/leader_schedule_v3.rs:83`) rebuilds live state from
+stored commits, and
+`test_recovery_replay_produces_same_state_as_live` (:1088) is the property
+test for it.
+
+What this change does is remove the snapshot and set the replay horizon to
+the epoch. The cost is restart latency; what is bought is that there is no
+second record to disagree with the store.
+
+(Upstream anchors here and below are at the pinned rev — `mainnet-v1.77.2`,
+`51d177ad7d65102fc368b582408f466d97b31548`. Re-verify on a Sui bump; line
+numbers move.)
+
 ## What the fold covers, and where it stops
 
 The replay stops at the store's **last finalized** commit
@@ -76,9 +101,21 @@ its record left the two out of order, and every boot aborted on that
 assertion — a validator down for up to a full epoch (ika #2057).
 
 Reading the index from the consensus store closes it structurally, not
-tolerantly: the two numbers are now the same number, so they cannot
-disagree. The empty-store case lands on `replay_after == 0`, which is what
-consensus asserts there.
+tolerantly. **This one line is the fix**: `replay_after` now comes from
+`Store::read_last_finalized_commit` on the same database consensus is about
+to open, so both of the upstream assertions become unreachable rather than
+merely unlikely — the store-behind one
+(`consensus/core/src/commit_observer.rs:162`,
+`assert!(last_commit_index > replay_after_commit_index)`) because the two
+numbers are the same number, and the store-empty one (:147, `assert_eq!(
+replay_after_commit_index, 0)`) because an empty store yields exactly 0.
+
+Nothing else in this change is load-bearing for #2057. In particular the
+replay's own gap assertion — that a batch scan returns as many commits as
+the range asked for — guards a *different* failure (a store pruned or
+truncated in the middle, which would silently drop a commit's effects from
+every derived table). Useful, but not the #2057 guard; do not read it as
+one.
 
 ## The determinism contract
 
@@ -188,6 +225,21 @@ behind the tip and suppresses *starting new cryptographic computations*, not
 on whether a given piece of work is settled. Its semantics are unchanged
 here; its gap is still store head minus drain cursor.
 
+### Where to draw the line
+
+Not every re-emission is worth suppressing, and upstream's line is the one
+to copy: **re-emit where peers deduplicate cheaply, suppress where it
+floods.** Consensus-core itself re-broadcasts its last proposed block on
+every reconnection for liveness, because one block per peer per reconnect is
+nothing. An epoch's worth of checkpoint signatures on every restart is not.
+
+Concretely in ika: the MPC message and output families keep re-deriving and
+re-emitting on the drain's replay, as they did before this change — their
+consensus keys deduplicate and their volume is bounded by live session
+state. Checkpoint signatures are gated, because their volume is bounded by
+the *epoch's age*. New submitters should be classified the same way, by
+asking what the re-emission's volume scales with.
+
 ## The MPC drain, and why the per-round tables still exist
 
 The `DWalletMPCService` drain is unchanged: an in-memory round cursor
@@ -232,12 +284,25 @@ consensus store being the only truth, which the wipe already establishes.
 ## Consensus-store retention is load-bearing
 
 The epoch's full commit history must survive until the epoch boundary, or
-the rebuild is impossible. Today it does — the consensus store is
-per-epoch (a directory per epoch, dropped at the boundary) and
-`RocksDBStore` prunes nothing within one — but the replay asserts it rather
-than assuming it: a scan that returns fewer commits than the range it asked
-for aborts with a message naming the condition, instead of silently
-producing derived state that is missing a commit's effects.
+the rebuild is impossible. It does, and structurally rather than by policy:
+
+- the consensus `Store` trait exposes **no delete or prune method at all**
+  (`consensus/core/src/storage/mod.rs`), and `RocksDBStore` contains zero
+  delete calls — a stored commit or block is never removed while the store
+  is open;
+- consensus-core's garbage collection is in-memory eviction from DAG state,
+  not deletion from the store;
+- pruning is whole-directory and only ever of *past* epochs:
+  `ConsensusStorePruner::prune_old_epoch_data`
+  (`crates/ika-core/src/epoch/consensus_store_pruner.rs:154`) removes epoch
+  directories strictly below `current_epoch - epoch_retention`.
+
+So nothing can prune the current epoch's commits out from under a replay.
+The replay still asserts it — a batch scan that returns fewer commits than
+its range aborts naming the condition — because the alternative to a cheap
+startup check is derived state that is silently missing a commit's effects,
+and because "no API exists to do this" is a property of the current pinned
+revision rather than a guarantee.
 
 ## Restart latency
 
@@ -267,6 +332,59 @@ failure mode, and it does not require an epoch boundary to be crossed first.
 The per-round tables an older binary's MPC drain reads are also intact: they
 are rebuilt by the replay, so a rolled-back binary finds a dense stream from
 the epoch's first commit to the head, which is exactly what it expects.
+
+## Follow-on: publishing the rebuilt state's digest (protocol v8)
+
+The audit is enforced by tests on one node. Upstream makes the equivalent
+property enforce itself across the fleet: Sui hashes its replay-rebuilt
+consensus state into an `AdditionalConsensusStateDigest`
+(`sui-core/src/consensus_handler.rs:285-288`) and publishes it in the commit
+prologue behind a protocol flag, so a validator whose rebuild diverges forks
+immediately and visibly instead of drifting.
+
+The ika equivalent — a digest of the rebuilt derived state carried in the
+checkpoint stream — would turn this document's classification from something
+review enforces into something the network enforces. It needs a protocol
+version (the digest is consensus-visible, so it cannot be a binary-driven
+flip) and is therefore explicitly NOT part of this change; it belongs with
+the next version gate.
+
+## What this is tested by, and what it is not
+
+In-process, in `ika-core`:
+
+| property | test |
+|---|---|
+| classification is complete | `every_epoch_table_is_classified` |
+| classification is CORRECT | `every_table_the_consensus_fold_writes_is_classified_derived` — takes its answer from folding real commits, not from the declaration |
+| the wipe is total, and reaches nothing preserved | `wipe_empties_every_derived_table_and_preserves_the_rest` |
+| the fold is deterministic over wiped state | `folding_the_same_commits_twice_rebuilds_identical_derived_state` |
+| the replay reaches the store head, stops below the unfinalized tail, crosses batch boundaries, and survives a lost tail | `consensus_manager::boot_replay::tests` |
+| a finalization hole below the head stops the node | `a_finalization_hole_below_the_head_stops_the_replay` |
+| replayed commits arm the commit-liveness watchdog | `replayed_commits_feed_the_commit_liveness_sink` |
+| a settled checkpoint is not re-signed | `a_rebuilt_checkpoint_is_not_re_signed_once_a_quorum_has_certified_it` |
+
+Every one of these was validated by injecting the fault it claims to catch
+and confirming the predicted evidence
+(`../playbooks/test-testing.md`) — which is how the first draft of the
+classification tests was found to pass with a misclassification injected.
+
+What in-process coverage cannot reach, and belongs on CI or a cluster:
+
+- **Kill-storm** — repeated `kill -9` under load, including mid-replay and
+  mid-batch. Consensus-core has the precedent to imitate:
+  `consensus/simtests/tests/consensus_tests.rs`
+  `test_consensus_crash_and_restart` (:135) and
+  `test_consensus_rolling_restarts_all_validators` (:223) already drive
+  full-replay-from-zero consumers through crash storms.
+- **Memory flatness** over a >1M-round epoch, and the **restart-to-live
+  latency budget** at ≥90% epoch age. Both are read off
+  `ika_consensus_boot_replay_*`.
+- **The real boot path end to end** — wipe, replay, consensus start,
+  builders released — which only `ika-test-cluster` exercises
+  (`restart_mid_grace`, `cluster_boots`).
+- **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
+  also where the rollback claim above gets tested rather than argued.
 
 ## What must never be reintroduced
 

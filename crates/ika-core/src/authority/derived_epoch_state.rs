@@ -88,7 +88,8 @@ pub struct EpochStateEntry {
 /// The deletion is a chunked sweep of point deletes rather than
 /// `Map::schedule_delete_all`. That helper takes the table's first and last
 /// keys and issues `schedule_delete_range(first, last)`
-/// (`typed-store/src/rocks/mod.rs:1913-1925`), which lowers to
+/// (`typed-store/src/rocks/mod.rs:1913-1926` at the pinned Sui rev), which
+/// lowers to
 /// `delete_range_cf` over the half-open `[first, last)` and so leaves the last
 /// row behind; its doc also warns that range deletions may stay visible until
 /// compaction. Point deletes are unconditionally safe on both counts, and a
