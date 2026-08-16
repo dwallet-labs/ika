@@ -10079,6 +10079,12 @@ mod tests {
     /// Iterating the classification registry rather than a hand-picked list is
     /// what makes this the audit's enforcement: a new table classified derived
     /// that is not in fact re-derivable shows up here as a difference.
+    ///
+    /// The shape is consensus-core's own
+    /// `leader_schedule_v3::test_recovery_replay_produces_same_state_as_live`
+    /// — build state live, rebuild it from the store, require every observable
+    /// projection equal — applied to the whole per-epoch store instead of one
+    /// component's schedule.
     #[tokio::test]
     async fn folding_the_same_commits_twice_rebuilds_identical_derived_state() {
         const ROUNDS: u64 = 6;

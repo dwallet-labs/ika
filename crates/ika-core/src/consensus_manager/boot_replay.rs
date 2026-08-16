@@ -347,20 +347,31 @@ mod tests {
         }
     }
 
-    /// The index handed to consensus must never exceed what the consensus
-    /// store actually holds — that inequality, violated because the two came
-    /// from different databases, is what crash-looped a validator for a full
-    /// epoch (ika #2057). Asserted on every scenario below.
-    fn assert_replay_index_is_backed_by_the_store(consensus_dir: &Path, replay_after: CommitIndex) {
+    /// Replays the two assertions `CommitObserver::recover_and_send_commits`
+    /// makes against the index it is started with, and requires that neither
+    /// can fire.
+    ///
+    /// Upstream aborts if the store is empty and the index is not zero
+    /// (`commit_observer.rs:147`), or if the store's last commit is neither
+    /// equal to the index nor strictly ahead of it (:162, with an equality
+    /// early-return just above). Those firing on a torn pair of databases is
+    /// what crash-looped a validator for a full epoch (ika #2057). Checked on
+    /// every scenario, because the whole fix is that the index and the store
+    /// are now one source rather than two.
+    fn assert_consensus_cannot_assert_on_start(consensus_dir: &Path, replay_after: CommitIndex) {
         let store = RocksDBStore::new(&consensus_dir.to_string_lossy());
-        let last_commit_index = store
-            .read_last_commit()
-            .unwrap()
-            .map_or(0, |commit| commit.index());
+        let Some(last_commit) = store.read_last_commit().unwrap() else {
+            assert_eq!(
+                replay_after, 0,
+                "an empty consensus store must be replayed after 0, or consensus aborts",
+            );
+            return;
+        };
+        let last_commit_index = last_commit.index();
         assert!(
-            replay_after <= last_commit_index,
-            "replay_after {replay_after} is ahead of the consensus store's last commit \
-             {last_commit_index}; consensus would assert on start",
+            last_commit_index >= replay_after,
+            "replay_after {replay_after} is ahead of the store's last commit \
+             {last_commit_index}; consensus aborts on start",
         );
     }
 
@@ -385,7 +396,7 @@ mod tests {
             6,
             "the fold did not advance through every replayed commit",
         );
-        assert_replay_index_is_backed_by_the_store(consensus_dir.path(), replayed_through);
+        assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
     }
 
     /// The commit-liveness watchdog (ika #2054) arms on the first commit this
@@ -529,7 +540,7 @@ mod tests {
             replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
 
         assert_eq!(replayed_through, 4);
-        assert_replay_index_is_backed_by_the_store(consensus_dir.path(), replayed_through);
+        assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
     }
 
     /// The consensus store wiped entirely — the second half of #2057's
@@ -549,6 +560,7 @@ mod tests {
             replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
 
         assert_eq!(replayed_through, 0);
+        assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
         assert!(
             epoch_store
                 .tables()
@@ -629,7 +641,7 @@ mod tests {
             replayed_through, truncated_head,
             "the rebuild must reach the surviving head and hand consensus that index",
         );
-        assert_replay_index_is_backed_by_the_store(truncated_dir.path(), replayed_through);
+        assert_consensus_cannot_assert_on_start(truncated_dir.path(), replayed_through);
         assert_eq!(
             epoch_store
                 .get_last_consensus_stats()
