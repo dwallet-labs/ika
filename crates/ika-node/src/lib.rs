@@ -2195,8 +2195,17 @@ impl IkaNode {
         // starts (which happens further down, and only after this function
         // returns), so no commit is ever folded without a drain attached to
         // receive it.
+        // Shared with the commit-liveness watchdog: while the fold is parked
+        // on this channel it is holding a commit, not missing one, so the
+        // watchdog must hold its clock rather than read the pause as
+        // isolation.
+        let fold_blocked = commit_liveness
+            .as_ref()
+            .map(|watchdog| watchdog.fold_blocked_flag())
+            .unwrap_or_default();
         let (round_sender, round_receiver) = ika_core::authority::round_transport::round_transport(
             ika_core::authority::round_transport::DEFAULT_ROUND_CHANNEL_CAPACITY,
+            fold_blocked,
         );
         epoch_store.install_round_transport(round_sender);
 

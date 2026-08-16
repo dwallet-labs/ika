@@ -95,6 +95,16 @@ pub struct RoundTransportSender {
     sender: Sender<ConsensusRoundPayload>,
     /// Set once the drain is gone. See [`Self::send`].
     drain_gone: AtomicBool,
+    /// True while the fold is parked waiting for room in the channel.
+    ///
+    /// Shared with the commit-liveness watchdog, which must not read a
+    /// blocked fold as consensus silence: a fold parked here is holding a
+    /// commit it received and waiting on the DRAIN, which is the opposite of
+    /// the isolation the watchdog exists to catch. Without this the watchdog
+    /// kills a healthy-but-busy node after one deep burst — the crash loop
+    /// this whole design removes, reintroduced one hop down from where it
+    /// was fixed.
+    fold_blocked: Arc<AtomicBool>,
     /// Rounds the fold blocked on because the channel was full — the
     /// coupling the benchmark is looking for, counted rather than inferred.
     blocked_sends: AtomicU64,
@@ -135,7 +145,10 @@ impl RoundTransportSender {
             }
             Err(TrySendError::Full(payload)) => {
                 self.blocked_sends.fetch_add(1, Ordering::Relaxed);
-                if self.sender.send(payload).await.is_err() {
+                self.fold_blocked.store(true, Ordering::Release);
+                let sent = self.sender.send(payload).await;
+                self.fold_blocked.store(false, Ordering::Release);
+                if sent.is_err() {
                     self.mark_drain_gone();
                 } else {
                     self.sent.fetch_add(1, Ordering::Relaxed);
@@ -204,13 +217,20 @@ impl RoundTransportReceiver {
 }
 
 /// Creates a bounded round transport with the given capacity.
-pub fn round_transport(capacity: usize) -> (Arc<RoundTransportSender>, RoundTransportReceiver) {
+///
+/// `fold_blocked` is shared with the commit-liveness watchdog so it can tell
+/// a fold waiting on the drain from a node receiving nothing.
+pub fn round_transport(
+    capacity: usize,
+    fold_blocked: Arc<AtomicBool>,
+) -> (Arc<RoundTransportSender>, RoundTransportReceiver) {
     let (sender, receiver) = channel(capacity);
     let received = Arc::new(AtomicU64::new(0));
     (
         Arc::new(RoundTransportSender {
             sender,
             drain_gone: AtomicBool::new(false),
+            fold_blocked,
             blocked_sends: AtomicU64::new(0),
             sent: AtomicU64::new(0),
         }),
