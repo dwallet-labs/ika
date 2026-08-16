@@ -61,26 +61,6 @@ impl fmt::Display for EpochStateClass {
     }
 }
 
-/// Whether opening a per-epoch store is the prelude to replaying the epoch's
-/// consensus commits.
-///
-/// The wipe and the replay are one operation split across two call sites — the
-/// store must be opened before the replay can run, and the derived tables must
-/// be gone before the store's constructor re-seeds in-memory state from them.
-/// Anything that opens the store WITHOUT then replaying must say so, or it
-/// deletes state nothing will rebuild.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DerivedEpochStatePolicy {
-    /// Delete every [`EpochStateClass::Derived`] table now. Only valid when the
-    /// caller goes on to replay this epoch's commits from the consensus store
-    /// (`ConsensusManager::start`).
-    RebuildFromConsensus,
-    /// Leave the tables as they are. For nodes that will not run consensus for
-    /// this epoch, and for tests that exercise the durable write path without a
-    /// replay behind it.
-    Retain,
-}
-
 /// One row of the audit table: the `AuthorityEpochTables` field name, its
 /// class, and the one-line reason a reader can check against the code.
 #[derive(Debug, Clone, Copy)]
@@ -106,10 +86,14 @@ pub struct EpochStateEntry {
 /// its answer from folding real commits rather than from this list.
 ///
 /// The deletion is a chunked sweep of point deletes rather than
-/// `Map::schedule_delete_all`, deliberately: that helper issues a RocksDB
-/// range delete over `[first_key, last_key)`, which is exclusive of the last
-/// key and therefore leaves one row behind — a partial wipe is precisely the
-/// half-derived state this design exists to make impossible.
+/// `Map::schedule_delete_all`. That helper takes the table's first and last
+/// keys and issues `schedule_delete_range(first, last)`
+/// (`typed-store/src/rocks/mod.rs:1913-1925`), which lowers to
+/// `delete_range_cf` over the half-open `[first, last)` and so leaves the last
+/// row behind; its doc also warns that range deletions may stay visible until
+/// compaction. Point deletes are unconditionally safe on both counts, and a
+/// partial wipe is precisely the half-derived state this design exists to make
+/// impossible.
 macro_rules! epoch_state_registry {
     ($( $class:ident $field:ident : $reason:literal ),* $(,)?) => {
         /// Every per-epoch table with its class. See

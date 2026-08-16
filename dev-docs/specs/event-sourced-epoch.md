@@ -13,12 +13,15 @@ Table-by-table classification and its reasoning:
 
 ## The model
 
-On every start, a validator that will run consensus for the current epoch:
+On every start, a node opening the current epoch's store:
 
 1. **Wipes** every per-epoch table classified *derived*
    (`AuthorityEpochTables::wipe_derived_state`), before anything reads the
    store. The wipe is a startup invariant, asserted: if any derived table
-   still holds a row, the process aborts rather than fold onto it.
+   still holds a row, the process aborts rather than fold onto it. It is
+   unconditional — every writer of a derived table lives inside the validator
+   components, so on a node that does not run consensus those tables are
+   already empty and the wipe is a no-op (see the audit).
 2. **Replays** the epoch's commits from the consensus store, in bounded
    batches of 250 — read a batch, fold it through the same
    `handle_consensus_commit` that processes live commits, release it, read
@@ -185,18 +188,46 @@ behind the tip and suppresses *starting new cryptographic computations*, not
 on whether a given piece of work is settled. Its semantics are unchanged
 here; its gap is still store head minus drain cursor.
 
-## The MPC drain
+## The MPC drain, and why the per-round tables still exist
 
 The `DWalletMPCService` drain is unchanged: an in-memory round cursor
 starting at the epoch's beginning, walking the per-round tables the fold
 writes. Those tables are derived, so they are wiped and rebuilt with
 everything else, and the drain re-reads what the fold has rebuilt.
 
-This is what keeps the drain decoupled from the handler. The drain does
-crypto and lags; the handler must reach the store head. The per-round tables
-are the disk-backed slack between them, and because they are deleted and
-re-derived on every boot they cannot survive a restart holding rounds the
-consensus store no longer backs.
+They are the disk-backed slack that keeps the drain decoupled from the
+handler — the drain does cryptography and lags, the handler must reach the
+store head — and because they are deleted and re-derived on every boot they
+cannot survive a restart holding rounds the consensus store no longer backs.
+That last property is what makes them a materialized view rather than a
+second truth, and it is the #2057 disagreement class removed.
+
+**Why they are not simply deleted, with the drain reading the consensus store
+itself.** Two things stand in the way, and they bound what that change could
+achieve:
+
+- **Two of the ten per-round tables are not projections of a commit.**
+  `verified_dwallet_checkpoint_messages` and
+  `verified_system_checkpoint_messages` are outputs of the fold —
+  `process_consensus_transactions` returns them, and they carry the epoch-close
+  message set — while the other eight are `filter_*(transactions)` over the
+  commit. A cursor over raw commits can derive the eight; it cannot derive
+  these two without re-running the fold, which mutates the epoch store and
+  decides the epoch close. So a per-round transport for them has to remain
+  whatever else changes.
+- **The consensus store cannot be opened twice.** `RocksDBStore::new` is a
+  primary open, and consensus-core holds that handle for the epoch;
+  `pub mod storage` exports no secondary or read-only constructor. An
+  independent drain cursor needs an upstream API that does not exist. (This is
+  also why the boot replay opens the store *before* `ConsensusAuthority::start`
+  and drops it — that is the only window ika can hold the handle.)
+
+The deletion that would be possible with an upstream secondary-open API
+therefore covers eight of ten tables: it reduces the duplicate persistence and
+its write amplification rather than removing them, and it costs a second
+`verify_consensus_transaction` pass over every transaction on the drain's
+slow path. Worth revisiting if that API lands; not a prerequisite for the
+consensus store being the only truth, which the wipe already establishes.
 
 ## Consensus-store retention is load-bearing
 

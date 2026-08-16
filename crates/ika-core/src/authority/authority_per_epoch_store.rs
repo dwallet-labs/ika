@@ -26,7 +26,7 @@ use typed_store::rocksdb::Options;
 use super::epoch_start_configuration::EpochStartConfigTrait;
 
 use crate::authority::derived_epoch_state::{
-    DerivedEpochStatePolicy, EpochStateClass, EpochStateEntry, epoch_state_registry,
+    EpochStateClass, EpochStateEntry, epoch_state_registry,
 };
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::authority::{AuthorityCapabilitiesVotingResults, AuthorityMetrics, AuthorityState};
@@ -2749,6 +2749,17 @@ impl AuthorityPerEpochStore {
         !matches!(&reconfig_state.status, &ReconfigCertStatus::RejectAllTx)
     }
 
+    /// Opens the epoch's store, deleting every derived table on the way in.
+    ///
+    /// The wipe is unconditional because there is no node on which it is
+    /// anything but a no-op or the right thing. Every writer of a derived
+    /// table — the consensus fold, the MPC drain, the checkpoint builders, and
+    /// `IkaTxValidator`'s checkpoint-signature notify — lives inside the
+    /// validator components, which only start for a committee member running
+    /// in validator mode; on any other node those tables are empty. State sync
+    /// writes no epoch-store table at all (its certificates and watermarks are
+    /// in `DWalletCheckpointStore`, a separate database), which is why the
+    /// preserved-class state-sync artifacts are not affected either.
     #[instrument(name = "AuthorityPerEpochStore::new", level = "error", skip_all, fields(epoch = committee.epoch))]
     pub fn new(
         name: AuthorityName,
@@ -2759,7 +2770,67 @@ impl AuthorityPerEpochStore {
         epoch_start_configuration: EpochStartConfiguration,
         chain_identifier: ChainIdentifier,
         packages_config: IkaNetworkConfig,
-        derived_state_policy: DerivedEpochStatePolicy,
+    ) -> IkaResult<Arc<Self>> {
+        Self::open(
+            name,
+            committee,
+            parent_path,
+            db_options,
+            metrics,
+            epoch_start_configuration,
+            chain_identifier,
+            packages_config,
+            /* wipe_derived_state */ true,
+        )
+    }
+
+    /// Opens the store WITHOUT deleting its derived tables.
+    ///
+    /// Test-only, and only for tests whose subject is the durable write
+    /// discipline itself — that a row written through
+    /// `ConsensusCommitOutput`'s batch survives a crash at any point, and that
+    /// reopening rehydrates the in-memory state built from it
+    /// (`dev-docs/conventions/epoch-table-write-discipline.md`). That property
+    /// still holds and is still load-bearing within one boot; it is simply not
+    /// what a production reopen exercises any more, because production reopens
+    /// wipe and replay. Using this outside such a test would assert against a
+    /// state no validator ever reaches.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_retaining_derived_state_for_testing(
+        name: AuthorityName,
+        committee: Arc<Committee>,
+        parent_path: &Path,
+        db_options: Option<Options>,
+        metrics: Arc<EpochMetrics>,
+        epoch_start_configuration: EpochStartConfiguration,
+        chain_identifier: ChainIdentifier,
+        packages_config: IkaNetworkConfig,
+    ) -> IkaResult<Arc<Self>> {
+        Self::open(
+            name,
+            committee,
+            parent_path,
+            db_options,
+            metrics,
+            epoch_start_configuration,
+            chain_identifier,
+            packages_config,
+            /* wipe_derived_state */ false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open(
+        name: AuthorityName,
+        committee: Arc<Committee>,
+        parent_path: &Path,
+        db_options: Option<Options>,
+        metrics: Arc<EpochMetrics>,
+        epoch_start_configuration: EpochStartConfiguration,
+        chain_identifier: ChainIdentifier,
+        packages_config: IkaNetworkConfig,
+        wipe_derived_state: bool,
     ) -> IkaResult<Arc<Self>> {
         let current_time = Instant::now();
         let epoch_id = committee.epoch;
@@ -2772,7 +2843,7 @@ impl AuthorityPerEpochStore {
         // that state would be rehydrated from rows the replay is about to
         // re-derive — the "replay against non-rewound durable state" hazard
         // this design exists to remove.
-        if derived_state_policy == DerivedEpochStatePolicy::RebuildFromConsensus {
+        if wipe_derived_state {
             let wiped = tables.wipe_derived_state()?;
             let remaining = tables.non_empty_derived_tables();
             assert!(
@@ -3048,13 +3119,6 @@ impl AuthorityPerEpochStore {
             epoch_start_configuration,
             chain_identifier,
             self.packages_config.clone(),
-            // The next epoch's tables have never been opened, so the wipe is a
-            // no-op here whatever the node's role — but declaring the rebuild
-            // policy keeps the invariant ("a store that is not replayed is
-            // never wiped") uniform across both entry points. A node that
-            // instead RESTARTS into this epoch comes through `Self::new`
-            // directly, where the policy is a real decision.
-            DerivedEpochStatePolicy::RebuildFromConsensus,
         )
     }
 
@@ -7188,7 +7252,7 @@ mod tests {
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             names[0],
             committee,
             dir.path(),
@@ -7197,7 +7261,6 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
         (epoch_store, dir)
@@ -7511,7 +7574,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             names[0],
             committee.clone(),
             dir.path(),
@@ -7520,7 +7583,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -7946,7 +8008,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             names[0],
             committee.clone(),
             dir.path(),
@@ -7955,7 +8017,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -8107,7 +8168,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             names[0],
             committee.clone(),
             dir.path(),
@@ -8116,7 +8177,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -8199,7 +8259,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
+        let epoch_store = AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             names[0],
             committee.clone(),
             dir.path(),
@@ -8208,7 +8268,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap();
 
@@ -8321,7 +8380,7 @@ mod tests {
             EpochStartSystem::new_for_testing_with_epoch(committee.epoch),
         )
         .unwrap();
-        AuthorityPerEpochStore::new(
+        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             name,
             committee,
             dir,
@@ -8330,7 +8389,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap()
     }
@@ -9270,7 +9328,7 @@ mod tests {
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(epoch))
                 .unwrap();
-        AuthorityPerEpochStore::new(
+        AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
             *base_committee.names().next().unwrap(),
             committee,
             dir,
@@ -9279,7 +9337,6 @@ mod tests {
             epoch_start_configuration,
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            DerivedEpochStatePolicy::Retain,
         )
         .unwrap()
     }
@@ -9780,24 +9837,43 @@ mod tests {
     }
 
     /// A committee-member name plus the store it will fold commits into.
+    ///
+    /// `wipe_derived_state` picks between the two constructors so a test can
+    /// stage a first run without the wipe and then reopen the way a validator
+    /// boots.
     fn derived_state_test_store(
         dir: &Path,
-        policy: DerivedEpochStatePolicy,
+        wipe_derived_state: bool,
     ) -> (Arc<AuthorityPerEpochStore>, AuthorityName) {
         let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
         let committee = Arc::new(committee);
         let name = *committee.names().next().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            name,
-            committee,
-            dir,
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-            policy,
-        )
+        let metrics = EpochMetrics::new(&Registry::new());
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = if wipe_derived_state {
+            AuthorityPerEpochStore::new(
+                name,
+                committee,
+                dir,
+                None,
+                metrics,
+                epoch_start_configuration,
+                ChainIdentifier::default(),
+                IkaNetworkConfig::new_for_testing(),
+            )
+        } else {
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(
+                name,
+                committee,
+                dir,
+                None,
+                metrics,
+                epoch_start_configuration,
+                ChainIdentifier::default(),
+                IkaNetworkConfig::new_for_testing(),
+            )
+        }
         .unwrap();
         (epoch_store, name)
     }
@@ -9897,7 +9973,7 @@ mod tests {
     async fn every_table_the_consensus_fold_writes_is_classified_derived() {
         let dir = tempfile::tempdir().unwrap();
         let (epoch_store, author) =
-            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+            derived_state_test_store(dir.path(), /* wipe_derived_state */ false);
         let tables = epoch_store.tables().unwrap();
 
         let before = classified_table_snapshot(&tables);
@@ -9944,7 +10020,7 @@ mod tests {
     async fn wipe_empties_every_derived_table_and_preserves_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         let (epoch_store, author) =
-            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+            derived_state_test_store(dir.path(), /* wipe_derived_state */ false);
         fold_test_commits(&epoch_store, author, 6).await;
 
         // Two preserved tables, populated the way production populates them:
@@ -10011,7 +10087,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let (epoch_store, author) =
-            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::Retain);
+            derived_state_test_store(dir.path(), /* wipe_derived_state */ false);
         fold_test_commits(&epoch_store, author, ROUNDS).await;
         let tables = epoch_store.tables().unwrap();
         let preserved_marker = SessionIdentifier::new(SessionType::InternalPresign, [5; 32]);
@@ -10035,7 +10111,7 @@ mod tests {
         // The restart: reopening with the rebuild policy is exactly what a
         // validator does at boot, wipe included.
         let (epoch_store, author_again) =
-            derived_state_test_store(dir.path(), DerivedEpochStatePolicy::RebuildFromConsensus);
+            derived_state_test_store(dir.path(), /* wipe_derived_state */ true);
         assert_eq!(author, author_again, "the test committee must be stable");
         let tables = epoch_store.tables().unwrap();
         assert!(

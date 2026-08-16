@@ -160,6 +160,36 @@ function of the commits. The set is empty for anything a decision reads:
   above. `should_accept_tx` reads `reconfig_state`, which the replay itself
   drives from `epoch_close_emitted` and the close decision.
 
+## Why the wipe is unconditional
+
+Every writer of a Derived table is inside the validator components, which only
+start for a committee member running in validator mode:
+
+| Derived table | writer outside the consensus fold |
+|---|---|
+| `pending_dwallet_checkpoints` | the MPC drain (`dwallet_mpc_service.rs:2113`) |
+| `builder_dwallet_checkpoint_message_v1`, `builder_system_checkpoint_v1` | the checkpoint builders |
+| `pending_dwallet_checkpoint_signatures`, `pending_system_checkpoint_signatures` | `notify_checkpoint_signature`, reached from the fold and from `IkaTxValidator` during block validation (`consensus_validator.rs:111`, `:130`) |
+
+Everything else is written only by `ConsensusCommitOutput::write_to_batch`.
+
+**State sync writes no per-epoch table at all** — `ika-network/src/state_sync`
+has no reference to `AuthorityPerEpochStore`; its certificates and watermarks
+live in `DWalletCheckpointStore` / `SystemCheckpointStore`, separate databases
+outside this audit. So the preserved-class "state-sync artifacts" the issue
+names are never at risk from the wipe, and no Derived table is fed by sync.
+
+So on a notifier, a fullnode, a non-committee node, or a committee member
+running in fullnode mode, every Derived table is already empty and the wipe is
+a no-op. There is no node on which "wipe" and "leave alone" differ, which is
+why the store has no policy parameter: `AuthorityPerEpochStore::new` always
+wipes. The only exception is
+`new_retaining_derived_state_for_testing`, for tests whose subject is the
+durable write discipline itself — that a commit-batched row survives a crash
+at any point and rehydrates the in-memory state built from it. That property
+still holds within a boot; it is simply not what a production reopen
+exercises.
+
 ## Adding a table
 
 1. Add the field with its `write-discipline:` line

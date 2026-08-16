@@ -34,9 +34,11 @@ use crate::consensus_manager::ConsensusManagerMetrics;
 use crate::dwallet_checkpoints::DWalletCheckpointService;
 
 /// How many commits are read from the store, folded and released before the
-/// next read. Mirrors consensus-core's `COMMIT_RECOVERY_BATCH_SIZE` so an
-/// operator reasoning about replay memory has one number to reason about.
-const REPLAY_BATCH_COMMITS: CommitIndex = 250;
+/// next read. Mirrors consensus-core's `COMMIT_RECOVERY_BATCH_SIZE`, including
+/// its shrink under `cfg!(test)`, so an operator reasoning about replay memory
+/// has one number to reason about and a test does not have to build hundreds
+/// of commits to reach the second iteration of the loop.
+const REPLAY_BATCH_COMMITS: CommitIndex = if cfg!(test) { 3 } else { 250 };
 
 /// Folds every finalized commit of the epoch through `handler` and returns the
 /// commit index the fold reached.
@@ -167,11 +169,20 @@ pub(crate) async fn replay_epoch_commits(
     folded_through
 }
 
-/// Rebuilds the committed sub-dag a commit stands for, exactly as
-/// consensus-core's own recovery does: the commit's blocks plus, when the
-/// commit is finalized, the stored per-block set of rejected transaction
-/// indices. `replay_epoch_commits` only ever passes finalized commits, so the
-/// rejected set is always the stored one and never an empty stand-in.
+/// Rebuilds the committed sub-dag a commit stands for, mirroring
+/// consensus-core's own `load_committed_subdag_from_store` (`pub(crate)`, so it
+/// cannot be called from here): the commit's blocks plus the stored per-block
+/// set of rejected transaction indices.
+///
+/// The rejected set is REQUIRED, not defaulted. `CommittedSubDag::new` leaves
+/// `rejected_transactions_by_block` empty, and ika's `ConsensusCommitAPI`
+/// reads exactly that map to decide which transactions to skip — so a commit
+/// folded without its rejected set accepts transactions the rest of the
+/// committee rejected, silently, with no crash and no log. Every commit the
+/// replay reaches is at or below the store's last FINALIZED commit and so must
+/// have one; that this holds today rests on consensus-core finalizing in
+/// order, which is an internal property of the commit finalizer with no API
+/// contract behind it. Hence the assertion rather than an `unwrap_or_default`.
 fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedSubDag {
     let blocks = store
         .read_blocks(commit.blocks())
@@ -193,14 +204,20 @@ fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedS
 
     let mut subdag =
         CommittedSubDag::new(leader, blocks, commit.timestamp_ms(), commit.reference());
-    if let Some(rejected) = store
+    let rejected = store
         .read_rejected_transactions(subdag.commit_ref)
         .expect("reading a finalized commit's rejected transactions must not fail")
-    {
-        subdag.decided_with_local_blocks = true;
-        subdag.recovered_rejected_transactions = true;
-        subdag.rejected_transactions_by_block = rejected;
-    }
+        .unwrap_or_else(|| {
+            panic!(
+                "commit {:?} is at or below the consensus store's last finalized commit but has \
+                 no stored set of rejected transactions; folding it would accept transactions \
+                 the committee rejected",
+                subdag.commit_ref,
+            )
+        });
+    subdag.decided_with_local_blocks = true;
+    subdag.recovered_rejected_transactions = true;
+    subdag.rejected_transactions_by_block = rejected;
     subdag
 }
 
@@ -218,7 +235,6 @@ mod tests {
     use super::*;
     use crate::authority::AuthorityMetrics;
     use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
-    use crate::authority::derived_epoch_state::DerivedEpochStatePolicy;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
@@ -272,15 +288,17 @@ mod tests {
         (dir, context)
     }
 
-    fn test_epoch_store(
-        dir: &Path,
-        policy: DerivedEpochStatePolicy,
-    ) -> Arc<AuthorityPerEpochStore> {
+    fn test_epoch_store(dir: &Path, wipe_derived_state: bool) -> Arc<AuthorityPerEpochStore> {
         let (committee, _keys) =
             Committee::new_simple_test_committee_of_size(CONSENSUS_COMMITTEE_SIZE);
         let committee = Arc::new(committee);
         let name = *committee.names().next().unwrap();
-        AuthorityPerEpochStore::new(
+        let build = if wipe_derived_state {
+            AuthorityPerEpochStore::new
+        } else {
+            AuthorityPerEpochStore::new_retaining_derived_state_for_testing
+        };
+        build(
             name,
             committee,
             dir,
@@ -289,7 +307,6 @@ mod tests {
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
             ChainIdentifier::default(),
             IkaNetworkConfig::new_for_testing(),
-            policy,
         )
         .unwrap()
     }
@@ -351,10 +368,7 @@ mod tests {
     async fn replay_folds_every_finalized_commit_and_reaches_the_store_head() {
         let (consensus_dir, context) = consensus_store_with(6, 6);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -388,10 +402,7 @@ mod tests {
     async fn replayed_commits_feed_the_commit_liveness_sink() {
         let (consensus_dir, context) = consensus_store_with(5, 5);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         let sink = Arc::new(CountingCommitSink::default());
         let mut handler = test_handler_with_sink(
             epoch_store,
@@ -425,10 +436,7 @@ mod tests {
         let commits = REPLAY_BATCH_COMMITS + REPLAY_BATCH_COMMITS / 2;
         let (consensus_dir, context) = consensus_store_with(commits, commits);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -457,6 +465,55 @@ mod tests {
         );
     }
 
+    /// A commit below the last finalized one but missing its rejected-transaction
+    /// set must stop the node, not be folded with an empty set.
+    ///
+    /// `CommittedSubDag::new` leaves `rejected_transactions_by_block` empty and
+    /// ika's `ConsensusCommitAPI::transactions` reads exactly that map, so
+    /// defaulting here would accept transactions the committee rejected —
+    /// silently, with no crash and no log. That this cannot happen today rests
+    /// on consensus-core finalizing commits in order, which is internal to the
+    /// commit finalizer and carries no API contract, so the replay checks it
+    /// rather than trusting it.
+    #[tokio::test]
+    #[should_panic(expected = "no stored set of rejected transactions")]
+    async fn a_finalization_hole_below_the_head_stops_the_replay() {
+        let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
+        let context = Arc::new(context);
+        let consensus_dir = TempDir::new().unwrap();
+        let store = RocksDBStore::new(&consensus_dir.path().to_string_lossy());
+
+        let mut dag = DagBuilder::new(context.clone());
+        dag.layers(1..=12).build();
+        // Commit 3 is written without a finalized-commits row while 4 and 5
+        // have one, so the last finalized commit is 5 and the hole sits under
+        // it — the shape in-order finalization is supposed to make impossible.
+        for (index, (subdag, commit)) in dag.get_sub_dag_and_commits(1..=5).into_iter().enumerate()
+        {
+            let finalized = if index == 2 {
+                Vec::new()
+            } else {
+                vec![(commit.reference(), BTreeMap::new())]
+            };
+            store
+                .write(WriteBatch::new(
+                    subdag.blocks.clone(),
+                    vec![commit],
+                    Vec::new(),
+                    finalized,
+                ))
+                .unwrap();
+        }
+        drop(store);
+
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let mut handler = test_handler(epoch_store, &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+    }
+
     /// Unfinalized commits carry no stored rejected-transaction set, so folding
     /// them here could accept a transaction peers reject. The replay must stop
     /// below them and leave them to consensus.
@@ -464,10 +521,7 @@ mod tests {
     async fn replay_stops_below_the_unfinalized_tail() {
         let (consensus_dir, context) = consensus_store_with(6, 4);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -487,10 +541,7 @@ mod tests {
         let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
         let consensus_dir = TempDir::new().unwrap();
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -525,10 +576,8 @@ mod tests {
 
         // The run before the storage incident: folded through commit 8.
         {
-            let epoch_store = test_epoch_store(
-                epoch_dir.path(),
-                DerivedEpochStatePolicy::RebuildFromConsensus,
-            );
+            let epoch_store =
+                test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
             let mut handler = test_handler(epoch_store.clone(), &context);
             let metrics = ConsensusManagerMetrics::new(&Registry::new());
             let replayed_through =
@@ -536,7 +585,8 @@ mod tests {
             assert_eq!(replayed_through, 8);
         }
         let stale_watermark = {
-            let epoch_store = test_epoch_store(epoch_dir.path(), DerivedEpochStatePolicy::Retain);
+            let epoch_store =
+                test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ false);
             let stale = epoch_store
                 .get_last_consensus_stats()
                 .unwrap()
@@ -560,10 +610,7 @@ mod tests {
         );
 
         // The new boot: wipe, replay against whatever the store still has.
-        let epoch_store = test_epoch_store(
-            epoch_dir.path(),
-            DerivedEpochStatePolicy::RebuildFromConsensus,
-        );
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
         assert!(
             epoch_store
                 .tables()

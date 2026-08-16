@@ -47,7 +47,6 @@ use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
 };
-use ika_core::authority::derived_epoch_state::DerivedEpochStatePolicy;
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
@@ -750,20 +749,6 @@ impl IkaNode {
             ValidatorComponentMetrics::new(&registry_service.default_registry());
         let validator_component_metrics_for_reconfig = validator_component_metrics.clone();
 
-        // Only a node that will run consensus for this epoch may delete its
-        // derived per-epoch state, because only that node goes on to rebuild it
-        // by replaying the epoch's commits (`ConsensusManager::start`). The
-        // condition is the same one that decides whether validator components
-        // start at all, evaluated here because the epoch store must be opened —
-        // and wiped — before anything reads it.
-        let runs_consensus_this_epoch =
-            mode.is_validator() && committee_arc.authority_exists(&config.authority_name());
-        let derived_state_policy = if runs_consensus_this_epoch {
-            DerivedEpochStatePolicy::RebuildFromConsensus
-        } else {
-            DerivedEpochStatePolicy::Retain
-        };
-
         let epoch_store = AuthorityPerEpochStore::new(
             config.authority_name(),
             committee_arc.clone(),
@@ -773,7 +758,6 @@ impl IkaNode {
             epoch_start_configuration,
             chain_identifier,
             packages_config,
-            derived_state_policy,
         )?;
 
         // Allow the per-epoch handoff record path to persist freshly
