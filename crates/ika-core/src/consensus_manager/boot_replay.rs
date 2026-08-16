@@ -127,9 +127,12 @@ pub(crate) async fn replay_epoch_commits(
                 folded_through + 1,
                 "consensus commit indices must be contiguous during replay",
             );
-            handler
-                .handle_consensus_commit(load_committed_subdag(&store, commit))
-                .await;
+            let subdag = load_committed_subdag(&store, commit);
+            // Arrival, before the fold — same rule as the live loop. This is
+            // also what arms the commit-liveness watchdog on a node whose
+            // whole boot is replay (#2054's boot-into-isolation gap).
+            handler.report_commit_received(&subdag);
+            handler.handle_consensus_commit(subdag).await;
             folded_through = commit_index;
         }
 
@@ -348,7 +351,7 @@ mod tests {
     }
 
     impl ConsensusCommitSink for CountingCommitSink {
-        fn commit_processed(&self, leader_round: u64) {
+        fn commit_received(&self, leader_round: u64) {
             self.rounds.lock().unwrap().push(leader_round);
         }
     }

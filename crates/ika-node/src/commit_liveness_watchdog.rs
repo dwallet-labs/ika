@@ -383,7 +383,7 @@ impl CommitLivenessWatchdog {
 }
 
 impl ConsensusCommitSink for CommitLivenessWatchdog {
-    fn commit_processed(&self, leader_round: u64) {
+    fn commit_received(&self, leader_round: u64) {
         let first = self
             .state
             .lock()
@@ -393,7 +393,7 @@ impl ConsensusCommitSink for CommitLivenessWatchdog {
             info!(
                 leader_round,
                 bound_secs = self.bound.as_secs(),
-                "commit-liveness watchdog armed on this process's first consensus commit"
+                "commit-liveness watchdog armed on the first consensus commit this process received"
             );
         }
     }
@@ -592,7 +592,7 @@ mod tests {
         .expect("an enabled watchdog spawns");
         assert_eq!(silence.get(), NOT_ARMED);
 
-        watchdog.commit_processed(1_234);
+        watchdog.commit_received(1_234);
         // One second past a poll boundary, so the last tick to have run is
         // the one at 600s rather than a race between two timers due at the
         // same instant.
@@ -623,7 +623,7 @@ mod tests {
         )
         .expect("an enabled watchdog spawns");
 
-        watchdog.commit_processed(1_234);
+        watchdog.commit_received(1_234);
         watchdog.consensus_stopped();
         tokio::time::sleep(Duration::from_secs(6 * 3_600)).await;
         assert!(

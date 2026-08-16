@@ -40,24 +40,39 @@ use sui_types::base_types::EpochId;
 use tokio::task::JoinSet;
 use tracing::{debug, error, instrument, trace_span, warn};
 
-/// Notified once for every consensus commit this node finishes processing at
-/// the Ika commit boundary.
+/// Notified once for every consensus commit this node RECEIVES.
 ///
-/// The commit boundary is the one place where "this process is still being
-/// fed by the consensus mesh" is observable from inside the node: the round
-/// and timestamp gauges stamped there
-/// (`ika_last_committed_leader_consensus_round`,
-/// `ika_consensus_last_committed_timestamp_seconds`) freeze together with
-/// the subscriptions when a validator is isolated at an epoch boundary
-/// (ika #1864), and no other subsystem's progress distinguishes that from a
-/// quiet network — `ika_dwallet_mpc_catchup_gap_rounds` in particular reads
-/// 0 on an isolated node, because it is measured against a persisted round
-/// stream that freezes too.
+/// Arrival, not completion — and the distinction is load-bearing. The
+/// watchdog behind this sink exits the node when commits stop for longer than
+/// its bound, and it exists to catch a validator whose consensus
+/// subscriptions were lost at an epoch boundary (ika #1864): the failure it
+/// names is commits no longer ARRIVING. Nothing else distinguishes that from
+/// a quiet network — `ika_dwallet_mpc_catchup_gap_rounds` in particular reads
+/// 0 on an isolated node.
+///
+/// This used to be reported after the commit boundary finished, on the
+/// argument that a handler wedged inside the boundary has stopped making
+/// progress just as completely as one receiving nothing. That argument no
+/// longer holds, because the boundary can now block legitimately: it hands
+/// each round to the MPC drain over a bounded channel and waits when the
+/// drain is behind (`authority::round_transport`). A deep burst can hold the
+/// fold for longer than the watchdog's bound, and reporting on completion
+/// would make the node kill itself for being busy — then replay, meet the
+/// same burst, and do it again.
+///
+/// KNOWN GAP, deliberate: a fold that is genuinely WEDGED — as opposed to
+/// blocked on a drain that is still consuming — no longer trips this
+/// watchdog, because commits keep arriving. That case is covered by
+/// observability rather than by self-exit: `ika_consensus_round_channel_depth`
+/// pinned at capacity together with `ika_consensus_fold_blocked_seconds_total`
+/// climbing while `ika_dwallet_mpc_consumed_round` is flat is a wedged drain,
+/// and the MPC lag alarm fires on it. Do not "fix" this by moving the call
+/// back after the boundary.
 ///
 /// Consumers must be cheap and non-blocking: this runs on the commit path,
 /// once per commit, at sub-second cadence.
 pub trait ConsensusCommitSink: Send + Sync {
-    fn commit_processed(&self, leader_round: u64);
+    fn commit_received(&self, leader_round: u64);
 }
 
 pub struct ConsensusHandlerInitializer {
@@ -197,6 +212,20 @@ impl<C> ConsensusHandler<C> {
             processed_cache: LruCache::new(NonZeroUsize::new(PROCESSED_CACHE_CAP).unwrap()),
             throughput_calculator,
             commit_sink,
+        }
+    }
+}
+
+impl<C> ConsensusHandler<C> {
+    /// Reports a commit's ARRIVAL to the commit-liveness watchdog.
+    ///
+    /// Called by every path that receives a commit — the live loop and the
+    /// boot replay alike — before the fold, so that a fold waiting on the MPC
+    /// drain never reads as consensus silence. Boot replay reports too, which
+    /// is what arms the watchdog on a node whose whole start is replay.
+    pub(crate) fn report_commit_received(&self, consensus_commit: &impl ConsensusCommitAPI) {
+        if let Some(sink) = &self.commit_sink {
+            sink.commit_received(consensus_commit.leader_round());
         }
     }
 }
@@ -411,15 +440,6 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             .await
             .expect("Unrecoverable error in consensus handler");
 
-        // A commit is only reported once it has been fully processed, not on
-        // entry: the commit-liveness watchdog behind this sink exists to catch
-        // a node that stops making commit progress, and a handler wedged
-        // inside the boundary above has stopped making it just as completely
-        // as one that receives nothing.
-        if let Some(sink) = &self.commit_sink {
-            sink.commit_processed(round);
-        }
-
         // update the calculated throughput
         self.throughput_calculator.add_transactions(
             timestamp,
@@ -464,6 +484,10 @@ impl MysticetiConsensusHandler {
             // TODO: pause when execution is overloaded, so consensus can detect the backpressure.
             while let Some(consensus_commit) = commit_receiver.recv().await {
                 let commit_index = consensus_commit.commit_ref.index;
+                // Report ARRIVAL, before the fold — the fold can block on the
+                // drain for longer than the watchdog's bound, and a node that
+                // killed itself for that would replay into the same burst.
+                consensus_handler.report_commit_received(&consensus_commit);
                 consensus_handler
                     .handle_consensus_commit(consensus_commit)
                     .await;
