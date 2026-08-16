@@ -361,6 +361,9 @@ async fn test_validator_removed_at_epoch_2() {
 
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
+        // The production minimum is four, so a four-to-three removal would be
+        // rejected before the test could exercise the epoch transition.
+        .with_min_validator_count(3)
         .with_epoch_duration_ms(20_000)
         .with_protocol_version(ProtocolVersion::MAX)
         .build()

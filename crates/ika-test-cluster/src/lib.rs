@@ -1118,6 +1118,9 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
+    /// Override the on-chain minimum only for tests that exercise committee
+    /// shrinkage below the production default.
+    min_validator_count: Option<u64>,
     /// Epoch duration of the underlying **Sui** localnet (NOT ika's epoch). When
     /// `None` (default) Sui keeps its 24h `for_local_testing` epoch, so the Sui
     /// validator committee never rotates during a test and the OCS Sui-committee
@@ -1214,6 +1217,7 @@ impl IkaTestClusterBuilder {
         Self {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
+            min_validator_count: None,
             sui_epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
@@ -1270,6 +1274,12 @@ impl IkaTestClusterBuilder {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Override the on-chain minimum active-validator count for this cluster.
+    pub fn with_min_validator_count(mut self, min_validator_count: u64) -> Self {
+        self.min_validator_count = Some(min_validator_count);
         self
     }
 
@@ -1426,6 +1436,9 @@ impl IkaTestClusterBuilder {
         let mut initiation_parameters = InitiationParameters::new();
         if let Some(epoch_duration_ms) = self.epoch_duration_ms {
             initiation_parameters.epoch_duration_ms = epoch_duration_ms;
+        }
+        if let Some(min_validator_count) = self.min_validator_count {
+            initiation_parameters.min_validator_count = min_validator_count;
         }
         if let Some(protocol_version) = self.protocol_version {
             initiation_parameters.protocol_version = protocol_version.as_u64();

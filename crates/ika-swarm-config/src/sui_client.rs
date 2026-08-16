@@ -1399,7 +1399,12 @@ pub async fn request_remove_validator(
 
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
-    let _ = execute_sui_transaction(validator_address, tx_kind, context).await?;
+    let response = execute_sui_transaction(validator_address, tx_kind, context).await?;
+    anyhow::ensure!(
+        response.effects.status().is_ok(),
+        "request_remove_validator execution failed: {:?}",
+        response.effects.status()
+    );
 
     Ok(())
 }
