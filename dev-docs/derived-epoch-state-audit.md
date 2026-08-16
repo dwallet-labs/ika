@@ -155,10 +155,36 @@ function of the commits. The set is empty for anything a decision reads:
 - **Randomness.** No sampling on the fold path. The nonces that make idle
   and observation updates unique are sampled by the *submitter* and travel
   inside the sequenced transaction, so the fold sees a fixed value.
-- **Local state read by the fold.** Two, both fenced. The expected handoff
-  attestation gates `handoff_signatures` writes — the documented residue
-  above. `should_accept_tx` reads `reconfig_state`, which the replay itself
-  drives from `epoch_close_emitted` and the close decision.
+- **Local state read by the fold.** Three, not two — the third is the one
+  worth knowing about:
+  1. The expected handoff attestation gates `handoff_signatures` writes.
+     Documented residue; see the spec's close section.
+  2. `should_accept_tx` reads `reconfig_state`, which the replay itself
+     drives from `epoch_close_emitted` and the close decision.
+  3. **The mpc_data freeze commit reads the PRIOR epoch's certified handoff
+     attestation from the PERPETUAL store**, for carry-forward
+     (`authority_per_epoch_store.rs:5060` → `prior_epoch_mpc_data_digests`,
+     `:4954-4992`). That is a consensus-visible decision — the frozen set —
+     taking an input from outside the commit stream.
+
+     Its divergence window is one-directional and narrow. A read error or a
+     missing perpetual handle FAILS the commit so it replays, rather than
+     degrading to an empty map, which is deliberate: a silent empty would
+     re-open the shrunken-set fork the function exists to close. What is not
+     fenced is `Ok(None)` → `Ok(Some(cert))`: the certificate is never
+     deleted, so the only possible skew is absent-then-present. A joiner
+     that froze while the cert was still absent, crashed, and restarted
+     after bootstrap fetched it re-decides the freeze with a LARGER
+     carry-forward set.
+
+     Traced consequence: benign to positive. Carry-forward only ADDS
+     members the committee's own certificate attests to, so the re-decided
+     set moves toward the committee's set, never away from it — the
+     opposite of the shrunken-set hazard. It is listed here because the
+     audit's job is to enumerate the inputs, not because this one is known
+     to be harmful; a future change that makes the frozen set
+     order-sensitive, or that ever deletes a certificate, would turn it
+     into one.
 
 ## Why the wipe is unconditional
 
@@ -189,6 +215,17 @@ durable write discipline itself — that a commit-batched row survives a crash
 at any point and rehydrates the in-memory state built from it. That property
 still holds within a boot; it is simply not what a production reopen
 exercises.
+
+## One thing outside this audit worth an eye
+
+`locally_computed_checkpoints` (in `DWalletCheckpointStore` and
+`SystemCheckpointStore`, not `AuthorityEpochTables`) is not wiped and is not
+covered here, because those are separate databases. It exists for fork
+DETECTION and logging; no decision path reads it. That is the only reason
+its survival is safe: rows written before a divergence would be stale
+relative to a rebuilt epoch. If a reader is ever added that acts on it,
+revisit — it would need either wiping alongside the derived tables or an
+argument for why stale rows cannot mislead it.
 
 ## Adding a table
 

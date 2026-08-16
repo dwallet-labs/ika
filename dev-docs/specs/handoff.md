@@ -86,11 +86,20 @@ next epoch inherits.
   hydrate+build it runs re-hashes and rewrites full key blobs, so it
   must not run once per second until teardown). So a restart after our
   own EndOfPublishV2 was sequenced rebuilds the in-memory aggregator
-  ONCE by replaying the persisted `handoff_signatures` rows and
-  re-mints+persists the certificate. Buffered-quorum adoption alone is
-  NOT the recovery mechanism — it sees only signatures that arrive after
-  the restart. SCOPE: this replay recovers a NON-divergent validator
-  (the rebuilt attestation matches what the persisted rows endorse). A
+  ONCE and re-mints+persists the certificate. Buffered-quorum adoption
+  alone is NOT the recovery mechanism — it sees only signatures that
+  arrive after the restart.
+
+  WHERE THE ROWS COME FROM CHANGED (#2058): `handoff_signatures` is
+  classified DERIVED, so a restart wipes it and the rebuild is the boot
+  replay re-folding the epoch's `EndOfPublishV2` bundles, not a read of
+  surviving rows. The bundles buffer until this validator's expected
+  attestation installs and are staged when it does, so the rows exist
+  again — but under whichever commit the replay had reached at install
+  time, which is not necessarily the commit the crashed run recorded
+  them under. See `event-sourced-epoch.md`. SCOPE: this recovers a
+  NON-divergent validator (the rebuilt attestation matches what the
+  re-folded bundles endorse). A
   validator whose rebuilt attestation DIVERGES from the rows re-verifies
   none of them and mints nothing — its recovery is the barrier
   peer-fetch of the quorum's certificate, never local replay.
@@ -100,9 +109,13 @@ next epoch inherits.
   changed the items) drops the superseded rows from BOTH the aggregator
   and the table — because the deferred-close quorum gate
   (`handoff_signatures_meet_quorum`) sums the TABLE, not the aggregator.
-  The table therefore plays two roles: a restart-durable source for
+  The table therefore plays two roles: the within-boot source for
   aggregator rebuild, and the close-gate quorum input; the second role
-  is what makes stale-row hygiene load-bearing. (If the close gate
+  is what makes stale-row hygiene load-bearing. (It is not a
+  restart-durable source any more — #2058 wipes it on boot and the
+  replay re-derives it; the hygiene rule is unaffected, because a
+  re-install can change the attestation within a single boot just as it
+  could across one.) (If the close gate
   migrates to a sequence-pure tally, that second role is retired.)
   TRADEOFF (deliberate): the delete is destructive under
   divergence — a validator that adopted the quorum's attestation via
@@ -145,8 +158,19 @@ next epoch inherits.
   EndOfPublish votes and handoff signatures can land before the final
   checkpoint. (Historically v4-gated — under v3 the close stayed inline
   at the quorum-crossing message; that inline branch is dead code since
-  `MIN_PROTOCOL_VERSION = 5`.) The close itself is restart-idempotent
-  via a persisted `epoch_close_emitted` marker.
+  `MIN_PROTOCOL_VERSION = 5`.)
+
+  The close is NO LONGER restart-idempotent via a persisted marker.
+  `epoch_close_emitted` is classified DERIVED (#2058), so a restart
+  wipes it and re-decides the close from the replayed commits rather
+  than short-circuiting on the crashed run's answer. Because the
+  handoff-cert half of the gate depends on when this validator's
+  expected attestation installs — which is not a function of the
+  sequence — the re-decided close round can land earlier or later than
+  the original. Close safety still rests where it always did:
+  buffered-quorum adoption plus the grace-multiplied liveness backstop,
+  not on a marker. `event-sourced-epoch.md` carries the full argument
+  and names this as the least-margin part of that change.
 
 ## Certificate
 

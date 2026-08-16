@@ -153,14 +153,41 @@ that arrive before the install buffer and are staged when it completes, at
 whichever commit the replay has reached.
 
 The close round a restart picks is therefore no longer guaranteed to equal
-the one the crashed run picked. It is not a new divergence class — it is the
-same pre-existing non-purity, reached by a different route, and the rebuilt
-checkpoint stream is self-consistent with whichever round this validator
-does pick — but it is the part of this change with the least margin, and
-the one to look at first if a restart near an epoch boundary produces a
-final checkpoint no peer signs. Retiring it properly is the sequence-pure
-tally in `../plans/handoff-barrier-escape-and-pure-close-gate.md`, which
-would make the question moot.
+the one the crashed run picked, **and it can move in either direction**:
+
+- **Later**, if the replay reaches the original close commit before this
+  validator's expected attestation installs. The bundles buffer, the gate
+  does not see a quorum at that commit, and the close lands at a later
+  commit or on the backstop.
+- **Earlier**, which is the less obvious one. If the crashed run installed
+  its attestation LATE, its buffered bundles were drained and staged at the
+  install commit, so the gate counted quorum there — after the commits the
+  bundles actually arrived in. A replay that installs EARLY records each
+  bundle under its own commit instead, so the gate can reach quorum at a
+  commit the original run had already passed, and the close lands earlier.
+
+It is not a new divergence class — it is the same pre-existing non-purity
+reached by a different route, and the rebuilt checkpoint stream is
+self-consistent with whichever round this validator picks. But it is the
+part of this change with the least margin, and the first thing to look at
+if a restart near an epoch boundary produces a final checkpoint no peer
+signs.
+
+The case that deserves a cluster test rather than an argument is
+**simultaneous restarts**. Pre-change, restarting validators kept their
+recorded close round, so a correlated restart cost nothing. Now each one
+re-rolls it independently, so restarting at least f+1 stake inside the
+window between `end_of_publish_quorum_round` being set and the final
+checkpoint certifying can scatter the close rounds and delay the final
+checkpoint until the backstop reconverges them. The blast radius is
+bounded — fork handling is log-and-metric, the settled-state suppression
+still holds, and state sync supplies the certified stream — but "bounded"
+is a traced argument, not a measurement.
+
+Retiring all of this properly is the sequence-pure tally in
+`../plans/handoff-barrier-escape-and-pure-close-gate.md`: once the gate is
+a function of the sequence, the replay re-derives the same close round by
+construction and none of the above can arise.
 
 ## Emission must be silent for settled work
 
@@ -307,7 +334,18 @@ revision rather than a guarantee.
 ## Restart latency
 
 Restart-to-live is now O(epoch age) for the whole node, not just for the MPC
-drain. This is an accepted cost, not an accident. Three gauges make it
+drain. This is an accepted cost, not an accident.
+
+One term in it has not been measured. The wipe deletes in chunks, re-seeking
+the table head each time, so on a table with millions of rows each chunk's
+seek walks the tombstones the previous chunks left — super-linear in the row
+count, though bounded by the same compaction that clears them. It is
+correctness-neutral (the alternative, a RocksDB range delete, is the one
+that leaves a row behind) and it runs once per boot against tables the
+replay is about to rewrite anyway, so it was not worth optimising blind.
+Benchmark it alongside the memory-flatness measurement on the same
+million-round epoch; if it dominates, deleting by explicit key range with an
+inclusive upper bound is the fix, not `schedule_delete_all`. Three gauges make it
 observable: `ika_consensus_boot_replay_target_commit_index`,
 `ika_consensus_boot_replay_folded_commit_index` (the two together are the
 remaining boot work) and `ika_consensus_boot_replay_latency_seconds`. The
@@ -383,6 +421,12 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
 - **The real boot path end to end** — wipe, replay, consensus start,
   builders released — which only `ika-test-cluster` exercises
   (`restart_mid_grace`, `cluster_boots`).
+- **Correlated restarts across the close window** (REQUIRED, not
+  optional): kill at least f+1 stake after `end_of_publish_quorum_round` is
+  set but before the final checkpoint certifies, and assert the epoch still
+  advances. This is the scenario the close-round re-roll above makes newly
+  reachable, and the one place a traced "bounded blast radius" should be
+  replaced by a measurement.
 - **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
   also where the rollback claim above gets tested rather than argued.
 
