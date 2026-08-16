@@ -236,9 +236,9 @@ construction; divergence = determinism bug).
   hunting is "never", not "slow". Before tightening, check whether the
   thing eventually happened after the budget expired.
 - **A validator that trails consensus is draining or dead, and the
-  difference is whether the gap falls.** A restart replays the epoch's
-  rounds from 0, so a huge `ika_mpc_consensus_round_lag` right after one
-  is expected, not a stall — the MPC service says so itself
+  difference is whether the gap falls.** A restart refolds the epoch from
+  its first commit and feeds every round to the drain again, so a huge
+  `ika_mpc_consensus_round_lag` right after one is expected, not a stall — the MPC service says so itself
   (`MPC service entered catch-up mode`), and
   `ika_dwallet_mpc_catchup_gap_rounds` falls fast while it drains
   (~40x the tip rate, with computation suppressed). What to act on is
@@ -246,7 +246,7 @@ construction; divergence = determinism bug).
   draining and MPC has stopped: `MPC subsystem has stopped keeping up
   with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`
   (draining, but the gap stopped falling). Restarting a validator that
-  is mid-drain only discards its progress and replays it.
+  is mid-drain only discards its progress and makes it refold the epoch.
 - **A drain that stopped consuming does NOT trip the commit-liveness
   watchdog, by design.** The consensus fold hands rounds to the drain over a
   bounded channel and waits when it is full; the watchdog holds its clock

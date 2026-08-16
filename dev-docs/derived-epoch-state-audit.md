@@ -69,7 +69,7 @@ which is why the row's original justification ("replay resumes mid-epoch, so
 this is otherwise unrecoverable") no longer applies.
 
 **Checkpoint construction.** `pending_dwallet_checkpoints` and
-`pending_system_checkpoints` are built from the rebuilt per-round streams
+`pending_system_checkpoints` are built from the refolded commits
 and keyed by consensus round, so a rebuild lands identical heights.
 `builder_dwallet_checkpoint_message_v1` and `builder_system_checkpoint_v1`
 are the builders' output over that queue, deterministic in it.

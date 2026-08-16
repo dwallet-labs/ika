@@ -132,9 +132,19 @@ gauge exists (#1978, #1980). It is computed locally: the MPC service publishes
 the consensus round it has consumed and the **consensus commit path** compares,
 because every way the MPC service stops also stops any check placed inside it.
 
+**This alert cannot fire while the consensus fold is BLOCKED on the drain.**
+The fold hands each round to the drain over a bounded channel and waits when
+it is full, so under a wedged drain the comparison freezes along with
+everything else on the commit path — moving the check to commit arrival would
+not help, because a parked fold is not receiving either. A drain that stops
+consuming therefore shows up as `ika_consensus_fold_blocked_seconds_total`
+climbing and `ika_consensus_round_channel_depth` pinned at capacity, with this
+gauge frozen at whatever it last read. Alert on that pair as well; do not read
+a quiet stopped-contributing gauge as "MPC is fine".
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
-restarted mid-epoch replays the epoch from round 0, so its raw lag legitimately
-exceeds any stall threshold for as long as the replay runs. The gauge above
+restarted mid-epoch refolds the epoch from its first commit, so its raw lag
+legitimately exceeds any stall threshold for as long as that runs. The gauge above
 already accounts for the catch-up the MPC service is reporting (#2036); the raw
 lag is a dashboard signal, not a page.
 
@@ -151,7 +161,7 @@ ika_mpc_catch_up_stuck_condition_active == 1
 
 The complement: this validator IS draining a backlog, and the backlog has
 stopped shrinking. **Operator action**: do not restart — a restart discards the
-drain's progress and replays it. Check `ika_dwallet_mpc_catchup_gap_rounds` on
+drain's progress and refolds the epoch from its first commit. Check `ika_dwallet_mpc_catchup_gap_rounds` on
 the host; while that gap falls the drain is healthy and this gauge reads 0, so a
 `1` means it went flat or started growing, and something other than the backlog
 is holding the service up.

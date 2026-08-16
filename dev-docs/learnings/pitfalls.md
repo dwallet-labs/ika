@@ -56,10 +56,13 @@ rule, not the instance.
   `InvalidParameters` and all malicious sets are empty, suspect key/share
   divergence, not a byzantine peer.
 - **A per-round drain decision kept only in memory can flip on the
-  restart replay — even when every INPUT is consensus-derived.** The
-  round replay after a restart re-runs the whole round stream against
-  durable per-epoch state (presign pools, marker tables) that is NOT
-  rewound to the round being replayed. Instance: the NOA presign-demand
+  restart replay — even when every INPUT is consensus-derived.** A restart
+  re-runs every round of the epoch against durable per-epoch state (presign
+  pools, marker tables) that is NOT rewound to the round being replayed.
+  (Historical detail: at the time the rounds came from persisted per-round
+  tables; they now reach the drain from the fold over a channel. The hazard
+  is unchanged — it is about the DURABLE state the replay runs against, not
+  about how the rounds arrive.) Instance: the NOA presign-demand
   park bound dropped a demand from the in-memory queue at round R_e; the
   demand's key pool then filled at a later round; on restart the replayed
   drain re-read the demand at its delivery round against the
@@ -78,7 +81,7 @@ rule, not the instance.
   time-of-replay sibling of the wall-clock rule above: inputs can all be
   consensus-ordered and the decision still diverges, because durable
   state advanced between the original visit and the replayed one.
-  → **Retired for one class, still live for the other.** Boot now deletes
+  → **Retired for one class, still live for the other.** Boot deletes
   every per-epoch table classified DERIVED and rebuilds it by replaying the
   epoch's commits, so replay against non-rewound durable state no longer
   happens for those. It is unchanged for tables classified PRESERVED — the
