@@ -521,6 +521,52 @@ mod tests {
         feeder.abort();
     }
 
+    /// Blocked time is read while a park is open and again after it closes, so
+    /// the two accounting paths meet at the moment the park ends. It must not
+    /// go backwards there.
+    ///
+    /// This is the precondition the metrics publisher rests on: it exports
+    /// blocked time as a process-lifetime COUNTER fed the difference between
+    /// consecutive samples, because the transport is per-epoch and a gauge
+    /// holding its absolute total would drop to zero at every boundary. A
+    /// reading that dipped when a park closed would be silently swallowed by
+    /// that subtraction — the counter would stall for as long as it took the
+    /// open interval to make the loss back, on the one signal a wedged drain
+    /// has.
+    #[tokio::test(start_paused = true)]
+    async fn blocked_time_never_goes_backwards_when_a_park_ends() {
+        let (sender, mut receiver) = transport(1);
+        sender.send(payload(1)).await;
+
+        let feeder = {
+            let sender = sender.clone();
+            tokio::spawn(async move { sender.send(payload(2)).await })
+        };
+        while !sender.fold_blocked() {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let while_parked = sender.blocked_nanos();
+        assert!(while_parked > 0, "the open park must already be counted");
+
+        // The drain takes a round, the park ends, and the open interval has to
+        // land in the completed total rather than be dropped with the stamp.
+        receiver.recv().await.expect("a round is queued");
+        feeder.await.unwrap();
+        assert!(
+            !sender.fold_blocked(),
+            "the park has ended, so nothing may still read as parked"
+        );
+
+        let after_park = sender.blocked_nanos();
+        assert!(
+            after_park >= while_parked,
+            "blocked time fell from {while_parked}ns to {after_park}ns when the park closed; \
+             the metrics publisher subtracts consecutive samples, so a dip is exported as no \
+             progress at all"
+        );
+    }
+
     /// Epoch teardown aborts the task the fold runs in, and an abort lands
     /// wherever the task is suspended — under a full channel, inside the
     /// parked send.
