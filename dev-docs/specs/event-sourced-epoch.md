@@ -147,22 +147,37 @@ verified watermark alone so state sync still gets to process the checkpoint,
 so a node that certified a checkpoint locally but has not synced past it
 would re-sign an epoch's worth of them on the verified watermark alone.
 
-### Nothing may submit before consensus is up
+### Submitting before consensus is up must be survivable, and rare
 
-Suppression is not enough on its own, because of *when* the replay runs. The
-checkpoint builders are started before consensus, and the consensus adapter's
-client panics if it is still unset 300s after a submission is issued — under
-`panic = "abort"`, that ends the process. Rebuilding an old epoch takes far
-longer than 300s, and the replay regenerates the builders' whole input queue,
-so a node that had not certified this epoch's early checkpoints would abort
-partway through its own recovery.
+The replay runs *before* consensus starts, and plenty of things submit in
+that window: the capability notification, both epoch-task senders on their
+timers, and — because the replay regenerates their whole input queue — the
+checkpoint builders.
 
-Both builders therefore await the same replay signal the MPC service waits
-on (`ConsensusManager::replay_waiter`) before their first pass. The
-subscriptions are taken before consensus start is spawned, so the signal
-cannot be published into an empty subscriber set. The rule generalises: any
-component whose work submits to consensus must be gated on that signal, not
-merely on having been constructed.
+Two changes make that window safe:
+
+- **`UpdatableConsensusClient` waits instead of aborting.** It used to panic
+  if the client was still unset 300 seconds after a submission was issued,
+  and with `panic = "abort"` in the release profile a single such submission
+  took the process down. A boot that rebuilds an old epoch is legitimately
+  longer than that, so a recovering node could abort partway through its own
+  recovery — the crash loop this design exists to remove, reintroduced by
+  the fix for it. The wait is now unbounded, with an escalating error naming
+  the replay gauge to check. It cannot leak: every caller reaches it through
+  `submit_and_wait`, inside `within_alive_epoch`, which is dropped at the
+  epoch boundary.
+- **The checkpoint builders wait for the replay** before their first pass,
+  on the same signal the MPC service waits on
+  (`ConsensusManager::replay_waiter`), with their subscriptions taken before
+  consensus start is spawned so the signal cannot be published into an empty
+  subscriber set. This is about volume rather than safety: a builder that
+  drained an epoch's rebuilt queue against an unset client would park one
+  task per checkpoint and trip the adapter's in-flight limit, rejecting the
+  live traffic that follows.
+
+The general rule: a component whose work submits to consensus should be
+gated on the replay signal, and the submission path must treat "consensus
+has not started yet" as a wait, never as a fault.
 
 The catch-up gate (`dwallet_mpc/catchup_gate.rs`) is the other
 replay-aware emission gate, and it is a different tool: it keys on distance

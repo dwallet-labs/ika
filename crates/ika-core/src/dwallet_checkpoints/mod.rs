@@ -487,17 +487,19 @@ impl DWalletCheckpointBuilder {
     async fn run(mut self, replay_waiter: ReplayWaiter) {
         info!("Starting DWalletCheckpointBuilder");
 
-        // Wait for the epoch's derived state to be rebuilt and consensus to
-        // be running before building anything.
+        // Wait for the epoch's derived state to be rebuilt and consensus to be
+        // running before building anything. Mirrors how the MPC service waits
+        // on the same signal.
         //
-        // The builder's output SUBMITS a signature to consensus, and the
-        // consensus adapter's client panics if it is still unset 300s after a
-        // submission is issued — with `panic = "abort"`, that takes the
-        // process down. A boot that rebuilds an old epoch legitimately spends
-        // far longer than that in replay, and the replay regenerates this
-        // builder's whole input queue, so without this gate the node could
-        // abort partway through its own recovery. Mirrors how the MPC service
-        // waits on the same signal.
+        // The builder's output submits a signature per checkpoint, and a boot
+        // that rebuilds an old epoch regenerates this builder's whole input
+        // queue while consensus is still down (see
+        // dev-docs/specs/event-sourced-epoch.md). Without this gate the
+        // builder would drain that queue immediately and park one submission
+        // task per checkpoint on an unset consensus client — enough of them to
+        // trip the adapter's in-flight limit and reject the live traffic that
+        // follows. Ordering the work after the replay costs nothing: the node
+        // is not participating until then either way.
         replay_waiter.wait_for_replay().await;
 
         // Collect info about the most recently built dwallet checkpoint for metrics.
