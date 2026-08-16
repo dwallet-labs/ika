@@ -68,6 +68,29 @@ correct for a watchdog scoped to isolation, and it means a wedged consumer has
 exactly one signal: blocked time climbing while the consumer's progress metric
 is flat. Alarm on that pair, not on the watchdog.
 
+Two properties that signal needs, and neither is free:
+
+- **Blocked time must accrue while the fold is still parked**, not only when a
+  park ends. Accounting on the way out reads as "waited a while, recovered",
+  and the permanent park — the exact case this names — would add nothing to it
+  ever. Stamp the park's start and add the open interval on read.
+- **The park flag must be cleared by a guard, not by a statement after the
+  await.** Epoch teardown aborts the folding task, and an abort lands where
+  the task is suspended, which under a full channel is inside the parked send.
+  A trailing clear never runs there, and the flag is typically one
+  process-lifetime `Arc` shared with the watchdog — so a single aborted park
+  disables the isolation watchdog for the rest of the process.
+
+## 4a. Publish a transport's gauges from outside its consumer
+
+The depth and blocked-time gauges must be written by a task that does not
+share fate with the consumer they describe.
+
+*Why:* they exist to report a consumer that stopped consuming. Published from
+inside that consumer's own loop, they stop being written by precisely the
+failure they name — freezing at their last healthy values while an operator
+reads a node that looks idle.
+
 ## 5. Two sinks, opposite placements — do not "fix" the asymmetry
 
 | sink | fed | why |

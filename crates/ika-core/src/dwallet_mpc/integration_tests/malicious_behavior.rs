@@ -107,7 +107,8 @@ async fn test_some_malicious_validators_flows_succeed() {
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
         mpc_round,
-    );
+    )
+    .await;
     mpc_round += 1;
     info!("Starting malicious behavior test");
     loop {
@@ -140,7 +141,8 @@ async fn test_some_malicious_validators_flows_succeed() {
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
             mpc_round,
-        );
+        )
+        .await;
         info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }
@@ -232,7 +234,8 @@ async fn test_party_copies_other_party_message_dkg_round() {
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
         mpc_round,
-    );
+    )
+    .await;
     mpc_round += 1;
     // The corrupted party sends a message the mock flags as malicious, so it never completes.
     // Advance and wait for the honest parties only (a quorum), exactly as
@@ -271,7 +274,8 @@ async fn test_party_copies_other_party_message_dkg_round() {
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
             mpc_round,
-        );
+        )
+        .await;
         info!(?mpc_round, "Sent advance results for MPC round");
         mpc_round += 1;
     }

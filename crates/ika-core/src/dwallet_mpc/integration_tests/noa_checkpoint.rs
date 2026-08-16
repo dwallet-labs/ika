@@ -82,7 +82,8 @@ async fn run_until(
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -129,37 +130,31 @@ fn install_dwallet_handlers_with_log_submitter(
     flags
 }
 
-/// Inject DWallet checkpoint messages at the given round for all validators.
-fn inject_dwallet_checkpoint_messages(
+/// Hand every validator a round carrying these dWallet checkpoint messages —
+/// the fold's own output, which now reaches the drain in the round payload
+/// rather than through a table.
+async fn inject_dwallet_checkpoint_messages(
     test_state: &IntegrationTestState,
     round: u64,
     messages: Vec<DWalletCheckpointMessageKind>,
 ) {
     for epoch_store in &test_state.epoch_stores {
-        epoch_store
-            .round_to_verified_checkpoint
-            .lock()
-            .unwrap()
-            .entry(round)
-            .or_default()
-            .extend(messages.clone());
+        let mut payload = utils::empty_round_payload(round);
+        payload.verified_dwallet_checkpoint_messages = messages.clone();
+        epoch_store.deliver_round(payload).await;
     }
 }
 
-/// Inject system checkpoint messages at the given round for all validators.
-fn inject_system_checkpoint_messages(
+/// The same for system checkpoint messages.
+async fn inject_system_checkpoint_messages(
     test_state: &IntegrationTestState,
     round: u64,
     messages: Vec<SystemCheckpointMessageKind>,
 ) {
     for epoch_store in &test_state.epoch_stores {
-        epoch_store
-            .round_to_verified_system_checkpoint
-            .lock()
-            .unwrap()
-            .entry(round)
-            .or_default()
-            .extend(messages.clone());
+        let mut payload = utils::empty_round_payload(round);
+        payload.verified_system_checkpoint_messages = messages.clone();
+        epoch_store.deliver_round(payload).await;
     }
 }
 
@@ -250,7 +245,8 @@ async fn test_noa_checkpoint_dwallet_e2e() {
         &test_state,
         checkpoint_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(42)],
-    );
+    )
+    .await;
 
     info!(
         checkpoint_round,
@@ -294,12 +290,14 @@ async fn test_noa_checkpoint_multiple_sequential() {
         &test_state,
         first_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(10)],
-    );
+    )
+    .await;
     inject_dwallet_checkpoint_messages(
         &test_state,
         second_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(20)],
-    );
+    )
+    .await;
     info!(
         first_round,
         second_round, "Injected both checkpoint batches"
@@ -353,7 +351,8 @@ async fn test_noa_checkpoint_buffered_context() {
         &test_state,
         buffered_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(99)],
-    );
+    )
+    .await;
     info!(buffered_round, "Injected messages without context");
 
     // Advance several rounds — messages should buffer in the service (no sign requests
@@ -364,7 +363,8 @@ async fn test_noa_checkpoint_buffered_context() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -389,7 +389,8 @@ async fn test_noa_checkpoint_buffered_context() {
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(
             100,
         )],
-    );
+    )
+    .await;
     info!(
         flush_round,
         "Injected flush-trigger message after context set"
@@ -444,7 +445,8 @@ async fn test_noa_checkpoint_chain_failure_retry() {
         &test_state,
         checkpoint_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(77)],
-    );
+    )
+    .await;
     info!(
         checkpoint_round,
         "Injected checkpoint for failure/retry test"
@@ -510,14 +512,16 @@ async fn test_noa_checkpoint_both_handlers() {
         &test_state,
         checkpoint_round,
         vec![DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(55)],
-    );
+    )
+    .await;
 
     // Inject System checkpoint messages at the same round.
     inject_system_checkpoint_messages(
         &test_state,
         checkpoint_round,
         vec![SystemCheckpointMessageKind::SetEpochDurationMs(86_400_000)],
-    );
+    )
+    .await;
 
     info!(
         checkpoint_round,

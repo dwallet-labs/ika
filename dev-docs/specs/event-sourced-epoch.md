@@ -242,15 +242,54 @@ Two changes make that window safe:
   task per checkpoint and trip the adapter's in-flight limit, rejecting the
   live traffic that follows.
 
+- **The MPC drain does NOT wait for the replay — it consumes during it.**
+  This is the one component that must not be gated on the replay signal, and
+  the reason is a circular wait. The replay's folds send each round into the
+  bounded channel and block when it is full; the replay signal is published
+  only after `replay_epoch_commits` returns; so a drain that waited for the
+  signal would let the channel fill and park the replay forever. Any store
+  holding more than the channel capacity of finalized commits — about a
+  minute of mainnet — would hang on every boot, and hang silently, because a
+  parked fold holds the commit-liveness watchdog. `DWalletMPCService::spawn`
+  therefore runs `drain_while_replaying` first, which consumes rounds and
+  nothing else until the replay completes.
+
+  Only the drain runs there, and that is deliberate: the rest of the service
+  iteration submits to consensus, which has not started, so it would park on
+  the unbounded wait above and rebuild the same cycle one layer up. The
+  drain itself submits nothing.
+
 The general rule: a component whose work submits to consensus should be
 gated on the replay signal, and the submission path must treat "consensus
-has not started yet" as a wait, never as a fault.
+has not started yet" as a wait, never as a fault. The drain is the
+exception, and it is exempt precisely because it submits nothing.
 
 The catch-up gate (`dwallet_mpc/catchup_gate.rs`) is the other
 replay-aware emission gate, and it is a different tool: it keys on distance
 behind the tip and suppresses *starting new cryptographic computations*, not
-on whether a given piece of work is settled. Its semantics are unchanged
-here; its gap is still store head minus drain cursor.
+on whether a given piece of work is settled. Its gap is still store head
+minus drain cursor — but **where the head comes from changed, and it had to.**
+
+Under a blocking transport the fold cannot supply it. Arrivals are stamped in
+the fold's own loop, and that loop stops advancing as soon as the drain falls
+a channel's-worth behind, so any head derived from the fold is pinned within
+the capacity (1,024) of the drain's own cursor — permanently below the gate's
+entry threshold. A validator that fell a hundred thousand rounds behind
+*without restarting* would never enter catch-up at all, which is the #2023
+collapse the gate exists to prevent; only a restart would rescue it, through
+the boot replay's head publication.
+
+The head is therefore published from the **consensus store**, which
+consensus-core writes as commits are decided and which nothing about that path
+makes wait on the fold (`MysticetiConsensusHandler::spawn_observed_head_publisher`,
+sampling `read_last_commit` every 5s). Two constraints on that task, both
+load-bearing:
+
+- it lives in the handler's own `JoinSet`, so `abort()` at the epoch boundary
+  is exactly its lifetime;
+- it holds the **store** handle from `ConsensusAuthority::store()`, never the
+  authority — `ConsensusManager::shutdown` does `Arc::try_unwrap` on the
+  authority and panics on any surviving reference.
 
 ### Where to draw the line
 

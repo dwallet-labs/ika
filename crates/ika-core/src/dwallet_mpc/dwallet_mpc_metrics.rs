@@ -128,8 +128,12 @@ pub struct DWalletMPCMetrics {
     /// Rounds handed to the drain but not yet consumed.
     pub(crate) round_channel_depth: IntGauge,
     /// Cumulative seconds the consensus fold has spent parked on a full
-    /// round channel.
+    /// round channel, including a park still in progress.
     pub(crate) fold_blocked_seconds_total: IntGauge,
+    /// Rounds the fold has had to park on. Pairs with the seconds above:
+    /// seconds climbing while this is FLAT is one endless park (a wedged
+    /// drain); both climbing together is a drain that is merely slow.
+    pub(crate) fold_blocked_sends_total: IntGauge,
 
     /// Computation spawn decisions withheld by catch-up mode. Labels:
     /// `session_type` (only the suppressible types — `user` /
@@ -626,6 +630,14 @@ impl DWalletMPCMetrics {
                  round channel. Climbing while ika_dwallet_mpc_consumed_round is flat is a \
                  wedged drain — the commit-liveness watchdog deliberately does NOT catch \
                  that, because a waiting fold is not an isolated node",
+                registry
+            )
+            .unwrap(),
+            fold_blocked_sends_total: register_int_gauge_with_registry!(
+                "ika_consensus_fold_blocked_sends_total",
+                "Consensus rounds the fold had to wait to hand over. Read with \
+                 ika_consensus_fold_blocked_seconds_total: seconds climbing while this stays \
+                 flat is a single endless park, i.e. a drain that has stopped consuming",
                 registry
             )
             .unwrap(),

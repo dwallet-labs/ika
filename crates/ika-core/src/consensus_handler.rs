@@ -24,7 +24,9 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::CommitConsumerMonitor;
+use consensus_core::storage::Store;
+use consensus_core::storage::rocksdb_store::RocksDBStore;
+use consensus_core::{CommitAPI, CommitConsumerMonitor};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -35,9 +37,11 @@ use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use lru::LruCache;
 use mysten_metrics::{monitored_future, monitored_mpsc::UnboundedReceiver, monitored_scope};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use sui_macros::{fail_point_async, fail_point_if};
 use sui_types::base_types::EpochId;
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 use tracing::{debug, error, instrument, trace_span, warn};
 
 /// Notified once for every consensus commit this node RECEIVES.
@@ -513,6 +517,60 @@ impl MysticetiConsensusHandler {
             }
         }));
         Self { tasks }
+    }
+
+    /// Publishes the consensus store's own head round, on a task of its own,
+    /// until the epoch ends.
+    ///
+    /// The catch-up gate needs to know how far behind the drain is. It cannot
+    /// learn that from the fold: the fold BLOCKS on the round channel, so the
+    /// arrivals stamped in the loop above stop the moment the drain falls a
+    /// channel's-worth behind. Everything the fold can report is therefore
+    /// pinned within the capacity (1,024) of the drain's own cursor, always
+    /// far below the gate's entry threshold — and a validator that fell a
+    /// hundred thousand rounds behind WITHOUT restarting would never enter
+    /// catch-up at all, which is precisely the collapse the gate was built for
+    /// (#2023). Only a restart would fix it, via the boot replay's head
+    /// publication.
+    ///
+    /// The consensus store is the one place the true backlog is visible: it is
+    /// written by consensus-core as commits are decided, and nothing about
+    /// that path waits on the fold. `ConsensusAuthority::store()` hands out the
+    /// RUNNING instance's own handle, so this is not a second RocksDB open and
+    /// cannot contend for the lock.
+    ///
+    /// This shares the handler's `JoinSet` deliberately: the set is shut down
+    /// by `abort()` at the epoch boundary, which is exactly this task's
+    /// lifetime. It must NOT hold the `ConsensusAuthority` itself — shutdown
+    /// `Arc::try_unwrap`s that and panics on a surviving reference — and it
+    /// does not need to; the store handle is a separate `Arc`.
+    pub(crate) fn spawn_observed_head_publisher(
+        &mut self,
+        store: Arc<RocksDBStore>,
+        epoch_store: Arc<AuthorityPerEpochStore>,
+    ) {
+        const PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+        self.tasks.spawn(monitored_future!(async move {
+            loop {
+                match store.read_last_commit() {
+                    Ok(Some(commit)) => {
+                        epoch_store
+                            .record_observed_consensus_head_round(commit.leader().round as u64);
+                    }
+                    // An epoch whose consensus store has no commit yet: there
+                    // is no head to report and no backlog to be behind.
+                    Ok(None) => {}
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            "failed to read the consensus store's head; the catch-up gate will \
+                             keep the last head it was given until this recovers"
+                        );
+                    }
+                }
+                sleep(PUBLISH_INTERVAL).await;
+            }
+        }));
     }
 
     pub(crate) async fn abort(&mut self) {

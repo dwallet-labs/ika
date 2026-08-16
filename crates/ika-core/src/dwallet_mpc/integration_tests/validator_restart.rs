@@ -73,7 +73,8 @@ async fn test_presign_pool_not_consumed_without_sign_requests() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -142,7 +143,8 @@ async fn test_validators_continue_sessions_across_rounds() {
                 &mut test_state.sent_consensus_messages_collectors,
                 &mut test_state.epoch_stores,
                 test_state.consensus_round as u64,
-            );
+            )
+            .await;
             test_state.consensus_round += 1;
 
             for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -245,7 +247,8 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for (i, service) in test_state.dwallet_mpc_services.iter_mut().enumerate() {
@@ -296,7 +299,8 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {

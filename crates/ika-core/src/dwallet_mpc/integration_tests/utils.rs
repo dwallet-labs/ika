@@ -3,11 +3,15 @@ use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, NoaPresignDemandResolution,
     PresignAssignmentOutcome, PresignDemand,
 };
+use crate::authority::round_transport::{
+    ConsensusRoundPayload, RoundTransportReceiver, RoundTransportSender, round_transport,
+};
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
+use arc_swap::ArcSwap;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
@@ -17,14 +21,10 @@ use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::handoff::CertifiedHandoffAttestation;
-use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
-    ConsensusNOAPresignDemand, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
-    UserSecretKeyShareEventType,
+    AssignedPresign, IdleStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::noa_checkpoint::{CounterpartyChainKind, NOAPresignDemandId};
 use std::collections::HashMap;
@@ -53,21 +53,67 @@ type ServedGlobalPresigns = Arc<Mutex<HashMap<u64, (SessionIdentifier, u16, Vec<
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
+/// How many rounds a test validator's drain may fall behind before the
+/// harness's own "fold" blocks. Generous on purpose: the tests here drive one
+/// round at a time and drain it, so blocking would only ever mean a harness
+/// bug. The blocking behaviour itself is covered where it belongs — the
+/// transport's unit tests and the boot-replay deadlock test.
+/// Sized above the largest backlog any test plants (the catch-up gate's entry
+/// test queues several thousand rounds before letting the drain run), so the
+/// harness's stand-in fold never parks. Parking here would deadlock a test:
+/// the harness distributes and drains from the same task.
+pub(crate) const TEST_ROUND_CHANNEL_CAPACITY: usize = 8192;
+
+/// What a round carried, kept for assertions after the payload itself has been
+/// consumed by the drain.
+/// Carries only what tests currently assert on; extend it as they need more.
+#[derive(Clone)]
+pub(crate) struct DeliveredRound {
+    pub(crate) round: Round,
+    pub(crate) idle_status_updates: Vec<IdleStatusUpdate>,
+}
+
+impl From<&ConsensusRoundPayload> for DeliveredRound {
+    fn from(payload: &ConsensusRoundPayload) -> Self {
+        Self {
+            round: payload.round,
+            idle_status_updates: payload.idle_status_updates.clone(),
+        }
+    }
+}
+
+/// An empty round payload — the shape the fold produces for a round in which
+/// nothing of a given kind was sequenced. Tests fill in only the fields they
+/// are about.
+pub(crate) fn empty_round_payload(round: Round) -> ConsensusRoundPayload {
+    ConsensusRoundPayload {
+        round,
+        mpc_messages: Vec::new(),
+        mpc_outputs: Vec::new(),
+        internal_mpc_outputs: Vec::new(),
+        verified_dwallet_checkpoint_messages: Vec::new(),
+        verified_system_checkpoint_messages: Vec::new(),
+        idle_status_updates: Vec::new(),
+        sui_chain_observation_updates: Vec::new(),
+        global_presign_requests: Vec::new(),
+        noa_observations: Vec::new(),
+        noa_presign_demands: Vec::new(),
+    }
+}
+
 pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
-    pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
-    pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
-    pub(crate) round_to_internal_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
-    pub(crate) round_to_verified_checkpoint:
-        Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
-    pub(crate) round_to_verified_system_checkpoint: Arc<
-        Mutex<
-            HashMap<
-                Round,
-                Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-            >,
-        >,
-    >,
+    /// This validator's half of the real round transport. The harness hands
+    /// rounds to the drain over this exactly as the consensus fold does in
+    /// production — there is no test-only round path any more, because the
+    /// per-round tables the old harness wrote are gone and a harness that kept
+    /// writing them would exercise nothing.
+    pub(crate) round_sender: ArcSwap<RoundTransportSender>,
+    /// The matching receiver, parked here until the service is built over this
+    /// store. A restart in the harness rebuilds the service (#1952 shape) and
+    /// must reattach to the SAME channel, so the receiver is taken once and
+    /// handed back on restart rather than recreated.
+    pub(crate) round_receiver: Mutex<Option<RoundTransportReceiver>>,
     /// Mirrors the real store's field so the MPC service's progress
     /// publication is exercised by the integration tests rather than stubbed.
     pub(crate) mpc_consumed_consensus_round: std::sync::atomic::AtomicU64,
@@ -80,14 +126,12 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// The real store holds it to decide whether an outsized lag is explained;
     /// mirrored here so a test can prove the service publishes it at all.
     pub(crate) mpc_reported_catching_up: std::sync::atomic::AtomicBool,
-    pub(crate) round_to_idle_status_updates: Arc<Mutex<HashMap<Round, Vec<IdleStatusUpdate>>>>,
-    pub(crate) round_to_sui_chain_observation_updates:
-        Arc<Mutex<HashMap<Round, Vec<SuiChainObservationUpdate>>>>,
-    pub(crate) round_to_global_presign_requests:
-        Arc<Mutex<HashMap<Round, Vec<ConsensusGlobalPresignRequest>>>>,
-    pub(crate) round_to_noa_observations: Arc<Mutex<HashMap<Round, Vec<ConsensusNOAObservation>>>>,
-    pub(crate) round_to_noa_presign_demands:
-        Arc<Mutex<HashMap<Round, Vec<ConsensusNOAPresignDemand>>>>,
+    /// Every round this store has handed to its drain, in order — an
+    /// assertion log, never a data path. The old harness asserted against the
+    /// per-round tables it wrote; those tables are gone, so tests that need to
+    /// see what was distributed read it here instead of from anything the
+    /// service consumes.
+    pub(crate) delivered_rounds: Arc<Mutex<Vec<DeliveredRound>>>,
     /// Terminal resolution of each NOA sign demand, keyed by demand-id digest:
     /// the presign assigned to it in consensus order, or the marker that the
     /// park bound dropped it. Mirrors the real store's
@@ -204,26 +248,55 @@ impl TestingAuthorityPerEpochStore {
         }))
     }
 
+    /// Hands one round to this validator's drain over the real transport —
+    /// the harness standing in for the consensus fold.
+    pub(crate) async fn deliver_round(&self, payload: ConsensusRoundPayload) {
+        self.delivered_rounds
+            .lock()
+            .unwrap()
+            .push(DeliveredRound::from(&payload));
+        // The head the catch-up gate measures against. Production feeds this
+        // from the boot replay's target and from the consensus store's head;
+        // in the harness the distributor IS the network, so the round it just
+        // produced is the head.
+        self.observed_consensus_head_round
+            .fetch_max(payload.round, Ordering::AcqRel);
+        self.round_sender.load_full().send(payload).await;
+    }
+
+    /// The receiver for a service being built over this store.
+    ///
+    /// The first call hands over the receiver created with the store. A later
+    /// call is the mid-epoch restart shape (#1952): the departed service took
+    /// the old receiver with it and closed the channel, so a FRESH transport
+    /// is installed and its receiver returned — which is what production does
+    /// too, since the transport is created and installed alongside the service
+    /// it feeds.
+    pub(crate) fn take_round_receiver(&self) -> RoundTransportReceiver {
+        if let Some(receiver) = self.round_receiver.lock().unwrap().take() {
+            return receiver;
+        }
+        let (sender, receiver) = round_transport(
+            TEST_ROUND_CHANNEL_CAPACITY,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        self.round_sender.store(sender);
+        receiver
+    }
+
     fn new() -> Self {
+        let (round_sender, round_receiver) = round_transport(
+            TEST_ROUND_CHANNEL_CAPACITY,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
         Self {
             pending_checkpoints: Arc::new(Mutex::new(vec![])),
-            // The DWalletMPCService expects at least on round of messages to be present before start functioning.
-            round_to_messages: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_internal_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_sender: ArcSwap::new(round_sender),
+            round_receiver: Mutex::new(Some(round_receiver)),
             mpc_consumed_consensus_round: std::sync::atomic::AtomicU64::new(0),
             observed_consensus_head_round: std::sync::atomic::AtomicU64::new(0),
             mpc_reported_catching_up: std::sync::atomic::AtomicBool::new(false),
-            round_to_idle_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_sui_chain_observation_updates: Arc::new(Mutex::new(HashMap::from([(
-                0,
-                vec![],
-            )]))),
-            round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_noa_presign_demands: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            delivered_rounds: Arc::new(Mutex::new(Vec::new())),
             noa_presign_demand_resolutions: Arc::new(Mutex::new(HashMap::new())),
             served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),
@@ -250,9 +323,7 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     fn round_transport_for_metrics(
         &self,
     ) -> Option<Arc<crate::authority::round_transport::RoundTransportSender>> {
-        // The harness drives the service's round consumption directly rather
-        // than through a transport, so there is nothing to report.
-        None
+        Some(self.round_sender.load_full())
     }
 
     fn observed_consensus_head_round(&self) -> Round {
@@ -917,6 +988,7 @@ pub(crate) fn create_dwallet_mpc_service_over_epoch_store(
     let checkpoint_notify = Arc::new(TestingDWalletCheckpointNotify::new());
     let (service, sign_request_sender, sign_output_receiver) = DWalletMPCService::new_for_testing(
         epoch_store.clone(),
+        epoch_store.take_round_receiver(),
         seed,
         dwallet_submit_to_consensus.clone(),
         Arc::new(TestingAuthorityState::new()),
@@ -954,12 +1026,21 @@ pub(crate) fn create_dwallet_mpc_service_over_epoch_store(
 }
 
 #[allow(clippy::needless_range_loop)]
-pub(crate) fn send_advance_results_between_parties(
+pub(crate) async fn send_advance_results_between_parties(
     committee: &Committee,
     sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
     epoch_stores: &mut [Arc<TestingAuthorityPerEpochStore>],
     new_data_consensus_round: Round,
 ) {
+    // One payload per validator for THIS round, filled from every submitter in
+    // turn. A round is now a single message rather than a set of rows, so each
+    // validator must be handed exactly one — appending per submitter, as the
+    // table version did, would deliver the same round number once per
+    // submitter and the drain would reject it as out of order.
+    let mut round_payloads: Vec<ConsensusRoundPayload> = (0..committee.voting_rights.len())
+        .map(|_| empty_round_payload(new_data_consensus_round))
+        .collect();
+
     for i in 0..committee.voting_rights.len() {
         let consensus_messages_store = sent_consensus_messages_collectors[i]
             .submitted_messages
@@ -1053,90 +1134,35 @@ pub(crate) fn send_advance_results_between_parties(
                 }
             })
             .collect();
-        for j in 0..committee.voting_rights.len() {
-            let other_epoch_store = epoch_stores.get(j).unwrap();
-            other_epoch_store
-                .round_to_messages
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
-                .extend(dwallet_messages.clone());
-            other_epoch_store
-                .round_to_outputs
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
-                .extend(dwallet_outputs.clone());
-
-            // The DWalletMPCService every round will have entries in all the round-specific DB tables.
-            other_epoch_store
-                .round_to_verified_checkpoint
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default();
-
-            other_epoch_store
-                .round_to_verified_system_checkpoint
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default();
-
-            // Distribute internal MPC outputs (e.g. completed internal presign sessions) to all parties
-            other_epoch_store
-                .round_to_internal_outputs
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
+        // Every validator receives the SAME content in the same submitter
+        // order (0,1,2,3), so the consensus-order drain assigns each demand the
+        // same presign on every validator regardless of local receive order.
+        for payload in round_payloads.iter_mut() {
+            payload.mpc_messages.extend(dwallet_messages.clone());
+            payload.mpc_outputs.extend(dwallet_outputs.clone());
+            payload
+                .internal_mpc_outputs
                 .extend(internal_outputs.clone());
-            // Distribute idle status updates to all parties
-            other_epoch_store
-                .round_to_idle_status_updates
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
+            payload
+                .idle_status_updates
                 .extend(idle_status_updates.clone());
-            // Distribute sui chain observation updates to all parties
-            other_epoch_store
-                .round_to_sui_chain_observation_updates
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
+            payload
+                .sui_chain_observation_updates
                 .extend(sui_chain_observation_updates.clone());
-            // Distribute presign requests to all parties
-            other_epoch_store
-                .round_to_global_presign_requests
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
+            payload
+                .global_presign_requests
                 .extend(presign_requests.clone());
-            // Distribute NOA observations to all parties
-            other_epoch_store
-                .round_to_noa_observations
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
-                .extend(noa_observations.clone());
-            // Distribute NOA presign demands to all parties, IDENTICALLY: every
-            // validator receives the same set in the same submitter order
-            // (0,1,2,3), so the consensus-order drain assigns each demand the
-            // same presign on every validator regardless of local receive order.
-            other_epoch_store
-                .round_to_noa_presign_demands
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
+            payload.noa_observations.extend(noa_observations.clone());
+            payload
+                .noa_presign_demands
                 .extend(noa_presign_demands.clone());
         }
+    }
+
+    // Now hand each validator its single round for this number, over the real
+    // transport — the same object the consensus fold hands its own drain.
+    for (epoch_store, payload) in epoch_stores.iter().zip(round_payloads) {
+        epoch_store.deliver_round(payload).await;
     }
 }
 
@@ -1882,7 +1908,8 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             consensus_round,
-        );
+        )
+        .await;
         consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -1984,7 +2011,8 @@ pub(crate) async fn advance_mpc_flow_until_completion_for_parties(
                 &mut test_state.sent_consensus_messages_collectors,
                 &mut test_state.epoch_stores,
                 consensus_round,
-            );
+            )
+            .await;
             return (consensus_round, pending_checkpoint);
         }
 
@@ -1993,7 +2021,8 @@ pub(crate) async fn advance_mpc_flow_until_completion_for_parties(
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             consensus_round,
-        );
+        )
+        .await;
         consensus_round += 1;
         rounds_waited += 1;
     }

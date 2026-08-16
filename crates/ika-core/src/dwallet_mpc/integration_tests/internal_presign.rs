@@ -121,7 +121,8 @@ async fn run_one_round_discarding_all_messages(test_state: &mut IntegrationTestS
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as u64,
-    );
+    )
+    .await;
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -135,7 +136,8 @@ async fn run_one_round_delivering_messages(test_state: &mut IntegrationTestState
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as u64,
-    );
+    )
+    .await;
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -365,7 +367,8 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         // Snapshot pre-loop state: this is exactly what step 3 sees for
@@ -565,7 +568,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -642,7 +646,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -674,7 +679,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -763,7 +769,8 @@ async fn test_internal_presign_continues_when_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -1274,7 +1281,8 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         round_after_k1 + 1,
-    );
+    )
+    .await;
     test_state.consensus_round = (round_after_k1 + 2) as usize;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;

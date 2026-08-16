@@ -54,6 +54,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::error::IkaError;
 use ika_types::message::{
     DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
     EncryptedUserShareOutput, MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
@@ -379,6 +380,7 @@ impl DWalletMPCService {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        round_receiver: RoundTransportReceiver,
         seed: RootSeed,
         dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
         authority_state: Arc<dyn AuthorityStateTrait>,
@@ -406,7 +408,11 @@ impl DWalletMPCService {
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: epoch_store.clone(),
-            round_receiver: None,
+            // A REAL receiver, on the real channel the harness's stand-in fold
+            // sends into. This used to be `None`, which made the drain a no-op
+            // and left every integration test exercising nothing of the round
+            // path at all.
+            round_receiver: Some(round_receiver),
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
@@ -616,7 +622,7 @@ impl DWalletMPCService {
     /// The service automatically terminates when an epoch switch occurs.
     pub async fn spawn(&mut self, replay_waiter: ReplayWaiter) {
         info!("Waiting for consensus commits to replay ...");
-        replay_waiter.wait_for_replay().await;
+        self.drain_while_replaying(replay_waiter).await;
         info!("Consensus commits finished replaying");
 
         info!(
@@ -661,6 +667,88 @@ impl DWalletMPCService {
             self.run_service_loop_iteration().await;
 
             tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)).await;
+        }
+    }
+
+    /// Publishes the round transport's gauges until the epoch ends.
+    ///
+    /// A task of its own, and that is the entire point. These two gauges are
+    /// the only place a WEDGED drain shows: the commit-liveness watchdog holds
+    /// its clock while the fold is parked (correctly — a parked fold is not an
+    /// isolated node), so nothing exits and nothing else alarms. Published
+    /// from inside the drain's own loop, they would stop being written by
+    /// precisely the failure they exist to report, freezing at their last
+    /// healthy values while an operator reads a node that looks idle.
+    ///
+    /// Sampling rather than event-driven, at a period well under a scrape
+    /// interval: a wedge is measured in minutes and the values are cheap
+    /// atomic loads.
+    pub async fn publish_round_transport_gauges(
+        epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
+        exit: Receiver<()>,
+    ) {
+        const PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+        loop {
+            if matches!(exit.has_changed(), Ok(true) | Err(_)) {
+                return;
+            }
+            if let Some(transport) = epoch_store.round_transport_for_metrics() {
+                dwallet_mpc_metrics
+                    .round_channel_depth
+                    .set(transport.queue_depth() as i64);
+                dwallet_mpc_metrics
+                    .fold_blocked_seconds_total
+                    .set((transport.blocked_nanos() / 1_000_000_000) as i64);
+                dwallet_mpc_metrics
+                    .fold_blocked_sends_total
+                    .set(transport.blocked_sends() as i64);
+            }
+            tokio::time::sleep(PUBLISH_INTERVAL).await;
+        }
+    }
+
+    /// Consumes rounds while the boot replay is still folding them, and
+    /// returns once the replay has finished.
+    ///
+    /// This exists to break a circular wait, and the cycle is worth stating
+    /// exactly because the obvious simplification re-creates it:
+    ///
+    /// - the boot replay folds the epoch's commits, and every fold SENDS a
+    ///   round into the bounded channel, blocking when it is full;
+    /// - `ReplayWaiter` releases only after `ConsensusManager::start` has
+    ///   published the consumer monitor, which happens after
+    ///   `replay_epoch_commits` has returned;
+    /// - so a service that waited for the replay before consuming would let
+    ///   the channel fill, park the replay's send forever, and never reach the
+    ///   release. Any epoch store holding more than
+    ///   [`DEFAULT_ROUND_CHANNEL_CAPACITY`] finalized commits — about a minute
+    ///   of mainnet — would hang on every boot, and hang SILENTLY: a parked
+    ///   fold holds the commit-liveness watchdog, so nothing exits and the
+    ///   node replays into the same wedge on restart.
+    ///
+    /// Only the drain runs here, deliberately. The rest of the service
+    /// iteration submits to consensus, and consensus has not started yet — a
+    /// submission would park on `UpdatableConsensusClient::get`, stop the
+    /// drain, and rebuild the same cycle one layer up. The drain itself
+    /// touches no submitting path: it feeds the manager, writes the epoch
+    /// store and notifies the checkpoint builders (which are held behind this
+    /// same waiter).
+    ///
+    /// [`DEFAULT_ROUND_CHANNEL_CAPACITY`]: crate::authority::round_transport::DEFAULT_ROUND_CHANNEL_CAPACITY
+    async fn drain_while_replaying(&mut self, replay_waiter: ReplayWaiter) {
+        let replay_complete = replay_waiter.wait_for_replay();
+        tokio::pin!(replay_complete);
+        loop {
+            tokio::select! {
+                // Biased so a finished replay is observed before another
+                // sleep, rather than after a further interval of it.
+                biased;
+                () = &mut replay_complete => return,
+                () = tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)) => {
+                    self.drain_consensus_rounds().await;
+                }
+            }
         }
     }
 
@@ -1245,18 +1333,13 @@ impl DWalletMPCService {
         self.dwallet_mpc_manager
             .observe_consensus_round_gap(observed_head, self.last_read_consensus_round);
 
-        // Publish the transport's own state. These two are the only place a
-        // wedged drain is visible: the commit-liveness watchdog holds while
-        // the fold is parked (correctly — a parked fold is not an isolated
-        // node), so nothing exits and nothing else alarms.
-        if let Some(transport) = self.epoch_store.round_transport_for_metrics() {
-            self.dwallet_mpc_metrics
-                .round_channel_depth
-                .set(transport.queue_depth() as i64);
-            self.dwallet_mpc_metrics
-                .fold_blocked_seconds_total
-                .set((transport.blocked_nanos() / 1_000_000_000) as i64);
-        }
+        // The transport's own gauges are deliberately NOT published here.
+        // They exist to report a drain that has stopped consuming, and a
+        // publisher living inside that drain stops publishing in exactly that
+        // case — the gauges would freeze at their last healthy values and the
+        // wedge would look like a node with nothing to do. They are published
+        // by `spawn_round_transport_gauges`, which shares fate with nothing
+        // but the runtime.
 
         loop {
             // Borrow the receiver only for the receive, so the rest of the
@@ -1301,6 +1384,39 @@ impl DWalletMPCService {
 
                 panic!("consensus round must be in a ascending order");
             }
+
+            // The NOA cluster stays gated on `noa_checkpoints()`, exactly as
+            // it was when these arrived through per-round tables: that flag is
+            // off on every live network, the old write path never persisted
+            // these streams while it was off, and so the drain never acted on
+            // them. Deleting the tables silently deleted that gate with them.
+            //
+            // The payload keeps carrying them — the fold is version-uniform
+            // and the channel is in-process, so nothing on the wire moves —
+            // but ACTING on them must not flip with the binary. The demand
+            // queue pops the SHARED internal presign pool
+            // (`assign_presign_for_demand`), so a node that processed demands
+            // while the network's flag was off would drain a pool no peer is
+            // drawing on and answer demands no peer answers: a
+            // consensus-visible divergence decided by which binary a validator
+            // runs rather than by the protocol version. That is the one class
+            // of change this repo rules out outright, and during a rolling
+            // upgrade it would be live on a mixed committee.
+            let (
+                sui_chain_observation_updates,
+                noa_observation_messages,
+                noa_presign_demand_messages,
+                verified_system_checkpoint_messages,
+            ) = if self.protocol_config.noa_checkpoints() {
+                (
+                    sui_chain_observation_updates,
+                    noa_observation_messages,
+                    noa_presign_demand_messages,
+                    verified_system_checkpoint_messages,
+                )
+            } else {
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            };
 
             // 1a. Handle idle status and chain observations.
             let (is_idle, agreed_sui_chain_context) =
@@ -1803,6 +1919,25 @@ impl DWalletMPCService {
                             .epoch_store
                             .insert_pending_dwallet_checkpoint(pending_checkpoint)
                         {
+                            // `EpochEnded` here is the reconfiguration
+                            // boundary, not a defect: this service is
+                            // per-epoch and teardown does not join it, so the
+                            // store's tables can be swapped out from under an
+                            // iteration that is still running. Stop the
+                            // iteration gracefully — the same semantics the
+                            // per-round store reads used to get from
+                            // `stop_on_epoch_end!`, which existed because
+                            // panicking on this race crashed the node and
+                            // stalled reconfiguration under churn.
+                            if let IkaError::EpochEnded(ended_epoch) = e {
+                                info!(
+                                    ended_epoch,
+                                    consensus_round,
+                                    "epoch ended while writing a pending dWallet checkpoint; \
+                                     stopping this service iteration gracefully"
+                                );
+                                return;
+                            }
                             error!(
                                     error=?e,
                                     ?consensus_round,
@@ -1820,6 +1955,16 @@ impl DWalletMPCService {
                         if let Some(ref service) = self.dwallet_checkpoint_service
                             && let Err(e) = service.notify_checkpoint()
                         {
+                            // Same boundary race as the write above.
+                            if let IkaError::EpochEnded(ended_epoch) = e {
+                                info!(
+                                    ended_epoch,
+                                    consensus_round,
+                                    "epoch ended while notifying the checkpoint service; \
+                                     stopping this service iteration gracefully"
+                                );
+                                return;
+                            }
                             error!(
                                 error=?e,
                                 ?consensus_round,

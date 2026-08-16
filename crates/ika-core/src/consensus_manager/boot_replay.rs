@@ -240,10 +240,11 @@ fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedS
 mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use arc_swap::ArcSwap;
     use consensus_core::storage::WriteBatch;
-    use consensus_core::{CommitAPI, Context, DagBuilder};
+    use consensus_core::{CommitAPI, CommitConsumerArgs, Context, DagBuilder};
     use prometheus::Registry;
     use tempfile::TempDir;
 
@@ -256,7 +257,7 @@ mod tests {
     use crate::authority::derived_epoch_state::EpochStateSnapshot;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::authority::round_transport::round_transport;
-    use crate::consensus_handler::ConsensusCommitSink;
+    use crate::consensus_handler::{ConsensusCommitSink, MysticetiConsensusHandler};
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
     use crate::epoch::epoch_metrics::EpochMetrics;
     use ika_types::committee::Committee;
@@ -651,6 +652,77 @@ mod tests {
                 .last_committed_round,
             "the published head must not trail the rounds the replay folded",
         );
+    }
+
+    /// The boot replay publishes the head once, at boot. A validator that
+    /// falls behind WITHOUT restarting needs it published continuously, and
+    /// the fold cannot do that: under a blocking transport the fold stops
+    /// advancing as soon as the drain falls a channel's-worth behind, so any
+    /// head derived from it is pinned within the capacity of the drain's own
+    /// cursor — permanently below the gate's entry threshold (#2023).
+    ///
+    /// So this asserts the property that makes the publisher worth having: it
+    /// reports the consensus store's head with **nothing folded at all**. No
+    /// commit is ever delivered on the commit channel here, which is what a
+    /// fold-derived head would need.
+    #[tokio::test]
+    async fn the_head_publisher_reports_the_store_head_without_folding_anything() {
+        let (consensus_dir, context) = consensus_store_with(6, 6);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let handler = test_handler(epoch_store.clone(), &context);
+
+        let store = RocksDBStore::new(&consensus_dir.path().to_string_lossy());
+        let head_round = store
+            .read_last_commit()
+            .unwrap()
+            .expect("the fixture wrote commits")
+            .leader()
+            .round as u64;
+        assert!(head_round > 0, "the fixture must have a head to publish");
+
+        // A real handler, with its commit channel left empty on purpose.
+        let (commit_consumer, commit_receiver) = CommitConsumerArgs::new(0, 0);
+        let mut mysticeti =
+            MysticetiConsensusHandler::new(handler, commit_receiver, commit_consumer.monitor());
+        assert_eq!(
+            epoch_store.observed_consensus_head_round(),
+            0,
+            "nothing has published a head yet",
+        );
+
+        mysticeti.spawn_observed_head_publisher(Arc::new(store), epoch_store.clone());
+
+        let published = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let head = epoch_store.observed_consensus_head_round();
+                if head > 0 {
+                    return head;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect(
+            "the head publisher reported nothing; the catch-up gate would see a zero gap on a \
+             validator that never restarts, however far behind it fell",
+        );
+        assert_eq!(
+            published, head_round,
+            "the published head must be the consensus store's own head",
+        );
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            0,
+            "nothing may have been folded: the point is that the head does not come from the \
+             fold",
+        );
+
+        mysticeti.abort().await;
     }
 
     /// A commit below the last finalized one but missing its rejected-transaction

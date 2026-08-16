@@ -312,6 +312,12 @@ impl ConsensusManager {
         )
         .await;
         let client = authority.transaction_client();
+        // The store handle, taken BEFORE the authority is sealed into its Arc:
+        // `shutdown` does `Arc::try_unwrap` on that and panics on a surviving
+        // reference, so the head publisher must hold the store rather than the
+        // authority. Feeds the catch-up gate the one backlog measure the fold
+        // cannot supply — see `spawn_observed_head_publisher`.
+        let consensus_store = authority.store();
 
         let registry_id = self.registry_service.add(registry.clone());
 
@@ -320,6 +326,10 @@ impl ConsensusManager {
 
         // Initialize the client to send transactions to this Mysticeti instance.
         self.client.set(client);
+
+        if let Some(handler) = consensus_handler.as_mut() {
+            handler.spawn_observed_head_publisher(consensus_store, epoch_store.clone());
+        }
 
         // Send the consumer monitor to the replay waiter.
         let _ = self.consumer_monitor_sender.send(monitor);

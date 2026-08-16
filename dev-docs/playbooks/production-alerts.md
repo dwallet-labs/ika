@@ -142,6 +142,19 @@ climbing and `ika_consensus_round_channel_depth` pinned at capacity, with this
 gauge frozen at whatever it last read. Alert on that pair as well; do not read
 a quiet stopped-contributing gauge as "MPC is fine".
 
+`ika_consensus_fold_blocked_sends_total` separates the two shapes of that
+pair, and the distinction decides the response:
+
+| seconds | sends | reading |
+|---|---|---|
+| climbing | climbing | the drain is slow but alive — many short parks |
+| climbing | **flat** | one endless park: the drain has stopped consuming |
+| flat | flat | the fold is not waiting at all |
+
+The three gauges are published by a task of their own rather than by the
+drain, precisely so they keep reporting when the drain is the thing that
+broke.
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
 restarted mid-epoch refolds the epoch from its first commit, so its raw lag
 legitimately exceeds any stall threshold for as long as that runs. The gauge above

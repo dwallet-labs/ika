@@ -198,7 +198,8 @@ pub(crate) async fn advance_parties_and_replace_malicious_parties_messages(
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as Round,
-    );
+    )
+    .await;
     false
 }
 
@@ -228,6 +229,7 @@ pub(crate) async fn advance_parties_and_send_results(
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as Round,
-    );
+    )
+    .await;
     false
 }

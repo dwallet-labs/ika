@@ -406,7 +406,8 @@ pub(crate) async fn create_network_key_test(
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         consensus_round + 1,
-    );
+    )
+    .await;
     // Process the new round to instantiate the agreed network key in every party.
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -569,7 +570,8 @@ async fn test_two_network_keys_same_epoch_dkg() {
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         round_after_k1 + 1,
-    );
+    )
+    .await;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
     }

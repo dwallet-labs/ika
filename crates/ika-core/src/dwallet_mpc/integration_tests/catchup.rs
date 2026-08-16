@@ -8,10 +8,10 @@
 //! the per-iteration round gap exceeds the enter threshold, and resuming once
 //! it falls below the exit threshold.
 //!
-//! The harness expresses the entry condition directly: planting a dense
-//! backlog of empty consensus rounds into every validator's epoch store makes
-//! the next service iteration observe `tip - cursor = backlog` at its drain
-//! entry — the exact signal a mid-epoch restart replay produces.
+//! The harness expresses the entry condition directly: handing every
+//! validator's drain a backlog of empty consensus rounds makes the next
+//! service iteration observe `head - cursor = backlog` at its drain entry —
+//! the exact signal a mid-epoch restart replay produces.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::catchup_gate::{CATCH_UP_ENTER_GAP_ROUNDS, CATCH_UP_EXIT_GAP_ROUNDS};
@@ -30,25 +30,30 @@ use tracing::info;
 /// production entry gaps (a replay landing thousands of rounds behind).
 const BACKLOG_ROUNDS: u64 = CATCH_UP_ENTER_GAP_ROUNDS + 1_000;
 
-/// Plants `count` dense empty consensus rounds starting at `start_round`
-/// into every validator's epoch store. Only the two per-round streams the
-/// service treats as mandatory-dense (MPC messages and MPC outputs) need
-/// entries; every other stream tolerates a missing round. Also advances the
-/// harness round counter past the planted range.
-fn plant_empty_round_backlog(test_state: &mut IntegrationTestState, start_round: u64, count: u64) {
+/// Hands `count` empty consensus rounds to every validator's drain — the
+/// backlog a validator finds waiting when its MPC service has fallen behind the
+/// fold — and advances the harness round counter past them.
+///
+/// Delivering rounds rather than planting rows is the whole difference the
+/// round channel makes. It also fixes where the backlog may start: rounds are
+/// handed over in sequence, so it begins at the next round the harness has to
+/// distribute, NOT one past the drain cursor. Those two were interchangeable
+/// when rounds were rows addressed by number; over a channel, delivering a
+/// round below one already delivered is out of order and the drain rejects it.
+/// The gap the gate reads — head minus cursor — is the same either way.
+async fn plant_empty_round_backlog(test_state: &mut IntegrationTestState, count: u64) {
+    let start_round = test_state.consensus_round as u64;
     for store in &test_state.epoch_stores {
-        let mut messages = store.round_to_messages.lock().unwrap();
-        let mut outputs = store.round_to_outputs.lock().unwrap();
         for round in start_round..start_round + count {
-            messages.entry(round).or_default();
-            outputs.entry(round).or_default();
+            store.deliver_round(utils::empty_round_payload(round)).await;
         }
     }
     test_state.consensus_round = (start_round + count) as usize;
 }
 
-/// The shared drain cursor of all services (asserting they agree, since the
-/// backlog must start exactly one past it on every validator).
+/// The shared drain cursor of all services, asserting they agree — the gap the
+/// gate is about is measured from it, so a divergence here would make the
+/// backlog mean something different on each validator.
 fn common_last_read_consensus_round(test_state: &IntegrationTestState) -> u64 {
     let cursor = test_state.dwallet_mpc_services[0]
         .last_read_consensus_round()
@@ -216,8 +221,9 @@ async fn test_catchup_gate_suppresses_and_resumes_computations() {
     }
 
     // === Phase 1: backlog beyond the enter threshold — engage and suppress ===
-    let cursor = common_last_read_consensus_round(&test_state);
-    plant_empty_round_backlog(&mut test_state, cursor + 1, BACKLOG_ROUNDS);
+    // Asserts the validators agree on their drain cursor before the backlog.
+    let _cursor = common_last_read_consensus_round(&test_state);
+    plant_empty_round_backlog(&mut test_state, BACKLOG_ROUNDS).await;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
     }
@@ -302,7 +308,8 @@ async fn test_catchup_gate_suppresses_and_resumes_computations() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -350,8 +357,9 @@ async fn test_catchup_gate_suppresses_and_resumes_computations() {
 
     let mut system_computation_spawned_during_catchup = false;
     for attempt in 0..5 {
-        let cursor = common_last_read_consensus_round(&test_state);
-        plant_empty_round_backlog(&mut test_state, cursor + 1, BACKLOG_ROUNDS);
+        // Asserts the validators agree on their drain cursor before the backlog.
+        let _cursor = common_last_read_consensus_round(&test_state);
+        plant_empty_round_backlog(&mut test_state, BACKLOG_ROUNDS).await;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
         }

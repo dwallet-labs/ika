@@ -119,6 +119,27 @@ rule, not the instance.
   declaration — here, folding real commits and requiring every table that
   actually got written to be declared derived. And this is only visible if
   you inject the mistake: both tests read as thorough.
+- **A test harness that stubs out the component under change tests
+  nothing, and stays green while doing it.** The MPC integration harness
+  built its services with no round receiver, so when the per-round tables
+  became a channel the drain became a no-op in all ~100 tests — which kept
+  passing for everything that did not need round content, and started
+  failing for everything that did. The failures were then misread as a
+  known local-run artifact (a concurrent build replacing the test binary),
+  because that artifact had genuinely happened twice before.
+  → Rule: when a change replaces a data path, the harness's substitute for
+  that path is part of the change — migrate it in the same PR, and treat a
+  new failure pattern as evidence about the code until the code is
+  eliminated, not the other way round. A plausible known-artifact
+  explanation is the easiest way to discard a real regression.
+- **Migrating a fan-out from rows to messages changes arity, silently.**
+  The same harness distributed each round by appending every submitter's
+  messages into one per-round ROW; rewritten naively over a channel it sent
+  one MESSAGE per submitter, i.e. four copies of round N to each validator.
+  Rows are addressed and idempotent; messages are sequenced and are not.
+  → Rule: when a keyed store becomes a stream, re-check every writer's
+  arity — "extend the entry for key K" becomes "send exactly one K",
+  and the loop that was harmless to repeat is not.
 
 ## Batch processing & error handling
 

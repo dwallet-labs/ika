@@ -2175,6 +2175,10 @@ impl IkaNode {
 
         let (dwallet_mpc_service_exit_sender, dwallet_mpc_service_exit_receiver) =
             watch::channel(());
+        // The gauge publisher ends with the same epoch as the service it
+        // reports on, and on the same signal — but in a task of its own, so a
+        // wedged drain cannot take the reporting down with it.
+        let transport_gauges_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
         if let Err(e) =
             DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
         {
@@ -2193,8 +2197,12 @@ impl IkaNode {
         // The bounded channel that carries every consensus round from the
         // fold to the MPC drain. Installed on the epoch store BEFORE consensus
         // starts (which happens further down, and only after this function
-        // returns), so no commit is ever folded without a drain attached to
-        // receive it.
+        // returns), so no commit is ever folded without a receiver attached.
+        // Attached is not the same as consuming: the boot replay folds into
+        // this channel before consensus starts, so the service consumes from
+        // it while the replay runs — see
+        // `DWalletMPCService::drain_while_replaying`, which is what keeps a
+        // replay longer than the capacity from parking forever.
         // Shared with the commit-liveness watchdog: while the fold is parked
         // on this channel it is holding a commit, not missing one, so the
         // watchdog must hold its clock rather than read the pause as
@@ -2312,6 +2320,18 @@ impl IkaNode {
             }
         });
         let replay_waiter = consensus_manager.replay_waiter();
+
+        // The round transport's gauges are published from a task of their
+        // own, NOT from the drain: they exist to report a drain that stopped
+        // consuming, and a publisher inside that drain goes silent in exactly
+        // that case.
+        let transport_gauge_metrics = dwallet_mpc_metrics.clone();
+        let transport_gauge_epoch_store = epoch_store.clone();
+        spawn_monitored_task!(DWalletMPCService::publish_round_transport_gauges(
+            transport_gauge_epoch_store,
+            transport_gauge_metrics,
+            transport_gauges_exit_receiver,
+        ));
 
         // Spawn the dWallet MPC Service now that we are done with bootstrapping both
         // from storage and from the consensus.

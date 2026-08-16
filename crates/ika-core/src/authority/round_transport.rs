@@ -38,7 +38,12 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+// `tokio::time::Instant`, not `std`: identical to the system clock under a
+// live runtime, and advanced by the test runtime's clock under
+// `start_paused`. Park accounting is the only signal a wedged drain has, so
+// it has to be assertable deterministically rather than by sleeping in real
+// time and hoping.
+use tokio::time::Instant;
 
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::Round;
@@ -115,9 +120,50 @@ pub struct RoundTransportSender {
     sent: AtomicU64,
     /// The drain's consumed count, shared so the sender can report depth.
     received: Arc<AtomicU64>,
-    /// Cumulative nanoseconds the fold has spent parked. See
-    /// [`Self::blocked_nanos`].
+    /// Nanoseconds spent in parks that have ENDED. The park in progress is
+    /// added on read — see [`Self::blocked_nanos`], where it matters.
     blocked_nanos: AtomicU64,
+    /// Monotonic origin for park timestamps. `Instant` cannot live in an
+    /// atomic, so a park is stamped as nanos since this.
+    started_at: Instant,
+    /// When the current park began, as a [`RoundTransportSender::park_stamp`],
+    /// or zero when the fold is not parked.
+    parked_since_nanos: AtomicU64,
+}
+
+/// Holds the parked-fold state for exactly as long as the fold is parked.
+///
+/// A guard rather than a pair of stores around the await, because the await
+/// can be CANCELLED: epoch teardown aborts the task the fold runs in, and an
+/// abort lands wherever the task is suspended — which, under a full channel,
+/// is precisely inside the parked send. A manual clear placed after the await
+/// never runs on that path, leaving `fold_blocked` latched true with nothing
+/// to ever clear it: the flag is one process-lifetime `Arc` shared with the
+/// commit-liveness watchdog, so a single aborted park would disable the
+/// isolation watchdog for the rest of the process — and an isolated node,
+/// which never parks, would never clear it by accident either.
+struct ParkGuard<'a> {
+    sender: &'a RoundTransportSender,
+}
+
+impl<'a> ParkGuard<'a> {
+    fn park(sender: &'a RoundTransportSender) -> Self {
+        sender
+            .parked_since_nanos
+            .store(sender.park_stamp(), Ordering::Release);
+        sender.fold_blocked.store(true, Ordering::Release);
+        Self { sender }
+    }
+}
+
+impl Drop for ParkGuard<'_> {
+    fn drop(&mut self) {
+        let stamp = self.sender.parked_since_nanos.swap(0, Ordering::AcqRel);
+        self.sender
+            .blocked_nanos
+            .fetch_add(self.sender.park_elapsed(stamp), Ordering::Relaxed);
+        self.sender.fold_blocked.store(false, Ordering::Release);
+    }
 }
 
 impl RoundTransportSender {
@@ -162,12 +208,10 @@ impl RoundTransportSender {
             }
             Err(TrySendError::Full(payload)) => {
                 self.blocked_sends.fetch_add(1, Ordering::Relaxed);
-                self.fold_blocked.store(true, Ordering::Release);
-                let parked_at = Instant::now();
-                let sent = self.sender.send(payload).await;
-                self.blocked_nanos
-                    .fetch_add(parked_at.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                self.fold_blocked.store(false, Ordering::Release);
+                let sent = {
+                    let _parked = ParkGuard::park(self);
+                    self.sender.send(payload).await
+                };
                 if sent.is_err() {
                     self.mark_drain_gone();
                 } else {
@@ -193,7 +237,8 @@ impl RoundTransportSender {
         self.blocked_sends.load(Ordering::Relaxed)
     }
 
-    /// Total nanoseconds the fold has spent parked on a full channel.
+    /// Total nanoseconds the fold has spent parked on a full channel,
+    /// INCLUDING the park currently in progress.
     ///
     /// The named signal for a WEDGED drain, which nothing else catches: the
     /// commit-liveness watchdog deliberately holds while the fold is parked
@@ -202,8 +247,33 @@ impl RoundTransportSender {
     /// isolation is not what has gone wrong. This climbing while
     /// `ika_dwallet_mpc_consumed_round` is flat is that failure, and it is
     /// the only place it shows.
+    ///
+    /// Which is exactly why the park in progress has to count. Accruing only
+    /// on the way out of a park would make this readable as "the fold has
+    /// waited a while and recovered", and the one case it is named for — a
+    /// fold parked FOREVER on a drain that never consumes again — would add
+    /// nothing to it, ever. The permanent wedge would be the one wedge the
+    /// wedge signal could not report.
     pub fn blocked_nanos(&self) -> u64 {
-        self.blocked_nanos.load(Ordering::Relaxed)
+        let completed = self.blocked_nanos.load(Ordering::Relaxed);
+        let stamp = self.parked_since_nanos.load(Ordering::Acquire);
+        completed.saturating_add(self.park_elapsed(stamp))
+    }
+
+    /// Nanos since [`Self::started_at`], offset by one so that zero can mean
+    /// "not parked" without costing a nanosecond of accuracy.
+    fn park_stamp(&self) -> u64 {
+        (self.started_at.elapsed().as_nanos() as u64).saturating_add(1)
+    }
+
+    /// How long a park stamped `stamp` has been running; zero for the
+    /// not-parked sentinel.
+    fn park_elapsed(&self, stamp: u64) -> u64 {
+        match stamp {
+            0 => 0,
+            stamp => (self.started_at.elapsed().as_nanos() as u64)
+                .saturating_sub(stamp.saturating_sub(1)),
+        }
     }
 
     /// Rounds handed to the drain but not yet consumed — the in-flight depth
@@ -286,6 +356,8 @@ pub fn round_transport(
             sent: AtomicU64::new(0),
             received: received.clone(),
             blocked_nanos: AtomicU64::new(0),
+            started_at: Instant::now(),
+            parked_since_nanos: AtomicU64::new(0),
         }),
         RoundTransportReceiver { receiver, received },
     )
@@ -294,6 +366,7 @@ pub fn round_transport(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn payload(round: Round) -> ConsensusRoundPayload {
         ConsensusRoundPayload {
@@ -377,12 +450,9 @@ mod tests {
         // timeout is the assertion: without the drain-gone path these await
         // forever on a full channel.
         for round in 2..=100 {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                sender.send(payload(round)),
-            )
-            .await
-            .expect("the fold must not block on a departed drain");
+            tokio::time::timeout(Duration::from_secs(5), sender.send(payload(round)))
+                .await
+                .expect("the fold must not block on a departed drain");
         }
         assert!(
             !sender.fold_blocked(),
@@ -416,18 +486,76 @@ mod tests {
             let sender = sender.clone();
             tokio::spawn(async move { sender.send(payload(2)).await })
         };
-        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(120)).await;
 
         assert!(
             sender.fold_blocked(),
             "the fold must still be parked on a drain that stopped consuming"
         );
+        // Specifically the park IN PROGRESS. `blocked_sends` counts parks
+        // entered, so it reads 1 the moment the fold parks and never moves
+        // again — asserting on it (or on it as an alternative) would pass on
+        // accounting that reports nothing at all about a drain wedged for
+        // hours. The elapsed time is the signal.
+        let blocked_for = sender.blocked_nanos();
         assert!(
-            sender.blocked_nanos() > 0 || sender.blocked_sends() > 0,
-            "a wedged drain must be visible on the blocked-time accounting; it is the only \
-             place it shows, since the watchdog deliberately holds here"
+            blocked_for >= Duration::from_secs(120).as_nanos() as u64,
+            "a park still in progress must already count as blocked time; got {blocked_for}ns \
+             after 120s parked"
         );
         assert_eq!(sender.queue_depth(), 1, "the queue sits at capacity");
+
+        // And it must keep climbing, because that slope is what an operator
+        // alerts on: seconds rising while the drain's progress metric is flat.
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert!(
+            sender.blocked_nanos() > blocked_for,
+            "blocked time must keep climbing while the fold stays parked"
+        );
+        assert_eq!(
+            sender.blocked_sends(),
+            1,
+            "one park, not many — which is exactly why the seconds gauge cannot be replaced \
+             by this counter"
+        );
         feeder.abort();
+    }
+
+    /// Epoch teardown aborts the task the fold runs in, and an abort lands
+    /// wherever the task is suspended — under a full channel, inside the
+    /// parked send.
+    ///
+    /// The flag is one process-lifetime `Arc` shared with the commit-liveness
+    /// watchdog, so a park that never cleared would hold that watchdog for the
+    /// remaining life of the process, across every later epoch. Nothing would
+    /// ever clear it: an isolated node — the one case the watchdog exists for
+    /// — never parks.
+    #[tokio::test]
+    async fn an_aborted_park_still_releases_the_watchdog_hold() {
+        let fold_blocked = Arc::new(AtomicBool::new(false));
+        let (sender, _receiver) = round_transport(1, fold_blocked.clone());
+        sender.send(payload(1)).await;
+
+        let fold = {
+            let sender = sender.clone();
+            tokio::spawn(async move { sender.send(payload(2)).await })
+        };
+        while !fold_blocked.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+
+        // Teardown, mid-park.
+        fold.abort();
+        let _ = fold.await;
+
+        assert!(
+            !fold_blocked.load(Ordering::Acquire),
+            "an aborted park must clear the hold; leaving it set disables the isolation \
+             watchdog for the rest of the process"
+        );
+        assert!(
+            !sender.fold_blocked(),
+            "the transport must agree that nothing is parked any more"
+        );
     }
 }
