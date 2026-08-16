@@ -463,6 +463,7 @@ In-process, in `ika-core`:
 | the catch-up head is published without folding anything | `the_head_publisher_reports_the_store_head_without_folding_anything` |
 | an aborted park releases the watchdog hold | `an_aborted_park_still_releases_the_watchdog_hold` |
 | a park still in progress already counts as blocked time | `a_wedged_drain_is_visible_only_on_the_blocked_time_gauge` |
+| blocked time does not dip when a park ends (what the delta-fed counter rests on) | `blocked_time_never_goes_backwards_when_a_park_ends` |
 | the watchdog holds off a real full round channel | `a_full_round_channel_holds_the_watchdog_while_commits_queue` (in `ika-node`) |
 
 Every one of these was validated by injecting the fault it claims to catch
