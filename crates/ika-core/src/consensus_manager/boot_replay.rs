@@ -255,6 +255,7 @@ mod tests {
     };
     use crate::authority::derived_epoch_state::EpochStateSnapshot;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+    use crate::authority::round_transport::round_transport;
     use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
     use crate::epoch::epoch_metrics::EpochMetrics;
@@ -262,6 +263,7 @@ mod tests {
     use ika_types::digests::ChainIdentifier;
     use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
     use ika_types::sui::EpochStartSystem;
+    use std::sync::atomic::AtomicBool;
 
     const CONSENSUS_COMMITTEE_SIZE: usize = 4;
 
@@ -470,6 +472,14 @@ mod tests {
         let (consensus_dir, context) = consensus_store_with(commits, commits);
         let epoch_dir = TempDir::new().unwrap();
         let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        // Count the rounds on the CHANNEL rather than in a table: no
+        // per-round table survives, and the channel is where a dropped batch
+        // boundary would actually show. Capacity well above the commit count
+        // so the fold never blocks — this test is about the batch arithmetic,
+        // not about backpressure.
+        let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
+        epoch_store.install_round_transport(sender);
+
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -485,20 +495,20 @@ mod tests {
                 .sub_dag_index,
             u64::from(commits),
         );
-        // One row per replayed commit: a dropped batch boundary shows up here
-        // as a hole rather than as a lower final index.
-        // `verified_dwallet_checkpoint_messages` is the dense per-round table
-        // now that the eight projection streams are gone — the MPC content
-        // that used to serve this purpose goes to the drain over the channel
-        // and leaves nothing on disk to count.
-        let rows = epoch_store
-            .tables()
-            .unwrap()
-            .classified_table_rows("verified_dwallet_checkpoint_messages");
+
+        let mut rounds = Vec::new();
+        while let Ok(payload) = receiver.try_recv() {
+            rounds.push(payload.round);
+        }
         assert_eq!(
-            rows.len(),
+            rounds.len(),
             commits as usize,
-            "the per-round stream is not dense across the batch boundary",
+            "the drain received {} of {commits} rounds; a batch boundary dropped one",
+            rounds.len(),
+        );
+        assert!(
+            rounds.windows(2).all(|pair| pair[0] < pair[1]),
+            "rounds reached the drain out of order across a batch boundary: {rounds:?}",
         );
     }
 
@@ -525,9 +535,25 @@ mod tests {
         // First run: an empty store folded once per commit, in order — what a
         // validator that never crashed would have built.
         let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ false);
+        let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
+        epoch_store.install_round_transport(sender);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let folded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
         assert_eq!(folded, 7);
+
+        // The channel IS the fold's derived output now, so determinism means
+        // the round stream it produces is identical too — the tables alone
+        // would be a thin comparison, since a synthetic commit carrying no ika
+        // transactions writes almost nothing.
+        let mut first_rounds = Vec::new();
+        while let Ok(payload) = receiver.try_recv() {
+            first_rounds.push(payload.round);
+        }
+        assert_eq!(
+            first_rounds.len(),
+            7,
+            "every folded commit must have reached the drain",
+        );
 
         let tables = epoch_store.tables().unwrap();
         let first: EpochStateSnapshot = EPOCH_STATE_REGISTRY
@@ -535,13 +561,8 @@ mod tests {
             .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
             .collect();
         let populated = first.values().filter(|rows| !rows.is_empty()).count();
-        // Three: the processed markers, the running stats and the epoch clock
-        // anchor. The synthetic DAG's commits carry no ika transactions, so
-        // nothing vote- or content-driven is written; the breadth this run
-        // covers is the PATH, and the epoch store's own double-fold test
-        // covers the tables.
         assert!(
-            populated >= 3,
+            populated >= 2,
             "only {populated} tables held rows after the first fold; the comparison below \
              would be near-vacuous",
         );
@@ -561,9 +582,21 @@ mod tests {
             tables.non_empty_derived_tables().is_empty(),
             "the reopen did not wipe; the second fold would land on the first's output",
         );
+        let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
+        epoch_store.install_round_transport(sender);
         let mut handler = test_handler(epoch_store.clone(), &context);
         let refolded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
         assert_eq!(refolded, folded);
+
+        let mut second_rounds = Vec::new();
+        while let Ok(payload) = receiver.try_recv() {
+            second_rounds.push(payload.round);
+        }
+        assert_eq!(
+            second_rounds, first_rounds,
+            "the round stream handed to the drain differed between two folds of the same \
+             consensus store",
+        );
 
         for entry in EPOCH_STATE_REGISTRY {
             assert_eq!(

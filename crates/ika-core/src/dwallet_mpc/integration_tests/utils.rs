@@ -266,42 +266,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .store(catching_up, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        let round_to_verified_checkpoint = self.round_to_verified_checkpoint.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_verified_checkpoint
-                .get(&0)
-                .map(|messages| (0, messages.clone())));
-        }
-        Ok(round_to_verified_checkpoint
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
-    }
-
-    fn next_verified_system_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<
-        Option<(
-            Round,
-            Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-        )>,
-    > {
-        let round_to_verified_system_checkpoint =
-            self.round_to_verified_system_checkpoint.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(round_to_verified_system_checkpoint
-                .get(&0)
-                .map(|messages| (0, messages.clone())));
-        }
-        Ok(round_to_verified_system_checkpoint
-            .get(&(last_consensus_round.unwrap() + 1))
-            .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
-    }
-
     fn insert_presigns(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,

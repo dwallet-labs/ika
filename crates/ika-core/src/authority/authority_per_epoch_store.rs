@@ -458,16 +458,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// gauges. `None` on a node that folds but runs no drain.
     fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>>;
 
-    fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
-
-    fn next_verified_system_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>>;
-
     /// Inserts presigns into the pool for the given signature algorithm and network encryption key.
     fn insert_presigns(
         &self,
@@ -661,36 +651,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>>;
 }
 
-/// The first per-round row STRICTLY after `last_consensus_round` — or the
-/// first row at all on a fresh start (`None`).
-///
-/// Deliberately an exclusive lower bound rather than the previous pattern of
-/// positioning the iterator AT the anchor row and skipping one (`nth(1)`):
-/// the skip variant is only correct while the row at exactly
-/// `last_consensus_round` exists in the table. If that anchor row is ever
-/// absent — a pruned table, a partially rebuilt epoch store — `nth(1)`
-/// consumes the first UNREAD row as if it were the anchor, and because every
-/// per-round stream skips the same round in lockstep, the downstream
-/// dense-stream alignment checks cannot catch it: a consensus round's MPC
-/// messages would silently never be processed. With the exclusive bound a
-/// missing anchor degrades to reading the next live row, which is the
-/// intended semantics ("everything after what I processed").
-fn next_round_row<V>(
-    table: &DBMap<Round, V>,
-    last_consensus_round: Option<Round>,
-) -> IkaResult<Option<(Round, V)>>
-where
-    V: serde::Serialize + serde::de::DeserializeOwned,
-{
-    Ok(table
-        .safe_iter_with_bounds(
-            last_consensus_round.map(|round| round.saturating_add(1)),
-            None,
-        )
-        .next()
-        .transpose()?)
-}
-
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn insert_pending_dwallet_checkpoint(
         &self,
@@ -717,28 +677,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
 
     fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>> {
         self.round_transport()
-    }
-
-    fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        let tables = self.tables()?;
-        next_round_row(
-            &tables.verified_dwallet_checkpoint_messages,
-            last_consensus_round,
-        )
-    }
-
-    fn next_verified_system_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>> {
-        let tables = self.tables()?;
-        next_round_row(
-            &tables.verified_system_checkpoint_messages,
-            last_consensus_round,
-        )
     }
 
     fn insert_presigns(
@@ -1308,18 +1246,6 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "pending_checkpoints_table_default_config"]
     pending_dwallet_checkpoints: DBMap<DWalletCheckpointHeight, PendingDWalletCheckpoint>,
 
-    /// write-discipline: commit-batched — the `DWalletMPCService` replay walks
-    /// this table in lockstep with `dwallet_mpc_messages` and requires it to be
-    /// dense and round-aligned with the commits that produced it.
-    #[default_options_override_fn = "verified_dwallet_checkpoint_messages_table_default_config"]
-    verified_dwallet_checkpoint_messages:
-        DBMap<DWalletCheckpointHeight, Vec<DWalletCheckpointMessageKind>>,
-
-    /// write-discipline: commit-batched — same round-alignment requirement as
-    /// `verified_dwallet_checkpoint_messages`, on the system-checkpoint stream.
-    #[default_options_override_fn = "verified_system_checkpoint_messages_table_default_config"]
-    verified_system_checkpoint_messages: DBMap<Round, Vec<SystemCheckpointMessageKind>>,
-
     /// Stores pending signatures
     /// The key in this table is checkpoint sequence number and an arbitrary integer
     ///
@@ -1850,11 +1776,6 @@ epoch_state_registry! {
     Derived pending_dwallet_checkpoints:
         "the MPC service builds these from the per-round streams it re-derives; \
          keyed by consensus round, so a rebuild lands the identical heights",
-    Derived verified_dwallet_checkpoint_messages:
-        "the fold's own output for the commit (session results promoted to \
-         checkpoint messages), not an input to it",
-    Derived verified_system_checkpoint_messages:
-        "same as the dWallet stream, on the system-checkpoint side",
     Derived pending_dwallet_checkpoint_signatures:
         "peers' checkpoint signatures arrive as sequenced \
          `DWalletCheckpointSignature` transactions, so the replay re-collects the \
@@ -2006,18 +1927,6 @@ where
         batch.delete_batch(table, keys)?;
         batch.write()?;
     }
-}
-
-fn verified_dwallet_checkpoint_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn verified_system_checkpoint_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
 }
 
 fn pending_checkpoints_table_default_config() -> DBOptions {
@@ -6787,38 +6696,6 @@ impl ConsensusCommitOutput {
     ) -> IkaResult {
         let tables = epoch_store.tables()?;
 
-        // The last two per-round tables. The eight projection streams they
-        // used to sit beside are gone: the MPC drain receives every round's
-        // inputs over the bounded channel now
-        // (`dev-docs/conventions/consensus-output-consumption.md`), so
-        // nothing polls a table per round and the dense-stream alignment
-        // these writes were gated to preserve no longer has a reader.
-        //
-        // NOTE: with the drain fed by the channel, these two have NO reader
-        // left either — checkpoint construction consumes the in-memory values
-        // in this same function via `pending_system_checkpoints`, never the
-        // tables. They are retained pending a decision on removing them; if
-        // that decision is to keep them, it needs a stated consumer, because
-        // an unread table is write amplification with a schema.
-        let noa = epoch_store.protocol_config().noa_checkpoints();
-
-        batch.insert_batch(
-            &tables.verified_dwallet_checkpoint_messages,
-            [(
-                self.consensus_round,
-                self.verified_dwallet_checkpoint_messages,
-            )],
-        )?;
-        if noa {
-            batch.insert_batch(
-                &tables.verified_system_checkpoint_messages,
-                [(
-                    self.consensus_round,
-                    self.verified_system_checkpoint_messages,
-                )],
-            )?;
-        }
-
         batch.insert_batch(
             &tables.end_of_publish,
             self.end_of_publish_votes
@@ -6964,46 +6841,6 @@ mod tests {
     };
     use tokio::time::advance;
 
-    /// `next_round_row` must return the first row STRICTLY after the anchor —
-    /// including when the anchor row itself is ABSENT from the table. The
-    /// previous `nth(1)` pattern positioned the iterator at the lower bound
-    /// and skipped one entry, which consumed the first UNREAD row as the
-    /// skip target whenever the anchor row was missing — and because every
-    /// per-round stream would skip the same round in lockstep, the
-    /// dense-stream alignment checks (which compare the streams to each
-    /// other) could never catch it.
-    ///
-    /// Retargeted at `verified_dwallet_checkpoint_messages` now that the
-    /// eight projection streams are gone. `next_round_row`'s only remaining
-    /// consumers are the two `next_verified_*` accessors, which themselves
-    /// have no caller since the drain moved to the channel — if those go, so
-    /// do the helper and this test.
-    #[tokio::test]
-    async fn next_round_row_does_not_skip_a_live_round_when_the_anchor_row_is_absent() {
-        let dir = tempfile::tempdir().unwrap();
-        let tables = AuthorityEpochTables::open(0, dir.path(), None);
-        let messages = &tables.verified_dwallet_checkpoint_messages;
-
-        // Rounds 1, 2, 3, 6, 7 present — a gap at 4..=5.
-        for round in [1u64, 2, 3, 6, 7] {
-            messages
-                .insert(&round, &Vec::<DWalletCheckpointMessageKind>::new())
-                .unwrap();
-        }
-
-        // Fresh start: the first row.
-        assert_eq!(next_round_row(messages, None).unwrap().unwrap().0, 1);
-        // Anchor present: the strictly-next row, across a gap too.
-        assert_eq!(next_round_row(messages, Some(1)).unwrap().unwrap().0, 2);
-        assert_eq!(next_round_row(messages, Some(3)).unwrap().unwrap().0, 6);
-        // Anchor ABSENT (no row at 4): the first live row after it — round 6
-        // — must be RETURNED, not consumed as the skip target. (`nth(1)`
-        // returned round 7 here, silently dropping round 6.)
-        assert_eq!(next_round_row(messages, Some(4)).unwrap().unwrap().0, 6);
-        // Past the end: no row, and no wraparound at the maximum round.
-        assert!(next_round_row(messages, Some(7)).unwrap().is_none());
-        assert!(next_round_row(messages, Some(u64::MAX)).unwrap().is_none());
-    }
     use crate::dwallet_checkpoints::DWalletCheckpointService;
     use crate::handoff_cert::{build_handoff_attestation, sign_handoff_attestation};
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
@@ -9844,16 +9681,15 @@ mod tests {
             .map(|entry| entry.field)
             .filter(|field| !after[field].is_empty())
             .collect();
-        // Five, not the eight this asserted before the round channel landed:
-        // the eight projection tables are gone, so a commit's MPC content
-        // reaches the drain over the channel and writes nothing here. What is
-        // left still spans four different kinds of write — the processed-marker
-        // set, the running stats, a fold output, a vote tally and the epoch
-        // clock anchor — which is what keeps the check meaningful. If it drops
-        // further, add a table-writing transaction kind to the fixture rather
-        // than lowering this.
+        // Four, not the eight this asserted before the round channel landed:
+        // all ten per-round tables are gone, so a commit's drain content
+        // reaches the MPC service over the channel and writes nothing here.
+        // What is left still spans four different kinds of write — the
+        // processed-marker set, the running stats, a vote tally and the epoch
+        // clock anchor. If it drops further, add a table-writing transaction
+        // kind to the fixture rather than lowering this again.
         assert!(
-            written.len() >= 5,
+            written.len() >= 4,
             "the commit boundary wrote only {} tables ({written:?}); this check would be \
              near-vacuous",
             written.len(),
@@ -9904,7 +9740,7 @@ mod tests {
         // Guards against the whole assertion below passing because the fold
         // wrote nothing at all.
         assert!(
-            populated_derived >= 5,
+            populated_derived >= 4,
             "the fold populated only {populated_derived} derived tables; the wipe assertion \
              would be near-vacuous",
         );
@@ -9969,7 +9805,7 @@ mod tests {
             })
             .count();
         assert!(
-            non_empty_first >= 5,
+            non_empty_first >= 4,
             "only {non_empty_first} derived tables held rows after the first fold; the \
              comparison below would be near-vacuous",
         );
