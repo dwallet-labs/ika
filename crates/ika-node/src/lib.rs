@@ -2175,10 +2175,10 @@ impl IkaNode {
 
         let (dwallet_mpc_service_exit_sender, dwallet_mpc_service_exit_receiver) =
             watch::channel(());
-        // The gauge publisher ends with the same epoch as the service it
-        // reports on, and on the same signal — but in a task of its own, so a
-        // wedged drain cannot take the reporting down with it.
-        let transport_gauges_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
+        // The transport's metrics publisher ends with the same epoch as the
+        // service it reports on, and on the same signal — but in a task of its
+        // own, so a wedged drain cannot take the reporting down with it.
+        let transport_metrics_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
         if let Err(e) =
             DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
         {
@@ -2321,16 +2321,16 @@ impl IkaNode {
         });
         let replay_waiter = consensus_manager.replay_waiter();
 
-        // The round transport's gauges are published from a task of their
-        // own, NOT from the drain: they exist to report a drain that stopped
-        // consuming, and a publisher inside that drain goes silent in exactly
-        // that case.
-        let transport_gauge_metrics = dwallet_mpc_metrics.clone();
-        let transport_gauge_epoch_store = epoch_store.clone();
-        spawn_monitored_task!(DWalletMPCService::publish_round_transport_gauges(
-            transport_gauge_epoch_store,
-            transport_gauge_metrics,
-            transport_gauges_exit_receiver,
+        // The round transport's depth and blocked figures are published from a
+        // task of their own, NOT from the drain: they exist to report a drain
+        // that stopped consuming, and a publisher inside that drain goes
+        // silent in exactly that case.
+        let transport_publisher_metrics = dwallet_mpc_metrics.clone();
+        let transport_publisher_epoch_store = epoch_store.clone();
+        spawn_monitored_task!(DWalletMPCService::publish_round_transport_metrics(
+            transport_publisher_epoch_store,
+            transport_publisher_metrics,
+            transport_metrics_exit_receiver,
         ));
 
         // Spawn the dWallet MPC Service now that we are done with bootstrapping both

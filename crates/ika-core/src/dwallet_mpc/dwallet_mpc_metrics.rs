@@ -22,10 +22,11 @@
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use ika_types::messages_dwallet_mpc::SessionType;
 use prometheus::{
-    GaugeVec, Histogram, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    GaugeVec, Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
     register_gauge_vec_with_registry, register_histogram_vec_with_registry,
     register_histogram_with_registry, register_int_counter_vec_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    register_int_counter_with_registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry,
 };
 use std::iter;
 use std::sync::Arc;
@@ -129,11 +130,18 @@ pub struct DWalletMPCMetrics {
     pub(crate) round_channel_depth: IntGauge,
     /// Cumulative seconds the consensus fold has spent parked on a full
     /// round channel, including a park still in progress.
-    pub(crate) fold_blocked_seconds_total: IntGauge,
+    ///
+    /// A counter rather than a gauge, and not only for the naming rule: the
+    /// transport is per-epoch and its park accounting restarts at zero on
+    /// every boundary, so a gauge fed from it would fall back to zero four
+    /// times a day and `increase()` over the alerting window would be
+    /// meaningless. The publisher feeds the per-sample delta instead, which
+    /// makes this monotonic for the life of the process.
+    pub(crate) fold_blocked_seconds_total: IntCounter,
     /// Rounds the fold has had to park on. Pairs with the seconds above:
     /// seconds climbing while this is FLAT is one endless park (a wedged
     /// drain); both climbing together is a drain that is merely slow.
-    pub(crate) fold_blocked_sends_total: IntGauge,
+    pub(crate) fold_blocked_sends_total: IntCounter,
 
     /// Computation spawn decisions withheld by catch-up mode. Labels:
     /// `session_type` (only the suppressible types — `user` /
@@ -624,7 +632,7 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
-            fold_blocked_seconds_total: register_int_gauge_with_registry!(
+            fold_blocked_seconds_total: register_int_counter_with_registry!(
                 "ika_consensus_fold_blocked_seconds_total",
                 "Cumulative seconds the consensus fold spent waiting for room in the MPC \
                  round channel. Climbing while ika_dwallet_mpc_consumed_round is flat is a \
@@ -633,7 +641,7 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
-            fold_blocked_sends_total: register_int_gauge_with_registry!(
+            fold_blocked_sends_total: register_int_counter_with_registry!(
                 "ika_consensus_fold_blocked_sends_total",
                 "Consensus rounds the fold had to wait to hand over. Read with \
                  ika_consensus_fold_blocked_seconds_total: seconds climbing while this stays \

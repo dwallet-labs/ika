@@ -345,14 +345,21 @@ that queue and they have different bounds:
   `ika_consensus_fold_blocked_seconds_total` and
   `ika_consensus_fold_blocked_sends_total` are the monitoring for it.
 
-Three things about those gauges are load-bearing rather than incidental, and
-each was a defect before it was a property:
+Four things about those three series are load-bearing rather than incidental,
+and each was a defect before it was a property:
 
 - they are published by a task of their own
-  (`DWalletMPCService::publish_round_transport_gauges`), not from inside the
+  (`DWalletMPCService::publish_round_transport_metrics`), not from inside the
   drain. A publisher living in the drain stops publishing in exactly the case
-  the gauges are named for, freezing at its last healthy values while an
-  operator reads a node with nothing to do;
+  they are named for, freezing at its last healthy values while an operator
+  reads a node with nothing to do;
+- the two `_total` series are process-lifetime **counters** fed the per-sample
+  delta, not the transport's own figures copied over. The transport is
+  per-epoch and its park accounting restarts at zero at every boundary, so a
+  gauge holding its absolute value would fall to zero several times a day —
+  destroying the slope reading below whenever a boundary lands in the alerting
+  window. Depth stays a gauge; it is an instantaneous value and resetting with
+  the epoch is correct for it;
 - blocked seconds include the park **still in progress**, added on read from a
   stored park-start. Accruing only when a park ends would leave the one wedge
   worth alarming on — a fold parked forever — contributing nothing, ever;

@@ -256,6 +256,13 @@ construction; divergence = determinism bug).
   `ika_dwallet_mpc_consumed_round` is flat and
   `ika_consensus_round_channel_depth` sits at capacity. Check that pair
   before concluding the node is healthy because nothing alarmed.
+  `ika_consensus_fold_blocked_sends_total` tells a wedge from a merely
+  slow drain: flat while the seconds climb is ONE park that never ended;
+  climbing alongside them is many short parks, i.e. a drain that is
+  behind but alive (the reading table is in
+  [`production-alerts.md`](production-alerts.md)). The seconds gauge
+  counts the park still in progress, so a permanently parked fold keeps
+  moving it — a flat reading is evidence, not a gap in the metric.
 - **The log's absence of a line is only meaningful at the right
   RUST_LOG.** Several load-bearing lines are debug-level; at info, do
   not conclude "X never happened" for a debug-level X.

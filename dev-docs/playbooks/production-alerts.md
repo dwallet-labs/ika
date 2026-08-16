@@ -151,9 +151,14 @@ pair, and the distinction decides the response:
 | climbing | **flat** | one endless park: the drain has stopped consuming |
 | flat | flat | the fold is not waiting at all |
 
-The three gauges are published by a task of their own rather than by the
-drain, precisely so they keep reporting when the drain is the thing that
-broke.
+All three are published by a task of their own rather than by the drain,
+precisely so they keep reporting when the drain is the thing that broke. The
+two `_total` series are process-lifetime counters fed the per-sample delta,
+not the transport's own figures copied across: the transport is per-epoch and
+its park accounting restarts at zero at every boundary, which would otherwise
+drop the series several times a day and break exactly the climbing-versus-flat
+reading above. `ika_consensus_round_channel_depth` is a gauge, and resets with
+the epoch because depth is an instantaneous value.
 
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
 restarted mid-epoch refolds the epoch from its first commit, so its raw lag

@@ -670,11 +670,12 @@ impl DWalletMPCService {
         }
     }
 
-    /// Publishes the round transport's gauges until the epoch ends.
+    /// Publishes the round transport's depth gauge and blocked counters until
+    /// the epoch ends.
     ///
-    /// A task of its own, and that is the entire point. These two gauges are
-    /// the only place a WEDGED drain shows: the commit-liveness watchdog holds
-    /// its clock while the fold is parked (correctly — a parked fold is not an
+    /// A task of its own, and that is the entire point. These are the only
+    /// place a WEDGED drain shows: the commit-liveness watchdog holds its
+    /// clock while the fold is parked (correctly — a parked fold is not an
     /// isolated node), so nothing exits and nothing else alarms. Published
     /// from inside the drain's own loop, they would stop being written by
     /// precisely the failure they exist to report, freezing at their last
@@ -683,12 +684,23 @@ impl DWalletMPCService {
     /// Sampling rather than event-driven, at a period well under a scrape
     /// interval: a wedge is measured in minutes and the values are cheap
     /// atomic loads.
-    pub async fn publish_round_transport_gauges(
+    ///
+    /// The two blocked figures are published as DELTAS onto process-lifetime
+    /// counters rather than set as absolute values. The transport is
+    /// per-epoch, so its own totals restart at zero at every boundary; copying
+    /// them across would drop the exported series to zero several times a day
+    /// and make the "climbing versus flat" reading — the whole wedge signal —
+    /// unreadable exactly when a boundary is in the alerting window. Both
+    /// figures are monotonic within one transport, so the delta is always
+    /// non-negative, and a fresh epoch's first sample is its own total.
+    pub async fn publish_round_transport_metrics(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         exit: Receiver<()>,
     ) {
         const PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+        let mut published_blocked_seconds = 0;
+        let mut published_blocked_sends = 0;
         loop {
             if matches!(exit.has_changed(), Ok(true) | Err(_)) {
                 return;
@@ -697,12 +709,18 @@ impl DWalletMPCService {
                 dwallet_mpc_metrics
                     .round_channel_depth
                     .set(transport.queue_depth() as i64);
+
+                let blocked_seconds = transport.blocked_nanos() / 1_000_000_000;
                 dwallet_mpc_metrics
                     .fold_blocked_seconds_total
-                    .set((transport.blocked_nanos() / 1_000_000_000) as i64);
+                    .inc_by(blocked_seconds.saturating_sub(published_blocked_seconds));
+                published_blocked_seconds = blocked_seconds;
+
+                let blocked_sends = transport.blocked_sends();
                 dwallet_mpc_metrics
                     .fold_blocked_sends_total
-                    .set(transport.blocked_sends() as i64);
+                    .inc_by(blocked_sends.saturating_sub(published_blocked_sends));
+                published_blocked_sends = blocked_sends;
             }
             tokio::time::sleep(PUBLISH_INTERVAL).await;
         }
@@ -1351,13 +1369,13 @@ impl DWalletMPCService {
         self.dwallet_mpc_manager
             .observe_consensus_round_gap(observed_head, self.last_read_consensus_round);
 
-        // The transport's own gauges are deliberately NOT published here.
-        // They exist to report a drain that has stopped consuming, and a
-        // publisher living inside that drain stops publishing in exactly that
-        // case — the gauges would freeze at their last healthy values and the
-        // wedge would look like a node with nothing to do. They are published
-        // by `publish_round_transport_gauges`, which shares fate with nothing
-        // but the runtime.
+        // The transport's own depth and blocked figures are deliberately NOT
+        // published here. They exist to report a drain that has stopped
+        // consuming, and a publisher living inside that drain stops publishing
+        // in exactly that case — the series would freeze at their last healthy
+        // values and the wedge would look like a node with nothing to do. They
+        // are published by `publish_round_transport_metrics`, which shares fate
+        // with nothing but the runtime.
 
         loop {
             // Borrow the receiver only for the receive, so the rest of the

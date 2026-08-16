@@ -91,6 +91,13 @@ inside that consumer's own loop, they stop being written by precisely the
 failure they name — freezing at their last healthy values while an operator
 reads a node that looks idle.
 
+And export the cumulative ones as **counters fed the per-sample delta**, never
+as gauges holding the transport's own total. A transport is per-epoch; its
+totals restart at zero at every boundary, and a series that drops to zero
+several times a day cannot carry the climbing-versus-flat reading the wedge
+signal depends on. Depth is the exception and stays a gauge: it is an
+instantaneous value, and resetting with the epoch is correct for it.
+
 ## 4b. A consumer's receive path must never wait on consensus
 
 The code that takes rounds off the channel — and everything it calls — must
