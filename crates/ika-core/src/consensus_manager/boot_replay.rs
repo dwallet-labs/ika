@@ -234,7 +234,9 @@ mod tests {
 
     use super::*;
     use crate::authority::AuthorityMetrics;
-    use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochStoreParams};
+    use crate::authority::authority_per_epoch_store::{
+        AuthorityPerEpochStore, EPOCH_STATE_REGISTRY, EpochStoreParams,
+    };
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::consensus_handler::ConsensusCommitSink;
     use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
@@ -477,6 +479,76 @@ mod tests {
             commits as usize,
             "the per-round stream is not dense across the batch boundary",
         );
+    }
+
+    /// Folding the epoch twice through the REAL path — commits read from a
+    /// RocksDB consensus store, rebuilt into `CommittedSubDag`s, folded by
+    /// `handle_consensus_commit` — must produce byte-identical derived state,
+    /// with the wipe as the only difference between the two runs.
+    ///
+    /// The epoch store's own double-fold test covers breadth: it drives many
+    /// transaction kinds through the commit boundary and so populates most of
+    /// the derived tables. It cannot cover the path, because the test DAG's
+    /// blocks cannot carry ika transactions (`LayerBuilder::num_transactions`
+    /// emits fixed dummy bytes that ika's decoder rejects, and
+    /// `TrustedCommit`'s test constructor is `pub(crate)`). This test covers
+    /// the path and not the breadth. Neither subsumes the other, and the
+    /// property — derived state is a function of the commits and nothing else
+    /// — needs both.
+    #[tokio::test]
+    async fn replaying_the_same_store_twice_rebuilds_identical_derived_state() {
+        let (consensus_dir, context) = consensus_store_with(7, 7);
+        let epoch_dir = TempDir::new().unwrap();
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        // First run: an empty store folded once per commit, in order — what a
+        // validator that never crashed would have built.
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ false);
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let folded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        assert_eq!(folded, 7);
+
+        let tables = epoch_store.tables().unwrap();
+        let first: BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>> = EPOCH_STATE_REGISTRY
+            .iter()
+            .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
+            .collect();
+        let populated = first.values().filter(|rows| !rows.is_empty()).count();
+        assert!(
+            populated >= 4,
+            "only {populated} tables held rows after the first fold; the comparison below \
+             would be near-vacuous",
+        );
+        // Release the RocksDB handles before reopening the same path. The
+        // handler holds its own `Arc` to the store, so dropping ours is not
+        // enough — which is the in-process stand-in for the process exit a
+        // real restart would have done.
+        drop(tables);
+        drop(handler);
+        epoch_store.release_db_handles();
+        drop(epoch_store);
+
+        // Second run: the same store, reopened the way a validator boots.
+        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let tables = epoch_store.tables().unwrap();
+        assert!(
+            tables.non_empty_derived_tables().is_empty(),
+            "the reopen did not wipe; the second fold would land on the first's output",
+        );
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let refolded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        assert_eq!(refolded, folded);
+
+        for entry in EPOCH_STATE_REGISTRY {
+            assert_eq!(
+                tables.classified_table_rows(entry.field),
+                first[entry.field],
+                "`{}` (classified {}) did not come back identical when the same consensus \
+                 store was replayed a second time",
+                entry.field,
+                entry.class,
+            );
+        }
     }
 
     /// A commit below the last finalized one but missing its rejected-transaction
