@@ -1609,7 +1609,7 @@ fn locally_minted_pool_ordinals(
 /// fresh process re-creates them); the epoch store is the only survivor.
 /// `last_session_to_complete_in_current_epoch` is restored directly, exactly
 /// as the tests around network-key creation set it.
-fn restart_validator_zero(
+async fn restart_validator_zero(
     test_state: &mut IntegrationTestState,
     seeds: &HashMap<AuthorityName, RootSeed>,
     bundles: &OffChainCommitteeBundles,
@@ -1632,6 +1632,12 @@ fn restart_validator_zero(
     test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager_mut()
         .last_session_to_complete_in_current_epoch = 400;
+    // The boot replay, in harness form: the replacement service brought a
+    // fresh transport with it, so the epoch's rounds have to be re-fed into it
+    // or the restarted validator would sit at round zero while its peers run
+    // on. A real node gets this by folding the epoch's commits out of the
+    // consensus store.
+    test_state.epoch_stores[0].replay_recorded_rounds().await;
 }
 
 /// Regression test for issue #1952: `next_internal_presign_sequence_number`
@@ -1774,7 +1780,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
         )
         .expect("insert_presigns");
 
-    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    restart_validator_zero(&mut test_state, &seeds, &bundles).await;
     assert!(
         test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
@@ -1936,7 +1942,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
         .max_filled_presign_pool_slot(algorithm, network_key_id)
         .expect("max_filled_presign_pool_slot")
         .expect("phase 3 refilled the pool");
-    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    restart_validator_zero(&mut test_state, &seeds, &bundles).await;
     while test_state.epoch_stores[0]
         .pop_presign_for_testing(algorithm, network_key_id)
         .expect("pop_presign_for_testing")

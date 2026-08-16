@@ -84,6 +84,12 @@ pub const DEFAULT_ROUND_CHANNEL_CAPACITY: usize = 1024;
 /// Owned rather than referenced, because it crosses a channel: the fold is
 /// free of it the moment the drain has it, and its cost is bounded by the
 /// channel capacity rather than by how far behind the drain has fallen.
+///
+/// `Clone` is for the integration harness only: production hands each payload
+/// to the drain exactly once. The harness keeps a copy so a restarted service
+/// can be re-fed the epoch's rounds, which is what the boot replay does on a
+/// real node — see `integration_tests::utils::replay_recorded_rounds`.
+#[derive(Clone)]
 pub struct ConsensusRoundPayload {
     pub round: Round,
     pub mpc_messages: Vec<DWalletMPCMessage>,

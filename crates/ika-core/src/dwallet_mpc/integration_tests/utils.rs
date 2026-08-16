@@ -132,6 +132,17 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// see what was distributed read it here instead of from anything the
     /// service consumes.
     pub(crate) delivered_rounds: Arc<Mutex<Vec<DeliveredRound>>>,
+    /// Full copies of those same rounds, kept so a restarted service can be
+    /// re-fed them — the harness's stand-in for the boot replay.
+    ///
+    /// On a real node a restart re-derives every round by folding the epoch's
+    /// commits out of the consensus store, which re-sends each one into the
+    /// fresh transport the new service brought with it. The harness has no
+    /// consensus store to fold, and rounds no longer survive in tables the way
+    /// they did before the transport, so without this a restarted service
+    /// would sit at round zero forever while its peers ran on — a harness
+    /// artifact that reads exactly like a replay bug.
+    pub(crate) replayable_rounds: Arc<Mutex<Vec<ConsensusRoundPayload>>>,
     /// Terminal resolution of each NOA sign demand, keyed by demand-id digest:
     /// the presign assigned to it in consensus order, or the marker that the
     /// park bound dropped it. Mirrors the real store's
@@ -255,6 +266,7 @@ impl TestingAuthorityPerEpochStore {
             .lock()
             .unwrap()
             .push(DeliveredRound::from(&payload));
+        self.replayable_rounds.lock().unwrap().push(payload.clone());
         // The head the catch-up gate measures against. Production feeds this
         // from the boot replay's target and from the consensus store's head;
         // in the harness the distributor IS the network, so the round it just
@@ -262,6 +274,23 @@ impl TestingAuthorityPerEpochStore {
         self.observed_consensus_head_round
             .fetch_max(payload.round, Ordering::AcqRel);
         self.round_sender.load_full().send(payload).await;
+    }
+
+    /// Re-feeds every round this store ever delivered, in order, into the
+    /// transport a restarted service is holding — the harness's boot replay.
+    ///
+    /// Call it after building the replacement service (which installs the
+    /// fresh transport) and before driving it, mirroring the real order: wipe,
+    /// replay to the store head, then run. The rounds are re-sent, not
+    /// re-derived, so what the drain sees is byte-identical to what it saw the
+    /// first time — which is the property the real replay provides by folding
+    /// the same commits.
+    pub(crate) async fn replay_recorded_rounds(&self) {
+        let rounds = self.replayable_rounds.lock().unwrap().clone();
+        let sender = self.round_sender.load_full();
+        for payload in rounds {
+            sender.send(payload).await;
+        }
     }
 
     /// The receiver for a service being built over this store.
@@ -297,6 +326,7 @@ impl TestingAuthorityPerEpochStore {
             observed_consensus_head_round: std::sync::atomic::AtomicU64::new(0),
             mpc_reported_catching_up: std::sync::atomic::AtomicBool::new(false),
             delivered_rounds: Arc::new(Mutex::new(Vec::new())),
+            replayable_rounds: Arc::new(Mutex::new(Vec::new())),
             noa_presign_demand_resolutions: Arc::new(Mutex::new(HashMap::new())),
             served_global_presigns: Arc::new(Mutex::new(HashMap::new())),
             presign_pools: Arc::new(Mutex::new(Default::default())),

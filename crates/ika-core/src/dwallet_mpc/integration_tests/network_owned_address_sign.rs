@@ -1838,7 +1838,7 @@ fn build_restartable_test_state() -> (
 /// epoch store — the in-process mid-epoch restart: every in-memory structure
 /// starts empty and the round cursor rewinds, while the store survives to be
 /// replayed.
-fn restart_target_validator(
+async fn restart_target_validator(
     test_state: &mut IntegrationTestState,
     seeds: &HashMap<AuthorityName, RootSeed>,
     bundles: &OffChainCommitteeBundles,
@@ -1864,6 +1864,13 @@ fn restart_target_validator(
         .last_session_to_complete_in_current_epoch = 400;
     test_state.dwallet_mpc_services[PARK_TEST_TARGET]
         .set_noa_presign_demand_park_rounds_for_testing(park_rounds);
+    // The boot replay, in harness form: the replacement service brought a
+    // fresh transport, so the epoch's rounds must be re-fed into it. Without
+    // this the replayed drain sees NOTHING and this test would pass for the
+    // wrong reason — nothing is resurrected because nothing is replayed.
+    test_state.epoch_stores[PARK_TEST_TARGET]
+        .replay_recorded_rounds()
+        .await;
 }
 
 /// A restart must not resurrect a demand the park bound already dropped.
@@ -1923,7 +1930,7 @@ async fn test_restart_does_not_resurrect_a_dropped_noa_presign_demand() {
 
     // Restart: in-memory state is gone, the epoch store (rounds AND pool)
     // survives, and the round cursor rewinds so every round is re-drained.
-    restart_target_validator(&mut test_state, &seeds, &bundles, PARK_ROUNDS);
+    restart_target_validator(&mut test_state, &seeds, &bundles, PARK_ROUNDS).await;
     flow_consensus_rounds(&mut test_state, 3).await;
 
     assert_eq!(
