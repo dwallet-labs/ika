@@ -12,6 +12,7 @@ use ika_sui_client::ika_protocol_transactions::{
     set_paused_curves_and_signature_algorithms, set_supported_and_pricing, try_migrate_coordinator,
     try_migrate_coordinator_by_cap, try_migrate_system, try_migrate_system_by_cap,
 };
+use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::sui::{PricingInfoKey, PricingInfoValue};
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,6 @@ use std::{
     fs,
     path::PathBuf,
 };
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
@@ -173,7 +173,7 @@ pub enum IkaProtocolCommandResponse {
 impl IkaProtocolCommand {
     pub async fn execute(
         self,
-        context: &mut WalletContext,
+        context: &mut impl TransactionContext,
     ) -> Result<IkaProtocolCommandResponse, anyhow::Error> {
         let response = match self {
             IkaProtocolCommand::SetApprovedUpgradeByCap {

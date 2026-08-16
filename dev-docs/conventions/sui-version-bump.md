@@ -17,8 +17,8 @@ the locations below and runs in CI; it fails the build on drift.
    sed -i "" "s/mainnet-v<OLD>/mainnet-v<NEW>/g" Cargo.toml   # adjust flavor if moving to/from testnet-v
    cargo update   # refresh Cargo.lock for the new revs
    ```
-   Also copy the `sui-rust-sdk` revision used by that Sui tag into `sui-rpc`,
-   `sui-sdk-types`, and `sui-transaction-builder`. Keeping the old SDK revision
+   Also copy the `sui-rust-sdk` revision used by that Sui tag into `sui-crypto`,
+   `sui-rpc`, `sui-sdk-types`, and `sui-transaction-builder`. Keeping the old SDK revision
    can compile while silently desynchronizing the client protobuf/BCS and
    transaction-building surfaces from the fullnode implementation.
 2. **Excluded workspaces** — `sdk/ika-wasm` (and any other

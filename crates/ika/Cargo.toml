@@ -36,7 +36,6 @@ colored.workspace = true
 
 telemetry-subscribers.workspace = true
 
-sui.workspace = true
 sui-config.workspace = true
 
 sui-keys.workspace = true

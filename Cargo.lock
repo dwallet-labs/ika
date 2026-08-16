@@ -6900,7 +6900,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
- "sui",
  "sui-config",
  "sui-keys",
  "sui-sdk",
@@ -7222,14 +7221,18 @@ dependencies = [
  "prost-types 0.14.4",
  "serde",
  "serde_json",
+ "serde_yaml 0.9.34+deprecated",
  "shared-crypto",
  "sui-config",
+ "sui-crypto",
  "sui-keys",
  "sui-rpc",
  "sui-sdk",
  "sui-sdk-types",
  "sui-storage",
+ "sui-transaction-builder 0.3.2",
  "sui-types",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tonic 0.14.6",
@@ -7282,7 +7285,6 @@ dependencies = [
  "rand 0.8.7",
  "serde",
  "serde_with",
- "shared-crypto",
  "sui",
  "sui-config",
  "sui-keys",
@@ -15927,6 +15929,7 @@ dependencies = [
  "hyper",
  "prost 0.14.4",
  "prost-types 0.14.4",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sui-crypto",
@@ -16366,12 +16369,12 @@ version = "0.3.2"
 source = "git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8#5781b718f2dbe43c8ce3de6f84fbd82c90f52aa8"
 dependencies = [
  "async-trait",
- "bcs",
+ "bcs 0.1.6",
  "futures",
  "serde",
  "sui-rpc",
  "sui-sdk-types",
- "thiserror 2.0.12",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -16586,17 +16589,6 @@ name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",

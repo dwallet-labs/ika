@@ -19,12 +19,11 @@ use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::ika_dwallet_transactions;
 use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
 use move_core_types::language_storage::StructTag;
 use serde::Serialize;
-use sui_keys::keystore::AccountKeystore;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::Coin;
 use sui_types::effects::TransactionEffectsAPI;
@@ -820,7 +819,7 @@ fn tx_response_to_output(response: &ExecutedTransaction) -> IkaDWalletCommandRes
 
 /// Find the first created object whose type name contains `type_substr`.
 async fn find_created_object_by_type(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     response: &ExecutedTransaction,
     type_substr: &str,
 ) -> Option<ObjectID> {
@@ -852,7 +851,7 @@ async fn find_created_object_by_type(
 
 /// Fetch transaction events by digest.
 async fn fetch_tx_events(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     digest: &str,
 ) -> Option<Vec<(String, serde_json::Value)>> {
     let grpc_client = create_grpc_client(context).await.ok()?;
@@ -929,7 +928,7 @@ fn extract_nested_event_field(
 }
 
 /// Extract the sign session object ID from a sign transaction's events.
-async fn find_sign_session_id(context: &WalletContext, digest: &str) -> Option<String> {
+async fn find_sign_session_id(context: &impl TransactionContext, digest: &str) -> Option<String> {
     fetch_tx_events(context, digest)
         .await
         .as_deref()
@@ -944,7 +943,7 @@ enum SignSessionResult {
 
 /// Poll a sign session until it reaches Completed or NetworkRejected state.
 async fn poll_sign_session(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     sign_session_id: ObjectID,
 ) -> Result<SignSessionResult> {
     let grpc_client = create_grpc_client(context).await?;
@@ -1237,7 +1236,7 @@ fn derive_encryption_keys(
 ///
 /// Address-based formula: `seed = keccak256(keypair_bytes || index_le_bytes)`
 fn resolve_seed(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     seed_file: Option<PathBuf>,
     address: Option<SuiAddress>,
     index: u32,
@@ -1261,10 +1260,9 @@ fn resolve_seed(
         None => context.active_address()?,
     };
 
-    let sui_keypair = context.config.keystore.export(&addr).with_context(|| {
+    let sk_bytes = context.keypair_bytes(addr).with_context(|| {
         format!("Cannot export key for address {addr}. Is it in your Sui keystore?")
     })?;
-    let sk_bytes = sui_keypair.to_bytes();
 
     use fastcrypto::hash::{HashFunction, Keccak256};
     let mut hasher = Keccak256::default();
@@ -1277,20 +1275,20 @@ fn resolve_seed(
 }
 
 /// Get the active Sui gRPC client.
-async fn create_grpc_client(context: &WalletContext) -> Result<SuiGrpcClient> {
-    SuiGrpcClient::new(&context.get_active_env()?.rpc)
+async fn create_grpc_client(context: &impl TransactionContext) -> Result<SuiGrpcClient> {
+    SuiGrpcClient::new(context.rpc_url()?)
         .await
         .context("Failed to create Sui gRPC client")
 }
 
 /// Create a SuiConnectorClient for read-only queries (coordinator, network keys, pricing).
 async fn create_sui_client(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     config_path: &PathBuf,
 ) -> Result<SuiConnectorClient> {
     let config = read_ika_sui_config_yaml(context, config_path)?;
     SuiConnectorClient::new_grpc(
-        &context.get_active_env()?.rpc,
+        context.rpc_url()?,
         SuiClientMetrics::new_for_testing(),
         config,
     )
@@ -1311,7 +1309,7 @@ struct NetworkKeyInfo {
 /// When `specific_key_id` is provided (e.g. from `dWallet.dwallet_network_encryption_key_id`),
 /// uses that exact key. Otherwise falls back to the latest network key.
 async fn get_network_key_info(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     config_path: &PathBuf,
     curve_id: u32,
 ) -> Result<NetworkKeyInfo> {
@@ -1319,7 +1317,7 @@ async fn get_network_key_info(
 }
 
 async fn get_network_key_info_for(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     config_path: &PathBuf,
     specific_key_id: Option<ObjectID>,
     curve_id: u32,
@@ -1401,7 +1399,7 @@ async fn find_ika_coin(
 /// SUI coin: passed through as-is. When `None`, the transaction functions use the
 /// gas coin directly (like the TypeScript SDK's `transaction.gas`).
 async fn resolve_payment_coins(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     config: &IkaNetworkConfig,
     payment: &PaymentArgs,
 ) -> Result<ika_dwallet_transactions::PaymentCoinArgs> {
@@ -1446,7 +1444,7 @@ async fn resolve_payment_coins(
 /// Returns `true` if the object type contains "VerifiedPresignCap",
 /// `false` if it contains "UnverifiedPresignCap".
 async fn is_presign_cap_verified(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     presign_cap_id: ObjectID,
 ) -> Result<bool> {
     let grpc_client = create_grpc_client(context).await?;
@@ -1505,7 +1503,7 @@ async fn list_owned_objects_with_json(
 
 /// Fetch dWallet metadata (curve, DKG output) from chain using the dWallet object ID.
 async fn fetch_dwallet_metadata(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     dwallet_id: ObjectID,
 ) -> Result<DWalletMetadata> {
     let grpc_client = create_grpc_client(context).await?;
@@ -1555,7 +1553,7 @@ struct DWalletMetadata {
 /// Reads the VerifiedPresignCap to get the presign_id, then reads the PresignSession
 /// to extract state.Completed.presign bytes.
 async fn fetch_presign_output(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     presign_cap_id: ObjectID,
 ) -> Result<Vec<u8>> {
     let grpc_client = create_grpc_client(context).await?;
@@ -1631,7 +1629,7 @@ fn extract_u32_from_json(value: &serde_json::Value) -> Option<u32> {
 impl IkaDWalletCommand {
     pub async fn execute(
         self,
-        context: &mut WalletContext,
+        context: &mut impl TransactionContext,
         json: bool,
         quiet: bool,
         global_ika_config: Option<PathBuf>,
@@ -3144,7 +3142,7 @@ impl IkaDWalletCommand {
 
 /// Poll a presign session until it reaches Completed state.
 async fn poll_presign_until_complete(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     presign_id: ObjectID,
     timeout_secs: u64,
 ) -> Result<()> {
@@ -3186,7 +3184,7 @@ async fn poll_presign_until_complete(
 
 /// Wait for a presign to complete, then verify the cap. Returns the verified cap ID.
 async fn wait_and_verify_presign(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     config: &IkaNetworkConfig,
     presign_id: ObjectID,
     unverified_cap_id: ObjectID,
@@ -3226,7 +3224,7 @@ async fn wait_and_verify_presign(
 /// 3. On-chain decryption — fetch the encrypted share from the dWallet object, derive the
 ///    decryption key from the user's Sui keystore, and decrypt locally.
 async fn resolve_secret_share(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     secret_share_file: Option<PathBuf>,
     secret_share_hex: Option<String>,
     dwallet_id: Option<ObjectID>,
@@ -3288,7 +3286,7 @@ async fn resolve_secret_share(
 /// (not the Sui wallet address), so we compute it from seed args.
 async fn fetch_encrypted_share_for_dwallet(
     grpc_client: &SuiGrpcClient,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     dwallet_id: ObjectID,
     curve_id: u32,
     seed: &SeedArgs,
@@ -3375,7 +3373,7 @@ async fn fetch_encrypted_share_for_dwallet(
 
 /// Resolve presign output: use provided hex string or auto-fetch from the presign cap on chain.
 async fn resolve_presign_output(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     presign_output: Option<String>,
     presign_cap_id: ObjectID,
 ) -> Result<Vec<u8>> {

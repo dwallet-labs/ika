@@ -34,9 +34,6 @@ use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use serde::Serialize;
-use shared_crypto::intent::Intent;
-use sui_keys::keystore::AccountKeystore;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
@@ -47,6 +44,8 @@ use sui_types::transaction::{Command, TransactionData};
 use sui_types::{MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID};
 
 use crate::grpc::SuiGrpcClient;
+use crate::transaction_builder::build_transaction_data;
+use crate::transaction_context::TransactionContext;
 use crate::transport::ExecutedTransaction;
 #[derive(Serialize)]
 pub struct BecomeCandidateValidatorData {
@@ -93,7 +92,7 @@ fn store_mcp_data_in_table_vec(
 
 /// Request to add a validator candidate transaction
 pub async fn request_add_validator_candidate(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     validator_initialization_metadata: &ValidatorInfo,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -113,7 +112,7 @@ pub async fn request_add_validator_candidate(
 
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    }) = SuiGrpcClient::connect(context.rpc_url()?)?
         .get_object(ika_system_object_id)
         .await
         .map(|o| o.owner().clone())
@@ -248,7 +247,7 @@ pub async fn request_add_validator_candidate(
         .map(|(reference, _)| reference.0)
         .collect::<Vec<_>>();
 
-    let grpc_client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let grpc_client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let mut validator_cap_id: Option<ObjectID> = None;
     let mut validator_operation_cap_id: Option<ObjectID> = None;
     let mut validator_commission_cap_id: Option<ObjectID> = None;
@@ -277,7 +276,7 @@ pub async fn request_add_validator_candidate(
         "failed to get validator commission cap object id",
     ))?;
 
-    let validator_cap_obj = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    let validator_cap_obj = SuiGrpcClient::connect(context.rpc_url()?)?
         .get_object(validator_cap_id)
         .await
         .map_err(|e| anyhow::anyhow!("failed to get validator cap object: {e}"))?;
@@ -299,7 +298,7 @@ pub async fn request_add_validator_candidate(
 }
 
 pub async fn stake_ika(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     ika_supply_id: ObjectID,
@@ -308,7 +307,7 @@ pub async fn stake_ika(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let ika_supply_ref = client.get_object_ref(ika_supply_id).await?;
 
     let ika_supply_id_arg =
@@ -342,13 +341,13 @@ pub async fn stake_ika(
 }
 
 pub async fn request_add_validator(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -374,13 +373,13 @@ pub async fn request_add_validator(
 }
 
 pub async fn request_remove_validator(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -402,13 +401,13 @@ pub async fn request_remove_validator(
 
 /// Request to remove a validator candidate transaction
 pub async fn request_remove_validator_candidate(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -435,14 +434,14 @@ pub async fn request_remove_validator_candidate(
 
 /// Set next commission rate for a validator
 pub async fn set_next_commission(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     new_commission_rate: u16,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -473,13 +472,13 @@ pub async fn set_next_commission(
 
 /// Withdraw stake from a validator's staking pool
 pub async fn withdraw_stake(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -506,13 +505,13 @@ pub async fn withdraw_stake(
 
 /// Request to withdraw stake from a validator's staking pool
 pub async fn request_withdraw_stake(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -537,14 +536,14 @@ pub async fn request_withdraw_stake(
 
 /// Report a validator as a bad or non-performant actor
 pub async fn report_validator(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     reportee_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -575,14 +574,14 @@ pub async fn report_validator(
 
 /// Undo a report_validator action
 pub async fn undo_report_validator(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     reportee_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -613,13 +612,13 @@ pub async fn undo_report_validator(
 
 /// Rotate operation cap for a validator
 pub async fn rotate_operation_cap(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -647,7 +646,7 @@ pub async fn rotate_operation_cap(
 }
 
 async fn construct_unsigned_ika_system_txn(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     sender: SuiAddress,
     function: &'static IdentStr,
     call_args: Vec<Argument>,
@@ -672,58 +671,32 @@ async fn construct_unsigned_ika_system_txn(
 }
 
 pub(crate) async fn construct_unsigned_txn(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     sender: SuiAddress,
     gas_budget: u64,
     ptb: ProgrammableTransactionBuilder,
 ) -> IkaResult<TransactionData> {
-    let sui_client = SuiGrpcClient::connect(
-        &context
-            .get_active_env()
-            .map_err(|_| IkaError::SuiSDKError)?
-            .rpc,
-    )
-    .map_err(|_| IkaError::SuiSDKError)?;
-    let gas_price = sui_client
-        .get_reference_gas_price()
-        .await
+    let sui_client = SuiGrpcClient::connect(context.rpc_url().map_err(|_| IkaError::SuiSDKError)?)
         .map_err(|_| IkaError::SuiSDKError)?;
-
-    let transaction =
-        TransactionData::new_programmable(sender, vec![], ptb.finish(), gas_budget, gas_price);
-    let simulation = sui_client
-        .simulate_transaction(&transaction, true)
+    build_transaction_data(&sui_client, sender, gas_budget, ptb.finish())
         .await
-        .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
-    if simulation.effects.status().is_err() {
-        let err_msg = format!("{:?}", simulation.effects.status());
-        tracing::debug!(?simulation.effects, "Dry run failed");
-        return Err(IkaError::DryRunFailed(err_msg));
-    }
-
-    Ok(simulation.transaction)
+        .map_err(|error| IkaError::DryRunFailed(error.to_string()))
 }
 
 pub async fn execute_transaction(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     tx_data: TransactionData,
 ) -> anyhow::Result<ExecutedTransaction> {
-    let sender = context.active_address()?;
-
-    let signature = context
-        .config
-        .keystore
-        .sign_secure(&sender, &tx_data, Intent::sui_transaction())
-        .await?;
+    let signature = context.sign_transaction(&tx_data).await?;
     let transaction = Transaction::from_data(tx_data, vec![signature]);
-    SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    SuiGrpcClient::connect(context.rpc_url()?)?
         .execute_transaction_and_wait(&transaction)
         .await
         .map_err(Into::into)
 }
 
 pub async fn call_ika_system(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     function: &'static IdentStr,
     call_args: Vec<Argument>,
     gas_budget: u64,
@@ -748,13 +721,13 @@ pub async fn call_ika_system(
 
 /// Rotate commission cap for a validator
 pub async fn rotate_commission_cap(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -783,14 +756,14 @@ pub async fn rotate_commission_cap(
 
 /// Collect commission from a validator
 pub async fn collect_commission(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_commission_cap_id: ObjectID,
     amount: Option<u64>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -823,14 +796,14 @@ pub async fn collect_commission(
 
 /// Set validator name
 pub async fn set_validator_name(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     name: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -861,7 +834,7 @@ pub async fn set_validator_name(
 
 /// Get validator metadata
 pub async fn validator_metadata(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_id: ObjectID,
@@ -890,14 +863,14 @@ pub async fn validator_metadata(
 
 /// Set validator metadata
 pub async fn set_validator_metadata(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     metadata: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -928,14 +901,14 @@ pub async fn set_validator_metadata(
 
 /// Set next epoch network address
 pub async fn set_next_epoch_network_address(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     network_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -966,14 +939,14 @@ pub async fn set_next_epoch_network_address(
 
 /// Set next epoch p2p address
 pub async fn set_next_epoch_p2p_address(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     p2p_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1004,14 +977,14 @@ pub async fn set_next_epoch_p2p_address(
 
 /// Set next epoch consensus address
 pub async fn set_next_epoch_consensus_address(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     consensus_address: String,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1042,7 +1015,7 @@ pub async fn set_next_epoch_consensus_address(
 
 /// Set next epoch protocol pubkey bytes
 pub async fn set_next_epoch_protocol_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1050,7 +1023,7 @@ pub async fn set_next_epoch_protocol_pubkey_bytes(
     proof_of_possession_bytes: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1084,14 +1057,14 @@ pub async fn set_next_epoch_protocol_pubkey_bytes(
 
 /// Set next epoch network pubkey bytes
 pub async fn set_next_epoch_network_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     network_pubkey: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1122,14 +1095,14 @@ pub async fn set_next_epoch_network_pubkey_bytes(
 
 /// Set next epoch consensus pubkey bytes
 pub async fn set_next_epoch_consensus_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     consensus_pubkey_bytes: Vec<u8>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1161,13 +1134,13 @@ pub async fn set_next_epoch_consensus_pubkey_bytes(
 
 /// Verify validator cap
 pub async fn verify_validator_cap(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1194,13 +1167,13 @@ pub async fn verify_validator_cap(
 
 /// Verify operation cap
 pub async fn verify_operation_cap(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1227,13 +1200,13 @@ pub async fn verify_operation_cap(
 
 /// Verify commission cap
 pub async fn verify_commission_cap(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_commission_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1258,13 +1231,13 @@ pub async fn verify_commission_cap(
     execute_transaction(context, tx_data).await
 }
 pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     next_mpc_data: &VersionedMPCData,
 ) -> Result<(ProgrammableTransactionBuilder, Argument), anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1291,7 +1264,7 @@ pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
 }
 
 pub async fn new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1328,7 +1301,7 @@ pub async fn new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
 
 /// Set next epoch MPC data bytes
 pub async fn set_next_epoch_mpc_data_bytes(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1389,7 +1362,7 @@ pub async fn set_next_epoch_mpc_data_bytes(
 
 /// Set pricing vote for DWallet operations
 pub async fn set_pricing_vote(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
@@ -1399,7 +1372,7 @@ pub async fn set_pricing_vote(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1498,12 +1471,12 @@ pub(crate) async fn new_pricing_info(
 }
 
 pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
 ) -> anyhow::Result<CallArg> {
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    }) = SuiGrpcClient::connect(context.rpc_url()?)?
         .get_object(ika_dwallet_2pc_mpc_coordinator_object_id)
         .await
         .map(|o| o.owner().clone())
@@ -1520,7 +1493,7 @@ pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
 }
 
 pub async fn add_ika_system_command_to_ptb(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     function: &IdentStr,
     call_args: Vec<Argument>,
     ika_system_object_id: ObjectID,
@@ -1529,7 +1502,7 @@ pub async fn add_ika_system_command_to_ptb(
 ) -> anyhow::Result<Argument> {
     let Some(Owner::Shared {
         initial_shared_version,
-    }) = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    }) = SuiGrpcClient::connect(context.rpc_url()?)?
         .get_object(ika_system_object_id)
         .await
         .map(|o| o.owner().clone())

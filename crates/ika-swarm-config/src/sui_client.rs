@@ -16,7 +16,10 @@ use ika_move_contracts::{
     save_mainnet_contracts_to_temp_dir, save_testnet_contracts_to_temp_dir,
 };
 use ika_protocol_config::Chain;
+use ika_sui_client::faucet::request_tokens_from_faucet;
 use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::transaction_builder::build_transaction_data;
+use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::ika_coin::IKACoin;
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
@@ -35,12 +38,10 @@ use ika_types::sui::{
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use move_package_alt_compilation::build_config::BuildConfig as MoveBuildConfig;
-use shared_crypto::intent::Intent;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sui::client_commands::{
     PublishArgs, SuiClientCommandResult, SuiClientCommands, TestPublishArgs,
-    request_tokens_from_faucet,
 };
 use sui_config::SUI_CLIENT_CONFIG;
 use sui_keys::key_derive::generate_new_key;
@@ -54,10 +55,7 @@ use sui_types::crypto::{SignatureScheme, SuiKeyPair};
 use sui_types::effects::TransactionEffectsAPI;
 use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{
-    Argument, CallArg, ObjectArg, SenderSignedData, Transaction, TransactionData,
-    TransactionDataAPI, TransactionKind,
-};
+use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction, TransactionKind};
 use sui_types::{SUI_CLOCK_OBJECT_ID, SUI_CLOCK_OBJECT_SHARED_VERSION, SUI_FRAMEWORK_PACKAGE_ID};
 use tempfile::TempDir;
 
@@ -282,7 +280,7 @@ pub async fn init_ika_on_sui(
 
     let mut context = WalletContext::new(&config_path)?;
 
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
 
     // The publisher pays for the whole bootstrap (4 package publishes, system
     // init, genesis staking) and observed runs have ended bootstrap with only
@@ -442,7 +440,7 @@ pub async fn publish_ika_packages(
 /// Assumes [`publish_ika_packages`] has already published the packages and minted
 /// the IKA supply, and that each validator address has been funded with gas.
 pub async fn initialize_ika_system(
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     publisher_address: SuiAddress,
     packages: &PublishedIkaPackages,
@@ -621,7 +619,7 @@ pub async fn initialize_ika_system(
 
 pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
@@ -743,7 +741,7 @@ impl GenesisGlobalPresignConfig {
 
 pub async fn set_global_presign_config(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -817,7 +815,7 @@ pub async fn set_global_presign_config(
 
 pub async fn ika_system_initialize(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1117,7 +1115,7 @@ pub async fn ika_system_initialize(
 
 pub async fn ika_system_set_witness_approving_advance_epoch(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1177,7 +1175,7 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
 
 pub async fn ika_system_add_upgrade_cap_by_cap(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1256,7 +1254,7 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
 
 pub async fn init_initialize(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_common_package_id: ObjectID,
     ika_system_package_id: ObjectID,
@@ -1352,7 +1350,7 @@ pub async fn init_initialize(
 
 pub async fn request_add_validator(
     validator_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1392,7 +1390,7 @@ pub async fn request_add_validator(
 /// boundary; the on-chain logic moves it out at the next reconfiguration.
 pub async fn request_remove_validator(
     validator_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     client: SuiGrpcClient,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -1427,7 +1425,7 @@ pub async fn request_remove_validator(
 
 pub async fn stake_ika(
     publisher_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     init_system_shared_version: SequenceNumber,
@@ -1442,7 +1440,7 @@ pub async fn stake_ika(
         mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
 
     let ika_supply_ref = client.get_object_ref(ika_supply_id).await?;
 
@@ -1498,7 +1496,7 @@ pub async fn minted_ika(
 
 pub async fn request_add_validator_candidate(
     validator_address: SuiAddress,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     validator_initialization_metadata: &ValidatorInfo,
     ika_system_package_id: ObjectID,
     ika_common_package_id: ObjectID,
@@ -1621,7 +1619,7 @@ pub async fn request_add_validator_candidate(
     let validator_cap_id = find_created_object_by_type(&response, &validator_cap_type)
         .expect("ValidatorCap object not found");
 
-    let validator_cap_object = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
+    let validator_cap_object = SuiGrpcClient::connect(context.rpc_url()?)?
         .get_object(validator_cap_id)
         .await?;
     let validator_cap_bcs = validator_cap_object
@@ -1888,54 +1886,35 @@ const DEFAULT_GAS_BUDGET: u64 = 5_000_000_000; // 5 SUI
 pub(crate) async fn create_sui_transaction(
     signer: SuiAddress,
     tx_kind: TransactionKind,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     gas_payment: Vec<ObjectRef>,
 ) -> Result<Transaction, anyhow::Error> {
-    let gas_price = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?
-        .get_reference_gas_price()
-        .await?;
-
-    //let gas_budget = max_gas_budget(&client).await?;
-    // let gas_budget =
-    //     estimate_gas_budget(context, signer, tx_kind.clone(), gas_price, gas_payment.clone(), None).await?;
-
-    let tx_data = TransactionData::new_with_gas_coins(
-        tx_kind,
-        signer,
-        gas_payment,
-        DEFAULT_GAS_BUDGET,
-        gas_price,
+    anyhow::ensure!(
+        gas_payment.is_empty(),
+        "explicit gas payment is not supported by the standalone builder path"
     );
-
-    let signature = context
-        .config
-        .keystore
-        .sign_secure(&tx_data.sender(), &tx_data, Intent::sui_transaction())
-        .await?;
-    let sender_signed_data = SenderSignedData::new_from_sender_signature(tx_data, signature);
-
-    let transaction = Transaction::new(sender_signed_data);
-
-    Ok(transaction)
+    let TransactionKind::ProgrammableTransaction(programmable_transaction) = tx_kind else {
+        anyhow::bail!("standalone builder path requires a programmable transaction")
+    };
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
+    let tx_data = build_transaction_data(
+        &client,
+        signer,
+        DEFAULT_GAS_BUDGET,
+        programmable_transaction,
+    )
+    .await?;
+    let signature = context.sign_transaction(&tx_data).await?;
+    Ok(Transaction::from_data(tx_data, vec![signature]))
 }
 
 pub(crate) async fn execute_sui_transaction(
     signer: SuiAddress,
     tx_kind: TransactionKind,
-    context: &mut WalletContext,
+    context: &mut impl TransactionContext,
     gas_payment: Vec<ObjectRef>,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
-    let client = SuiGrpcClient::connect(&context.get_active_env()?.rpc)?;
-    let gas_payment = if gas_payment.is_empty() {
-        // Select enough of the signer's gas coins to fund the budget instead
-        // of taking an arbitrary first coin. Long scenarios can burn that
-        // first coin down below the budget while the address still has enough
-        // aggregate balance. The standalone client also enforces Sui's limit
-        // of 256 gas-payment objects.
-        client.select_gas_coins(signer, DEFAULT_GAS_BUDGET).await?
-    } else {
-        gas_payment
-    };
+    let client = SuiGrpcClient::connect(context.rpc_url()?)?;
     let transaction = create_sui_transaction(signer, tx_kind, context, gas_payment).await?;
     client
         .execute_transaction_and_wait(&transaction)

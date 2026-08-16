@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::Config;
+use ika_sui_client::faucet::request_tokens_from_faucet;
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_types::ika_coin::INKU_PER_IKA;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
@@ -425,20 +426,10 @@ fn json_str(value: &serde_json::Value, field: &str) -> Result<String> {
         .with_context(|| format!("response missing string field `{field}`: {value}"))
 }
 
-/// Request SUI gas for `recipient` from the localnet faucet. The localnet
-/// faucet sometimes returns a 200 with an error-shaped body; treat that as OK.
 async fn faucet_sui(faucet_url: &str, recipient: SuiAddress) -> Result<()> {
-    let body = serde_json::json!({ "FixedAmountRequest": { "recipient": recipient.to_string() } });
-    match reqwest::Client::new()
-        .post(faucet_url)
-        .json(&body)
-        .send()
+    request_tokens_from_faucet(recipient, faucet_url)
         .await
-    {
-        Ok(_) => {}
-        Err(e) if e.to_string().contains("200 OK") => {}
-        Err(e) => return Err(e).context("faucet request"),
-    }
+        .context("faucet request")?;
     // Give the faucet a moment to deliver the gas object.
     tokio::time::sleep(Duration::from_secs(3)).await;
     Ok(())

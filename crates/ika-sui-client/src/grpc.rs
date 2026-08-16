@@ -22,7 +22,7 @@ use futures::StreamExt;
 use ika_config::node::{SuiGrpcHeaderValue, SuiGrpcHeaders};
 use prost_types::value::Kind as ProtoValueKind;
 use sui_rpc::Client as SuiRpcClient;
-use sui_rpc::client::HeadersInterceptor;
+use sui_rpc::client::{ExecuteAndWaitError, HeadersInterceptor};
 use sui_rpc::proto::sui::rpc::v2 as proto;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::effects::TransactionEvents;
@@ -151,6 +151,21 @@ impl SuiGrpcClient {
         }
     }
 
+    /// Resolves a standalone SDK transaction builder against this client's
+    /// endpoint, including object metadata, gas selection, and simulation.
+    pub async fn build_transaction(
+        &self,
+        builder: sui_transaction_builder::TransactionBuilder,
+    ) -> Result<sui_sdk_types::Transaction, TransportError> {
+        self.gate.wait_for_capacity().await;
+        let transaction = builder
+            .build(&mut self.rpc.clone())
+            .await
+            .map_err(|error| TransportError::Encoding(format!("build transaction: {error}")))?;
+        self.gate.note_success();
+        Ok(transaction)
+    }
+
     pub async fn get_chain_identifier(
         &self,
     ) -> Result<sui_types::digests::ChainIdentifier, TransportError> {
@@ -236,24 +251,28 @@ impl SuiGrpcClient {
         // Admission happens before the request deadline starts, so a shared
         // cooldown does not consume the submission's own timeout.
         self.gate.wait_for_capacity().await;
-        let response = match tokio::time::timeout(
-            SUBMIT_TIMEOUT,
-            rpc.execution_client().execute_transaction(request),
-        )
-        .await
+        let response = match rpc
+            .execute_transaction_and_wait_for_checkpoint(request, SUBMIT_TIMEOUT)
+            .await
         {
-            Err(_) => {
-                return Err(TransportError::Network(format!(
-                    "execute_transaction exceeded {SUBMIT_TIMEOUT:?} with no response"
-                )));
-            }
-            Ok(Ok(response)) => {
+            Ok(response) => {
                 self.gate.note_success();
                 response.into_inner()
             }
-            Ok(Err(status)) => {
+            Err(ExecuteAndWaitError::RpcError(status)) => {
                 self.gate.note_status(&status);
                 return Err(Self::rpc_err(status));
+            }
+            Err(ExecuteAndWaitError::CheckpointStreamError { error, .. }) => {
+                self.gate.note_status(&error);
+                return Err(TransportError::Network(format!(
+                    "execute transaction and wait for checkpoint: {error}"
+                )));
+            }
+            Err(error) => {
+                return Err(TransportError::Network(format!(
+                    "execute transaction and wait for checkpoint: {error}"
+                )));
             }
         };
         Self::decode_executed_transaction(response.transaction())

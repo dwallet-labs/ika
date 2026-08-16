@@ -36,6 +36,7 @@ use tokio::sync::OnceCell;
 use tracing::{error, warn};
 
 pub mod archive;
+pub mod faucet;
 pub mod genesis;
 pub mod grpc;
 pub mod grpc_backend;
@@ -45,6 +46,8 @@ pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
 pub mod rate_limit;
+pub mod transaction_builder;
+pub mod transaction_context;
 pub mod transport;
 pub use transport::{SubmittedTransaction, SuiFundsBreakdown};
 // Re-exported so `retry_with_max_elapsed_time!` can reach it as `$crate::error_chain`
