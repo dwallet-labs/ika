@@ -247,6 +247,15 @@ construction; divergence = determinism bug).
   with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`
   (draining, but the gap stopped falling). Restarting a validator that
   is mid-drain only discards its progress and replays it.
+- **A drain that stopped consuming does NOT trip the commit-liveness
+  watchdog, by design.** The consensus fold hands rounds to the drain over a
+  bounded channel and waits when it is full; the watchdog holds its clock
+  while the fold waits, because a node holding a commit it received is not
+  isolated. So a wedged drain produces no exit and no silence alarm. Its
+  signature is `ika_consensus_fold_blocked_seconds_total` climbing while
+  `ika_dwallet_mpc_consumed_round` is flat and
+  `ika_consensus_round_channel_depth` sits at capacity. Check that pair
+  before concluding the node is healthy because nothing alarmed.
 - **The log's absence of a line is only meaningful at the right
   RUST_LOG.** Several load-bearing lines are debug-level; at info, do
   not conclude "X never happened" for a debug-level X.

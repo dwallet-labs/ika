@@ -135,6 +135,12 @@ them has a bug — determine which before changing either.
   conventions (new protocols auto-instrument through the exhaustive
   `[curve, signature_algorithm, key_role]` labels), and a generated name
   inventory.
+- [`conventions/consensus-output-consumption.md`](conventions/consensus-output-consumption.md)
+  — the rules for getting data out of consensus: the store is the only
+  durable truth, the fold is its only reader, consumers receive rounds over
+  bounded blocking channels, and the two commit sinks that are fed at
+  deliberately opposite points. Read before adding any consumer of
+  per-commit data.
 - [`conventions/epoch-table-write-discipline.md`](conventions/epoch-table-write-discipline.md)
   — every `AuthorityEpochTables` field declares whether it is written
   through the consensus commit batch or directly (and, if directly, the

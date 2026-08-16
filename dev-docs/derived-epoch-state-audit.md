@@ -4,7 +4,22 @@ Every field of `AuthorityEpochTables`
 (`crates/ika-core/src/authority/authority_per_epoch_store.rs`) is classified
 **derived** — deleted on every boot and rebuilt by replaying the epoch's
 consensus commits — or **preserved** — left alone, because no replay
-reproduces it.
+reproduces it. 46 fields today.
+
+> **The ten per-round tables are gone.** `dwallet_mpc_messages` and its nine
+> siblings used to be the largest derived group: one row per consensus round
+> each, carrying the MPC drain's inputs. The drain now receives them from the
+> fold over a bounded blocking channel
+> ([`conventions/consensus-output-consumption.md`](conventions/consensus-output-consumption.md)),
+> so nothing writes or reads them and they were deleted rather than wiped.
+>
+> Measured before the deletion, on a 50k-commit fixture with the drain five
+> times slower than commit production: the epoch database shrank 30% (10.35 →
+> 7.25 MiB) and the time to drain the whole backlog was unchanged (122.6 →
+> 123.1s), while the fold took 50% longer to reach the store head (80.3 →
+> 120.6s) because it now waits. That measurement still had two of the ten
+> tables written, so the shipped design saves somewhat more than 30%. The cost
+> side is in the spec's memory section.
 
 The model this serves is
 [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md). This file is
@@ -52,16 +67,6 @@ epoch. `last_consensus_stats` is its running index and per-author tallies.
 directly re-observable now that replay starts at the epoch's first commit,
 which is why the row's original justification ("replay resumes mid-epoch, so
 this is otherwise unrecoverable") no longer applies.
-
-**Filters of a commit's transactions.** `dwallet_mpc_messages`,
-`dwallet_mpc_outputs`, `dwallet_internal_mpc_outputs`,
-`idle_status_updates`, `sui_chain_observation_updates`,
-`global_presign_requests`, `noa_observations`, `noa_presign_demands`. Each
-row is a projection of one commit, written in that commit's batch.
-
-**Outputs of the fold.** `verified_dwallet_checkpoint_messages` and
-`verified_system_checkpoint_messages` are what the fold produces for a
-commit, not inputs to it.
 
 **Checkpoint construction.** `pending_dwallet_checkpoints` and
 `pending_system_checkpoints` are built from the rebuilt per-round streams

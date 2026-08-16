@@ -270,17 +270,18 @@ because it is what makes replay unsafe — see below.
 
 ## The replay contract
 
-**A restart replays the epoch twice over, at two levels.** The consensus
-handler deletes its derived per-epoch tables and rebuilds them by folding
-the epoch's commits from the consensus store; the per-round streams the pool
-paths read are among them. Then `DWalletMPCService` replays every round of
-that rebuilt stream — its round cursor (`last_read_consensus_round`) is
-in-memory and starts unset — re-absorbing every internal presign output and
-re-draining every global presign request and NOA demand. The demand queue
-and the delivery rounds the park bound measures from are rebuilt by that
-replay, and rebuild identically because they are read from the same rounds
-the handler just re-derived from the same commits. The model is
-[`event-sourced-epoch.md`](event-sourced-epoch.md).
+**A restart replays the epoch, and the pool paths see it as one stream.** The
+consensus handler deletes its derived per-epoch tables and refolds the epoch's
+commits from the consensus store, handing each round to `DWalletMPCService`
+over a bounded channel as it goes — there are no per-round tables any more, so
+the drain does not replay a stored stream, it consumes the refold live. It
+still sees every round of the epoch from the first, so it re-absorbs every
+internal presign output and re-drains every global presign request and NOA
+demand exactly as before. The demand queue and the delivery rounds the park
+bound measures from are rebuilt by that pass and rebuild identically, because
+they come from the same commits in the same order. The model is
+[`event-sourced-epoch.md`](event-sourced-epoch.md); the consumption rules are
+[`../conventions/consensus-output-consumption.md`](../conventions/consensus-output-consumption.md).
 
 **The pool is NOT reset for that replay — by classification, not by
 accident.** Every per-epoch table is classified derived (deleted and

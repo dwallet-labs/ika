@@ -52,13 +52,16 @@ validators, so "usually equal" is a divergence with a longer fuse.
 
 ## The two disciplines
 
+(The per-round streams this rule used to be mostly about are gone: the MPC
+drain is fed from the fold over a channel, not from tables. What remains is
+votes, anchors, checkpoint construction and the presign material.)
+
 **`commit-batched`** — the only writer is
 `ConsensusCommitOutput::write_to_batch`. The row lands in the same atomic
 RocksDB batch as the processed-markers of the commit that produced it, so
 a crash before that batch replays the whole commit and re-derives the row.
 This is **required** for anything a consensus-visible decision reads: the
-close round, the freeze partition, checkpoint content, the MPC service's
-per-round replay streams.
+close round, the freeze partition, and checkpoint content.
 
 Note what the boot replay does and does not change here. It deletes every
 derived table and re-derives it from the commits, so a torn *pair* of rows

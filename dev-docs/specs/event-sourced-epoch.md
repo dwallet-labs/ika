@@ -267,46 +267,54 @@ state. Checkpoint signatures are gated, because their volume is bounded by
 the *epoch's age*. New submitters should be classified the same way, by
 asking what the re-emission's volume scales with.
 
-## The MPC drain, and why the per-round tables still exist
+## The MPC drain
 
-The `DWalletMPCService` drain is unchanged: an in-memory round cursor
-starting at the epoch's beginning, walking the per-round tables the fold
-writes. Those tables are derived, so they are wiped and rebuilt with
-everything else, and the drain re-reads what the fold has rebuilt.
+The drain receives each round's inputs from the fold over a **bounded blocking
+channel** (`authority::round_transport`). There are no per-round tables: all
+ten were deleted. When the drain falls behind, the channel fills and the fold
+WAITS — that coupling is what makes the tables unnecessary rather than merely
+unused.
 
-They are the disk-backed slack that keeps the drain decoupled from the
-handler — the drain does cryptography and lags, the handler must reach the
-store head — and because they are deleted and re-derived on every boot they
-cannot survive a restart holding rounds the consensus store no longer backs.
-That last property is what makes them a materialized view rather than a
-second truth, and it is the #2057 disagreement class removed.
+The rules this establishes for every future consumer of consensus output are
+[`../conventions/consensus-output-consumption.md`](../conventions/consensus-output-consumption.md).
 
-**Why they are not simply deleted, with the drain reading the consensus store
-itself.** Two things stand in the way, and they bound what that change could
-achieve:
+**What it costs, measured.** On a 50k-commit fixture with the drain five times
+slower than commit production: the epoch database shrank 30% and the time to
+drain the backlog was unchanged, but the fold took 50% longer to reach the
+store head. The cap is a dial across its whole range — at 64 the fold waited
+on 9,752 of 10,000 rounds, at 4096 on none.
 
-- **Two of the ten per-round tables are not projections of a commit.**
-  `verified_dwallet_checkpoint_messages` and
-  `verified_system_checkpoint_messages` are outputs of the fold —
-  `process_consensus_transactions` returns them, and they carry the epoch-close
-  message set — while the other eight are `filter_*(transactions)` over the
-  commit. A cursor over raw commits can derive the eight; it cannot derive
-  these two without re-running the fold, which mutates the epoch store and
-  decides the epoch close. So a per-round transport for them has to remain
-  whatever else changes.
-- **The consensus store cannot be opened twice.** `RocksDBStore::new` is a
-  primary open, and consensus-core holds that handle for the epoch;
-  `pub mod storage` exports no secondary or read-only constructor. An
-  independent drain cursor needs an upstream API that does not exist. (This is
-  also why the boot replay opens the store *before* `ConsensusAuthority::start`
-  and drops it — that is the only window ika can hold the handle.)
+**Where the backlog goes instead — and why it is bounded.** The fold can no
+longer absorb a backlog, so it accumulates one queue upstream, in
+consensus-core's commit channel, which is unbounded. Two different paths feed
+that queue and they have different bounds:
 
-The deletion that would be possible with an upstream secondary-open API
-therefore covers eight of ten tables: it reduces the duplicate persistence and
-its write amplification rather than removing them, and it costs a second
-`verify_consensus_transaction` pass over every transaction on the drain's
-slow path. Worth revisiting if that API lands; not a prerequisite for the
-consensus store being the only truth, which the wipe already establishes.
+- **Deep lag (sync-fetched), bounded.** `commit_syncer` stops scheduling
+  fetches when `highest_handled_index + threshold < range_end`
+  (`commit_syncer.rs:238`), reading `commit_consumer_monitor.highest_handled_commit()`
+  at `:205` — the value ika reports AFTER each fold. The threshold is
+  `commit_sync_batch_size × commit_sync_batches_ahead` = 100 × 32 = 3,200
+  (`consensus/config/src/parameters.rs:203`, `:220`). So a blocked fold stalls
+  the watermark, which pauses fetching, which bounds the queue at roughly
+  3,200 commits. **This is why `set_highest_handled_commit` must stay
+  post-fold** — reporting it early removes the guard.
+- **At tip (locally decided), unbounded in principle.** Commits the node
+  decides itself are not gated on the consumer's watermark. In practice they
+  arrive at the network's commit rate, a few per second, so a block of the
+  watchdog's length accumulates a few thousand — comparable to the sync bound
+  — but nothing enforces that. `ika_consensus_round_channel_depth` and
+  `ika_consensus_fold_blocked_seconds_total` are the monitoring for it.
+
+The threshold is consensus **node configuration**, not protocol: it can be
+tuned per node and is not an invariant the network enforces.
+
+**Unmeasured.** The 50k benchmark's synthetic commits are about a kilobyte
+each; a real `CommittedSubDag` carries every validator's blocks including
+class-groups MPC payloads. The queue's byte cost in production is therefore
+larger than the harness showed by a factor this repo has not measured — and
+the harness overstated the *deep-lag* case in the other direction, since its
+producer never paused the way `commit_syncer` does. Closing both needs a
+cluster measurement; see the remainder list.
 
 ## Consensus-store retention is load-bearing
 
@@ -352,40 +360,27 @@ remaining boot work) and `ika_consensus_boot_replay_latency_seconds`. The
 replay also logs progress per batch, because a boot that legitimately takes
 tens of minutes must be distinguishable from one that is stuck.
 
-## Rolling back to a binary that expects the watermark
+## Rolling back
 
-An older binary reads `last_consensus_stats` to decide where to resume. After
-this binary has run, that row holds the tally of a full replay to the head —
-which is the same value the old binary would itself have written, so a
-rollback *within the same epoch* resumes from the correct place and behaves
-as it always did.
+**The clean-rollback property is gone.** It was an artefact of the tables: an
+older binary could resume from them because they were still there. They are
+not.
 
-What the old binary does NOT get back is the guarantee that the row agrees
-with the consensus store: it resumes trusting its own record again, so it is
-once more exposed to ika #2057 if a storage incident costs the consensus
-store its tail. The rollback is therefore safe in the ordinary case and
-carries the original risk in the incident case — it does not add a new
-failure mode, and it does not require an epoch boundary to be crossed first.
+A binary rolled back mid-epoch finds the per-round column families absent.
+typed-store recreates missing column families empty, so it starts, and its
+drain then sees no round history at all — it processes nothing until the epoch
+boundary gives it a fresh epoch store and a live stream. Concretely: degraded
+MPC for the remainder of the epoch, with checkpoints and the epoch close still
+produced by the fold. That is the outcome the issue's open question 1
+anticipated and accepted.
 
-The per-round tables an older binary's MPC drain reads are also intact: they
-are rebuilt by the replay, so a rolled-back binary finds a dense stream from
-the epoch's first commit to the head, which is exactly what it expects.
+`last_consensus_stats` is a separate matter and is fine: it holds the tally of
+a full replay to the head, which is what the old binary would have written
+itself.
 
-## Follow-on: publishing the rebuilt state's digest (protocol v8)
-
-The audit is enforced by tests on one node. Upstream makes the equivalent
-property enforce itself across the fleet: Sui hashes its replay-rebuilt
-consensus state into an `AdditionalConsensusStateDigest`
-(`sui-core/src/consensus_handler.rs:285-288`) and publishes it in the commit
-prologue behind a protocol flag, so a validator whose rebuild diverges forks
-immediately and visibly instead of drifting.
-
-The ika equivalent — a digest of the rebuilt derived state carried in the
-checkpoint stream — would turn this document's classification from something
-review enforces into something the network enforces. It needs a protocol
-version (the digest is consensus-visible, so it cannot be a binary-driven
-flip) and is therefore explicitly NOT part of this change; it belongs with
-the next version gate.
+This is an argument, not evidence. The upgrade matrix is where it gets tested;
+until then treat a mid-epoch rollback as costing that node's MPC participation
+for the rest of the epoch.
 
 ## What this is tested by, and what it is not
 
@@ -428,7 +423,20 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
 - **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
-  also where the rollback claim above gets tested rather than argued.
+  also where the rollback claim above gets tested rather than argued — and it
+  is now an argument with teeth, since a rolled-back node loses MPC for the
+  rest of the epoch.
+- **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
+  on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
+  the commit-channel backlog. This closes both directions the local harness
+  got wrong — synthetic commits understate the per-commit byte cost, and a
+  producer that never pauses overstates the deep-lag case that
+  `commit_syncer` actually bounds at ~3,200 commits.
+- **A wedged drain end to end** (REQUIRED): stop the drain consuming on a
+  live validator and confirm the watchdog does NOT exit the node (the hold is
+  correct) while blocked time and channel depth climb. The hold and the
+  signal are separately tested in-process; that they behave that way together
+  on a real node is not.
 
 ## What must never be reintroduced
 

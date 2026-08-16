@@ -106,7 +106,12 @@ rule, not the instance.
   catch (a fold-written table declared preserved) left both GREEN. The wipe
   test checked each table against its declared class, so a wrong declaration
   agreed with itself; the double-fold passed because the per-round tables
-  are keyed by round and a second fold simply overwrote them.
+  were keyed by round and a second fold simply overwrote them. (Those tables
+  no longer exist — the drain is fed by a channel — but the lesson outlived
+  them, and recurred twice more in the same change: a watchdog-hold test that
+  drove the state machine directly never noticed the wiring being deleted,
+  and a drain-departure test asserted a property tokio provides rather than
+  the one the code adds.)
   → Rule: an enforcement test needs a source of truth INDEPENDENT of the
   declaration — here, folding real commits and requiring every table that
   actually got written to be declared derived. And this is only visible if
