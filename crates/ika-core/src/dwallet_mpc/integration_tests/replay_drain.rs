@@ -76,6 +76,25 @@ async fn a_replay_longer_than_the_channel_still_finishes() {
              handed over every round",
         );
 
+    // The invariant that keeps the phase-split working: the replay-phase drain
+    // SUBMITS NOTHING. Consensus is not running here — in production the
+    // submit path parks until it is — so a submission reachable from the drain
+    // would stop the drain, keep the channel full and park the replay forever,
+    // rebuilding the deadlock one layer up. The rounds above are empty, so any
+    // submission at all is a new path that was not there when this was
+    // written.
+    let submitted_during_replay = test_state.sent_consensus_messages_collectors[0]
+        .submitted_messages
+        .lock()
+        .unwrap()
+        .len();
+    assert_eq!(
+        submitted_during_replay, 0,
+        "the drain submitted to consensus while the boot replay was still running; consensus \
+         has not started at that point, so the submission would park and take the drain — and \
+         the replay parked behind it — down with it",
+    );
+
     // Only now does consensus start and the waiter release — the ordering the
     // deadlock depends on.
     let (commit_consumer, _commit_receiver) = CommitConsumerArgs::new(0, 0);

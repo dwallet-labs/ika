@@ -91,6 +91,29 @@ inside that consumer's own loop, they stop being written by precisely the
 failure they name — freezing at their last healthy values while an operator
 reads a node that looks idle.
 
+## 4b. A consumer's receive path must never wait on consensus
+
+The code that takes rounds off the channel — and everything it calls — must
+not await anything that consensus has to be running to satisfy: no submission,
+no client handle that blocks until consensus is up, no round trip through a
+peer.
+
+*Why:* the consumer runs **during the boot replay**, and it has to. The
+replay's folds send into the same channel and block when it is full, and the
+replay signal is only published after the replay returns, so a consumer that
+waited for that signal before consuming would park the replay forever (rule 4
+again: silently, because a parked fold holds the watchdog). Consuming during
+the replay is therefore mandatory — and it puts the receive path *before*
+consensus exists, where a wait on consensus is a wait on the thing that wait
+is blocking.
+
+The consequence for a new consumer: split it in two. A receive phase that runs
+from boot and submits nothing, and the rest of its work gated on the replay
+signal. Keep the receive path's await inventory small enough to audit —
+ika's drain has exactly one await, `yield_now` — and say so where it is
+written, because the next person to add work there will not be reading this
+file.
+
 ## 5. Two sinks, opposite placements — do not "fix" the asymmetry
 
 | sink | fed | why |

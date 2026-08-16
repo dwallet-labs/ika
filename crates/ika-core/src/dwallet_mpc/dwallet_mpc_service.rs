@@ -1304,6 +1304,24 @@ impl DWalletMPCService {
         Ok(rejected_sessions)
     }
 
+    /// Consumes every round queued on the transport, then returns.
+    ///
+    /// **Nothing reachable from here may wait on consensus.** This runs during
+    /// the boot replay ([`Self::drain_while_replaying`]), before consensus has
+    /// started, and the replay's own folds are parked on the channel this
+    /// drains — so a call that waited for consensus to come up would stop the
+    /// drain, keep the channel full, park the replay forever, and leave
+    /// consensus never starting: the wait would be on the thing the wait
+    /// blocks.
+    ///
+    /// The invariant currently holds structurally, and cheaply enough to
+    /// re-check by hand: the whole body has exactly one await point,
+    /// `yield_now`. Everything else it touches — the manager, the epoch store,
+    /// the checkpoint-service notification — is synchronous. Adding an
+    /// `.await` here is the moment to re-read this comment; the submitting
+    /// work belongs in `run_service_loop_iteration`, which runs only after the
+    /// replay signal. `a_replay_longer_than_the_channel_still_finishes` fails
+    /// if a submission does creep in.
     async fn drain_consensus_rounds(&mut self) {
         // Rounds arrive over the bounded channel the commit boundary feeds;
         // there is no per-round table to poll, and no round-equality check to
@@ -1338,7 +1356,7 @@ impl DWalletMPCService {
         // publisher living inside that drain stops publishing in exactly that
         // case — the gauges would freeze at their last healthy values and the
         // wedge would look like a node with nothing to do. They are published
-        // by `spawn_round_transport_gauges`, which shares fate with nothing
+        // by `publish_round_transport_gauges`, which shares fate with nothing
         // but the runtime.
 
         loop {

@@ -341,8 +341,25 @@ that queue and they have different bounds:
   decides itself are not gated on the consumer's watermark. In practice they
   arrive at the network's commit rate, a few per second, so a block of the
   watchdog's length accumulates a few thousand — comparable to the sync bound
-  — but nothing enforces that. `ika_consensus_round_channel_depth` and
-  `ika_consensus_fold_blocked_seconds_total` are the monitoring for it.
+  — but nothing enforces that. `ika_consensus_round_channel_depth`,
+  `ika_consensus_fold_blocked_seconds_total` and
+  `ika_consensus_fold_blocked_sends_total` are the monitoring for it.
+
+Three things about those gauges are load-bearing rather than incidental, and
+each was a defect before it was a property:
+
+- they are published by a task of their own
+  (`DWalletMPCService::publish_round_transport_gauges`), not from inside the
+  drain. A publisher living in the drain stops publishing in exactly the case
+  the gauges are named for, freezing at its last healthy values while an
+  operator reads a node with nothing to do;
+- blocked seconds include the park **still in progress**, added on read from a
+  stored park-start. Accruing only when a park ends would leave the one wedge
+  worth alarming on — a fold parked forever — contributing nothing, ever;
+- seconds and sends are read as a pair. Both climbing is a drain that is slow
+  but alive; seconds climbing while sends stays flat is a single endless park.
+  The reading table is in
+  [`../playbooks/production-alerts.md`](../playbooks/production-alerts.md).
 
 The threshold is consensus **node configuration**, not protocol: it can be
 tuned per node and is not an invariant the network enforces.
@@ -435,6 +452,11 @@ In-process, in `ika-core`:
 | a finalization hole below the head stops the node | `a_finalization_hole_below_the_head_stops_the_replay` |
 | replayed commits arm the commit-liveness watchdog | `replayed_commits_feed_the_commit_liveness_sink` |
 | a settled checkpoint is not re-signed | `a_rebuilt_checkpoint_is_not_re_signed_once_a_quorum_has_certified_it` |
+| a replay longer than the channel completes, and its drain submits nothing | `a_replay_longer_than_the_channel_still_finishes` |
+| the catch-up head is published without folding anything | `the_head_publisher_reports_the_store_head_without_folding_anything` |
+| an aborted park releases the watchdog hold | `an_aborted_park_still_releases_the_watchdog_hold` |
+| a park still in progress already counts as blocked time | `a_wedged_drain_is_visible_only_on_the_blocked_time_gauge` |
+| the watchdog holds off a real full round channel | `a_full_round_channel_holds_the_watchdog_while_commits_queue` (in `ika-node`) |
 
 Every one of these was validated by injecting the fault it claims to catch
 and confirming the predicted evidence
