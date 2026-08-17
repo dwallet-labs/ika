@@ -1,6 +1,6 @@
 'use client';
 
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Check, Coins, Plus, Trash2, Wallet, X } from 'lucide-react';
 import { useState } from 'react';
@@ -49,7 +49,7 @@ export function CreateMultisigModal({
 	ikaPackageId,
 }: CreateMultisigModalProps) {
 	const account = useCurrentAccount();
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const [members, setMembers] = useState<string[]>([]);
 	const [newMemberInput, setNewMemberInput] = useState('');
 	const [approvalThreshold, setApprovalThreshold] = useState('2');
@@ -62,7 +62,7 @@ export function CreateMultisigModal({
 		queryKey: ['sui-balance', account?.address, open],
 		queryFn: async () => {
 			if (!account?.address) return null;
-			const balance = await suiClient.getBalance({
+			const { balance } = await suiClient.getBalance({
 				owner: account.address,
 			});
 			return balance;
@@ -74,7 +74,7 @@ export function CreateMultisigModal({
 		queryKey: ['ika-balance', account?.address, ikaPackageId, open],
 		queryFn: async () => {
 			if (!account?.address || !ikaPackageId) return null;
-			const balance = await suiClient.getBalance({
+			const { balance } = await suiClient.getBalance({
 				owner: account.address,
 				coinType: `${ikaPackageId}::ika::IKA`,
 			});
@@ -87,8 +87,8 @@ export function CreateMultisigModal({
 	const isDuplicate = members.includes(newMemberInput.trim());
 
 	// Check if user has sufficient balance
-	const hasEnoughIka = ikaBalance ? BigInt(ikaBalance.totalBalance) >= CREATION_COST_IKA : false;
-	const hasEnoughSui = suiBalance ? BigInt(suiBalance.totalBalance) >= CREATION_COST_SUI : false;
+	const hasEnoughIka = ikaBalance ? BigInt(ikaBalance.balance) >= CREATION_COST_IKA : false;
+	const hasEnoughSui = suiBalance ? BigInt(suiBalance.balance) >= CREATION_COST_SUI : false;
 	const hasEnoughBalance = hasEnoughIka && hasEnoughSui;
 	const isLoadingBalances = isLoadingSui || isLoadingIka;
 
@@ -242,7 +242,7 @@ export function CreateMultisigModal({
 																: 'text-red-600 dark:text-red-500'
 														}`}
 													>
-														(have: {(Number(ikaBalance.totalBalance) / 1_000_000_000).toFixed(2)})
+														(have: {(Number(ikaBalance.balance) / 1_000_000_000).toFixed(2)})
 													</span>
 												)}
 											</>
@@ -265,7 +265,7 @@ export function CreateMultisigModal({
 																: 'text-red-600 dark:text-red-500'
 														}`}
 													>
-														(have: {(Number(suiBalance.totalBalance) / 1_000_000_000).toFixed(2)})
+														(have: {(Number(suiBalance.balance) / 1_000_000_000).toFixed(2)})
 													</span>
 												)}
 											</>

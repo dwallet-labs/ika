@@ -1,7 +1,7 @@
 'use client';
 
 import { getNetworkConfig, IkaClient, type IkaConfig, type Network } from '@ika.xyz/sdk';
-import { useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentClient } from '@mysten/dapp-kit-react';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 export interface IkaClientContextType {
@@ -21,7 +21,7 @@ export function IkaClientProvider({
 	network = 'testnet',
 	config,
 }: IkaClientProviderProps) {
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 
 	const ikaClient = useMemo(() => {
 		const ikaConfig = config || getNetworkConfig(network);

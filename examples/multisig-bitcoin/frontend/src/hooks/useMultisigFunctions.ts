@@ -6,7 +6,7 @@ import {
 	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '@ika.xyz/sdk';
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { bcs } from '@mysten/sui/bcs';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 import * as bitcoin from 'bitcoinjs-lib';
@@ -36,7 +36,7 @@ import { useUserShareEncryptionKeys } from './useUserShareEncryptionKeys';
 
 export const useMultisigFunctions = () => {
 	const account = useCurrentAccount();
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const { coordinator, multisigPackageId, ikaPackageId } = useIds();
 	const { ikaClient } = useIkaClient();
 	const { data: userShareEncryptionKeys, isLoading: isLoadingKeys } = useUserShareEncryptionKeys();
@@ -240,12 +240,14 @@ export const useMultisigFunctions = () => {
 		const transactionResult = await executeTransaction(transaction);
 
 		const signEvent = transactionResult.events?.find((event) =>
-			event.type.includes('SignRequestEvent'),
+			event.eventType.includes('SignRequestEvent'),
 		);
+
+		invariant(signEvent, 'SignRequestEvent not found');
 
 		const signEventData = SessionsManagerModule.DWalletSessionEvent(
 			CoordinatorInnerModule.SignRequestEvent,
-		).fromBase64(signEvent?.bcs as string);
+		).parse(signEvent.bcs);
 
 		const sign = await ikaClient.getSignInParticularState(
 			signEventData.event_data.sign_id,
@@ -258,51 +260,27 @@ export const useMultisigFunctions = () => {
 		// Get the multisig object to access the requests table
 		const multisigObject = await suiClient
 			.getObject({
-				id: multisig.object.multisig,
-				options: {
-					showBcs: true,
-				},
+				objectId: multisig.object.multisig,
+				include: { content: true },
 			})
-			.then((obj) => MultisigModule.Multisig.fromBase64(objResToBcs(obj)));
+			.then((obj) => MultisigModule.Multisig.parse(objResToBcs(obj)));
 
 		// Get the table ID from the requests table
 		const tableId = multisigObject.requests.id.id;
 
-		// Get the request from the requests table using getDynamicFieldObject
-		const requestFieldResponse = await suiClient.getDynamicFieldObject({
+		// The Core API returns the field's value directly, so there is no longer a
+		// Field<u64, Request> envelope to fetch separately and unwrap.
+		const { dynamicField } = await suiClient.getDynamicField({
 			parentId: tableId,
 			name: {
 				type: 'u64',
-				value: String(requestId),
+				bcs: bcs.u64().serialize(requestId).toBytes(),
 			},
 		});
 
-		// Get the actual Request object from the dynamic field
-		// The dynamic field contains a Field object, we need to get the value object
-		invariant(requestFieldResponse.data, 'Request not found');
+		invariant(dynamicField, 'Request not found');
 
-		const requestObject = await suiClient.getObject({
-			id: requestFieldResponse.data.objectId,
-			options: {
-				showBcs: true,
-			},
-		});
-
-		// Parse the Field<u64, Request> wrapper first
-		const fieldBcs = objResToBcs(requestObject);
-		const fieldBytes = Buffer.from(fieldBcs, 'base64');
-
-		// Create BCS struct for Field<u64, Request>
-		const fieldStruct = bcs.struct('Field', {
-			id: bcs.Address,
-			name: bcs.u64(),
-			value: Request,
-		});
-
-		const parsedField = fieldStruct.parse(fieldBytes);
-
-		// Extract the Request from the Field's value
-		const request = parsedField.value;
+		const request = Request.parse(dynamicField.value.bcs);
 
 		// Extract PSBT from request_type if it's a Transaction type
 		let psbt: Uint8Array | null = null;
@@ -489,50 +467,27 @@ export const useMultisigFunctions = () => {
 		// Get the multisig object to access the requests table
 		const multisigObject = await suiClient
 			.getObject({
-				id: multisig.object.multisig,
-				options: {
-					showBcs: true,
-				},
+				objectId: multisig.object.multisig,
+				include: { content: true },
 			})
-			.then((obj) => MultisigModule.Multisig.fromBase64(objResToBcs(obj)));
+			.then((obj) => MultisigModule.Multisig.parse(objResToBcs(obj)));
 
 		// Get the table ID from the requests table
 		const tableId = multisigObject.requests.id.id;
 
-		// Get the request from the requests table using getDynamicFieldObject
-		const requestFieldResponse = await suiClient.getDynamicFieldObject({
+		// The Core API returns the field's value directly, so there is no longer a
+		// Field<u64, Request> envelope to fetch separately and unwrap.
+		const { dynamicField } = await suiClient.getDynamicField({
 			parentId: tableId,
 			name: {
 				type: 'u64',
-				value: String(requestId),
+				bcs: bcs.u64().serialize(requestId).toBytes(),
 			},
 		});
 
-		// Get the actual Request object from the dynamic field
-		invariant(requestFieldResponse.data, 'Request not found');
+		invariant(dynamicField, 'Request not found');
 
-		const requestObject = await suiClient.getObject({
-			id: requestFieldResponse.data.objectId,
-			options: {
-				showBcs: true,
-			},
-		});
-
-		// Parse the Field<u64, Request> wrapper first
-		const fieldBcs = objResToBcs(requestObject);
-		const fieldBytes = Buffer.from(fieldBcs, 'base64');
-
-		// Create BCS struct for Field<u64, Request>
-		const fieldStruct = bcs.struct('Field', {
-			id: bcs.Address,
-			name: bcs.u64(),
-			value: Request,
-		});
-
-		const parsedField = fieldStruct.parse(fieldBytes);
-
-		// Extract the Request from the Field's value
-		const request = parsedField.value;
+		const request = Request.parse(dynamicField.value.bcs);
 
 		// Check if request is approved and is a Transaction type
 		const statusObj = request.status as any;
