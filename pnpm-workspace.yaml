@@ -1,5 +1,49 @@
 packages:
   - 'sdk/**'
+  - 'examples/*/frontend'
+  - 'examples/*/backend'
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
+
+# Versions of the libraries shared by the SDK and the example apps live HERE
+# and nowhere else: each package.json references them as `catalog:`. Before
+# this, the two examples and the SDK each pinned their own `@mysten/sui`, and
+# the examples drifted a whole major behind without anything noticing.
+#
+# Only genuinely shared libraries belong here. A dependency used by a single
+# package (elysia, bitcoinjs-lib, ethers) stays in that package's manifest —
+# cataloguing it would add indirection for nothing.
+catalog:
+  # Sui + Mysten stack. dapp-kit 2.x (the `@mysten/dapp-kit-react` rewrite) is
+  # the only one that speaks gRPC — the legacy `@mysten/dapp-kit` is JSON-RPC
+  # only and receives no further updates — so these move together or not at all.
+  '@mysten/sui': ^2.26.1
+  '@mysten/dapp-kit-react': ^2.1.19
+  '@mysten/dapp-kit-core': ^1.6.17
+  '@mysten/bcs': ^2.1.0
+  '@mysten/codegen': ^0.12.2
+
+  # Crypto primitives. v2 renamed `randomPrivateKey` to `randomSecretKey`;
+  # the SDK is on v2, so an example on v1 gets two copies with incompatible
+  # APIs in one bundle.
+  '@noble/curves': ^2.3.0
+  '@noble/hashes': ^2.3.0
+
+  # Front-end framework, shared by both example UIs.
+  next: 16.3.1
+  react: 19.2.8
+  react-dom: 19.2.8
+  '@tanstack/react-query': ^5.101.4
+  tailwindcss: ^4.3.3
+  '@tailwindcss/postcss': ^4.3.3
+
+  # Toolchain. Node 24 (Krypton) is the Active LTS line as of this writing;
+  # @types/node tracks it rather than the newer Current release. The SDK's own
+  # `engines` floor stays permissive on purpose — a published library should not
+  # lock consumers to our runtime — so this LTS choice binds the apps we run.
+  typescript: ^6.0.3
+  '@types/node': ^24.13.3
+  '@types/react': ^19.2.18
+  '@types/react-dom': ^19.2.4
+  viem: ^2.55.17
