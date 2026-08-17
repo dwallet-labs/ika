@@ -65,7 +65,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22.x
+          node-version: 24.x
           cache: "pnpm"
 
       - name: Install wasm pack
@@ -119,7 +119,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 22.x
+          node-version: 24.x
 
       - name: Probe the published SDK from npm
         run: node scripts/probe-published-sdk.mjs

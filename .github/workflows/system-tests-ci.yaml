@@ -46,7 +46,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 21.x
+          node-version: 24.x
           cache: 'pnpm'
 
       - name: Install wasm pack
