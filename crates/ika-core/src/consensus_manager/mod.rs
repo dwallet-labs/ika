@@ -215,7 +215,12 @@ impl ConsensusManager {
         // if that measurement comes back badly: the resident cost is
         // 3,200 × the size of a `CommittedSubDag`, which carries every
         // validator's blocks for its round.
-        const UNHANDLED_COMMIT_CEILING_BATCH_SIZE: u32 = 100;
+        // Upstream shrinks the batch under simulation on purpose, so its
+        // simtests actually cross a batch boundary and exercise commit sync;
+        // pinning the production number unconditionally would have quietly
+        // taken that coverage away from ika's simtests, which is the opposite
+        // of what pinning it is for.
+        const UNHANDLED_COMMIT_CEILING_BATCH_SIZE: u32 = if cfg!(msim) { 5 } else { 100 };
         const UNHANDLED_COMMIT_CEILING_BATCHES_AHEAD: usize = 32;
         let parameters = Parameters {
             db_path: self.get_store_path(epoch),
