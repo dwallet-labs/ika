@@ -14,6 +14,10 @@ const envSchema = z.object({
 
 	// Sui Network
 	SUI_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
+
+	// Optional override for the Sui gRPC endpoint (public fullnodes no longer
+	// serve JSON-RPC, so this is a gRPC base URL).
+	SUI_GRPC_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -48,5 +52,6 @@ export const config = {
 	sui: {
 		network: env.SUI_NETWORK,
 		adminSecretKey: env.SUI_ADMIN_SECRET_KEY,
+		grpcUrl: env.SUI_GRPC_URL,
 	},
 } as const;
