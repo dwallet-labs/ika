@@ -445,7 +445,22 @@ This is an argument, not evidence. The upgrade matrix is where it gets tested;
 until then treat a mid-epoch rollback as costing that node's MPC participation
 for the rest of the epoch.
 
+**Release note, for lifting verbatim into operator notes:** rolling this binary
+back mid-epoch does not restore the node's MPC participation until the next
+epoch boundary. The node starts, follows consensus, and keeps producing
+checkpoints, but its MPC drain has no round history to read and will sit out
+until the boundary hands it a fresh epoch store. A rollback taken *at* a
+boundary is unaffected. This must not be discovered mid-incident: an operator
+rolling back to recover from something else needs to know the recovery costs
+MPC for up to one epoch.
+
 ## What this is tested by, and what it is not
+
+Two of the remainders below are **release conditions**, not follow-ups —
+tracked in ika issue #2064: the real-payload upstream queue bytes (measured on
+a cluster or bounded defensively), and the wedged-but-alive drain end to end
+together with the alerts that are its only detection. Everything else here is
+ordinary follow-up work.
 
 In-process, in `ika-core`:
 
