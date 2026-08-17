@@ -1,0 +1,62 @@
+{
+	"name": "@fesal-packages/ikavery-solana-sdk",
+	"version": "0.1.0",
+	"description": "Solana-side SDK for the Ikavery dWallet recovery program — passkey-gated propose/approve/execute flows for sweep + roster + enrollment.",
+	"license": "BSD-3-Clause",
+	"author": "fesal <https://github.com/iamknownasfesal>",
+	"homepage": "https://solana.ikavery.com",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/iamknownasfesal/ikavery"
+	},
+	"keywords": [
+		"ika",
+		"ikavery",
+		"dwallet",
+		"mpc",
+		"passkey",
+		"webauthn",
+		"solana",
+		"key-recovery"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsc -p tsconfig.build.json",
+		"test": "bun test",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"lint": "cd ../../.. && biome check solana/packages/sdk",
+		"prepublishOnly": "bun run build"
+	},
+	"dependencies": {
+		"@fesal-packages/ikavery-core": "workspace:*",
+		"@noble/curves": "^1.6.0",
+		"@noble/hashes": "^1.5.0",
+		"@solana/web3.js": "^1.95.4",
+		"bs58": "^6.0.0"
+	},
+	"devDependencies": {
+		"@grpc/grpc-js": "^1.14.3",
+		"@ika.xyz/pre-alpha-solana-client": "^0.1.1",
+		"@solana/kit": "^6.8.0",
+		"@solana/spl-token": "^0.4.14",
+		"@types/bun": "^1.1.13",
+		"litesvm": "^1.0.0",
+		"typescript": "^5.6.3"
+	}
+}

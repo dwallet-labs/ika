@@ -1,0 +1,10 @@
+[package]
+name = "recovery"
+edition = "2024.beta"
+
+[dependencies]
+ika_dwallet_2pc_mpc = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_dwallet_2pc_mpc", rev = "main" }
+ika = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika", rev = "main" }
+
+[addresses]
+recovery = "0x0"

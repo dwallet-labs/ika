@@ -1,0 +1,51 @@
+[package]
+name = "ikavery"
+version = "0.1.0"
+edition = "2021"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+alloc = []
+client = []
+debug = []
+idl-build = ["quasar-lang/idl-build"]
+legacy-integration = []
+
+[dependencies]
+quasar-lang = { git = "https://github.com/blueshift-gg/quasar" }
+solana-address = { version = "2.2.0", features = ["curve25519"] }
+solana-instruction = { version = "3.2.0" }
+solana-sha256-hasher = "3.1"
+solana-keccak-hasher = { version = "3.1", features = ["sha3"] }
+ika-dwallet-quasar = { git = "https://github.com/dwallet-labs/ika-pre-alpha", branch = "main" }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+serde = { version = "1", features = ["derive"] }
+bcs = "0.1"
+k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+
+[dev-dependencies]
+quasar-svm = { git = "https://github.com/blueshift-gg/quasar-svm" }
+solana-account = { version = "3.4.0" }
+solana-address = { version = "2.2.0", features = ["decode"] }
+solana-instruction = { version = "3.2.0", features = ["bincode"] }
+solana-pubkey = { version = "4.1.0" }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["legacy-integration"]
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

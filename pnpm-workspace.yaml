@@ -2,6 +2,12 @@ packages:
   - 'sdk/**'
   - 'examples/*/frontend'
   - 'examples/*/backend'
+  # ikavery is itself a small monorepo; its packages join this workspace
+  # directly rather than nesting a second package manager inside it.
+  - 'examples/ikavery/packages/*'
+  - 'examples/ikavery/sui/packages/sdk'
+  - 'examples/ikavery/sui/packages/frontend'
+  - 'examples/ikavery/solana/packages/*'
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
@@ -23,6 +29,8 @@ catalog:
   '@mysten/dapp-kit-core': ^1.6.17
   '@mysten/bcs': ^2.1.0
   '@mysten/codegen': ^0.12.2
+  '@mysten/enoki': ^1.2.15
+  '@mysten/wallet-standard': ^0.21.17
 
   # Crypto primitives. v2 renamed `randomPrivateKey` to `randomSecretKey`;
   # the SDK is on v2, so an example on v1 gets two copies with incompatible

@@ -1,0 +1,142 @@
+---
+id: ikavery-example
+title: ikavery Quorum-Gated Key Custody
+description: Import an existing private key into an Ika dWallet and gate its use behind a t-of-N roster of passkeys or wallet credentials
+sidebar_position: 4
+sidebar_label: ikavery
+---
+
+# ikavery Quorum-Gated Key Custody
+
+## Overview
+
+ikavery answers a question that seed phrases answer badly: **who can move the
+funds if the owner cannot?**
+
+An existing private key is imported into an Ika 2PC-MPC dWallet, and authority
+over it is handed to a roster of credentials — WebAuthn passkeys, connected Sui
+wallets, or zkLogin identities. Moving assets requires a threshold `t` of the
+`N` enrolled members to approve. No single device holds the key, and no
+custodian sits in the middle.
+
+Source: `examples/ikavery/`, with the Move package at
+`examples/ikavery/sui/packages/contracts/recovery/`.
+
+## Architecture
+
+```
+Owner                    recovery::Recovery              Ika Network
+  │                              │                            │
+  │  import key ────────────────►│                            │
+  │                              │  imported-key dWallet ────►│
+  │                              │                            │
+Members                          │                            │
+  │  enrol credential ──────────►│  roster: t of N            │
+  │                              │                            │
+  │  propose sweep ─────────────►│  RecoveryProposal          │
+  │  approve (signed challenge)─►│  verify + count            │
+  │                              │                            │
+  │                              │  quorum reached ──────────►│  sign sweep
+  │                              │◄─────────────── signature  │
+  └──────────────────────────────┴────► assets swept to recovery address
+```
+
+The Move package holds the roster and the proposals; Ika holds the key material.
+Neither can act alone.
+
+## Key Concepts
+
+### Quorum-gated signing
+
+`recovery::propose` records an intent — a sweep destination, an enrollment, or a
+roster change. `recovery::approve` verifies one member's signature over a
+challenge and counts it. Only when approvals reach the threshold does
+`recovery::execute` reach for the dWallet's signing capability.
+
+### Credential-agnostic membership
+
+A member is a verified credential, not an address. `auth` and `assertion` verify
+WebAuthn assertions (P-256 signatures over an authenticator payload) and wallet
+signatures under one interface, so a roster can mix a phone passkey, a hardware
+wallet, and a zkLogin identity.
+
+### Imported keys, not fresh ones
+
+Unlike the DKG flows in the other examples, ikavery starts from a key that
+already exists and already holds assets. It uses Ika's imported-key path:
+the key is encrypted to the network's encryption key, verified, and from then on
+only ever signs under quorum.
+
+### Enrollment is itself gated
+
+Adding a member re-encrypts a share of the dWallet to them, so enrollment runs
+through the same propose/approve/execute cycle as a sweep
+(`propose_enrollment`, `approve_enrollment`, `execute_enrollment`). A single
+member cannot quietly add themselves.
+
+## File Structure
+
+```
+examples/ikavery/
+├── packages/
+│   ├── core/                      shared cross-chain logic
+│   └── frontend-ui/               design system
+├── sui/packages/
+│   ├── contracts/recovery/        Move package
+│   │   └── sources/
+│   │       ├── recovery.move      proposals, approvals, execution
+│   │       ├── auth.move          credential verification
+│   │       ├── assertion.move     WebAuthn assertion parsing
+│   │       ├── challenges.move    replay-resistant challenges
+│   │       ├── registry.move      recovery instance registry
+│   │       └── sweep_intent.move  sweep payload encoding
+│   ├── sdk/                       TypeScript flows over the package
+│   └── frontend/                  Next.js app
+└── solana/packages/               parallel Solana deployment
+```
+
+## Quick Start
+
+The examples are pnpm workspace members, so dependencies install once from the
+repository root:
+
+```bash
+pnpm install
+```
+
+Build the Move package:
+
+```bash
+cd examples/ikavery && pnpm run move:build
+```
+
+Run the Sui app:
+
+```bash
+pnpm --filter ikavery-frontend dev    # http://localhost:3000
+```
+
+## Sui Access
+
+The app talks to Sui over **gRPC** — public fullnodes no longer serve JSON-RPC —
+using `@mysten/sui` v2 and dApp Kit 2 (`@mysten/dapp-kit-react`), which is the
+dApp Kit release that supports a gRPC client. Wallet connection, transaction
+resolution, and execution all run over that transport.
+
+## Security Considerations
+
+- Testnet/devnet only. Never import a key holding real funds.
+- The contracts have not been independently audited.
+- Threshold choice is a real trade-off: too high and recovery becomes
+  impossible, too low and a subset of members can move the assets.
+- Enrollment re-encrypts key material to a new member — treat a roster change
+  with the same care as a withdrawal.
+
+## Next Steps
+
+- [Key importing](/docs/move-integration/protocols/key-importing) — the protocol
+  underneath the import step
+- [Signing](/docs/move-integration/protocols/signing) — how the sweep signature
+  is produced
+- [Bitcoin Multisig](/docs/move-integration/examples/multisig-bitcoin) — a
+  different take on governance over a dWallet

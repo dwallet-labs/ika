@@ -17,6 +17,21 @@ All examples in this directory:
 
 ---
 
+## Installing
+
+Every example here is a **pnpm workspace member of this repository**, so
+dependencies are installed once from the repository root — not per app:
+
+```bash
+# from the repository root
+pnpm install
+```
+
+The examples consume `@ika.xyz/sdk` as `workspace:*`, meaning they build against
+the SDK in this checkout rather than a published version, and shared library
+versions come from the `catalog:` in `pnpm-workspace.yaml`. Node 24+ (the Active
+LTS line) is required.
+
 ## Available Examples
 
 ### 🪙 bitisi - Bitcoin Multisig on Sui
@@ -36,15 +51,16 @@ A full-featured Bitcoin multisig wallet application built on the Sui blockchain 
 **Tech Stack:**
 
 - **Smart Contracts:** Move on Sui blockchain
-- **Frontend:** Next.js 14, TypeScript, Tailwind CSS
+- **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS
+- **Sui access:** `@mysten/sui` v2 over gRPC with dApp Kit 2
+  (`@mysten/dapp-kit-react`)
 - **Integration:** IKA 2PC MPC protocol for key generation
 
 **Quick Start:**
 
 ```bash
-cd multisig-bitcoin/frontend
-npm install
-npm run dev
+pnpm install                          # from the repository root
+pnpm --filter frontend dev
 ```
 
 [View detailed documentation →](multisig-bitcoin/README.md)
@@ -67,27 +83,62 @@ A cross-chain wallet demo that creates an Ethereum wallet from any browser walle
 
 **Tech Stack:**
 
-- **Backend:** Bun, TypeScript, Ika SDK
-- **Frontend:** Next.js, TypeScript, Tailwind CSS
+- **Backend:** Bun (runtime), TypeScript, Ika SDK
+- **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS
+- **Sui access:** `@mysten/sui` v2 over gRPC
 - **Integration:** Ika 2PC-MPC protocol for distributed key generation
 
 **Quick Start:**
 
 ```bash
-# Backend
-cd keyspring/backend
-bun install
+pnpm install                          # from the repository root
+
+# Backend (still runs under bun; pnpm installs it)
 export SUI_ADMIN_SECRET_KEY="your-base64-encoded-key"
 export IKA_COIN_ID="your-ika-coin-id"
-bun run dev
+pnpm --filter @demo/backend dev
 
 # Frontend
-cd keyspring/frontend
-bun install
-bun run dev
+pnpm --filter @demo/frontend dev
 ```
 
 [View detailed documentation →](keyspring/README.md)
+
+---
+
+### 🔐 ikavery - Quorum-Gated Key Custody
+
+**Location:** `ikavery/`
+
+Import an existing private key into an Ika dWallet, put it behind a t-of-N
+roster of passkeys or wallet credentials, and recover the assets by sweeping
+them once a quorum signs. Ships parallel Sui and Solana deployments over a
+shared design layer.
+
+**Features:**
+
+- Import an existing private key into an Ika 2PC-MPC dWallet
+- Enrol WebAuthn passkeys (Face ID, Touch ID, Windows Hello), connected wallets,
+  or zkLogin identities via Enoki
+- Change the roster and threshold later, under the same quorum rules
+- Propose a sweep and approve it with t of N credentials
+- Sweep native and token balances to a recovery address
+
+**Tech Stack:**
+
+- **Smart Contracts:** Move on Sui, Quasar program on Solana
+- **Frontend:** Next.js 16, React 19, Tailwind v4
+- **Sui access:** `@mysten/sui` v2 over gRPC with dApp Kit 2, Enoki, WebAuthn
+- **Integration:** Ika 2PC-MPC for key import, quorum-gated signing
+
+**Quick Start:**
+
+```bash
+pnpm install                          # from the repository root
+pnpm --filter ikavery-frontend dev
+```
+
+[View detailed documentation →](ikavery/README.md)
 
 ---
 
