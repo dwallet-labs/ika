@@ -161,14 +161,6 @@ async fn inject_dwallet_checkpoint_messages(
     inject_checkpoint_messages(test_state, round, messages, Vec::new()).await;
 }
 
-async fn inject_system_checkpoint_messages(
-    test_state: &IntegrationTestState,
-    round: u64,
-    messages: Vec<SystemCheckpointMessageKind>,
-) {
-    inject_checkpoint_messages(test_state, round, Vec::new(), messages).await;
-}
-
 fn all_flags_true(flags: &[Arc<AtomicBool>]) -> bool {
     flags.iter().all(|f| f.load(Ordering::Acquire))
 }
