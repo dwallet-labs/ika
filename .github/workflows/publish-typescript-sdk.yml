@@ -68,12 +68,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
 
-      # Update npm for registry checks (npm view commands)
-      - name: Update npm to latest
-        run: npm install -g npm@latest
+      # There used to be an `npm install -g npm@latest` here, for the `npm view`
+      # calls that check whether a version is already published. Bundled npm
+      # does that fine, and tracking `latest` put a moving target on the release
+      # path: npm 12 raised its floor to Node >=22.22, so the step started
+      # failing on this job's Node 20 and blocked a release outright. The
+      # publishing itself goes through pnpm, which does not use npm here.
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6.0.10
