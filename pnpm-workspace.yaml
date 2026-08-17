@@ -3,3 +3,27 @@ packages:
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
+
+# pnpm 11 no longer reads configuration from the `pnpm` field in package.json,
+# and what it finds there is ignored SILENTLY — no warning, no error. These
+# overrides are CVE pins, so leaving them behind would have quietly restored
+# vulnerable transitive versions. Settings other than auth/registry also move
+# out of .npmrc, camelCased.
+strictPeerDependencies: false
+autoInstallPeers: false
+
+# v11 removed `onlyBuiltDependencies` in favour of `allowBuilds`, and made
+# `strictDepBuilds` the default — an un-allowed build script now fails the
+# install rather than printing a notice.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+
+overrides:
+  'node-notifier': '10.0.0'
+  'async': '3.2.2'
+  'nth-check': '2.0.1'
+  'yaml@<2.2.2': '>=2.2.2'
+  'semver@<7.5.2': '>=7.5.2'
+  'postcss@<8.4.31': '>=8.4.31'
+  'dompurify@>=3.0.0 <3.1.3': '>=3.1.3'
