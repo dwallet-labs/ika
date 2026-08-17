@@ -195,9 +195,33 @@ impl ConsensusManager {
             .consensus_config()
             .expect("consensus_config should exist");
 
+        let node_parameters = consensus_config.parameters.clone().unwrap_or_default();
+        // `commit_sync_batch_size × commit_sync_batches_ahead` is what bounds
+        // this node's memory while the fold is parked on a slow MPC drain, so
+        // the number is ika's business and is pinned here rather than
+        // inherited: the commit syncer stops scheduling fetches once the
+        // consumer trails by that many unhandled commits
+        // (`consensus/core/src/commit_syncer.rs`), which is the only thing
+        // keeping a deep backlog on peers' disks instead of in this process's
+        // commit channel. Upstream's defaults are tuned for Sui's consumer,
+        // which never blocks; ours does, deliberately (see
+        // `dev-docs/specs/event-sourced-epoch.md`), so a retune upstream must
+        // not move our ceiling without us noticing.
+        //
+        // Held at upstream's current values — 100 × 32 = 3,200 unhandled
+        // commits — because lowering them also slows a legitimately-behind
+        // node's catch-up, and that trade should follow the real-payload
+        // measurement in ika #2064 rather than precede it. THIS is the lever
+        // if that measurement comes back badly: the resident cost is
+        // 3,200 × the size of a `CommittedSubDag`, which carries every
+        // validator's blocks for its round.
+        const UNHANDLED_COMMIT_CEILING_BATCH_SIZE: u32 = 100;
+        const UNHANDLED_COMMIT_CEILING_BATCHES_AHEAD: usize = 32;
         let parameters = Parameters {
             db_path: self.get_store_path(epoch),
-            ..consensus_config.parameters.clone().unwrap_or_default()
+            commit_sync_batch_size: UNHANDLED_COMMIT_CEILING_BATCH_SIZE,
+            commit_sync_batches_ahead: UNHANDLED_COMMIT_CEILING_BATCHES_AHEAD,
+            ..node_parameters
         };
 
         let own_protocol_key = self.protocol_keypair.public();

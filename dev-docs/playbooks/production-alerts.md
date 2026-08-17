@@ -160,6 +160,47 @@ drop the series several times a day and break exactly the climbing-versus-flat
 reading above. `ika_consensus_round_channel_depth` is a gauge, and resets with
 the epoch because depth is an instantaneous value.
 
+## Alert 7: the MPC drain has stopped consuming (fold parked)
+
+```promql
+# One endless park: the fold has been waiting on the drain for minutes and
+# the drain has taken nothing in that time. Read the two together — the
+# seconds counter alone cannot tell a stuck drain from a slow one.
+increase(ika_consensus_fold_blocked_seconds_total[10m]) > 300
+  and increase(ika_consensus_fold_blocked_sends_total[10m]) == 0
+# for: 10m
+```
+
+```promql
+# The corroborating shape, and the one to put on the dashboard beside it:
+# the channel pinned at capacity while the drain's consumed round stands
+# still. Capacity is `DEFAULT_ROUND_CHANNEL_CAPACITY` (1024) unless a node
+# overrides it.
+ika_consensus_round_channel_depth >= 1024
+  and increase(ika_dwallet_mpc_consumed_round[10m]) == 0
+# for: 10m
+```
+
+This is the failure with **no second opinion**. The commit-liveness watchdog
+deliberately holds while the fold is parked — a parked fold is holding a
+commit it received, which is the opposite of the isolation that watchdog
+exists to catch — so it will not exit the node, and Alert 6's
+stopped-contributing gauge freezes rather than climbing (see below). These
+counters are the only thing that moves.
+
+Distinguish before acting, using the table below: **seconds climbing while
+sends stays flat** is a drain that has stopped, and the node is contributing
+no MPC work while still following consensus and signing checkpoints.
+**Both climbing** is a drain that is merely slow — heavy MPC load, expected
+under bursts, not an incident on its own.
+
+**Operator action** for the stopped case: the node needs a restart, which is
+safe and self-healing here — the epoch's derived state is rebuilt by replay
+from the consensus store on boot (`../specs/event-sourced-epoch.md`), and no
+MPC work is lost that the committee has not already agreed. Capture the MPC
+service's logs first; a drain that stops without dying is not a failure mode
+with a known cause yet, and ika #2064 tracks the end-to-end coverage for it.
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
 restarted mid-epoch refolds the epoch from its first commit, so its raw lag
 legitimately exceeds any stall threshold for as long as that runs. The gauge above
