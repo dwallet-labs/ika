@@ -27,6 +27,7 @@ use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
+use ika_types::error::error_chain;
 use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -338,14 +339,14 @@ where
                 Err(err) => {
                     if consecutive_refresh_failures.is_multiple_of(12) {
                         warn!(
-                            error=?err,
+                            error = %error_chain(&err),
                             label = self.label,
                             consecutive_failures = consecutive_refresh_failures,
                             "pubkey provider refresh failed; will retry"
                         );
                     } else {
                         debug!(
-                            error=?err,
+                            error = %error_chain(&err),
                             label = self.label,
                             consecutive_failures = consecutive_refresh_failures,
                             "pubkey provider refresh failed; will retry"

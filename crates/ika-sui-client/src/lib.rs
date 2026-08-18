@@ -45,6 +45,9 @@ pub mod ika_validator_transactions;
 pub mod metrics;
 pub mod transport;
 pub use transport::{SubmittedTransaction, SuiFundsBreakdown};
+// Re-exported so `retry_with_max_elapsed_time!` can reach it as `$crate::error_chain`
+// from any expansion site, without requiring the caller to depend on ika-types.
+pub use ika_types::error::error_chain;
 
 #[macro_export]
 macro_rules! retry_with_max_elapsed_time {
@@ -68,7 +71,7 @@ macro_rules! retry_with_max_elapsed_time {
                     }
                     Err(err) => {
           // For simplicity we treat every error as transient so we can retry until max_elapsed_time
-          warn!(error=?err, "retrying with max elapsed time");
+          warn!(error = %$crate::error_chain(&err), "retrying with max elapsed time");
                         return Err(backoff::Error::transient(err));
                     }
                 }
