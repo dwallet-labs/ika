@@ -23,7 +23,7 @@ use sui_types::base_types::ConciseableName;
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use ika_types::crypto::AuthorityStrongQuorumSignInfo;
-use ika_types::error::{IkaError, IkaResult};
+use ika_types::error::{IkaError, IkaResult, error_chain};
 use ika_types::message_envelope::Message;
 use ika_types::messages_system_checkpoints::{
     CertifiedSystemCheckpointMessage, SignedSystemCheckpointMessage, SystemCheckpointMessage,
@@ -492,7 +492,7 @@ impl SystemCheckpointBuilder {
 
             if let Err(e) = self.make_checkpoint(vec![pending.clone()]).await {
                 error!(
-                    ?e,
+                    error = %error_chain(&e),
                     last_height,
                     ?pending,
                     "Error while making system checkpoint, will retry in 1s"

@@ -33,6 +33,60 @@ macro_rules! fp_ensure {
 use crate::dwallet_mpc_error::DwalletMPCError;
 use sui_types::error::SuiError;
 
+/// One-line, backtrace-free rendering of an error **and its full context
+/// chain**, for logging on paths that will retry.
+///
+/// # Why this exists
+///
+/// The obvious way to log an error under `tracing` is `error = ?e`, and for a
+/// plain `#[derive(Debug)]` error enum that is fine. For an [`anyhow::Error`]
+/// it is not: `anyhow`'s `Debug` impl prints the message, then each `Caused
+/// by:` line, then — when the binary captures backtraces, which ika's do — the
+/// **entire captured stack backtrace**. On a path that logs once per retry
+/// tick that turns the log into mostly backtrace by volume, and the one line an
+/// operator actually needs (the underlying cause) is buried in frames that are
+/// identical on every tick and say nothing the log line's own message didn't.
+///
+/// The naive fix, `error = %e`, is worse than it looks: `anyhow`'s plain
+/// `Display` prints **only the outermost context**. A tick that failed with
+/// `.context("bag walk failed")` over a transport error would log exactly
+/// `bag walk failed` and drop the actual reason.
+///
+/// `anyhow`'s *alternate* `Display` (`{:#}`) is the one that renders the whole
+/// chain, on a single line, with no backtrace — which is precisely what a
+/// retry-path log wants. This wrapper is that formatting, made greppable and
+/// usable from a `tracing` field (the macros have sigils for `Display` and
+/// `Debug`, but no sigil for alternate-`Display`).
+///
+/// It is generic over `Display`, not specific to `anyhow`: for a typed error
+/// enum `{:#}` is identical to `{}`, so the same call site stays correct if the
+/// error type changes.
+///
+/// Fatal and non-retryable paths should keep `?e` — a backtrace logged once,
+/// where the process is about to stop or a decision is final, is worth having.
+///
+/// ```ignore
+/// warn!(error = %error_chain(&e), "checkpoint pusher tick failed; will retry");
+/// ```
+pub struct ErrorChain<E>(E);
+
+impl<E: std::fmt::Display> std::fmt::Display for ErrorChain<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl<E: std::fmt::Display> std::fmt::Debug for ErrorChain<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+/// See [`ErrorChain`].
+pub fn error_chain<E: std::fmt::Display>(error: E) -> ErrorChain<E> {
+    ErrorChain(error)
+}
+
 #[macro_export]
 macro_rules! exit_main {
     ($result:expr_2021) => {
@@ -370,5 +424,74 @@ impl Ord for IkaError {
 impl PartialOrd for IkaError {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod error_chain_tests {
+    use super::error_chain;
+
+    fn nested() -> anyhow::Error {
+        anyhow::anyhow!("transport: code 'Unavailable', message: \"grpc-status header missing\"")
+            .context("verified_dynamic_fields_page failed")
+            .context("bag walk failed")
+    }
+
+    /// The whole point: one line, the full cause chain, no backtrace.
+    #[test]
+    fn renders_the_full_chain_on_one_line() {
+        let rendered = format!("{}", error_chain(&nested()));
+        assert!(
+            !rendered.contains('\n'),
+            "a retry-path log line must stay one line, got:\n{rendered}"
+        );
+        for fragment in [
+            "bag walk failed",
+            "verified_dynamic_fields_page failed",
+            "grpc-status header missing",
+        ] {
+            assert!(
+                rendered.contains(fragment),
+                "the chain must survive; {fragment:?} missing from {rendered:?}"
+            );
+        }
+        assert!(
+            !rendered.contains("Stack backtrace"),
+            "a retry-path log line must not carry a backtrace: {rendered}"
+        );
+    }
+
+    /// What `error = ?e` does instead, and why it is wrong here: `Debug` on an
+    /// `anyhow::Error` is multi-line before a backtrace is even captured, and
+    /// with `RUST_BACKTRACE` set (which ika's binaries enable) it appends the
+    /// whole stack — once per retry tick.
+    #[test]
+    fn debug_formatting_is_the_multi_line_shape_this_replaces() {
+        assert!(
+            format!("{:?}", nested()).contains('\n'),
+            "if anyhow's Debug ever became single-line this fix would be moot"
+        );
+    }
+
+    /// The naive one-line alternative, `error = %e`, silently drops every
+    /// cause — which is exactly the information a retry-path log exists to
+    /// carry.
+    #[test]
+    fn plain_display_would_drop_the_causes() {
+        let plain = format!("{}", nested());
+        assert_eq!(plain, "bag walk failed");
+        assert!(!plain.contains("grpc-status header missing"));
+    }
+
+    /// Generic over `Display`, so a call site stays correct if its error type
+    /// is a plain enum rather than `anyhow::Error` (`{:#}` == `{}` there).
+    #[test]
+    fn typed_errors_render_unchanged() {
+        let typed = crate::error::IkaError::TooManyRequests;
+        assert_eq!(
+            format!("{}", error_chain(&typed)),
+            format!("{typed}"),
+            "a non-anyhow error must render exactly as it always did"
+        );
     }
 }

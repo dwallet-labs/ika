@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::archive::CheckpointArchive;
 use ika_sui_client::transport::SuiTransport;
+use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
 use sui_types::TypeTag;
@@ -200,7 +201,10 @@ impl IkaCheckpointPusher {
         loop {
             tick.tick().await;
             if let Err(e) = self.advance().await {
-                warn!(error = ?e, "checkpoint pusher tick failed; will retry");
+                warn!(
+                    error = %error_chain(&e),
+                    "checkpoint pusher tick failed; will retry"
+                );
             }
         }
     }
@@ -541,7 +545,11 @@ impl IkaCheckpointPusher {
                         );
                     }
                     Err(e) => {
-                        warn!(seq, error = ?e, "gap checkpoint fetched but failed to fold — will retry");
+                        warn!(
+                            seq,
+                            error = %error_chain(&e),
+                            "gap checkpoint fetched but failed to fold — will retry"
+                        );
                     }
                 },
                 Err(fullnode_error) => {
@@ -625,7 +633,11 @@ impl IkaCheckpointPusher {
                     Err(e) => {
                         // Same transient-vs-deterministic ambiguity as the
                         // fullnode fold path; the caller's deadline bounds it.
-                        warn!(seq, error = ?e, "archive checkpoint fetched but failed to fold — will retry");
+                        warn!(
+                            seq,
+                            error = %error_chain(&e),
+                            "archive checkpoint fetched but failed to fold — will retry"
+                        );
                         false
                     }
                 }

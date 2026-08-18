@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ika_types::committee::EpochId;
+use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::{DBSuiEvent, IkaNetworkConfig};
 use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner};
 use sui_types::TypeTag;
@@ -195,13 +196,17 @@ impl BagEventPump {
                     // outage no longer floods the log at the poll rate.
                     if consecutive_failures >= PUMP_FAILURE_ESCALATION_TICKS {
                         error!(
-                            error = ?e,
+                            error = %error_chain(&e),
                             consecutive_failures,
                             backoff_ms = backoff.as_millis() as u64,
                             "BagEventPump tick failing persistently (relay/proof outage?); backing off"
                         );
                     } else {
-                        warn!(error = ?e, consecutive_failures, "BagEventPump tick failed; will retry with backoff");
+                        warn!(
+                            error = %error_chain(&e),
+                            consecutive_failures,
+                            "BagEventPump tick failed; will retry with backoff"
+                        );
                     }
                 }
             }
@@ -256,7 +261,12 @@ impl BagEventPump {
                     snapshot_requests.push(req);
                 }
                 Ok(None) => {}
-                Err(e) => error!(error=?e, event_type=?ev.type_, ?id, "failed to parse bag entry"),
+                Err(e) => error!(
+                    error = %error_chain(&e),
+                    event_type = ?ev.type_,
+                    ?id,
+                    "failed to parse bag entry"
+                ),
             }
         }
 

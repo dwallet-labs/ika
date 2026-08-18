@@ -25,7 +25,7 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 
 use ika_types::crypto::AuthorityStrongQuorumSignInfo;
 use ika_types::digests::DWalletCheckpointMessageDigest;
-use ika_types::error::{IkaError, IkaResult};
+use ika_types::error::{IkaError, IkaResult, error_chain};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::message_envelope::Message;
 use ika_types::messages_dwallet_checkpoint::{
@@ -503,7 +503,7 @@ impl DWalletCheckpointBuilder {
 
             if let Err(e) = self.make_checkpoint(vec![pending.clone()]).await {
                 error!(
-                    ?e,
+                    error = %error_chain(&e),
                     last_height,
                     ?pending,
                     "Error while making dwallet checkpoint, will retry in 1s",
