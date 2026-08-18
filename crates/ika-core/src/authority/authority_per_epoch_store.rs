@@ -651,10 +651,14 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         checkpoint: PendingDWalletCheckpoint,
     ) -> IkaResult<()> {
         self.ensure_epoch_alive()?;
-        self.checkpoint_construction
-            .write()
-            .pending_dwallet_checkpoints
-            .insert(checkpoint.height(), checkpoint);
+        let queued = {
+            let mut construction = self.checkpoint_construction.write();
+            construction
+                .pending_dwallet_checkpoints
+                .insert(checkpoint.height(), checkpoint);
+            construction.pending_dwallet_checkpoints.len()
+        };
+        self.metrics.pending_dwallet_checkpoints.set(queued as i64);
         Ok(())
     }
 
@@ -5968,6 +5972,9 @@ impl AuthorityPerEpochStore {
         construction.pending_dwallet_checkpoints = construction
             .pending_dwallet_checkpoints
             .split_off(&(commit_height + 1));
+        let queued = construction.pending_dwallet_checkpoints.len();
+        drop(construction);
+        self.metrics.pending_dwallet_checkpoints.set(queued as i64);
         Ok(())
     }
 
@@ -6220,6 +6227,9 @@ impl AuthorityPerEpochStore {
         construction.pending_system_checkpoints = construction
             .pending_system_checkpoints
             .split_off(&(commit_height + 1));
+        let queued = construction.pending_system_checkpoints.len();
+        drop(construction);
+        self.metrics.pending_system_checkpoints.set(queued as i64);
         Ok(())
     }
 
@@ -6637,12 +6647,19 @@ impl ConsensusCommitOutput {
         drop(state);
 
         if !self.pending_system_checkpoints.is_empty() {
-            let mut construction = epoch_store.checkpoint_construction.write();
-            for checkpoint in self.pending_system_checkpoints {
-                construction
-                    .pending_system_checkpoints
-                    .insert(checkpoint.height(), checkpoint);
-            }
+            let queued = {
+                let mut construction = epoch_store.checkpoint_construction.write();
+                for checkpoint in self.pending_system_checkpoints {
+                    construction
+                        .pending_system_checkpoints
+                        .insert(checkpoint.height(), checkpoint);
+                }
+                construction.pending_system_checkpoints.len()
+            };
+            epoch_store
+                .metrics
+                .pending_system_checkpoints
+                .set(queued as i64);
         }
 
         let digests = self
@@ -6715,11 +6732,12 @@ mod tests {
     use tokio::time::advance;
 
     use crate::dwallet_checkpoints::DWalletCheckpointService;
-    use crate::epoch_tasks::mpc_data_announcement_sender::ready_signal_deadline_ms;
     use crate::handoff_cert::{build_handoff_attestation, sign_handoff_attestation};
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
     use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
     use fastcrypto::traits::{KeyPair, ToFromBytes};
+    use ika_types::crypto::AuthorityKeyPair;
+    use ika_types::messages_dwallet_checkpoint::SignedDWalletCheckpointMessage;
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use prometheus::Registry;
     use sui_types::base_types::ObjectID;
@@ -9388,6 +9406,299 @@ mod tests {
                 )
                 .await
                 .unwrap();
+        }
+    }
+
+    /// A store, its committee's signing keys, and the names in order — for
+    /// the checkpoint-construction tests, which need real
+    /// `SignedDWalletCheckpointMessage`s (the prune does not verify them, but
+    /// there is no other way to build the type).
+    fn checkpoint_construction_test_store(
+        dir: &Path,
+    ) -> (
+        Arc<AuthorityPerEpochStore>,
+        Vec<AuthorityKeyPair>,
+        Vec<AuthorityName>,
+    ) {
+        let (committee, keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
+        (epoch_store, keys, names)
+    }
+
+    fn test_checkpoint_message(sequence_number: u64) -> DWalletCheckpointMessage {
+        DWalletCheckpointMessage {
+            epoch: 0,
+            sequence_number,
+            messages: Vec::new(),
+        }
+    }
+
+    /// Builds a peer's signature over `sequence_number`, the way the
+    /// checkpoint output path does.
+    fn test_checkpoint_signature(
+        sequence_number: u64,
+        signer: &AuthorityKeyPair,
+        authority: AuthorityName,
+    ) -> DWalletCheckpointSignatureMessage {
+        DWalletCheckpointSignatureMessage {
+            checkpoint_message: SignedDWalletCheckpointMessage::new(
+                0,
+                test_checkpoint_message(sequence_number),
+                signer,
+                authority,
+            ),
+        }
+    }
+
+    /// The prune's boundary is `< next_to_certify`, and it has to be exact:
+    /// the sequence the aggregator is working on right now is the one it is
+    /// still collecting signatures for.
+    ///
+    /// An off-by-one the wrong way drops the signatures for the checkpoint
+    /// being certified, which is not a memory bug but a LIVENESS bug — this
+    /// node stops certifying and waits for peers to re-send signatures they
+    /// have no reason to re-send.
+    #[tokio::test]
+    async fn the_checkpoint_prune_keeps_the_sequence_being_certified() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, keys, names) = checkpoint_construction_test_store(dir.path());
+
+        // Signatures spanning the watermark: one below, one at, one above.
+        for sequence_number in [4u64, 5, 6] {
+            epoch_store
+                .insert_checkpoint_signature(
+                    sequence_number,
+                    0,
+                    &test_checkpoint_signature(sequence_number, &keys[0], names[0]),
+                )
+                .unwrap();
+        }
+
+        epoch_store
+            .prune_dwallet_checkpoint_construction(5)
+            .unwrap();
+
+        let retained: Vec<u64> = epoch_store
+            .pending_dwallet_checkpoint_signatures_from(0, 0)
+            .unwrap()
+            .into_iter()
+            .map(|((sequence_number, _), _)| sequence_number)
+            .collect();
+        assert_eq!(
+            retained,
+            vec![5, 6],
+            "the prune must drop everything BELOW the watermark and keep the sequence being \
+             certified — dropping 5 here would strand this node's own aggregation",
+        );
+    }
+
+    /// The prune must never drop the HIGHEST built checkpoint message, however
+    /// far ahead the certified watermark runs.
+    ///
+    /// State sync can certify past this node's own build progress, which puts
+    /// `next_to_certify` above everything the builder has produced. That
+    /// message is the sequence-number cursor `create_checkpoints` reads
+    /// through `last_built_dwallet_checkpoint_message`; dropping it restarts
+    /// this epoch's numbering at the previous epoch's anchor, and every
+    /// checkpoint this node builds from then on is byte-divergent from the
+    /// committee's.
+    #[tokio::test]
+    async fn the_checkpoint_prune_keeps_the_sequence_number_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, _keys, _names) = checkpoint_construction_test_store(dir.path());
+
+        epoch_store
+            .process_pending_dwallet_checkpoint(
+                7,
+                vec![test_checkpoint_message(2), test_checkpoint_message(3)],
+            )
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .last_built_dwallet_checkpoint_message()
+                .unwrap()
+                .map(|(sequence_number, _)| sequence_number),
+            Some(3),
+        );
+
+        // State sync has certified far past what this node has built.
+        epoch_store
+            .prune_dwallet_checkpoint_construction(10)
+            .unwrap();
+
+        assert_eq!(
+            epoch_store
+                .last_built_dwallet_checkpoint_message()
+                .unwrap()
+                .map(|(sequence_number, _)| sequence_number),
+            Some(3),
+            "the highest built message is the sequence-number cursor; pruning it restarts \
+             this epoch's checkpoint numbering",
+        );
+    }
+
+    /// The submission dedup set is what tells a submitter its transaction
+    /// landed, and it must be updated before the notification that wakes it.
+    ///
+    /// `consensus_messages_processed_notify` registers first and then checks
+    /// the set, so a digest that lands after the notification fires would
+    /// leave a waiter parked forever — the consensus adapter's submit-and-wait
+    /// never returns, and the epoch task behind it stops re-emitting.
+    #[tokio::test]
+    async fn a_folded_transaction_is_marked_processed_before_its_waiter_wakes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        let transaction = ConsensusTransaction::new_idle_status_update(IdleStatusUpdate {
+            authority: author,
+            nonce: [3u8; 32],
+            is_idle: true,
+        });
+        let key = SequencedConsensusTransactionKey::External(transaction.key());
+
+        assert!(
+            !epoch_store.is_consensus_message_processed(&key).unwrap(),
+            "nothing is processed before the fold",
+        );
+
+        // A waiter parked exactly as the consensus adapter parks one.
+        let waiting_store = epoch_store.clone();
+        let waiting_key = key.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_store
+                .consensus_messages_processed_notify(vec![waiting_key])
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![VerifiedSequencedConsensusTransaction(
+                    SequencedConsensusTransaction {
+                        certificate_author_index: 0,
+                        certificate_author: author,
+                        consensus_index: ExecutionIndices {
+                            last_committed_round: 1,
+                            sub_dag_index: 1,
+                            transaction_index: 0,
+                        },
+                        transaction: SequencedConsensusTransactionKind::External(transaction),
+                    },
+                )],
+                &ExecutionIndicesWithStats {
+                    index: ExecutionIndices {
+                        last_committed_round: 1,
+                        sub_dag_index: 1,
+                        transaction_index: 0,
+                    },
+                    hash: 0,
+                    stats: ConsensusStats::new(4),
+                },
+                &None::<Arc<DWalletCheckpointService>>,
+                &None,
+                &ConsensusCommitInfo::new_for_test(1, 1_000, true),
+                &metrics,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            epoch_store.is_consensus_message_processed(&key).unwrap(),
+            "the commit boundary must mark every transaction it folded processed — without \
+             it the submitter re-submits forever and the fold sees the duplicate as new",
+        );
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter must be woken by the commit that processed its transaction")
+            .unwrap()
+            .unwrap();
+    }
+
+    /// Reading derived state after the epoch store is released must FAIL, not
+    /// answer "empty".
+    ///
+    /// Every reader used to reach this state through `tables()`, which returns
+    /// `EpochEnded` once the handles are dropped. In memory the state is
+    /// cleared instead, so without an explicit check the same call would
+    /// report no frozen set, no close and no votes — indistinguishable from an
+    /// epoch that has not started. The MPC drain's graceful stop at the epoch
+    /// boundary is written against the ERROR: it stops the service iteration
+    /// on `EpochEnded` rather than acting on the answer.
+    #[tokio::test]
+    async fn derived_state_reads_fail_once_the_epoch_store_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        fold_test_commits(&epoch_store, author, 2).await;
+        assert!(epoch_store.get_capabilities_v1().unwrap().len() == 1);
+
+        epoch_store.release_db_handles();
+
+        // The memory itself must be gone, not merely unreadable. This store
+        // outlives its epoch — tasks hold the `Arc` well past the boundary —
+        // and the derived half is the larger one, so an epoch's worth of it
+        // surviving every boundary is a leak this design would have invented.
+        for (field, encoded) in epoch_store.derived_state_snapshot() {
+            assert!(
+                is_empty_derived_state(&encoded),
+                "`{field}` still holds state after the epoch store was released",
+            );
+        }
+
+        let epoch = epoch_store.epoch();
+        for (name, result) in [
+            (
+                "is_epoch_close_emitted",
+                epoch_store.is_epoch_close_emitted().err(),
+            ),
+            (
+                "end_of_publish_quorum_round",
+                epoch_store.end_of_publish_quorum_round().err(),
+            ),
+            (
+                "get_frozen_validator_mpc_data_input_set",
+                epoch_store.get_frozen_validator_mpc_data_input_set().err(),
+            ),
+            (
+                "get_capabilities_v1",
+                epoch_store.get_capabilities_v1().err(),
+            ),
+            (
+                "get_pending_dwallet_checkpoints",
+                epoch_store.get_pending_dwallet_checkpoints(None).err(),
+            ),
+            (
+                "insert_pending_dwallet_checkpoint",
+                epoch_store
+                    .insert_pending_dwallet_checkpoint(PendingDWalletCheckpoint::V1(
+                        crate::dwallet_checkpoints::PendingDWalletCheckpointV1 {
+                            messages: Vec::new(),
+                            details: crate::dwallet_checkpoints::PendingDWalletCheckpointInfo {
+                                checkpoint_height: 1,
+                            },
+                        },
+                    ))
+                    .err(),
+            ),
+        ] {
+            assert!(
+                matches!(result, Some(IkaError::EpochEnded(ended)) if ended == epoch),
+                "`{name}` must report the epoch has ended, not answer from cleared state",
+            );
         }
     }
 

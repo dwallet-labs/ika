@@ -256,6 +256,23 @@ pub struct EpochMetrics {
     /// size is healthy and sustained growth means certification has stalled.
     pub pending_dwallet_checkpoint_signatures: IntGauge,
     pub pending_system_checkpoint_signatures: IntGauge,
+
+    /// Entries in each builder's input queue, sampled where the queue is
+    /// MUTATED rather than on a builder pass.
+    ///
+    /// That is the whole point of them: the builders wait for the boot replay
+    /// before their first pass, while the MPC drain fills the queue throughout
+    /// it, so a builder-sampled depth reports nothing during the one window
+    /// where the queue grows without a consumer.
+    /// `ika_pending_dwallet_checkpoint_queue_depth` is the builder-sampled
+    /// view and stays the right one for "is the builder stuck"; these two are
+    /// the right one for "how much is the replay accumulating".
+    ///
+    /// Entries, not bytes. Each carries one consensus round's checkpoint
+    /// content, so multiply by the epoch's average checkpoint size for a
+    /// footprint.
+    pub pending_dwallet_checkpoints: IntGauge,
+    pub pending_system_checkpoints: IntGauge,
 }
 
 impl EpochMetrics {
@@ -509,6 +526,18 @@ impl EpochMetrics {
             pending_system_checkpoint_signatures: register_int_gauge_with_registry!(
                 "ika_epoch_pending_system_checkpoint_signatures",
                 "Peer system checkpoint signatures held for aggregation",
+                registry
+            )
+            .unwrap(),
+            pending_dwallet_checkpoints: register_int_gauge_with_registry!(
+                "ika_epoch_pending_dwallet_checkpoints",
+                "Entries in the dWallet checkpoint builder's input queue, sampled on mutation",
+                registry
+            )
+            .unwrap(),
+            pending_system_checkpoints: register_int_gauge_with_registry!(
+                "ika_epoch_pending_system_checkpoints",
+                "Entries in the system checkpoint builder's input queue, sampled on mutation",
                 registry
             )
             .unwrap(),
