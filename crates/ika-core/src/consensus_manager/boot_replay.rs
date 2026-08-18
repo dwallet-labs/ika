@@ -844,23 +844,21 @@ mod tests {
         let epoch_dir = TempDir::new().unwrap();
 
         // The run before the storage incident: folded through commit 8.
-        {
+        let watermark_the_old_run_reached = {
             let epoch_store = test_epoch_store(epoch_dir.path());
             let mut handler = test_handler(epoch_store.clone(), &context);
             let metrics = ConsensusManagerMetrics::new(&Registry::new());
             let replayed_through =
                 replay_epoch_commits(intact_dir.path(), &mut handler, &metrics).await;
             assert_eq!(replayed_through, 8);
-        }
-        let stale_watermark = {
-            let epoch_store = test_epoch_store(epoch_dir.path());
-            let stale = epoch_store
+            let reached = epoch_store
                 .get_last_consensus_stats()
                 .unwrap()
                 .index
                 .sub_dag_index;
-            assert_eq!(stale, 8, "the per-epoch store must survive with its tally");
-            stale
+            assert_eq!(reached, 8);
+            epoch_store.release_db_handles();
+            reached
         };
 
         // The incident: the consensus store comes back holding only 5 commits.
@@ -871,12 +869,13 @@ mod tests {
         };
         assert_eq!(truncated_head, 5);
         assert!(
-            stale_watermark > u64::from(truncated_head),
-            "the fixture must reproduce the torn state: a per-epoch record ahead of the \
-             consensus store, which is what the upstream assertion aborts on",
+            watermark_the_old_run_reached > u64::from(truncated_head),
+            "the fixture must reproduce the incident: the run before it had gone further \
+             than the consensus store now holds, which is what the upstream assertion \
+             aborts on when the two numbers come from different databases",
         );
 
-        // The new boot: wipe, replay against whatever the store still has.
+        // The new boot: replay against whatever the store still has.
         let epoch_store = test_epoch_store(epoch_dir.path());
         assert_eq!(
             epoch_store
@@ -885,7 +884,9 @@ mod tests {
                 .index
                 .last_committed_round,
             0,
-            "a reopened store must hold no tally to fold onto",
+            "the reopened store keeps no record of how far the old run got — which is why \
+             the torn state can no longer exist: there is no second number left to be \
+             ahead of the consensus store's",
         );
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());

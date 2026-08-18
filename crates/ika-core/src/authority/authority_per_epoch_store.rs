@@ -8109,14 +8109,29 @@ mod tests {
         store.release_db_handles();
         drop(store);
 
-        // Replay: consensus redelivers the lost commit, this time to
+        // Replay: the reopened store holds nothing, so the replay re-folds the
+        // earlier commits too — modelled here by re-seeding the state they
+        // produced — and then redelivers the lost commit, this time to
         // completion. The gate and the close round must come out identical to
         // the original run.
         let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
         assert!(
             store.should_accept_tx(),
-            "the close marker rode the lost batch, so the reopened epoch is open"
+            "the close never reached a boundary, so the reopened epoch is open"
         );
+        store.seed_folded_state_for_test(|state| {
+            state
+                .end_of_publish_votes
+                .extend(names.iter().take(3).copied());
+            state.end_of_publish_quorum_round = Some(anchor);
+            state.end_of_publish_quorum_voted_count = Some(3);
+        });
+        {
+            let mut end_of_publish = store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+        }
         store
             .install_expected_handoff_attestation(attestation.clone())
             .unwrap();
@@ -9112,21 +9127,16 @@ mod tests {
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
             3
         );
-        // The deadline backstop is re-published from the first commit the
-        // replay folded (stamped 100_000 ms by the drive helper).
-        let expected_deadline_seconds = ready_signal_deadline_ms(
-            Some(100_000),
-            epoch_store.epoch_start_state().epoch_duration_ms(),
-            None,
-        )
-        .unwrap()
-            / 1000;
+        // The deadline backstop's anchor is re-observed at the same first
+        // commit the replay folded (stamped 100_000 ms by the drive helper).
+        // The gauge itself is the announcement sender's to publish, from
+        // exactly this value, on its next tick — which is why the reset above
+        // matters: a gauge left holding the pre-restart deadline would read as
+        // an anchor this run has not re-observed yet.
         assert_eq!(
-            registry_gauge(
-                &registry,
-                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
-            ),
-            expected_deadline_seconds as i64
+            epoch_store.epoch_first_commit_timestamp_ms().unwrap(),
+            Some(100_000),
+            "the replay must re-observe the epoch's first-commit anchor",
         );
 
         // And the restarted validator freezes at the same anchored round its
