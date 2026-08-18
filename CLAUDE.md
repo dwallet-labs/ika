@@ -2,46 +2,53 @@
 
 ## Communication (highest priority)
 
-Write for a competent engineer who has never read this repo, the earlier
-conversation, or the writer's vocabulary. Every explanation walks a path
-from what that reader already has to the new thing, one step at a time. A
-skipped step reads as an unsupported claim, not an argument.
+Every explanation walks a path from the reader's actual starting point
+to the new thing, one step at a time. Know the audience, in both
+directions: a skipped step reads as an unsupported claim; an explained
+basic reads as condescension and buries the point.
 
-1. Introduce every concept the first time it appears in a message or a
-   document, with one plain sentence — even terms that feel standard in
-   this domain. A term the reader has not been given may not be used.
-2. Plain words. Never use a metaphor as a technical term ("seam",
+1. Establish the reader's starting point and keep updating it. Their
+   role sets the baseline (a vulnerability researcher knows what a stack
+   overflow is; a Move developer knows objects and abilities). A term
+   they use themselves is known. A term they ask about is not. When
+   nothing is known about the reader, assume a competent engineer who
+   has never read this repo.
+2. Explain what the reader lacks, not what they have. For this codebase
+   that usually means: the code flow, which functions run and in what
+   order, what each account or object holds, chain-specific mechanics
+   they have not met — never the basics of their own field.
+3. Plain words. Never use a metaphor as a technical term ("seam",
    "load-bearing", "surface", "lane", "gate", "shape", "wedge",
    "stranded", "hardening", "blast radius", "plumbing", "landed", ...).
    Say the literal thing: "the code that reads Ethereum events", "the
    check was missing", "delivery stops forever".
-3. One idea per sentence. Subject first. Usually under twenty words. No
+4. One idea per sentence. Subject first. Usually under twenty words. No
    nested parentheses, no em-dash chains, no lists inside a sentence, no
    noun piles.
-4. Lead with the claim in ordinary words — who did what, and what
+5. Lead with the claim in ordinary words — who did what, and what
    follows. Code identifiers come after, once, in parentheses, only when
    needed to find the thing.
-5. No private labels in prose: no finding IDs, no invented shorthand, no
+6. No private labels in prose: no finding IDs, no invented shorthand, no
    agent names.
-6. Explanations are prose paths. Tables only for looking up items the
+7. Explanations are prose paths. Tables only for looking up items the
    reader already understands.
-7. Convey the same information. Never drop content or steps to be
-   shorter; the plain version is longer, and that is correct. Summarize
-   only when asked.
-8. Do not signal being steps ahead ("worth flagging", "textbook", ...).
+8. Convey the same information. Never drop content or steps to be
+   shorter; summarize only when asked. Do not pad with steps the reader
+   already has either — length comes from missing steps, not from
+   restating known ones.
+9. Do not signal being steps ahead ("worth flagging", "textbook", ...).
    Walk the steps.
-9. Plain must not become vague: a plain sentence must be exactly as true
-   as the code it describes.
-10. Before sending any message or document: replace the words in rule 2;
-    find every term a stranger would not know and check it was
-    introduced; split every sentence with two ideas; confirm the first
-    sentence states the claim.
+10. Plain must not become vague: a plain sentence must be exactly as true
+    as the code it describes.
+11. Before sending any message or document: replace the words in rule 3;
+    for every term, decide "does this reader have it?" — introduce it if
+    not, leave it alone if yes; split every sentence with two ideas;
+    confirm the first sentence states the claim.
 
 When the reader asks "what is X" or repeats a claim back in their own
 words, a step was skipped: walk back to their words and rebuild from
-there — do not restate.
-
-Decentralized MPC signing network built on Sui. dWallets provide zero-trust multi-chain signing via 2PC-MPC protocol.
+there — do not restate. When the reader says "I know this", the
+baseline moves up: stop explaining that class of thing.
 
 ## Collaboration Style
 
