@@ -2514,6 +2514,16 @@ impl AuthorityPerEpochStore {
         // traffic — and this store outlives its epoch, so without this an
         // epoch's worth of it would survive every boundary for as long as some
         // task still holds the Arc.
+        //
+        // Order matters, and it is deliberately this way round: readers start
+        // failing `ensure_epoch_alive` BEFORE the state they would have read
+        // disappears. It narrows the window rather than closing it — a reader
+        // that passed the check an instant earlier can still see cleared state
+        // and read it as an empty epoch — which is a real difference from the
+        // durable version, where holding the tables `Arc` kept the rows alive
+        // for that reader. It is not reachable in production: the caller
+        // releases only after the epoch's components have been replaced, so
+        // the fold, the drain and the builders are already stopped.
         self.folded_epoch_state.write().clear();
         self.checkpoint_construction.write().clear();
         // `HashSet::clear` keeps the allocated table; the epoch's capacity is
