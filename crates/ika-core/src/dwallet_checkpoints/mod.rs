@@ -840,6 +840,13 @@ impl DWalletCheckpointAggregator {
         let mut result = vec![];
         'outer: loop {
             let next_to_certify = self.next_checkpoint_to_certify()?;
+            // Everything below the watermark is unreachable from here — this
+            // loop only ever reads forward from it — so the epoch stops
+            // holding it. The checkpoint construction state is in memory now,
+            // and one copy of every checkpoint's content per signer for a
+            // whole epoch is not a footprint a validator can carry.
+            self.epoch_store
+                .prune_dwallet_checkpoint_construction(next_to_certify)?;
             let current = if let Some(current) = &mut self.current {
                 // It's possible that the checkpoint was already certified by
                 // the rest of the network, and we've already received the
@@ -899,21 +906,14 @@ impl DWalletCheckpointAggregator {
                 self.current.as_mut().unwrap()
             };
 
-            let epoch_tables = self
+            let pending_signatures = self
                 .epoch_store
-                .tables()
+                .pending_dwallet_checkpoint_signatures_from(
+                    current.checkpoint_message.sequence_number,
+                    current.next_index,
+                )
                 .expect("should not run past end of epoch");
-            let iter = epoch_tables
-                .pending_dwallet_checkpoint_signatures
-                .safe_iter_with_bounds(
-                    Some((
-                        current.checkpoint_message.sequence_number,
-                        current.next_index,
-                    )),
-                    None,
-                );
-            for item in iter {
-                let ((seq, index), received_data) = item?;
+            for ((seq, index), received_data) in pending_signatures {
                 if seq != current.checkpoint_message.sequence_number {
                     debug!(
                         checkpoint_seq =? current.checkpoint_message.sequence_number,

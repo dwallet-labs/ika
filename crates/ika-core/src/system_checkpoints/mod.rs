@@ -766,6 +766,10 @@ impl SystemCheckpointAggregator {
         let mut result = vec![];
         'outer: loop {
             let next_to_certify = self.next_checkpoint_to_certify()?;
+            // See the dWallet aggregator: everything below the watermark is
+            // unreachable from here, and the epoch cannot hold it all.
+            self.epoch_store
+                .prune_system_checkpoint_construction(next_to_certify)?;
             let current = if let Some(current) = &mut self.current {
                 // It's possible that the checkpoint was already certified by
                 // the rest of the network, and we've already received the
@@ -825,21 +829,14 @@ impl SystemCheckpointAggregator {
                 self.current.as_mut().unwrap()
             };
 
-            let epoch_tables = self
+            let pending_signatures = self
                 .epoch_store
-                .tables()
+                .pending_system_checkpoint_signatures_from(
+                    current.checkpoint_message.sequence_number,
+                    current.next_index,
+                )
                 .expect("should not run past end of epoch");
-            let iter = epoch_tables
-                .pending_system_checkpoint_signatures
-                .safe_iter_with_bounds(
-                    Some((
-                        current.checkpoint_message.sequence_number,
-                        current.next_index,
-                    )),
-                    None,
-                );
-            for item in iter {
-                let ((seq, index), data) = item?;
+            for ((seq, index), data) in pending_signatures {
                 if seq != current.checkpoint_message.sequence_number {
                     debug!(
                         checkpoint_seq =? current.checkpoint_message.sequence_number,

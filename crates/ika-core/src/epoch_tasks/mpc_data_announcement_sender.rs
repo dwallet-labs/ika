@@ -1251,21 +1251,20 @@ mod tests {
         let committee = Arc::new(committee);
         let member = *committee.names().next().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store =
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
-                name: member,
-                committee,
-                parent_path: dir.path().to_path_buf(),
-                db_options: None,
-                metrics: EpochMetrics::new(&Registry::new()),
-                epoch_start_configuration: EpochStartConfiguration::new(
-                    EpochStartSystem::new_for_testing_with_epoch(0),
-                )
-                .unwrap(),
-                chain_identifier: ChainIdentifier::default(),
-                packages_config: IkaNetworkConfig::new_for_testing(),
-            })
-            .unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: member,
+            committee,
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
 
         let perpetual_dir = tempfile::TempDir::new().unwrap();
         let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
@@ -1366,21 +1365,20 @@ mod tests {
         let committee = Arc::new(committee);
         let member = *committee.names().next().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store =
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
-                name: member,
-                committee,
-                parent_path: dir.path().to_path_buf(),
-                db_options: None,
-                metrics: EpochMetrics::new(&Registry::new()),
-                epoch_start_configuration: EpochStartConfiguration::new(
-                    EpochStartSystem::new_for_testing_with_epoch(0),
-                )
-                .unwrap(),
-                chain_identifier: ChainIdentifier::default(),
-                packages_config: IkaNetworkConfig::new_for_testing(),
-            })
-            .unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: member,
+            committee,
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
 
         let make_sender = || {
             let perpetual_dir = tempfile::TempDir::new().unwrap();
@@ -1468,21 +1466,20 @@ mod tests {
         let committee = Arc::new(committee);
         let member = *committee.names().next().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store =
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
-                name: member,
-                committee,
-                parent_path: dir.path().to_path_buf(),
-                db_options: None,
-                metrics: EpochMetrics::new(&Registry::new()),
-                epoch_start_configuration: EpochStartConfiguration::new(
-                    EpochStartSystem::new_for_testing_with_epoch(0),
-                )
-                .unwrap(),
-                chain_identifier: ChainIdentifier::default(),
-                packages_config: IkaNetworkConfig::new_for_testing(),
-            })
-            .unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: member,
+            committee,
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
 
         // The recorded row holds seq=0 with the member's attestation.
         epoch_store

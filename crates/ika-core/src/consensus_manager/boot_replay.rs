@@ -251,10 +251,7 @@ mod tests {
     use super::*;
     use crate::authority::AuthorityMetrics;
     use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
-    use crate::authority::authority_per_epoch_store::{
-        AuthorityPerEpochStore, EPOCH_STATE_REGISTRY, EpochStoreParams,
-    };
-    use crate::authority::derived_epoch_state::EpochStateSnapshot;
+    use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochStoreParams};
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::authority::round_transport::round_transport;
     use crate::consensus_handler::{ConsensusCommitSink, MysticetiConsensusHandler};
@@ -310,7 +307,7 @@ mod tests {
         (dir, context)
     }
 
-    fn test_epoch_store(dir: &Path, wipe_derived_state: bool) -> Arc<AuthorityPerEpochStore> {
+    fn test_epoch_store(dir: &Path) -> Arc<AuthorityPerEpochStore> {
         let (committee, _keys) =
             Committee::new_simple_test_committee_of_size(CONSENSUS_COMMITTEE_SIZE);
         let committee = Arc::new(committee);
@@ -328,12 +325,7 @@ mod tests {
             chain_identifier: ChainIdentifier::default(),
             packages_config: IkaNetworkConfig::new_for_testing(),
         };
-        let build = if wipe_derived_state {
-            AuthorityPerEpochStore::new
-        } else {
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing
-        };
-        build(params).unwrap()
+        AuthorityPerEpochStore::new(params).unwrap()
     }
 
     fn test_handler(
@@ -404,7 +396,7 @@ mod tests {
     async fn replay_folds_every_finalized_commit_and_reaches_the_store_head() {
         let (consensus_dir, context) = consensus_store_with(6, 6);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -438,7 +430,7 @@ mod tests {
     async fn replayed_commits_feed_the_commit_liveness_sink() {
         let (consensus_dir, context) = consensus_store_with(5, 5);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let sink = Arc::new(CountingCommitSink::default());
         let mut handler = test_handler_with_sink(
             epoch_store,
@@ -472,7 +464,7 @@ mod tests {
         let commits = REPLAY_BATCH_COMMITS + REPLAY_BATCH_COMMITS / 2;
         let (consensus_dir, context) = consensus_store_with(commits, commits);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         // Count the rounds on the CHANNEL rather than in a table: no
         // per-round table survives, and the channel is where a dropped batch
         // boundary would actually show. Capacity well above the commit count
@@ -515,12 +507,15 @@ mod tests {
 
     /// Folding the epoch twice through the REAL path — commits read from a
     /// RocksDB consensus store, rebuilt into `CommittedSubDag`s, folded by
-    /// `handle_consensus_commit` — must produce byte-identical derived state,
-    /// with the wipe as the only difference between the two runs.
+    /// `handle_consensus_commit` — must produce byte-identical derived state.
+    ///
+    /// The two runs differ in nothing but that the second one starts from a
+    /// freshly opened store, which is the whole of what a restart now does to
+    /// derived state: it is in memory, so a reopen IS the reset.
     ///
     /// The epoch store's own double-fold test covers breadth: it drives many
     /// transaction kinds through the commit boundary and so populates most of
-    /// the derived tables. It cannot cover the path, because the test DAG's
+    /// the derived state. It cannot cover the path, because the test DAG's
     /// blocks cannot carry ika transactions (`LayerBuilder::num_transactions`
     /// emits fixed dummy bytes that ika's decoder rejects, and
     /// `TrustedCommit`'s test constructor is `pub(crate)`). This test covers
@@ -535,7 +530,7 @@ mod tests {
 
         // First run: an empty store folded once per commit, in order — what a
         // validator that never crashed would have built.
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ false);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
         epoch_store.install_round_transport(sender);
         let mut handler = test_handler(epoch_store.clone(), &context);
@@ -543,9 +538,9 @@ mod tests {
         assert_eq!(folded, 7);
 
         // The channel IS the fold's derived output now, so determinism means
-        // the round stream it produces is identical too — the tables alone
+        // the round stream it produces is identical too — the state alone
         // would be a thin comparison, since a synthetic commit carrying no ika
-        // transactions writes almost nothing.
+        // transactions derives almost nothing.
         let mut first_rounds = Vec::new();
         while let Ok(payload) = receiver.try_recv() {
             first_rounds.push(payload.round);
@@ -556,32 +551,33 @@ mod tests {
             "every folded commit must have reached the drain",
         );
 
-        let tables = epoch_store.tables().unwrap();
-        let first: EpochStateSnapshot = EPOCH_STATE_REGISTRY
+        let first = epoch_store.derived_state_snapshot();
+        let populated = first
             .iter()
-            .map(|entry| (entry.field, tables.classified_table_rows(entry.field)))
-            .collect();
-        let populated = first.values().filter(|rows| !rows.is_empty()).count();
+            .filter(|(_, encoded)| !is_empty_encoding(encoded))
+            .count();
         assert!(
             populated >= 2,
-            "only {populated} tables held rows after the first fold; the comparison below \
-             would be near-vacuous",
+            "only {populated} pieces of derived state were non-empty after the first fold; \
+             the comparison below would be near-vacuous",
         );
         // Release the RocksDB handles before reopening the same path. The
         // handler holds its own `Arc` to the store, so dropping ours is not
         // enough — which is the in-process stand-in for the process exit a
         // real restart would have done.
-        drop(tables);
         drop(handler);
         epoch_store.release_db_handles();
         drop(epoch_store);
 
         // Second run: the same store, reopened the way a validator boots.
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
-        let tables = epoch_store.tables().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path());
         assert!(
-            tables.non_empty_derived_tables().is_empty(),
-            "the reopen did not wipe; the second fold would land on the first's output",
+            epoch_store
+                .derived_state_snapshot()
+                .values()
+                .all(|encoded| is_empty_encoding(encoded)),
+            "a freshly opened store held derived state; the second fold would land on the \
+             first run's output",
         );
         let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
         epoch_store.install_round_transport(sender);
@@ -599,16 +595,28 @@ mod tests {
              consensus store",
         );
 
-        for entry in EPOCH_STATE_REGISTRY {
+        let second = epoch_store.derived_state_snapshot();
+        for (field, encoded) in &first {
             assert_eq!(
-                tables.classified_table_rows(entry.field),
-                first[entry.field],
-                "`{}` (classified {}) did not come back identical when the same consensus \
-                 store was replayed a second time",
-                entry.field,
-                entry.class,
+                second.get(field),
+                Some(encoded),
+                "`{field}` did not come back identical when the same consensus store was \
+                 replayed a second time",
             );
         }
+        assert_eq!(
+            second.keys().collect::<Vec<_>>(),
+            first.keys().collect::<Vec<_>>(),
+            "the two snapshots described different sets of derived state",
+        );
+    }
+
+    /// Whether a BCS-encoded piece of derived state carries nothing: an empty
+    /// collection, a `None`, or a `false`. Every one of those encodes to a
+    /// single zero byte, and the empty-vs-populated distinction is what the
+    /// vacuity guard above rests on.
+    fn is_empty_encoding(encoded: &[u8]) -> bool {
+        encoded == [0]
     }
 
     /// The boot replay must publish the consensus store's head round before it
@@ -626,7 +634,7 @@ mod tests {
     async fn the_replay_publishes_the_store_head_before_folding() {
         let (consensus_dir, context) = consensus_store_with(6, 6);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         assert_eq!(
             epoch_store.observed_consensus_head_round(),
             0,
@@ -669,7 +677,7 @@ mod tests {
     async fn the_head_publisher_reports_the_store_head_without_folding_anything() {
         let (consensus_dir, context) = consensus_store_with(6, 6);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let handler = test_handler(epoch_store.clone(), &context);
 
         let store = RocksDBStore::new(&consensus_dir.path().to_string_lossy());
@@ -767,7 +775,7 @@ mod tests {
         drop(store);
 
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let mut handler = test_handler(epoch_store, &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -781,7 +789,7 @@ mod tests {
     async fn replay_stops_below_the_unfinalized_tail() {
         let (consensus_dir, context) = consensus_store_with(6, 4);
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -801,7 +809,7 @@ mod tests {
         let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
         let consensus_dir = TempDir::new().unwrap();
         let epoch_dir = TempDir::new().unwrap();
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+        let epoch_store = test_epoch_store(epoch_dir.path());
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
@@ -810,13 +818,13 @@ mod tests {
 
         assert_eq!(replayed_through, 0);
         assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
-        assert!(
+        assert_eq!(
             epoch_store
-                .tables()
-                .unwrap()
                 .get_last_consensus_stats()
                 .unwrap()
-                .is_none()
+                .index
+                .last_committed_round,
+            0,
         );
     }
 
@@ -837,8 +845,7 @@ mod tests {
 
         // The run before the storage incident: folded through commit 8.
         {
-            let epoch_store =
-                test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
+            let epoch_store = test_epoch_store(epoch_dir.path());
             let mut handler = test_handler(epoch_store.clone(), &context);
             let metrics = ConsensusManagerMetrics::new(&Registry::new());
             let replayed_through =
@@ -846,8 +853,7 @@ mod tests {
             assert_eq!(replayed_through, 8);
         }
         let stale_watermark = {
-            let epoch_store =
-                test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ false);
+            let epoch_store = test_epoch_store(epoch_dir.path());
             let stale = epoch_store
                 .get_last_consensus_stats()
                 .unwrap()
@@ -871,15 +877,15 @@ mod tests {
         );
 
         // The new boot: wipe, replay against whatever the store still has.
-        let epoch_store = test_epoch_store(epoch_dir.path(), /* wipe_derived_state */ true);
-        assert!(
+        let epoch_store = test_epoch_store(epoch_dir.path());
+        assert_eq!(
             epoch_store
-                .tables()
-                .unwrap()
                 .get_last_consensus_stats()
                 .unwrap()
-                .is_none(),
-            "the wipe must have removed the stale tally",
+                .index
+                .last_committed_round,
+            0,
+            "a reopened store must hold no tally to fold onto",
         );
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());

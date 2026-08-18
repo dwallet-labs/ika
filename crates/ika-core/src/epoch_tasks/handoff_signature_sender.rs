@@ -487,18 +487,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store =
-            AuthorityPerEpochStore::new_retaining_derived_state_for_testing(EpochStoreParams {
-                name: names[0],
-                committee: committee.clone(),
-                parent_path: dir.path().to_path_buf(),
-                db_options: None,
-                metrics: EpochMetrics::new(&Registry::new()),
-                epoch_start_configuration,
-                chain_identifier: ChainIdentifier::default(),
-                packages_config: IkaNetworkConfig::new_for_testing(),
-            })
-            .unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
         let perpetual_dir = tempfile::tempdir().unwrap();
         let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
         epoch_store.install_perpetual_tables_for_handoff(perpetual);

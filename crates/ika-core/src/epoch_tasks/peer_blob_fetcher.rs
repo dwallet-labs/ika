@@ -59,7 +59,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, info, warn};
-use typed_store::Map;
 
 pub struct PeerBlobFetcher {
     epoch_store: Weak<AuthorityPerEpochStore>,
@@ -176,32 +175,19 @@ impl PeerBlobFetcher {
             // Epoch ended — the spawning task is about to drop us.
             return;
         };
-        let pending: Vec<(AuthorityName, [u8; 32])> = {
-            let mut out = Vec::new();
-            let Ok(tables) = epoch_store.tables() else {
-                return;
-            };
-            for entry in tables.validator_mpc_data_announcements.safe_iter() {
-                let Ok((authority, announcement)) = entry else {
-                    continue;
-                };
-                if authority == self.own_authority {
-                    // Our own announcement; the producer path inserted
-                    // the blob into both stores at submission time.
-                    continue;
-                }
-                let digest = announcement.blob_hash;
-                // Already hold the blob (either store)? Nothing to
-                // fetch. The cache's read-through `get` means a
-                // perpetual-only blob is still servable to peers
-                // without an explicit in-memory backfill here.
-                if self.blob_cache.contains(&digest) {
-                    continue;
-                }
-                out.push((authority, digest));
-            }
-            out
+        let Ok(announcements) = epoch_store.validator_mpc_data_announcement_hashes() else {
+            return;
         };
+        let pending: Vec<(AuthorityName, [u8; 32])> = announcements
+            .into_iter()
+            // Our own announcement; the producer path inserted the blob into
+            // both stores at submission time.
+            .filter(|(authority, _)| *authority != self.own_authority)
+            // Already hold the blob (either store)? Nothing to fetch. The
+            // cache's read-through `get` means a perpetual-only blob is still
+            // servable to peers without an explicit in-memory backfill here.
+            .filter(|(_, digest)| !self.blob_cache.contains(digest))
+            .collect();
         if pending.is_empty() {
             return;
         }
