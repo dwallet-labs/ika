@@ -81,13 +81,13 @@ rule, not the instance.
   time-of-replay sibling of the wall-clock rule above: inputs can all be
   consensus-ordered and the decision still diverges, because durable
   state advanced between the original visit and the replayed one.
-  → **Retired for one class, still live for the other.** Boot deletes
-  every per-epoch table classified DERIVED and rebuilds it by replaying the
-  epoch's commits, so replay against non-rewound durable state no longer
-  happens for those. It is unchanged for tables classified PRESERVED — the
+  → **Retired for one class, still live for the other.** State the commits
+  determine is held in memory and rebuilt by replaying the epoch's commits,
+  so replay against non-rewound durable state no longer happens for any of
+  it. It is unchanged for what remains on disk — the
   presign pools and their markers, which is where the instance above lived
-  and where the rule still bites. Which class a table is in, and why:
-  `../derived-epoch-state-audit.md`.
+  and where the rule still bites. What stays, and why:
+  `../preserved-epoch-state-audit.md`.
 - **One logical fact in two databases is a brick waiting for a storage
   incident.** "How much of this epoch has been consumed" lived both in
   Mysticeti's commit store and in ika's per-epoch watermark, with no shared
@@ -119,6 +119,12 @@ rule, not the instance.
   declaration — here, folding real commits and requiring every table that
   actually got written to be declared derived. And this is only visible if
   you inject the mistake: both tests read as thorough.
+  → **Better still, delete the declaration.** The classification is gone: a
+  `DBMap` field survives a restart by definition and an in-memory field is
+  rebuilt by definition, so there is no second list to agree with itself and
+  nothing left to enforce. A rule you can make structural beats a rule you
+  have to test, and the enforcement test is worth writing only for the part
+  that stays declarative.
 - **A test harness that stubs out the component under change tests
   nothing, and stays green while doing it.** The MPC integration harness
   built its services with no round receiver, so when the per-round tables

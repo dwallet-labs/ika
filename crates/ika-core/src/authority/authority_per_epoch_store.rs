@@ -1334,23 +1334,30 @@ type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec
 /// presign's session identifier, blending index, and serialized value.
 type PreparedPresignPop = (DBBatch, SessionIdentifier, u16, Vec<u8>);
 
-/// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
+/// The per-epoch state that SURVIVES a restart.
+///
+/// Only state no replay reproduces belongs here — presign material and the
+/// idempotency markers that make replaying against it safe, this validator's
+/// private VSS outputs, the content-addressed output caches, and the
+/// operator's buffer-stake override. Everything the epoch's consensus commits
+/// determine lives in memory on [`AuthorityPerEpochStore`] and is rebuilt by
+/// the boot replay; a durable copy of it would be a second truth the replay
+/// never rewinds, holding rows for commits the consensus store may no longer
+/// have (ika #2057). The split is structural — a field here survives by
+/// definition — so adding one is that decision, with no classification step
+/// in between to catch it: see
+/// `dev-docs/preserved-epoch-state-audit.md` and the
+/// `the_epoch_store_keeps_only_state_no_replay_reproduces` test.
 ///
 /// WRITE DISCIPLINE — read before adding a table, a write site, or a
-/// consumer. This store deliberately holds two persistence patterns, and
-/// confusing them has produced real divergence bugs (#1829, #1917/#1920).
-/// Every field below therefore ends its doc comment with one
-/// `write-discipline:` line, in one of these forms:
+/// consumer. Confusing a table's write pattern with its readers' expectations
+/// has produced real divergence bugs (#1829, #1917/#1920). Every field below
+/// therefore ends its doc comment with one `write-discipline:` line, in one of
+/// these forms:
 ///
-/// - `write-discipline: commit-batched` — the only writer is
-///   `ConsensusCommitOutput::write_to_batch`, so the row lands in the same
-///   atomic batch as the processed-markers of the commit that produced it.
-///   A crash before that batch replays the whole commit and re-derives the
-///   row. This is the required discipline for anything a consensus-visible
-///   decision (close round, freeze partition, checkpoint content) reads.
 /// - `write-discipline: direct — safe because <reason>: <consumer>` — the
-///   row is written outside the commit batch, followed by the argument that
-///   makes the table's consumers survive that. Fixed vocabulary:
+///   row is written outside the commit boundary, followed by the argument
+///   that makes the table's consumers survive that. Fixed vocabulary:
 ///   `pure-function-of-table` (every consumer folds the WHOLE table, with no
 ///   arrival-order or size cap), `idempotent-replay` (re-running the
 ///   producing work rewrites the same key with the same value),

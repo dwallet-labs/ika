@@ -22,11 +22,10 @@ here updates the file in the same PR.
 ## Index
 
 ### Top-level audits
-- [`derived-epoch-state-audit.md`](derived-epoch-state-audit.md) — every
-  `AuthorityEpochTables` field classified derived (deleted on boot and
-  rebuilt by replaying the epoch's commits) vs preserved, with the reason
-  for each, why misclassification is silent in both directions, and the
-  four tests that enforce it. Read with
+- [`preserved-epoch-state-audit.md`](preserved-epoch-state-audit.md) — what
+  the per-epoch store still keeps on disk and what a replay would have to
+  redo to rebuild each of it, plus the non-determinism audit of the fold.
+  Everything else an epoch derives is in memory by construction. Read with
   [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md).
 
 ### specs/ — protocol behavioral contracts
@@ -39,10 +38,11 @@ them has a bug — determine which before changing either.
   — off-chain mpc_data pipeline: announcements, P2P, ready signals,
   the freeze decision, next-committee assembly.
 - [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md) — the
-  consensus store as the only truth for epoch-scoped state: the boot wipe,
-  the bounded-batch replay that rebuilds derived state, why there is no
-  watermark, the determinism contract, the settled-state rule for
-  replay-silent emission, and the rollback story.
+  consensus store as the only truth for epoch-scoped state: derived state
+  held in memory, the bounded-batch replay that rebuilds it, why there is no
+  watermark, the determinism contract, what the fold accumulates and what
+  bounds it, the settled-state rule for replay-silent emission, and the
+  rollback story.
 - [`specs/handoff.md`](specs/handoff.md) — cross-epoch handoff:
   attestation, EndOfPublish V2, certificate, joiner bootstrap, the
   prepare-then-start barrier, network-key adoption guards.

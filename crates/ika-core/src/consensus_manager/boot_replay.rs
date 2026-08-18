@@ -3,20 +3,21 @@
 
 //! Rebuilding the epoch's derived state by replaying the consensus store.
 //!
-//! The per-epoch store keeps no record of how far the consensus handler got.
-//! On every start the derived tables are deleted
-//! (`AuthorityEpochTables::wipe_derived_state`) and this module folds the
-//! epoch's commits back through the same handler that processes live commits,
-//! in bounded batches, until it reaches the store's last finalized commit.
-//! Only then does consensus start, and it starts from exactly that index — so
-//! the index consensus is asked to replay after is READ FROM the consensus
-//! store rather than remembered beside it, and the two can no longer disagree
+//! The per-epoch store keeps no record of how far the consensus handler got,
+//! and no copy of what it derived: that state is in memory, so a start has
+//! nothing to delete and nothing to resume from. This module folds the epoch's
+//! commits back through the same handler that processes live commits, in
+//! bounded batches, until it reaches the store's last finalized commit. Only
+//! then does consensus start, and it starts from exactly that index — so the
+//! index consensus is asked to replay after is READ FROM the consensus store
+//! rather than remembered beside it, and the two can no longer disagree
 //! (ika #2057).
 //!
-//! Batching is what keeps memory flat on an old epoch: one batch of commits and
-//! their blocks is resident at a time, folded, then dropped. The batch size
-//! matches consensus-core's own recovery batch so the two paths read the store
-//! the same way.
+//! Batching is what keeps the COMMITS flat on an old epoch: one batch of
+//! commits and their blocks is resident at a time, folded, then dropped. The
+//! batch size matches consensus-core's own recovery batch so the two paths
+//! read the store the same way. What the fold accumulates from them is not
+//! flat, and is the spec's memory section.
 //!
 //! The full model — what "derived" means, why the fold is deterministic, and
 //! what replay must not re-emit — is `dev-docs/specs/event-sourced-epoch.md`.

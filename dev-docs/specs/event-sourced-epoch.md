@@ -1,43 +1,51 @@
 # The event-sourced epoch
 
 **The consensus store is the only truth for epoch-scoped state. Everything
-derived from it is deleted and rebuilt by replay on every restart.**
+derived from it is held in memory and rebuilt by replay on every restart.**
 
 Actors: `ConsensusManager::start`, `consensus_manager::boot_replay`,
-`ConsensusHandler::handle_consensus_commit`, `AuthorityEpochTables` and its
-classification in `authority::derived_epoch_state`, the `DWalletMPCService`
-round drain, and the checkpoint builders' signature outputs.
+`ConsensusHandler::handle_consensus_commit`, the in-memory derived state on
+`AuthorityPerEpochStore`, the `DWalletMPCService` round drain, and the
+checkpoint builders' signature outputs.
 
-Table-by-table classification and its reasoning:
-[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md).
+What the store still keeps on disk, and why:
+[`../preserved-epoch-state-audit.md`](../preserved-epoch-state-audit.md).
 
 ## The model
 
 On every start, a node opening the current epoch's store:
 
-1. **Wipes** every per-epoch table classified *derived*
-   (`AuthorityEpochTables::wipe_derived_state`), before anything reads the
-   store. The wipe is a startup invariant, asserted: if any derived table
-   still holds a row, the process aborts rather than fold onto it. It is
-   unconditional — every writer of a derived table lives inside the validator
-   components, so on a node that does not run consensus those tables are
-   already empty and the wipe is a no-op (see the audit).
+1. **Starts with nothing.** Derived state is in memory, so opening the store
+   is the only state it can have. There is no deletion step and no
+   post-deletion invariant to assert, because there is nothing to delete:
+   the state that used to be wiped at boot is never written.
 2. **Replays** the epoch's commits from the consensus store, in bounded
    batches of 250 — read a batch, fold it through the same
    `handle_consensus_commit` that processes live commits, release it, read
-   the next. Memory is flat in the epoch's age: one batch of commits and
-   their blocks is resident at a time. The replay reads the store directly
-   and does not go through consensus-core's commit channel, which is
-   unbounded and would otherwise buffer the whole epoch between a producer
-   that scans at disk speed and a consumer that folds at handler speed.
+   the next. Memory is flat in the epoch's age for the commits themselves:
+   one batch of commits and their blocks is resident at a time. What the
+   fold ACCUMULATES is not flat, and is the subject of the memory section
+   below. The replay reads the store directly and does not go through
+   consensus-core's commit channel, which is unbounded and would otherwise
+   buffer the whole epoch between a producer that scans at disk speed and a
+   consumer that folds at handler speed.
 3. **Starts consensus** with the index the replay reached, as both
    `replay_after_commit_index` and `consumer_last_processed_commit_index`,
    and follows the live tail from there.
 
 There is **no watermark**. The handler folds every commit of the epoch on
-every boot. Exactly-once is replaced by *deterministic fold over wiped
-state*: the double-apply failure shape requires surviving partial state, and
-wipe-and-rebuild removes the category rather than defending against it.
+every boot. Exactly-once is replaced by *deterministic fold from empty*: the
+double-apply failure shape requires surviving partial state, and a restart
+that keeps none removes the category rather than defending against it.
+
+**The split is structural.** A `DBMap` field on `AuthorityEpochTables`
+survives restarts by definition; an in-memory field on
+`AuthorityPerEpochStore` is rebuilt by definition. There is no classification
+to declare, no registry to keep in step with the struct, and no way to get
+the two out of sync — which is the whole reason the earlier design's registry
+macro, its wipe, and the three tests that enforced the classification are
+gone rather than adapted. What remains is one test pinning the set of tables
+that stay on disk, so adding one is a deliberate act.
 
 ## Why this is sound
 
@@ -45,9 +53,9 @@ Deterministic derivation from the commit stream is already a hard
 cross-node requirement — every validator must reach identical checkpoints
 and identical convictions from the same commits, or the network forks.
 Relying on the same property *within* one node across restarts adds no new
-assumption. If a table cannot be re-derived, that is not a replay problem;
-it is a table that was never a function of consensus, and it belongs on the
-preserved side of the audit.
+assumption. If a piece of state cannot be re-derived, that is not a replay
+problem; it was never a function of consensus, and it belongs on disk (see
+the audit).
 
 It is also not a new architecture. **Sui is already event-sourced**; what it
 keeps is a durable *snapshot* taken only at boundaries it has proven safe.
@@ -114,8 +122,12 @@ Nothing else in this change is load-bearing for #2057. In particular the
 replay's own gap assertion — that a batch scan returns as many commits as
 the range asked for — guards a *different* failure (a store pruned or
 truncated in the middle, which would silently drop a commit's effects from
-every derived table). Useful, but not the #2057 guard; do not read it as
-one.
+everything the fold derives). Useful, but not the #2057 guard; do not read
+it as one.
+
+The torn state is now unbuildable rather than merely handled: there is no
+second number left to be ahead of the consensus store's, which is what
+`a_consensus_store_that_lost_its_tail_replays_to_its_own_head` asserts.
 
 ## The determinism contract
 
@@ -129,10 +141,12 @@ Everything the fold does must be a function of the commits it folds.
 - **Aggregators that cap on arrival order rebuild correctly** because they
   rebuild from empty. `end_of_publish`'s aggregator stops accepting votes at
   quorum, so its membership is a prefix of consensus arrival order that the
-  vote table does not record. Wiping both and refilling from the replayed
-  commits reproduces the same prefix and re-pins the same
-  `end_of_publish_quorum_voted_count` at the same commit — the divergence of
-  ika #1917 removed at its root rather than compensated for.
+  vote SET does not record. Both start empty on every boot, and refilling
+  from the replayed commits reproduces the same prefix and re-pins the same
+  quorum-voted count at the same commit — the divergence of ika #1917
+  removed at its root rather than compensated for. This is the one place
+  where re-derivation has no fallback: the count is not recoverable from the
+  vote set, and there is no durable record left to read it from.
 ### The epoch close is the one decision this changes the shape of
 
 `handoff_signatures` rows are written only once this validator has installed
@@ -321,7 +335,9 @@ The rules this establishes for every future consumer of consensus output are
 slower than commit production: the epoch database shrank 30% and the time to
 drain the backlog was unchanged, but the fold took 50% longer to reach the
 store head. The cap is a dial across its whole range — at 64 the fold waited
-on 9,752 of 10,000 rounds, at 4096 on none.
+on 9,752 of 10,000 rounds, at 4096 on none. (That database figure is now
+historical: the epoch database holds only the durable tables, and the ten
+per-round tables it measured are two changes gone.)
 
 **Where the backlog goes instead — and why it is bounded.** The fold can no
 longer absorb a backlog, so it accumulates one queue upstream, in
@@ -379,6 +395,127 @@ the harness overstated the *deep-lag* case in the other direction, since its
 producer never paused the way `commit_syncer` does. Closing both needs a
 cluster measurement; see the remainder list.
 
+## What the fold accumulates, and what bounds it
+
+Holding derived state in memory moves a cost rather than removing one: what
+RocksDB used to absorb, RSS now carries. Three things the fold accumulates grow
+with the epoch's TRAFFIC rather than with its age, and each needed an answer
+before this design was viable at all. A validator idles at roughly 7.5–8 GB RSS
+([`../playbooks/ci-suites.md`](../playbooks/ci-suites.md)), so these are
+budgets, not rounding.
+
+**Checkpoint signatures and builder outputs — bounded by a prune.** The two
+`pending_*_checkpoint_signatures` maps and the two builder-output maps were
+never deleted within an epoch, and every signature row carries a FULL checkpoint
+message. That is one copy of every checkpoint's content per signer, retained for
+the epoch: at a committee of 30 and a kilobyte per checkpoint, ~31 KiB per
+checkpoint, which is fine at a checkpoint a minute and fatal at a checkpoint a
+second.
+
+They are therefore pruned below the certified watermark
+(`prune_dwallet_checkpoint_construction`, `prune_system_checkpoint_construction`,
+called once per aggregator pass). Nothing below it is reachable: the aggregator
+reads strictly forward from `next_checkpoint_to_certify()` and resets its
+in-flight aggregator whenever it finds itself below the watermark. The prune is
+LOCAL — both families' write discipline is `local-only`, so which quorum subset
+this node aggregates and when a peer's row lands are not observable to peers and
+feed no consensus-visible decision — which is what makes dropping them a memory
+decision rather than a protocol one.
+
+Two properties of the prune are load-bearing and each has a test that was
+validated by breaking it:
+
+- the boundary is `< next_to_certify`, never `<=`. The sequence being certified
+  right now is the one still collecting signatures, and dropping it is a
+  LIVENESS failure (this node stops certifying and waits for signatures peers
+  have no reason to re-send), not a memory one;
+- the HIGHEST built message is retained whatever the watermark says. State sync
+  can certify past this node's own build progress, and that message is the
+  sequence-number cursor `create_checkpoints` reads through
+  `last_built_dwallet_checkpoint_message` — dropping it restarts the epoch's
+  numbering at the previous epoch's anchor and every checkpoint built afterwards
+  is byte-divergent from the committee's.
+
+The residual is deliberate: **retention is now bounded by CERTIFICATION LAG, not
+by the epoch.** A node whose certification stalls holds every signature since
+the stall, which is correct — a signature must be kept until the checkpoint it
+signs is certified — and it means growth here is the visible symptom of a
+certification stall. `ika_epoch_pending_dwallet_checkpoint_signatures` and
+`ika_epoch_pending_system_checkpoint_signatures` are that signal.
+
+The prune also makes the REPLAY flat rather than the worst case. A boot
+re-collects every checkpoint signature of the epoch against a watermark already
+at the head, so each is dropped on the next pass instead of accumulating.
+
+**The processed-transaction dedup set — unbounded, measured, watched.** One
+entry per verified consensus transaction of the epoch, never pruned within it:
+a duplicate can arrive at any later commit, and evicting would let it be
+processed twice. The entry is `Blake2b256(bcs(key))` rather than the key,
+because three `ConsensusTransactionKey` variants embed their whole MPC payload
+(`ConsensusTransactionKey::embeds_payload`, which is already why the consensus
+handler's LRU refuses to cache them) — a set of keys would be budgeted by entry
+count times an unbounded per-entry size.
+
+Measured with a counting allocator: a `HashSet<[u8; 32]>` costs **37.7–69.2
+bytes per entry**, the spread being where in the doubling cycle the table sits;
+budget the high end. Cardinality is the epoch's transaction count, dominated by
+`N × (dwallet checkpoints + system checkpoints)` for a committee of N. At one
+checkpoint of each per second over a 24h epoch and N = 30 that is ~5.2M entries,
+~360 MiB. At one per consensus round (~19.5/s) it is ~100M entries and ~6.9 GiB,
+which is not survivable. **The real rate is not measured**, which is why
+`ika_epoch_processed_consensus_messages` exists and why the measurement is a
+release condition rather than an assumption.
+
+Two levers exist if that measurement comes back badly, neither taken here:
+
+- **an LRU**, the same shape as the handler's existing 1,048,576-entry
+  `processed_cache`. Eviction is deterministic over a deterministic stream so it
+  stays consensus-uniform, but it changes fold semantics — a duplicate arriving
+  after eviction is processed twice — and every arm's idempotence would have to
+  be proven individually;
+- **dropping the dominant family entirely.** The cardinality is dominated by MPC
+  messages and outputs. If session-level handling is provably idempotent per
+  `(party, session, round)`, that whole term could leave the dedup set. That is
+  a semantics question deserving its own change, not a rider on a conversion.
+
+**The builders' input queues — transient, and peaked by the replay.** In steady
+state each queue is bounded by builder lag: the builder deletes everything at or
+below the height it built from. During a BOOT REPLAY it is not. The checkpoint
+builders wait for the replay signal while the MPC drain deliberately does not
+(see above), so across a full-epoch replay the drain fills the queues and
+nothing consumes them; each entry carries one consensus round's checkpoint
+content.
+
+This peak is accepted rather than defended against, for three reasons: it is
+TRANSIENT (the queues drain as soon as the builders are released, unlike the
+retention the prune fixed, which was permanent); it is bounded by the epoch's
+MPC-output rounds rather than by all of them; and the mechanism that would
+remove it is a change to a gate this document specifies. `ika_epoch_pending_dwallet_checkpoints`
+and `ika_epoch_pending_system_checkpoints` measure it, sampled where the queues
+are MUTATED — deliberately not on a builder pass, since a builder-sampled depth
+reports nothing during exactly the window the queues grow without a consumer.
+
+Two approaches were considered and rejected for this change:
+
+- **prune the queue on arrival against the certified watermark**, the way the
+  signatures are pruned. It does not work, twice over. The queue is keyed by
+  consensus HEIGHT while the watermark is a checkpoint SEQUENCE NUMBER, and the
+  only thing relating them is written by the builder as it builds — during a
+  from-scratch replay there is nothing to test against. And even given a
+  mapping, skipping already-certified heights would shift every later sequence
+  number: the builder must BUILD every checkpoint of the epoch to reproduce the
+  committee's numbering, and what it must not do is re-SIGN them, which the
+  settled-state suppression already handles;
+- **release the builders during the replay.** This is the mechanism that works,
+  and it is the one to reach for if the measurement comes back badly. It was not
+  taken here because it changes the builder gate this document specifies, on an
+  argument (the parking flood) that the emission suppression has since covered,
+  and coupling that re-specification into an already-large conversion is how
+  riders become incidents. A bounded queue with a blocking producer is the same
+  change wearing a different hat: it deadlocks under the current gate, since a
+  blocked drain fills the round channel, which parks the replay, which never
+  releases the builders.
+
 ## Consensus-store retention is load-bearing
 
 The epoch's full commit history must survive until the epoch boundary, or
@@ -407,69 +544,81 @@ revision rather than a guarantee.
 Restart-to-live is now O(epoch age) for the whole node, not just for the MPC
 drain. This is an accepted cost, not an accident.
 
-One term in it has not been measured. The wipe deletes in chunks, re-seeking
-the table head each time, so on a table with millions of rows each chunk's
-seek walks the tombstones the previous chunks left — super-linear in the row
-count, though bounded by the same compaction that clears them. It is
-correctness-neutral (the alternative, a RocksDB range delete, is the one
-that leaves a row behind) and it runs once per boot against tables the
-replay is about to rewrite anyway, so it was not worth optimising blind.
-Benchmark it alongside the memory-flatness measurement on the same
-million-round epoch; if it dominates, deleting by explicit key range with an
-inclusive upper bound is the fix, not `schedule_delete_all`. Three gauges make it
-observable: `ika_consensus_boot_replay_target_commit_index`,
+The boot no longer pays a deletion pass before it starts — there is nothing
+to delete — so restart-to-live is the replay and only the replay. Three
+gauges make it observable: `ika_consensus_boot_replay_target_commit_index`,
 `ika_consensus_boot_replay_folded_commit_index` (the two together are the
 remaining boot work) and `ika_consensus_boot_replay_latency_seconds`. The
 replay also logs progress per batch, because a boot that legitimately takes
 tens of minutes must be distinguishable from one that is stuck.
 
+What the boot pays instead is the memory it accumulates as it folds, which is
+the section above rather than a latency term.
+
 ## Rolling back
 
-**The clean-rollback property is gone.** It was an artefact of the tables: an
-older binary could resume from them because they were still there. They are
-not.
+**The clean-rollback property is gone**, and it costs more than it did when
+only the per-round tables were deleted. An older binary rolled back mid-epoch
+finds an epoch store holding NOTHING it recognises as progress: the per-round
+column families are absent, and so now are every fold-side table and any
+record of how far the handler got.
 
-A binary rolled back mid-epoch finds the per-round column families absent.
-typed-store recreates missing column families empty, so it starts, and its
-drain then sees no round history at all — it processes nothing until the epoch
-boundary gives it a fresh epoch store and a live stream. Concretely: degraded
-MPC for the remainder of the epoch, with checkpoints and the epoch close still
-produced by the fold. That is the outcome the issue's open question 1
-anticipated and accepted.
+Two consequences, and the second is new:
 
-`last_consensus_stats` is a separate matter and is fine: it holds the tally of
-a full replay to the head, which is what the old binary would have written
-itself.
+- its MPC drain has no round history to read, so it processes nothing until
+  the epoch boundary hands it a fresh epoch store and a live stream —
+  degraded MPC for the remainder of the epoch, with checkpoints and the epoch
+  close still produced by its fold;
+- its fold starts from the epoch's first commit against empty tables and
+  re-derives the whole epoch through its own table-WRITING path. The
+  argument that used to cover this ("`last_consensus_stats` holds the tally of
+  a full replay, which is what the old binary would have written itself") is
+  dead: there is no tally to inherit. Whether an old binary's re-fold-from-zero
+  onto empty tables behaves is untested — it re-emits an epoch of checkpoint
+  signatures with none of the settled-state suppression this binary added,
+  which is a volume problem rather than a correctness one, but "rather than"
+  is an argument and not a measurement.
 
-This is an argument, not evidence. The upgrade matrix is where it gets tested;
-until then treat a mid-epoch rollback as costing that node's MPC participation
-for the rest of the epoch.
+The upgrade matrix is where this gets tested rather than argued; it is the
+required evidence, and until it exists treat a mid-epoch rollback as costing
+that node's MPC participation for the rest of the epoch AND putting it through
+a full re-derivation on the old binary.
 
 **Release note, for lifting verbatim into operator notes:** rolling this binary
 back mid-epoch does not restore the node's MPC participation until the next
 epoch boundary. The node starts, follows consensus, and keeps producing
 checkpoints, but its MPC drain has no round history to read and will sit out
-until the boundary hands it a fresh epoch store. A rollback taken *at* a
-boundary is unaffected. This must not be discovered mid-incident: an operator
-rolling back to recover from something else needs to know the recovery costs
-MPC for up to one epoch.
+until the boundary hands it a fresh epoch store, while its consensus handler
+re-derives the epoch from its first commit. A rollback taken *at* a boundary is
+unaffected. This must not be discovered mid-incident: an operator rolling back
+to recover from something else needs to know the recovery costs MPC for up to
+one epoch.
 
 ## What this is tested by, and what it is not
 
-Two of the remainders below are **release conditions**, not follow-ups —
+Three of the remainders below are **release conditions**, not follow-ups —
 tracked in ika issue #2064: the real-payload upstream queue bytes (measured on
-a cluster or bounded defensively), and the wedged-but-alive drain end to end
-together with the alerts that are its only detection. Everything else here is
-ordinary follow-up work.
+a cluster or bounded defensively), the wedged-but-alive drain end to end
+together with the alerts that are its only detection, and the memory the fold
+accumulates on a loaded node. The last one is three series off the same run:
+`ika_epoch_processed_consensus_messages`, the two
+`ika_epoch_pending_*_checkpoint_signatures`, and the two
+`ika_epoch_pending_*_checkpoints` against RSS. Everything else here is ordinary
+follow-up work.
 
 In-process, in `ika-core`:
 
 | property | test |
 |---|---|
-| classification is complete | `every_epoch_table_is_classified` |
-| classification is CORRECT | `every_table_the_consensus_fold_writes_is_classified_derived` — takes its answer from folding real commits, not from the declaration |
-| the wipe is total, and reaches nothing preserved | `wipe_empties_every_derived_table_and_preserves_the_rest` |
-| the fold is deterministic over wiped state | `folding_the_same_commits_twice_rebuilds_identical_derived_state` |
+| only state no replay reproduces stays on disk | `the_epoch_store_keeps_only_state_no_replay_reproduces` — pins the table list, so adding one is deliberate |
+| a reopen holds no derived state and keeps every durable table | `a_reopened_store_holds_no_derived_state_and_keeps_its_durable_tables` |
+| releasing the store FREES the derived state, and reads then report the epoch ended | `derived_state_reads_fail_once_the_epoch_store_is_released` |
+| the fold is deterministic from empty | `folding_the_same_commits_twice_rebuilds_identical_derived_state` |
+| the checkpoint prune keeps the sequence being certified (`<`, not `<=`) | `the_checkpoint_prune_keeps_the_sequence_being_certified` |
+| the checkpoint prune keeps the sequence-number cursor when state sync runs ahead | `the_checkpoint_prune_keeps_the_sequence_number_cursor` |
+| a folded transaction is marked processed before its waiter wakes | `a_folded_transaction_is_marked_processed_before_its_waiter_wakes` |
+| the `all_voted` count is the quorum-crossing membership, and a restart re-derives it | `the_pinned_all_voted_count_is_the_quorum_crossing_membership`, `a_restart_re_derives_the_same_pinned_count_and_grace_anchor` |
+| a restart resets the freeze gauges, and the re-fold re-publishes them | `freeze_metrics_reset_on_restart_and_republished_by_the_refold` |
 | the replay reaches the store head, stops below the unfinalized tail, crosses batch boundaries, and survives a lost tail | `consensus_manager::boot_replay::tests` |
 | a finalization hole below the head stops the node | `a_finalization_hole_below_the_head_stops_the_replay` |
 | replayed commits arm the commit-liveness watchdog | `replayed_commits_feed_the_commit_liveness_sink` |
@@ -482,9 +631,10 @@ In-process, in `ika-core`:
 | the watchdog holds off a real full round channel | `a_full_round_channel_holds_the_watchdog_while_commits_queue` (in `ika-node`) |
 
 Every one of these was validated by injecting the fault it claims to catch
-and confirming the predicted evidence
-(`../playbooks/test-testing.md`) — which is how the first draft of the
-classification tests was found to pass with a misclassification injected.
+and confirming the predicted evidence (`../playbooks/test-testing.md`) — which
+is how the prune's two boundary conditions were found to need tests at all:
+neither the `<=` off-by-one nor the lost sequence-number cursor was visible
+from the design, only from the call sites.
 
 What in-process coverage cannot reach, and belongs on CI or a cluster:
 
@@ -494,12 +644,15 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   `test_consensus_crash_and_restart` (:135) and
   `test_consensus_rolling_restarts_all_validators` (:223) already drive
   full-replay-from-zero consumers through crash storms.
-- **Memory flatness** over a >1M-round epoch, and the **restart-to-live
-  latency budget** at ≥90% epoch age. Both are read off
+- **The restart-to-live latency budget** at ≥90% epoch age, read off
   `ika_consensus_boot_replay_*`.
-- **The real boot path end to end** — wipe, replay, consensus start,
-  builders released — which only `ika-test-cluster` exercises
-  (`restart_mid_grace`, `cluster_boots`).
+- **What the fold accumulates over a >1M-round epoch** (REQUIRED): the five
+  series named above against RSS. This replaces the old "memory flatness"
+  remainder, which was about the replay's commit batches — those are still
+  flat; what is not is the state the fold builds from them.
+- **The real boot path end to end** — replay, consensus start, builders
+  released — which only `ika-test-cluster` exercises (`restart_mid_grace`,
+  `cluster_boots`).
 - **Correlated restarts across the close window** (REQUIRED, not
   optional): kill at least f+1 stake after `end_of_publish_quorum_round` is
   set but before the final checkpoint certifies, and assert the epoch still
@@ -507,9 +660,10 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
 - **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
-  also where the rollback claim above gets tested rather than argued — and it
-  is now an argument with teeth, since a rolled-back node loses MPC for the
-  rest of the epoch.
+  where the rollback section above gets tested rather than argued. It is now
+  an argument with two teeth: a rolled-back node loses MPC for the rest of the
+  epoch, and it re-derives the whole epoch through its own table-writing fold
+  onto empty tables, which nothing has exercised.
 - **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
   on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
   the commit-channel backlog. This closes both directions the local harness
@@ -526,7 +680,13 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
 
 - A persisted record of how far the handler got, used to skip commits. It is
   the second truth this design deletes, under any name.
-- A second persisted copy of the commit stream that is not wiped on boot. A
-  copy that survives a restart can hold rounds the consensus store no longer
-  backs.
+- A durable copy of anything the commits determine. It survives a restart the
+  replay does not rewind, so it can hold rows for commits the consensus store
+  no longer backs — and because the split is structural, adding a `DBMap`
+  field IS that decision, with no classification step in between to catch it.
+  `the_epoch_store_keeps_only_state_no_replay_reproduces` is where the
+  decision surfaces.
 - Emission suppression keyed on local progress rather than on settled state.
+- In-memory derived state that outlives its epoch. The store is held past the
+  boundary, so anything not cleared in `release_db_handles` is an epoch's
+  worth of RSS retained until the last `Arc` drops.

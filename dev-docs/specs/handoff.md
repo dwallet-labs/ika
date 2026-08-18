@@ -90,10 +90,10 @@ next epoch inherits.
   alone is NOT the recovery mechanism — it sees only signatures that
   arrive after the restart.
 
-  WHERE THE ROWS COME FROM CHANGED (#2058): `handoff_signatures` is
-  classified DERIVED, so a restart wipes it and the rebuild is the boot
-  replay re-folding the epoch's `EndOfPublishV2` bundles, not a read of
-  surviving rows. The bundles buffer until this validator's expected
+  WHERE THE ROWS COME FROM CHANGED (#2058): the handoff signatures are
+  in-memory epoch state, so a restart starts them empty and the rebuild is
+  the boot replay re-folding the epoch's `EndOfPublishV2` bundles, not a
+  read of surviving rows. The bundles buffer until this validator's expected
   attestation installs and are staged when it does, so the rows exist
   again — but under whichever commit the replay had reached at install
   time, which is not necessarily the commit the crashed run recorded
@@ -107,15 +107,14 @@ next epoch inherits.
   that verify against the currently-installed expected attestation. A
   re-install that changes the attestation (e.g. a fresh hydration
   changed the items) drops the superseded rows from BOTH the aggregator
-  and the table — because the deferred-close quorum gate
-  (`handoff_signatures_meet_quorum`) sums the TABLE, not the aggregator.
-  The table therefore plays two roles: the within-boot source for
-  aggregator rebuild, and the close-gate quorum input; the second role
-  is what makes stale-row hygiene load-bearing. (It is not a
-  restart-durable source any more — #2058 wipes it on boot and the
-  replay re-derives it; the hygiene rule is unaffected, because a
-  re-install can change the attestation within a single boot just as it
-  could across one.) (If the close gate
+  and the recorded rows — because the deferred-close quorum gate
+  (`handoff_signatures_meet_quorum`) sums the ROWS, not the aggregator.
+  They therefore play two roles: the within-boot source for aggregator
+  rebuild, and the close-gate quorum input; the second role is what makes
+  stale-row hygiene load-bearing. (They are not a restart-durable source
+  any more — #2058 holds them in memory and the replay re-derives them;
+  the hygiene rule is unaffected, because a re-install can change the
+  attestation within a single boot just as it could across one.) (If the close gate
   migrates to a sequence-pure tally, that second role is retired.)
   TRADEOFF (deliberate): the delete is destructive under
   divergence — a validator that adopted the quorum's attestation via
@@ -161,8 +160,8 @@ next epoch inherits.
   `MIN_PROTOCOL_VERSION = 5`.)
 
   The close is NO LONGER restart-idempotent via a persisted marker.
-  `epoch_close_emitted` is classified DERIVED (#2058), so a restart
-  wipes it and re-decides the close from the replayed commits rather
+  The close marker is in-memory epoch state (#2058), so a restart starts
+  it unset and re-decides the close from the replayed commits rather
   than short-circuiting on the crashed run's answer. Because the
   handoff-cert half of the gate depends on when this validator's
   expected attestation installs — which is not a function of the

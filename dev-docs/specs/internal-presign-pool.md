@@ -283,11 +283,10 @@ they come from the same commits in the same order. The model is
 [`event-sourced-epoch.md`](event-sourced-epoch.md); the consumption rules are
 [`../conventions/consensus-output-consumption.md`](../conventions/consensus-output-consumption.md).
 
-**The pool is NOT reset for that replay — by classification, not by
-accident.** Every per-epoch table is classified derived (deleted and
-rebuilt) or preserved (left alone) in
-[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md), and
-the pool tables, their size counters, their idempotency markers
+**The pool is NOT reset for that replay — by construction, not by
+accident.** The per-epoch store keeps only state no replay reproduces
+([`../preserved-epoch-state-audit.md`](../preserved-epoch-state-audit.md)),
+and the pool tables, their size counters, their idempotency markers
 (`filled_presign_pool_slots`, `served_global_presigns`,
 `noa_presign_demand_resolutions`, `used_presigns`), the assigned-presign
 pools and `presign_private_outputs` are all **preserved**. They have to be:
@@ -354,14 +353,14 @@ without its marker is re-applied on the next replay, and a marker that landed
 without its mutation loses the presigns (fill) or serves a presign the pool
 never gave up (drain).
 
-**A marker table can never be classified derived.** Wiping a marker while
-the pool it guards survives is precisely the double-absorb this contract
-exists to prevent, and it produces no error — an inflated size counter reads
-as a full pool and suppresses top-ups until the pool physically starves.
-The pairing is checked: the classification test that requires every table
-the consensus fold writes to be derived does not reach these (the pool paths
-write them, not the fold), so the argument for each is written out in the
-audit and reviewed there.
+**A marker can never become in-memory state.** Losing a marker while the pool
+it guards survives is precisely the double-absorb this contract exists to
+prevent, and it produces no error — an inflated size counter reads as a full
+pool and suppresses top-ups until the pool physically starves. Since the boot
+replay rebuilds everything held in memory but never rewinds the pool, a
+marker moved there would be re-derived against a pool that already consumed
+what it records. The markers therefore stay tables, and the argument for each
+is written out in the audit.
 
 The pool has no bare pop on any replayed path. `pop_presign_for_testing`
 exists only so tests can inspect pool contents directly, and is

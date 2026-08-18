@@ -267,3 +267,27 @@ is holding the service up.
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)'s interpretation rules
   plus
   [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+- The five `ika_epoch_*` memory series report what an epoch's fold is holding
+  in RAM, which is where the epoch's derived state lives
+  ([`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md)). Read
+  them as three different things:
+  - `ika_epoch_pending_dwallet_checkpoint_signatures` /
+    `ika_epoch_pending_system_checkpoint_signatures` are pruned below the
+    certified watermark, so a steady value near the committee size is healthy.
+    **Sustained growth means certification has stalled** — the signatures are
+    correctly retained until the checkpoints they sign certify — so read them
+    against `ika_last_certified_dwallet_checkpoint` rather than as a memory
+    alarm in their own right;
+  - `ika_epoch_pending_dwallet_checkpoints` /
+    `ika_epoch_pending_system_checkpoints` are the builders' input queues,
+    sampled where they are mutated so they keep reporting during a boot replay
+    (when the builders are gated and the drain is not). A large value **during
+    a boot** is the expected replay peak and drains when the builders are
+    released; a large value on a running node is a stuck builder, which
+    `ika_pending_dwallet_checkpoint_queue_depth` and
+    `ika_last_constructed_dwallet_checkpoint` diagnose;
+  - `ika_epoch_processed_consensus_messages` grows monotonically with the
+    epoch's transaction count and drops at the boundary. It is the epoch's
+    largest single structure at roughly 69 bytes an entry; track it against
+    RSS. There is no threshold to alert on yet, because the mainnet rate is
+    unmeasured — establishing it is a release condition (ika #2064).

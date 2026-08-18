@@ -7,16 +7,15 @@ CI enforces the presence of that line
 (`scripts/check-epoch-table-write-discipline.sh`); review enforces that
 it is true.
 
-Every field carries a **second** declaration alongside it, in the
-`epoch_state_registry!` invocation in the same file: whether the table is
-DERIVED (deleted on every boot and rebuilt by replaying the epoch's commits)
-or PRESERVED. The two declarations answer different questions —
-`write-discipline:` is about which batch a row lands in, the classification
-is about whether the row exists at all after a restart — and both are
-required. The classification's rules and reasoning are
-[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md); the
-model behind it is
-[`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md).
+Every table here survives every restart, un-rewound by the boot replay —
+that is what being a table MEANS now, and it is why the store holds only
+state no replay reproduces. State the commits determine lives in memory on
+`AuthorityPerEpochStore` instead. Adding a table is therefore a decision
+before it is a discipline question:
+[`../preserved-epoch-state-audit.md`](../preserved-epoch-state-audit.md) is
+what to answer first, and
+[`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md) is the
+model behind it.
 
 ## The rule
 
@@ -53,24 +52,25 @@ validators, so "usually equal" is a divergence with a longer fuse.
 ## The two disciplines
 
 (The per-round streams this rule used to be mostly about are gone: the MPC
-drain is fed from the fold over a channel, not from tables. What remains is
-votes, anchors, checkpoint construction and the presign material.)
+drain is fed from the fold over a channel. So is everything the commits
+determine — votes, anchors, the freeze partition, checkpoint construction —
+which now lives in memory. What is left on disk is the presign material, the
+private VSS outputs, the output caches and the operator override, and every
+one of them is `direct`.)
 
-**`commit-batched`** — the only writer is
-`ConsensusCommitOutput::write_to_batch`. The row lands in the same atomic
-RocksDB batch as the processed-markers of the commit that produced it, so
-a crash before that batch replays the whole commit and re-derives the row.
-This is **required** for anything a consensus-visible decision reads: the
-close round, the freeze partition, and checkpoint content.
+**`commit-batched`** still exists, but it describes the in-memory
+commit-boundary group rather than a table. `ConsensusCommitOutput::apply_to_epoch_state`
+applies everything a commit derived under ONE lock, which is what the single
+RocksDB batch it replaced gave concurrent readers: no reader sees the freeze
+partition without the freeze round, or the close marker without the votes
+that justified it. It remains **required** for anything a consensus-visible
+decision reads — the close round, the freeze partition, checkpoint content —
+and the reason is unchanged even though the mechanism is a lock instead of a
+batch. What DID change is the crash half of the argument: a crash no longer
+tears a pair, it loses the whole epoch's derived state, and the replay
+rebuilds it. Atomicity here is now purely about concurrent readers.
 
-Note what the boot replay does and does not change here. It deletes every
-derived table and re-derives it from the commits, so a torn *pair* of rows
-cannot survive a restart — but within a running process the atomicity
-argument is unchanged, and a table written outside the commit batch is still
-read by consumers that may look at it between the decision and its batch.
-Commit-batching is about the live path; the classification is about the boot.
-
-**`direct`** — written outside the commit batch, with a stated reason.
+**`direct`** — written outside the commit boundary, with a stated reason.
 Fixed vocabulary, so the reasons stay comparable:
 
 | reason | means | check it by asking |
@@ -88,8 +88,9 @@ blocker, not a judgement call.
 
 `handoff_signatures` was the other one until #1927 moved all three of its
 writers — the consensus arm, the buffered drain, and the stale-row
-cleanup — onto `commit-batched`. Worth reading as the worked example of
-converting a table rather than annotating it: the writers that were not
+cleanup — onto `commit-batched`. It is in-memory state now rather than a
+table, but the conversion is still worth reading as the worked example of
+converting a writer rather than annotating it: the writers that were not
 on the consensus thread had to stage into the epoch store and let the
 next commit fold them in, and the gate had to start reading the
 committed table *overlaid with the evaluating commit's own staged rows*,

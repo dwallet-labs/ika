@@ -16,8 +16,8 @@ commit (#2057). Deriving removes the disagreement; reconciling only shrinks
 the window.
 
 Model: [`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md).
-Per-table classification:
-[`../derived-epoch-state-audit.md`](../derived-epoch-state-audit.md).
+What the epoch store still keeps on disk, and why:
+[`../preserved-epoch-state-audit.md`](../preserved-epoch-state-audit.md).
 
 ## 2. The fold is the only reader of consensus output
 
@@ -161,12 +161,36 @@ certification for the rest of the epoch.
 wedge whatever the code does. What the code owes is *noticing* — one loud
 line, so a node quietly doing no MPC for an epoch is visible.)
 
-## 8. What must never be reintroduced
+## 8. Where state derived from consensus lives
+
+**In memory, on `AuthorityPerEpochStore`.** The rule is structural rather than
+declared: a `DBMap` field on `AuthorityEpochTables` survives every restart and
+is never rewound by the replay, so putting consensus-derived state there
+recreates the second truth rule 1 exists to delete — and there is no
+classification step in between that would catch it. An in-memory field is
+rebuilt by the replay by definition.
+
+The question to answer before adding a durable per-epoch table is therefore
+*what would a replay have to redo to rebuild this?* If the answer is "nothing,
+the commits carry it", it belongs in memory. `the_epoch_store_keeps_only_state_no_replay_reproduces`
+pins the list so the decision has to be made rather than drifted into.
+
+Two consequences worth stating, because both have bitten:
+
+- **memory the fold accumulates is a budget, not free.** State proportional to
+  the epoch's traffic needs a bound before it can be in-memory at all — a
+  prune against a watermark it can prove nothing reads below, or a measured
+  ceiling and a gauge. The spec's memory section is the worked version;
+- **anything held there must be cleared in `release_db_handles`.** The epoch
+  store outlives its epoch, so state not cleared is retained until the last
+  `Arc` drops.
+
+## 9. What must never be reintroduced
 
 - A persisted record of how far the fold got, used to skip commits — under any
   name.
-- A second persisted copy of the commit stream that is not wiped at boot. A
-  copy that survives a restart can hold rounds the consensus store no longer
+- A durable copy of anything the commits determine (rule 8). A copy that
+  survives a restart can hold rows for commits the consensus store no longer
   backs.
 - Emission suppression keyed on local progress rather than settled state.
 - Commit-liveness reporting moved back after the fold (rule 4), or
