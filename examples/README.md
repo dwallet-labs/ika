@@ -112,8 +112,7 @@ pnpm --filter @demo/frontend dev
 
 Import an existing private key into an Ika dWallet, put it behind a t-of-N
 roster of passkeys or wallet credentials, and recover the assets by sweeping
-them once a quorum signs. Ships parallel Sui and Solana deployments over a
-shared design layer.
+them once a quorum signs.
 
 **Features:**
 
@@ -126,7 +125,7 @@ shared design layer.
 
 **Tech Stack:**
 
-- **Smart Contracts:** Move on Sui, Quasar program on Solana
+- **Smart Contracts:** Move on Sui
 - **Frontend:** Next.js 16, React 19, Tailwind v4
 - **Sui access:** `@mysten/sui` v2 over gRPC with dApp Kit 2, Enoki, WebAuthn
 - **Integration:** Ika 2PC-MPC for key import, quorum-gated signing

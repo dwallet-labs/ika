@@ -1,4 +1,4 @@
-# ikavery - Quorum-Gated Key Custody on Sui and Solana
+# ikavery - Quorum-Gated Key Custody on Sui
 
 Import an existing private key into an Ika 2PC-MPC dWallet, put it behind a
 t-of-N roster of WebAuthn passkeys or wallet credentials, and recover the assets
@@ -9,11 +9,10 @@ by sweeping them once a quorum signs.
 > ⚠️ **Testnet Only — Developer Warning**
 >
 > This example is provided for **developer testing and educational purposes
-> only** and must be used on **testnet/devnet only** (not mainnet).
+> only** and must be used on **testnet only** (not mainnet).
 >
-> Never import a key that holds real funds. Neither contract has been
-> independently audited, and the Solana side runs against Ika's pre-alpha mock
-> signer, which resets without warning.
+> Never import a key that holds real funds. The contract has not been
+> independently audited.
 >
 > **You assume all risk by proceeding.**
 
@@ -21,7 +20,8 @@ by sweeping them once a quorum signs.
 
 > **Vendored example.** This app began life at
 > [Iamknownasfesal/ikavery](https://github.com/Iamknownasfesal/ikavery) and was
-> imported into the ika monorepo, where it is licensed under the repository's
+> imported into the ika monorepo — Sui half only, since this repository's
+> examples are Ika-on-Sui — where it is licensed under the repository's
 > Clear BSD License (see `LICENSE`). Its packages are installed by pnpm as
 > workspace members, and shared library versions come from the `catalog:` in the
 > root `pnpm-workspace.yaml` rather than from pins here.
@@ -42,12 +42,8 @@ custodian.
 - Propose and approve a sweep; the network signs only once the quorum is met
 - Sweep native and token balances (SUI, SPL) to a recovery address
 
-Two parallel deployments share the design layer:
-
-- [`sui.ikavery.com`](https://sui.ikavery.com) — Move package on Sui testnet,
-  passkey-first via WebAuthn PRF
-- [`solana.ikavery.com`](https://solana.ikavery.com) — Quasar program on Solana
-  devnet, wallet-first via [dynamic.xyz](https://dynamic.xyz)
+Deployed at [`sui.ikavery.com`](https://sui.ikavery.com): a Move package on Sui
+testnet, passkey-first via WebAuthn PRF.
 
 ## Getting Started
 
@@ -107,56 +103,33 @@ sui/packages/
 ├── contracts/recovery/  Move package (recovery::*)
 ├── sdk/                 @fesal-packages/ikavery-sui-sdk
 └── frontend/            ikavery-frontend (Next.js)
-solana/packages/
-├── program/             Quasar program (Rust + Quasar.toml)
-├── sdk/                 @fesal-packages/ikavery-solana-sdk
-└── frontend/            ikavery-solana-frontend (Next.js)
 ```
 
-The two frontends share `@fesal-packages/ikavery-frontend-ui` and diverge only
-at the wallet provider, the chain SDK, and the auth ramp. Per-chain details:
-[`sui/README.md`](sui/README.md), [`solana/README.md`](solana/README.md).
+The app is built on `@fesal-packages/ikavery-frontend-ui`, the shared design
+system. Further detail: [`sui/README.md`](sui/README.md).
 
 ### Technology Stack
 
-**Shared:**
-
 - TypeScript, Tailwind v4, shadcn-derived primitives, framer-motion
-- `@ika.xyz/sdk` for the Sui side, `@ika.xyz/pre-alpha-solana-client` for Solana
-
-**Sui:**
-
+- `@ika.xyz/sdk`
 - Move (`framework/testnet`), Next.js 16, React 19
 - `@mysten/sui` v2 over **gRPC** — public Sui fullnodes no longer serve JSON-RPC
 - `@mysten/dapp-kit-react` (dApp Kit 2, the gRPC-capable rewrite),
   `@mysten/enoki` for zkLogin, `@simplewebauthn/browser` for passkeys
 
-**Solana:**
-
-- Quasar program on devnet, `@dynamic-labs/sdk-react-core` +
-  `@dynamic-labs/solana`
-
 ## End-to-End Scripts
 
-Each chain's SDK package ships scripts that drive the full lifecycle against
-live testnets:
+`sui/packages/sdk/scripts/` ships scripts that drive the full lifecycle against
+live testnet: `e2e-recover`, `e2e-recover-spl`, `e2e-roster-change`,
+`e2e-multi-member`, `e2e-enrollment-spl` and `e2e-retry-spl`.
 
-| Sui (`sui/packages/sdk/scripts/`)          | Solana (`solana/packages/sdk/scripts/`) |
-| ------------------------------------------ | --------------------------------------- |
-| `e2e-recover` · SUI sweep                  | `e2e-recover` · SOL sweep               |
-| `e2e-recover-spl` · sweep with tokens      | `e2e-recover-spl` · SOL+SPL sweep       |
-| `e2e-roster-change`                        | `e2e-roster-change`                     |
-| `e2e-multi-member` (5-member, segregation) | `e2e-multi-member` (3-of-5 mechanics)   |
-| `e2e-enrollment-spl`                       | `e2e-enrollment`                        |
-| `e2e-retry-spl`                            | `e2e-retry-spl`                         |
-
-See the chain-specific READMEs for the env vars each script needs.
+See [`sui/README.md`](sui/README.md) for the env vars each script needs.
 
 ## Status
 
-Pre-alpha, testnet/devnet only. The Sui half was migrated to the Sui SDK v2 gRPC
-stack when it was vendored here; the Solana half is carried over unchanged and
-still targets Ika's pre-alpha mock signer.
+Pre-alpha, testnet only. Migrated to the Sui SDK v2 gRPC stack when it was
+vendored here. The upstream project also has a Solana deployment, which is not
+carried in this repository.
 
 ## Learn More
 
