@@ -71,15 +71,23 @@ pub struct GrpcSuiClient {
 impl GrpcSuiClient {
     /// Connect to a Sui fullnode over gRPC at `grpc_url`. The same direct
     /// client backs both the read transport and the writer uplink.
-    pub async fn new(grpc_url: &str) -> anyhow::Result<Self> {
-        Self::new_with_headers(grpc_url, &SuiGrpcHeaders::new()).await
+    pub async fn new(
+        grpc_url: &str,
+        gate: std::sync::Arc<crate::rate_limit::RateLimitGate>,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_headers(grpc_url, &SuiGrpcHeaders::new(), gate).await
     }
 
     pub async fn new_with_headers(
         grpc_url: &str,
         headers: &SuiGrpcHeaders,
+        gate: std::sync::Arc<crate::rate_limit::RateLimitGate>,
     ) -> anyhow::Result<Self> {
-        let grpc = std::sync::Arc::new(SuiGrpcClient::new_with_headers(grpc_url, headers).await?);
+        let grpc = std::sync::Arc::new(
+            SuiGrpcClient::new_with_headers(grpc_url, headers)
+                .await?
+                .with_gate(gate),
+        );
         Ok(Self {
             transport: grpc.clone(),
             writer: Some(grpc),

@@ -24,6 +24,7 @@ tracing.workspace = true
 
 fastcrypto.workspace = true
 move-core-types.workspace = true
+mysten-common.workspace = true
 
 shared-crypto.workspace = true
 ika-config.workspace = true

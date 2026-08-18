@@ -365,6 +365,16 @@ impl IkaNode {
         mysten_metrics::thread_stall_monitor::start_thread_stall_monitor();
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
+        // ONE rate-limit gate for this node's Sui endpoint, shared by every
+        // client that talks to it: the connector stack's read client (and so
+        // the ratchet, the verified reader / bag event pump, and the
+        // checkpoint pusher) and the notifier's read/write `SuiClient`. Those
+        // are separate gRPC connections to the same URL, so without a shared
+        // gate the two halves of the node would retry through each other's
+        // cooldown — see `ika_sui_client::rate_limit`.
+        let sui_rate_limit_gate = std::sync::Arc::new(
+            ika_sui_client::rate_limit::RateLimitGate::with_metrics(sui_client_metrics.clone()),
+        );
 
         // Genesis-root the chain before resolving the on-chain identity: when a
         // Sui genesis blob is configured, load + verify it and DERIVE the chain
@@ -586,6 +596,7 @@ impl IkaNode {
                 proof_cache_cfg.clone(),
                 ocs_metrics.clone(),
                 proof_provider_metrics.clone(),
+                sui_rate_limit_gate.clone(),
             )
             .await
             .map_err(|e| anyhow!("build OCS connector stack (peer-only): {e}"))?;
@@ -639,7 +650,7 @@ impl IkaNode {
             let client = Arc::new(
                 SuiClient::new_grpc_with_transport(
                     verified,
-                    sui_client_metrics,
+                    sui_client_metrics.clone(),
                     ika_network_config,
                 )
                 .await?,
@@ -663,7 +674,9 @@ impl IkaNode {
                 SuiClient::new_grpc_with_headers(
                     &grpc_url,
                     grpc_headers,
-                    sui_client_metrics,
+                    sui_client_metrics.clone(),
+                    // The same gate the connector stack above was built with.
+                    sui_rate_limit_gate.clone(),
                     ika_network_config,
                 )
                 .await?,
@@ -840,6 +853,7 @@ impl IkaNode {
                     proof_cache_cfg.clone(),
                     ocs_metrics.clone(),
                     proof_provider_metrics.clone(),
+                    sui_rate_limit_gate.clone(),
                 )
                 .await
                 .map_err(|e| anyhow!("build OCS connector stack: {e}"))?;
@@ -975,6 +989,7 @@ impl IkaNode {
                 proof_cache_cfg,
                 ocs_metrics.clone(),
                 proof_provider_metrics.clone(),
+                sui_rate_limit_gate.clone(),
             )
             .await
             .map_err(|e| anyhow!("build OCS connector stack (sui-state-mirrored): {e}"))?;

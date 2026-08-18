@@ -7217,6 +7217,7 @@ dependencies = [
  "ika-types",
  "itertools 0.15.0",
  "move-core-types",
+ "mysten-common",
  "object_store",
  "prometheus",
  "prost-types 0.14.4",

@@ -48,6 +48,7 @@ use ika_network::sui_state_mirror::{
 };
 use ika_sui_client::genesis::load_and_verify_sui_genesis;
 use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::rate_limit::RateLimitGate;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use tracing::{info, warn};
 use typed_store::TypedStoreError;
@@ -195,6 +196,10 @@ pub async fn build_sui_connector_stack(
     proof_cache_cfg: ProofCacheConfig,
     metrics: Arc<OcsMetrics>,
     provider_metrics: Arc<ProofProviderMetrics>,
+    // The node's ONE rate-limit gate for its Sui endpoint. Handed to every
+    // direct-gRPC client built here, and to the notifier's `SuiClient` by the
+    // caller, so all of them back off together when the endpoint refuses us.
+    sui_rate_limit_gate: Arc<RateLimitGate>,
 ) -> Result<SuiConnectorStack, SetupError> {
     // Durable cache: rehydrates from the perpetual `verified_object_cache`
     // column on boot and writes through every absorb. The direct proof
@@ -217,7 +222,12 @@ pub async fn build_sui_connector_stack(
             let grpc = Arc::new(
                 SuiGrpcClient::new_with_headers(url, headers)
                     .await
-                    .map_err(|e| SetupError::Transport(format!("connect {url}: {e}")))?,
+                    .map_err(|e| SetupError::Transport(format!("connect {url}: {e}")))?
+                    // ONE client, therefore one gate, for the ratchet, the
+                    // LocalProofProvider (and so the bag event pump) and the
+                    // checkpoint pusher below — and the same gate the caller
+                    // gave the notifier's client.
+                    .with_gate(sui_rate_limit_gate.clone()),
             );
             // Same provider instance used by the local reader and (via
             // the mirror server) by remote sui-state-mirrored peers.
@@ -282,10 +292,14 @@ pub async fn build_sui_connector_stack(
             let relay: Arc<dyn SuiTransport> = mirror.clone();
             let raw: Arc<dyn SuiTransport> = match fallback_grpc_url {
                 Some(url) => {
-                    let fallback: Arc<dyn SuiTransport> =
-                        Arc::new(SuiGrpcClient::new_with_headers(url, headers).await.map_err(|e| {
-                            SetupError::Transport(format!("connect fallback {url}: {e}"))
-                        })?);
+                    let fallback: Arc<dyn SuiTransport> = Arc::new(
+                        SuiGrpcClient::new_with_headers(url, headers)
+                            .await
+                            .map_err(|e| {
+                                SetupError::Transport(format!("connect fallback {url}: {e}"))
+                            })?
+                            .with_gate(sui_rate_limit_gate.clone()),
+                    );
                     Arc::new(FallbackTransport::new(relay, fallback))
                 }
                 None => relay,

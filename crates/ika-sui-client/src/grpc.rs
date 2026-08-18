@@ -12,7 +12,9 @@
 use std::env::{self, VarError};
 use std::fmt::Display;
 use std::fs;
+use std::future::Future;
 use std::path::Path;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -29,6 +31,7 @@ use sui_types::object::Object;
 use sui_types::transaction::Transaction;
 use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
+use crate::rate_limit::RateLimitGate;
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
     SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
@@ -47,6 +50,16 @@ const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 pub struct SuiGrpcClient {
     rpc: SuiRpcClient,
     endpoint: String,
+    /// Rate-limit state for this ENDPOINT — shared, not per-client. Every
+    /// request this client makes passes through it, and a node hands the same
+    /// gate to every client pointed at the same URL (see [`Self::with_gate`]),
+    /// so the components that share one `Arc<SuiGrpcClient>` — on a
+    /// sui-state-direct validator the committee ratchet, the
+    /// `LocalProofProvider` under the verified reader (and therefore the bag
+    /// event pump), and the checkpoint pusher — *and* the notifier's separate
+    /// client all back off together instead of retrying through each other's
+    /// throttling. See [`crate::rate_limit`].
+    gate: Arc<RateLimitGate>,
 }
 
 impl SuiGrpcClient {
@@ -57,6 +70,10 @@ impl SuiGrpcClient {
 
     /// Connects with configured metadata attached to every request, then
     /// probes the endpoint by fetching the chain id.
+    ///
+    /// The returned client gets its own unmetered rate-limit gate. A node
+    /// should chain [`Self::with_gate`] to put every client that talks to the
+    /// SAME endpoint behind one shared, metered gate.
     pub async fn new_with_headers(
         endpoint: impl Into<String>,
         headers: &SuiGrpcHeaders,
@@ -66,13 +83,75 @@ impl SuiGrpcClient {
         let rpc = SuiRpcClient::new(endpoint.as_str())
             .map_err(|e| TransportError::Network(format!("connect {endpoint}: {e}")))?
             .with_headers(headers);
-        let client = Self { rpc, endpoint };
+        let client = Self {
+            rpc,
+            endpoint,
+            gate: Arc::new(RateLimitGate::unmetered()),
+        };
         let _ = client.get_chain_identifier().await?;
         Ok(client)
     }
 
+    /// Put this client behind an existing [`RateLimitGate`].
+    ///
+    /// Pass the SAME gate to every client pointed at the same endpoint — on a
+    /// node that is the connector stack's read client and the notifier's
+    /// read/write client, which are two `SuiGrpcClient`s against one URL.
+    /// Sharing the gate is the difference between the node backing off as a
+    /// unit and its two halves retrying through each other's cooldown.
+    ///
+    /// Clients that are not handed one (the one-shot CLI clients, the test
+    /// cluster) keep their own unmetered gate: the backoff still applies,
+    /// only the reporting does not.
+    pub fn with_gate(mut self, gate: Arc<RateLimitGate>) -> Self {
+        self.gate = gate;
+        self
+    }
+
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// Run one upstream call under the shared rate-limit gate, keeping
+    /// `NotFound` distinguishable from generic transport failure.
+    ///
+    /// Admission first, then classification: a classified rate limit arms the
+    /// shared cooldown for every other component; any success disarms it;
+    /// anything else is passed through untouched, so non-rate-limit errors
+    /// keep exactly the retry behavior their caller already had.
+    async fn gated<T>(
+        &self,
+        call: impl Future<Output = Result<T, tonic::Status>>,
+    ) -> Result<T, TransportError> {
+        self.gated_with(call, Self::rpc_status_err).await
+    }
+
+    /// As [`Self::gated`], but collapsing every failing status to
+    /// [`TransportError::Network`] — the historical mapping for the calls
+    /// whose callers have no `NotFound` branch.
+    async fn gated_network<T>(
+        &self,
+        call: impl Future<Output = Result<T, tonic::Status>>,
+    ) -> Result<T, TransportError> {
+        self.gated_with(call, Self::rpc_err).await
+    }
+
+    async fn gated_with<T>(
+        &self,
+        call: impl Future<Output = Result<T, tonic::Status>>,
+        map_err: impl FnOnce(tonic::Status) -> TransportError,
+    ) -> Result<T, TransportError> {
+        self.gate.wait_for_capacity().await;
+        match call.await {
+            Ok(value) => {
+                self.gate.note_success();
+                Ok(value)
+            }
+            Err(status) => {
+                self.gate.note_status(&status);
+                Err(map_err(status))
+            }
+        }
     }
 
     /// Returns the checkpoint sequence in which `tx` was committed; errors if
@@ -85,10 +164,9 @@ impl SuiGrpcClient {
         tx: TransactionDigest,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
         let mut rpc = self.rpc.clone();
-        let executed = rpc
-            .get_transaction(&tx)
-            .await
-            .map_err(Self::rpc_status_err)?;
+        let executed = self
+            .gated(async move { rpc.get_transaction(&tx).await })
+            .await?;
         executed.checkpoint.ok_or_else(|| {
             TransportError::NotFound(format!("tx {tx} not yet committed in any checkpoint"))
         })
@@ -236,15 +314,15 @@ impl SuiTransport for SuiGrpcClient {
     // -- chain metadata ---------------------------------------------------------------------
     async fn get_chain_identifier(&self) -> Result<String, TransportError> {
         let rpc = self.rpc.clone();
-        rpc.get_chain_identifier()
+        self.gated_network(async move { rpc.get_chain_identifier().await })
             .await
             .map(|c| c.to_string())
-            .map_err(Self::rpc_err)
     }
 
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
         let rpc = self.rpc.clone();
-        rpc.get_current_epoch().await.map_err(Self::rpc_err)
+        self.gated_network(async move { rpc.get_current_epoch().await })
+            .await
     }
 
     async fn get_committee(
@@ -252,7 +330,8 @@ impl SuiTransport for SuiGrpcClient {
         epoch: Option<u64>,
     ) -> Result<sui_types::committee::Committee, TransportError> {
         let rpc = self.rpc.clone();
-        rpc.get_committee(epoch).await.map_err(Self::rpc_err)
+        self.gated_network(async move { rpc.get_committee(epoch).await })
+            .await
     }
 
     // -- checkpoints ------------------------------------------------------------------------
@@ -262,9 +341,8 @@ impl SuiTransport for SuiGrpcClient {
         // empties the availability window and NotFounds its OWN latest, and
         // callers (the boot artifacts-digest probe) treat that transient
         // state differently from a real transport failure.
-        rpc.get_latest_checkpoint()
+        self.gated(async move { rpc.get_latest_checkpoint().await })
             .await
-            .map_err(Self::rpc_status_err)
     }
 
     async fn get_latest_checkpoint_sequence(
@@ -275,13 +353,15 @@ impl SuiTransport for SuiGrpcClient {
         // `GetCheckpoint` NotFound a just-pruned latest — the probe keeps
         // working while the fullnode prunes at head.
         let mut rpc = self.rpc.clone();
-        let response = rpc
-            .inner_mut()
-            .clone()
-            .ledger_client()
-            .get_service_info(proto::GetServiceInfoRequest::default())
-            .await
-            .map_err(Self::rpc_status_err)?
+        let response = self
+            .gated(async move {
+                rpc.inner_mut()
+                    .clone()
+                    .ledger_client()
+                    .get_service_info(proto::GetServiceInfoRequest::default())
+                    .await
+            })
+            .await?
             .into_inner();
         response.checkpoint_height.ok_or_else(|| {
             TransportError::Network(
@@ -295,10 +375,9 @@ impl SuiTransport for SuiGrpcClient {
         seq: CheckpointSequenceNumber,
     ) -> Result<CheckpointData, TransportError> {
         let mut rpc = self.rpc.clone();
-        let checkpoint = rpc
-            .get_full_checkpoint(seq)
-            .await
-            .map_err(Self::rpc_status_err)?;
+        let checkpoint = self
+            .gated(async move { rpc.get_full_checkpoint(seq).await })
+            .await?;
         Ok(CheckpointData::from(checkpoint))
     }
 
@@ -319,13 +398,15 @@ impl SuiTransport for SuiGrpcClient {
         request.read_mask = Some(prost_types::FieldMask {
             paths: vec!["summary.bcs".into(), "signature".into()],
         });
-        let response = rpc
-            .inner_mut()
-            .clone()
-            .ledger_client()
-            .get_checkpoint(request)
-            .await
-            .map_err(Self::rpc_status_err)?
+        let response = self
+            .gated(async move {
+                rpc.inner_mut()
+                    .clone()
+                    .ledger_client()
+                    .get_checkpoint(request)
+                    .await
+            })
+            .await?
             .into_inner();
         let proto_checkpoint = response
             .checkpoint
@@ -346,12 +427,18 @@ impl SuiTransport for SuiGrpcClient {
             paths: vec!["summary.bcs".into(), "signature".into()],
         });
         let mut rpc = self.rpc.clone();
-        let mut inner = rpc.inner_mut().clone();
-        let streaming = inner
-            .subscription_client()
-            .subscribe_checkpoints(request)
-            .await
-            .map_err(Self::rpc_status_err)?
+        // Only the subscribe handshake is gated; per-item stream errors are the
+        // follower's resubscribe concern, and gating a long-lived stream would
+        // mean holding the gate for the life of the subscription.
+        let streaming = self
+            .gated(async move {
+                rpc.inner_mut()
+                    .clone()
+                    .subscription_client()
+                    .subscribe_checkpoints(request)
+                    .await
+            })
+            .await?
             .into_inner();
         // Map each streamed response to a decoded summary; a per-item decode or
         // transport error becomes a stream item error (the follower resubscribes
@@ -379,13 +466,15 @@ impl SuiTransport for SuiGrpcClient {
         // only) is a determinate condition the committee ratchet routes to its
         // pruned-boundary fallback chain. Collapsing it into `Network` made the
         // ratchet retry it forever, invisibly.
-        let response = rpc
-            .inner_mut()
-            .clone()
-            .ledger_client()
-            .get_epoch(request)
-            .await
-            .map_err(Self::rpc_status_err)?
+        let response = self
+            .gated(async move {
+                rpc.inner_mut()
+                    .clone()
+                    .ledger_client()
+                    .get_epoch(request)
+                    .await
+            })
+            .await?
             .into_inner();
         let info = response
             .epoch
@@ -398,7 +487,7 @@ impl SuiTransport for SuiGrpcClient {
     // -- objects ----------------------------------------------------------------------------
     async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
         let mut rpc = self.rpc.clone();
-        rpc.get_object(id).await.map_err(Self::rpc_status_err)
+        self.gated(async move { rpc.get_object(id).await }).await
     }
 
     async fn get_object_with_version(
@@ -407,16 +496,14 @@ impl SuiTransport for SuiGrpcClient {
         version: SequenceNumber,
     ) -> Result<Object, TransportError> {
         let mut rpc = self.rpc.clone();
-        rpc.get_object_with_version(id, version)
+        self.gated(async move { rpc.get_object_with_version(id, version).await })
             .await
-            .map_err(Self::rpc_status_err)
     }
 
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
         let rpc = self.rpc.clone();
-        rpc.batch_get_objects(ids)
+        self.gated(async move { rpc.batch_get_objects(ids).await })
             .await
-            .map_err(Self::rpc_status_err)
     }
 
     // -- dynamic fields ---------------------------------------------------------------------
@@ -428,10 +515,11 @@ impl SuiTransport for SuiGrpcClient {
     ) -> Result<DynamicFieldPage, TransportError> {
         let rpc = self.rpc.clone();
         let page_token = page_token.map(bytes::Bytes::from);
-        let response = rpc
-            .get_dynamic_fields(parent, page_size, page_token)
-            .await
-            .map_err(Self::rpc_err)?;
+        let response = self
+            .gated_network(
+                async move { rpc.get_dynamic_fields(parent, page_size, page_token).await },
+            )
+            .await?;
         let mut entries = Vec::with_capacity(response.dynamic_fields.len());
         for proto_df in response.dynamic_fields {
             if let Some(entry) = convert_dynamic_field(proto_df)? {
@@ -450,7 +538,8 @@ impl SuiTransport for SuiGrpcClient {
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError> {
         let mut rpc = self.rpc.clone();
-        rpc.get_transaction(&tx).await.map_err(Self::rpc_status_err)
+        self.gated(async move { rpc.get_transaction(&tx).await })
+            .await
     }
 }
 
@@ -458,7 +547,8 @@ impl SuiTransport for SuiGrpcClient {
 impl SuiWriter for SuiGrpcClient {
     async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
         let rpc = self.rpc.clone();
-        rpc.get_reference_gas_price().await.map_err(Self::rpc_err)
+        self.gated_network(async move { rpc.get_reference_gas_price().await })
+            .await
     }
 
     async fn list_owned_gas_coins(
@@ -472,10 +562,13 @@ impl SuiWriter for SuiGrpcClient {
             if refs.len() >= MAX_GAS_PAYMENT_OBJECTS {
                 break;
             }
-            let page = rpc
-                .get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
-                .await
-                .map_err(Self::rpc_err)?;
+            let rpc = rpc.clone();
+            let page = self
+                .gated_network(async move {
+                    rpc.get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
+                        .await
+                })
+                .await?;
             refs.extend(
                 page.items
                     .iter()
@@ -498,10 +591,9 @@ impl SuiWriter for SuiGrpcClient {
         // NB: GetBalance takes the COIN type (`0x2::sui::SUI`, `GAS::type_()`),
         // not the coin OBJECT type (`Coin<SUI>`, `GasCoin::type_()`) — the
         // latter silently reads as a zero balance of a nonexistent coin type.
-        let balance = rpc
-            .get_balance(address, &GAS::type_())
-            .await
-            .map_err(Self::rpc_err)?;
+        let balance = self
+            .gated_network(async move { rpc.get_balance(address, &GAS::type_()).await })
+            .await?;
         Ok(SuiFundsBreakdown {
             in_address_balance: balance.address_balance.unwrap_or(0),
             in_coin_objects: balance.coin_balance.unwrap_or(0),
@@ -514,7 +606,8 @@ impl SuiWriter for SuiGrpcClient {
         let rpc = self.rpc.clone();
         // The inner client already returns the typed, full identifier
         // (service-info chain id parsed as the genesis checkpoint digest).
-        rpc.get_chain_identifier().await.map_err(Self::rpc_err)
+        self.gated_network(async move { rpc.get_chain_identifier().await })
+            .await
     }
 
     async fn execute_transaction(
@@ -527,14 +620,26 @@ impl SuiWriter for SuiGrpcClient {
         // keepalives but no per-request deadline, so an upstream that accepts
         // the request and never answers would stall every notifier write
         // behind it, with no watchdog able to fire.
-        let executed = tokio::time::timeout(SUBMIT_TIMEOUT, rpc.execute_transaction(tx))
-            .await
-            .map_err(|_| {
-                TransportError::Network(format!(
+        // Admission BEFORE the deadline starts: a shared rate-limit cooldown
+        // must not eat into the submission's own 60s budget and turn a
+        // throttled endpoint into a spurious "no response" timeout.
+        self.gate.wait_for_capacity().await;
+        let executed = match tokio::time::timeout(SUBMIT_TIMEOUT, rpc.execute_transaction(tx)).await
+        {
+            Err(_) => {
+                return Err(TransportError::Network(format!(
                     "execute_transaction exceeded {SUBMIT_TIMEOUT:?} with no response"
-                ))
-            })?
-            .map_err(Self::rpc_err)?;
+                )));
+            }
+            Ok(Ok(executed)) => {
+                self.gate.note_success();
+                executed
+            }
+            Ok(Err(status)) => {
+                self.gate.note_status(&status);
+                return Err(Self::rpc_err(status));
+            }
+        };
         Ok(SubmittedTransaction {
             digest: *tx.digest(),
             effects: executed.effects,
