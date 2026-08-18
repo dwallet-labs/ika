@@ -39,6 +39,17 @@ pub struct SuiClientMetrics {
     /// off-chain pipeline genuinely sources these blobs from
     /// consensus + P2P rather than re-reading them from chain.
     pub chain_blob_reads: IntCounterVec,
+    /// Upstream Sui responses classified as rate limiting (HTTP 429 / gRPC
+    /// `RESOURCE_EXHAUSTED`) by [`crate::rate_limit`]. Labelled by which signal
+    /// identified it: `grpc_code` for the canonical gRPC code, `message_marker`
+    /// for the message-text heuristic that is the only surviving evidence when
+    /// an HTTP gateway answers 429 (tonic maps that to `Code::Unavailable`).
+    ///
+    /// Steady-state non-zero means the node's read load is exceeding what its
+    /// configured endpoint will serve, and its own retries are part of what
+    /// keeps the endpoint refusing. Fleet-wide this should be flat at zero;
+    /// growth on a single node points at that node's endpoint, not at ika.
+    pub sui_rate_limited_errors: IntCounterVec,
 }
 
 impl SuiClientMetrics {
@@ -58,7 +69,24 @@ impl SuiClientMetrics {
                 registry,
             )
             .unwrap(),
+            sui_rate_limited_errors: register_int_counter_vec_with_registry!(
+                "ika_sui_client_rate_limited_errors_total",
+                "Total upstream Sui responses classified as rate limiting (HTTP 429 / gRPC RESOURCE_EXHAUSTED), by classifying signal",
+                &["signal"],
+                registry,
+            )
+            .unwrap(),
         };
+        // Publish both series from process start so a dashboard/alert can tell
+        // "no rate limiting" apart from "this node never reported".
+        for signal in [
+            crate::rate_limit::RateLimitSignal::GrpcCode,
+            crate::rate_limit::RateLimitSignal::MessageMarker,
+        ] {
+            this.sui_rate_limited_errors
+                .with_label_values(&[signal.label()])
+                .inc_by(0);
+        }
         Arc::new(this)
     }
 

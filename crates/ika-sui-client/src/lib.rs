@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::metrics::SuiClientMetrics;
+use crate::rate_limit::RateLimitGate;
 use async_trait::async_trait;
 use core::panic;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
@@ -43,6 +44,7 @@ pub mod ika_dwallet_transactions;
 pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
+pub mod rate_limit;
 pub mod transport;
 pub use transport::{SubmittedTransaction, SuiFundsBreakdown};
 
@@ -100,27 +102,41 @@ pub type SuiConnectorClient = SuiClient<SuiBackend>;
 
 impl SuiConnectorClient {
     /// Build a connector whose I/O goes through a direct Sui gRPC endpoint.
+    /// Opens its own rate-limit gate. Use this only where there is no other
+    /// client against the same endpoint to share one with — the one-shot CLI
+    /// paths. A node builds one gate and passes it to
+    /// [`Self::new_grpc_with_headers`] and to the connector stack.
     pub async fn new_grpc(
         grpc_url: &str,
         sui_client_metrics: Arc<SuiClientMetrics>,
         ika_network_config: IkaNetworkConfig,
     ) -> anyhow::Result<Self> {
+        let gate = Arc::new(RateLimitGate::with_metrics(sui_client_metrics.clone()));
         Self::new_grpc_with_headers(
             grpc_url,
             &SuiGrpcHeaders::new(),
             sui_client_metrics,
+            gate,
             ika_network_config,
         )
         .await
     }
 
+    /// `rate_limit_gate` must be the SAME gate every other client against this
+    /// endpoint holds — see [`crate::rate_limit::RateLimitGate`]. On a node
+    /// that means the gate the connector stack was built with, so the
+    /// notifier's read/write client and the connector's read client back off
+    /// as one instead of retrying through each other's cooldown.
     pub async fn new_grpc_with_headers(
         grpc_url: &str,
         headers: &SuiGrpcHeaders,
         sui_client_metrics: Arc<SuiClientMetrics>,
+        rate_limit_gate: Arc<RateLimitGate>,
         ika_network_config: IkaNetworkConfig,
     ) -> anyhow::Result<Self> {
-        let inner = grpc_backend::GrpcSuiClient::new_with_headers(grpc_url, headers).await?;
+        let inner =
+            grpc_backend::GrpcSuiClient::new_with_headers(grpc_url, headers, rate_limit_gate)
+                .await?;
         let self_ = Self {
             inner,
             sui_client_metrics,

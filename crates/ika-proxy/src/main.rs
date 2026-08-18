@@ -95,7 +95,11 @@ async fn main() -> Result<()> {
     let sui_client = SuiConnectorClient::new_grpc_with_headers(
         &config.dynamic_peers.grpc_url,
         &config.dynamic_peers.headers,
-        sui_client_metrics,
+        sui_client_metrics.clone(),
+        // The proxy has exactly one Sui client, so its gate is its own.
+        std::sync::Arc::new(ika_sui_client::rate_limit::RateLimitGate::with_metrics(
+            sui_client_metrics,
+        )),
         ika_network_config,
     )
     .await?;
