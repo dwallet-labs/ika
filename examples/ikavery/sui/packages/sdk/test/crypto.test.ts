@@ -193,7 +193,7 @@ describe('roster-change challenges', () => {
 
 describe('derSigToCompactRaw64', () => {
 	test('round-trips a real P-256 signature', () => {
-		const sk = p256.utils.randomPrivateKey();
+		const sk = p256.utils.randomSecretKey();
 		const msg = sha256(enc.encode('hello'));
 		const sigObj = p256.sign(msg, sk);
 		const der = sigObj.toDERRawBytes();
@@ -210,7 +210,7 @@ describe('derSigToCompactRaw64', () => {
 
 describe('spkiToCompressedP256', () => {
 	test('round-trips a freshly-generated P-256 key', () => {
-		const sk = p256.utils.randomPrivateKey();
+		const sk = p256.utils.randomSecretKey();
 		const compressed = p256.getPublicKey(sk, true);
 		const uncompressed = p256.getPublicKey(sk, false);
 		const spki = buildEs256Spki(uncompressed);
@@ -220,14 +220,14 @@ describe('spkiToCompressedP256', () => {
 		expect(() => spkiToCompressedP256(new Uint8Array(90))).toThrow(/91 bytes/);
 	});
 	test('rejects wrong ES256 prefix', () => {
-		const sk = p256.utils.randomPrivateKey();
+		const sk = p256.utils.randomSecretKey();
 		const uncompressed = p256.getPublicKey(sk, false);
 		const spki = buildEs256Spki(uncompressed);
 		spki[0] = 0x31;
 		expect(() => spkiToCompressedP256(spki)).toThrow(/prefix mismatch/);
 	});
 	test('uncompressed point lives at bytes 26..91', () => {
-		const sk = p256.utils.randomPrivateKey();
+		const sk = p256.utils.randomSecretKey();
 		const uncompressed = p256.getPublicKey(sk, false);
 		const spki = buildEs256Spki(uncompressed);
 		expect(spki[26]).toBe(0x04);

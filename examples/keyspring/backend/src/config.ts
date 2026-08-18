@@ -10,7 +10,10 @@ const envSchema = z.object({
 	// Sui Admin Keypair (base64 encoded secret key)
 	SUI_ADMIN_SECRET_KEY: z.string().min(1, 'SUI_ADMIN_SECRET_KEY is required'),
 
-	IKA_COIN_ID: z.string().min(1, 'IKA_COIN_ID is required'),
+	// Budget, in MIST, for the IKA fee attached to each dWallet operation. The
+	// coin is selected from the admin's own IKA at build time; anything unspent
+	// is returned by the coordinator.
+	IKA_FEE_BUDGET: z.coerce.number().positive().default(1_000_000_000),
 
 	// Sui Network
 	SUI_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
@@ -47,7 +50,7 @@ export const config = {
 		host: env.HOST,
 	},
 	ika: {
-		coinId: env.IKA_COIN_ID,
+		feeBudget: env.IKA_FEE_BUDGET,
 	},
 	sui: {
 		network: env.SUI_NETWORK,

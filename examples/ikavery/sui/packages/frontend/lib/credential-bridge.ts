@@ -5,7 +5,7 @@ import {
 	credentialFromSerializedSignature,
 	type CredentialInput,
 } from '@fesal-packages/ikavery-sui-sdk';
-import type { UiWallet, UiWalletAccount } from '@mysten/dapp-kit-core';
+import type { UiWallet } from '@mysten/dapp-kit-core';
 
 import type { SignerOption } from '@/components/vault/signer-gas-payer';
 import type { AuthIdentity } from '@/workers/session.worker';

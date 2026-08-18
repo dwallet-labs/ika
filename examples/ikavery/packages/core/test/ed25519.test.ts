@@ -60,7 +60,7 @@ describe('solanaSeedToCanonicalScalar', () => {
 		const scalar = solanaSeedToCanonicalScalar(seed);
 
 		// Multiply scalar (LE) * basepoint and compare compressed point bytes.
-		const point = ed25519.ExtendedPoint.BASE.multiply(leBytesToBigInt(scalar));
+		const point = ed25519.Point.BASE.multiply(leBytesToBigInt(scalar));
 		expect(Array.from(point.toRawBytes())).toEqual(Array.from(solanaPubkey));
 	});
 

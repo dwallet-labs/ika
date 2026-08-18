@@ -13,7 +13,7 @@ import {
 } from '@ika.xyz/sdk';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { SerialTransactionExecutor, Transaction } from '@mysten/sui/transactions';
+import { coinWithBalance, SerialTransactionExecutor, Transaction } from '@mysten/sui/transactions';
 // For Ethereum
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { computeAddress } from 'ethers';
@@ -523,7 +523,12 @@ export class DKGExecutorService {
 				tx,
 			),
 			null,
-			tx.object(config.ika.coinId),
+			tx.add(
+				coinWithBalance({
+					type: `${this.ikaConfig.packages.ikaPackage}::ika::IKA`,
+					balance: config.ika.feeBudget,
+				}),
+			),
 			tx.gas,
 			tx,
 		);
@@ -637,7 +642,12 @@ export class DKGExecutorService {
 				random32Bytes,
 				tx,
 			),
-			tx.object(config.ika.coinId),
+			tx.add(
+				coinWithBalance({
+					type: `${this.ikaConfig.packages.ikaPackage}::ika::IKA`,
+					balance: config.ika.feeBudget,
+				}),
+			),
 			tx.gas,
 			tx,
 		);
@@ -759,7 +769,12 @@ export class DKGExecutorService {
 			verifiedMessageApproval,
 			new Uint8Array(data.userSignMessage),
 			ikaTx.createSessionIdentifier(),
-			tx.object(config.ika.coinId),
+			tx.add(
+				coinWithBalance({
+					type: `${this.ikaConfig.packages.ikaPackage}::ika::IKA`,
+					balance: config.ika.feeBudget,
+				}),
+			),
 			tx.gas,
 			tx,
 		);
