@@ -932,17 +932,16 @@ impl NetworkKeyBlobSource for AuthorityPerEpochStore {
     }
 }
 
-/// The epoch state the consensus fold derives, in the one commit-boundary
-/// group the fold used to write as a single RocksDB batch.
+/// The epoch state the consensus fold derives, as one commit-boundary group.
 ///
-/// Every field here was a per-epoch table written only by
-/// `ConsensusCommitOutput::write_to_batch`. They share ONE lock because a
-/// `WriteBatch` is atomic to concurrent readers, so a single lock acquisition
-/// reproduces exactly the visibility the batch gave: the freeze partition, the
-/// close marker and the two grace anchors still become observable together or
-/// not at all. Mutated only at the commit boundary, where `batch.write()` was,
-/// so the fold's own mid-commit reads still see the state as of the previous
-/// commit.
+/// Every field here was a per-epoch table that the fold wrote in a single
+/// RocksDB batch, and they share ONE lock for the same reason that was one
+/// batch: a `WriteBatch` is atomic to concurrent readers, so a single lock
+/// acquisition reproduces exactly the visibility it gave — the freeze
+/// partition, the close marker and the two grace anchors still become
+/// observable together or not at all. Mutated only at the commit boundary,
+/// where the batch was committed, so the fold's own mid-commit reads still see
+/// the state as of the previous commit.
 ///
 /// Nothing here is durable, and that is the design: the epoch's derived state
 /// is rebuilt by replaying the epoch's commits on every boot
@@ -970,8 +969,10 @@ struct FoldedEpochState {
     /// Leader round of the commit that first observed the mpc_data
     /// ready-signal stake quorum — the freeze-grace anchor.
     mpc_data_ready_quorum_round: Option<u64>,
-    /// Leader round of the commit the freeze fired at. Observability only: it
-    /// re-seeds the freeze-round gauge, and nothing in the protocol reads it.
+    /// Leader round of the commit the freeze fired at. Observability only —
+    /// nothing in the protocol reads it back; it exists so the freeze-round
+    /// gauge reports the round the partition was decided at rather than
+    /// whichever round the fold happens to be on.
     mpc_data_freeze_round: Option<u64>,
     /// The frozen `validator -> blob_hash` input set, and its other half.
     /// Decided at one commit boundary and never revisited within the epoch.
@@ -985,12 +986,14 @@ struct FoldedEpochState {
 /// The checkpoint-construction state: the two builders' input queues, their
 /// outputs, and the peer signatures their aggregators consume.
 ///
-/// One lock for all six because the builders mutate a queue and its output
-/// together (`process_pending_dwallet_checkpoint` used one batch for exactly
-/// that pair). Separate from [`FoldedEpochState`] because the builders and the
-/// MPC drain write here off the commit path, and holding the fold's lock
-/// across a builder pass would couple two loops that have no reason to wait
-/// on each other.
+/// One lock for all six because a builder mutates a queue and its output
+/// together, which is exactly the pair `process_pending_dwallet_checkpoint`
+/// used to write in one batch: a reader that saw the queue drained without the
+/// output that replaced it would rebuild those heights as if they were never
+/// built. Separate from [`FoldedEpochState`] because the builders and the MPC
+/// drain write here off the commit path, and holding the fold's lock across a
+/// builder pass would couple two loops that have no reason to wait on each
+/// other.
 ///
 /// RETENTION. The two signature maps and the two builder-output maps are
 /// pruned below the certified watermark rather than kept for the epoch, which
@@ -6595,7 +6598,7 @@ impl ConsensusCommitOutput {
     /// The commit boundary: folds everything this commit derived into the
     /// epoch store's in-memory state.
     ///
-    /// This is where `write_to_batch`'s single RocksDB batch was, and the
+    /// This is where the fold's single RocksDB batch was written, and the
     /// [`FoldedEpochState`] lock is held across the whole group for the same
     /// reason the batch was one batch: no reader may see the freeze partition
     /// without the freeze round, or the close marker without the votes that
