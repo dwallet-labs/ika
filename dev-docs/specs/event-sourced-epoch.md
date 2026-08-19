@@ -447,6 +447,13 @@ The prune also makes the REPLAY flat rather than the worst case. A boot
 re-collects every checkpoint signature of the epoch against a watermark already
 at the head, so each is dropped on the next pass instead of accumulating.
 
+"Flat" means flat ACROSS the replay, not smooth within it: the fold re-inserts
+at replay speed while the prune fires about once a second, so what an operator
+sees during a boot is a SAWTOOTH whose teeth are one prune interval of the
+fold's re-insertion rate — full checkpoint-message rows, so tens to hundreds of
+megabytes on a deep replay of a busy epoch. It is bounded and self-draining,
+and it is normal. The number that matters is the envelope, not the peak.
+
 **That rests on the signature aggregator NOT being replay-gated**, which is an
 asymmetry worth stating because it looks like an inconsistency. The checkpoint
 BUILDER waits for the replay signal (`builder.run(replay_waiter)`); the
@@ -477,6 +484,23 @@ checkpoint of each per second over a 24h epoch and N = 30 that is ~5.2M entries,
 which is not survivable. **The real rate is not measured**, which is why
 `ika_epoch_processed_consensus_messages` exists and why the measurement is a
 release condition rather than an assumption.
+
+**Exhausting it is a DETERMINISTIC wedge, and that is what makes the
+measurement a gate rather than a nice-to-have.** The set is a pure function of
+the epoch's distinct verified transactions, so a node that runs out of memory
+part-way through a replay re-accumulates the IDENTICAL set on the next boot,
+reaches the same point, and dies again — a crash loop that lasts until the
+epoch boundary hands it a fresh epoch, which is the same shape of outage as
+ika #2057. There is no partial-progress escape: the replay cannot resume from
+where the last attempt died, because not resuming is the whole design. The
+durable version had the same cardinality but spent DISK for it, and disk
+pressure degrades where memory pressure aborts.
+
+Two consequences. The loaded-epoch RSS measurement below is a release gate,
+not a follow-up: the failure it guards is unrecoverable-in-epoch rather than
+slow. And any future eviction trigger has to be sized against the same
+determinism — a threshold that fires on one node's replay must fire on every
+node's, or the eviction itself becomes the divergence.
 
 Two levers exist if that measurement comes back badly, neither taken here:
 

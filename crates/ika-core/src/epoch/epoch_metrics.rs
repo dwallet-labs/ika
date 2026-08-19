@@ -252,8 +252,11 @@ pub struct EpochMetrics {
     pub processed_consensus_messages: IntGauge,
 
     /// Peer checkpoint signatures held for aggregation, per family. Pruned
-    /// below the certified watermark, so a steady value near the committee
-    /// size is healthy and sustained growth means certification has stalled.
+    /// below the certified watermark, so on a running node a steady value near
+    /// the committee size is healthy and sustained growth means certification
+    /// has stalled. During a boot replay they sawtooth instead — the fold
+    /// re-inserts faster than the once-a-second prune — which is bounded and
+    /// normal.
     pub pending_dwallet_checkpoint_signatures: IntGauge,
     pub pending_system_checkpoint_signatures: IntGauge,
 

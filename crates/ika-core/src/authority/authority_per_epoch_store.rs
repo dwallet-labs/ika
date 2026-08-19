@@ -1012,6 +1012,13 @@ struct FoldedEpochState {
 /// certified — but it means growth here is the visible symptom of a
 /// certification stall. `ika_epoch_pending_dwallet_checkpoint_signatures` and
 /// `ika_epoch_pending_system_checkpoint_signatures` are that signal.
+///
+/// That describes the STEADY state. During a boot replay the fold re-inserts
+/// at replay speed while the prune fires about once a second, so the two
+/// series sawtooth, with teeth of one prune interval of the fold's
+/// re-insertion rate — full checkpoint-message rows, so tens to hundreds of
+/// megabytes on a deep replay of a busy epoch. Bounded and self-draining, and
+/// not a stall: the envelope is the number to read, not the peak.
 #[derive(Default)]
 struct CheckpointConstructionState {
     /// Built from the fold's rounds by the MPC drain, consumed by the dWallet
@@ -6130,7 +6137,9 @@ impl AuthorityPerEpochStore {
     /// makes the boot replay flat rather than the worst case: the replay
     /// re-collects every signature of the epoch against a watermark that is
     /// already at the head, so each one is dropped on the next pass instead of
-    /// accumulating.
+    /// accumulating. Flat across the replay, not within it — this runs about
+    /// once a second while the fold re-inserts at replay speed, so the two
+    /// series sawtooth during a boot (see [`CheckpointConstructionState`]).
     ///
     /// Retention is therefore bounded by CERTIFICATION LAG, not by the epoch:
     /// a node whose certification stalls holds every signature since the

@@ -273,11 +273,16 @@ is holding the service up.
   them as three different things:
   - `ika_epoch_pending_dwallet_checkpoint_signatures` /
     `ika_epoch_pending_system_checkpoint_signatures` are pruned below the
-    certified watermark, so a steady value near the committee size is healthy.
-    **Sustained growth means certification has stalled** — the signatures are
-    correctly retained until the checkpoints they sign certify — so read them
-    against `ika_last_certified_dwallet_checkpoint` rather than as a memory
-    alarm in their own right;
+    certified watermark, so on a running node a steady value near the committee
+    size is healthy. **Sustained growth means certification has stalled** — the
+    signatures are correctly retained until the checkpoints they sign certify —
+    so read them against `ika_last_certified_dwallet_checkpoint` rather than as
+    a memory alarm in their own right. **During a boot they SAWTOOTH, and that
+    is normal**: the fold re-inserts at replay speed while the prune fires
+    about once a second, so each tooth is one prune interval of full
+    checkpoint-message rows (tens to hundreds of MB on a deep replay of a busy
+    epoch). Read the envelope, not the peak — a sawtooth that keeps returning
+    to its floor is healthy; a floor that climbs is the stall above;
   - `ika_epoch_pending_dwallet_checkpoints` /
     `ika_epoch_pending_system_checkpoints` are the builders' input queues,
     sampled where they are mutated so they keep reporting during a boot replay
