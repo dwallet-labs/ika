@@ -34,6 +34,8 @@ use ika_sui_client::ika_validator_transactions::{
     withdraw_stake,
 };
 use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transaction_context::TransactionContext;
+use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::crypto::generate_proof_of_possession;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::{DEFAULT_COMMISSION_RATE, PricingInfoKey, PricingInfoValue};
@@ -45,8 +47,6 @@ use sui_keys::{
         read_network_keypair_from_file, write_authority_keypair_to_file, write_keypair_to_file,
     },
 };
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
 use sui_types::crypto::get_authority_key_pair;
@@ -400,7 +400,7 @@ impl IkaValidatorCommand {
 
     pub async fn execute(
         self,
-        context: &mut WalletContext,
+        context: &impl TransactionContext,
     ) -> Result<IkaValidatorCommandResponse, anyhow::Error> {
         Ok(match self {
             IkaValidatorCommand::MakeValidatorInfo {
@@ -500,7 +500,7 @@ impl IkaValidatorCommand {
                     })?;
                 }
 
-                let sui_env = context.get_active_env()?.alias.clone();
+                let sui_env = context.environment_alias()?.to_owned();
                 full_config.envs.insert(sui_env.clone(), config);
                 full_config.save(&config_path)?;
 
@@ -1031,7 +1031,7 @@ impl IkaValidatorCommand {
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
                 let client = SuiClient::new_grpc(
-                    &context.get_active_env()?.rpc,
+                    context.rpc_url()?,
                     SuiClientMetrics::new_for_testing(),
                     config,
                 )

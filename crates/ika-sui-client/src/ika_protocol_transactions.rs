@@ -15,13 +15,14 @@ use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use std::collections::HashMap;
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::Entry;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg};
+
+use crate::transaction_context::TransactionContext;
+use crate::transport::ExecutedTransaction;
 
 const VERIFY_PROTOCOL_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_protocol_cap");
 const SET_PAUSED_CURVES_AND_SIGNATURE_ALGORITHMS_FUNCTION_NAME: &IdentStr =
@@ -40,7 +41,7 @@ const SET_GLOBAL_PRESIGN_CONFIG_FUNCTION_NAME: &IdentStr = ident_str!("set_globa
 
 /// Set approved upgrade by cap
 pub async fn set_approved_upgrade_by_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     protocol_cap_id: ObjectID,
@@ -49,10 +50,7 @@ pub async fn set_approved_upgrade_by_cap(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let package_id = ptb.input(CallArg::Pure(bcs::to_bytes(&package_id)?))?;
@@ -84,7 +82,7 @@ pub async fn set_approved_upgrade_by_cap(
 
 /// Perform approved upgrade
 pub async fn perform_approved_upgrade(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
@@ -165,7 +163,7 @@ pub async fn perform_approved_upgrade(
 
 /// Try to migrate the system to a new package
 pub async fn try_migrate_system(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     new_ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     gas_budget: u64,
@@ -191,7 +189,7 @@ pub async fn try_migrate_system(
 
 /// Try to migrate the coordinator to a new package
 pub async fn try_migrate_coordinator(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     new_ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_coordinator_object_id: ObjectID,
     gas_budget: u64,
@@ -220,7 +218,7 @@ pub async fn try_migrate_coordinator(
 
 /// Try to migrate the system to a new package by protocol cap
 pub async fn try_migrate_system_by_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     protocol_cap_id: ObjectID,
     new_ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -231,10 +229,7 @@ pub async fn try_migrate_system_by_cap(
 
     let sender = context.active_address()?;
 
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     add_ika_system_command_to_ptb(
         context,
@@ -255,7 +250,7 @@ pub async fn try_migrate_system_by_cap(
 
 /// Try to migrate the coordinator to a new package by protocol cap
 pub async fn try_migrate_coordinator_by_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     protocol_cap_id: ObjectID,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -296,7 +291,7 @@ pub async fn try_migrate_coordinator_by_cap(
 
 /// Set paused curves and signature algorithms
 pub async fn set_paused_curves_and_signature_algorithms(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     ika_system_package_id: ObjectID,
@@ -356,7 +351,7 @@ pub async fn set_paused_curves_and_signature_algorithms(
 
 /// Set supported and pricing
 pub async fn set_supported_and_pricing(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     ika_system_package_id: ObjectID,
@@ -420,7 +415,7 @@ pub async fn set_supported_and_pricing(
 }
 
 pub async fn set_gas_fee_reimbursement_sui_system_call_value_by_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     ika_system_package_id: ObjectID,
@@ -534,17 +529,14 @@ fn new_supported_curves_to_signature_algorithms_to_hash_schemes_argument(
 }
 
 pub async fn get_verified_protocol_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     protocol_cap_id: ObjectID,
     ptb: &mut ProgrammableTransactionBuilder,
 ) -> Result<Argument, anyhow::Error> {
     let client = context.grpc_client()?;
-    let protocol_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(protocol_cap_id)
-        .await?;
+    let protocol_cap_ref = client.get_object_ref(protocol_cap_id).await?;
 
     let args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         protocol_cap_ref,
@@ -582,7 +574,7 @@ fn new_curve_to_signature_algorithm_vecmap(
 
 /// Set global presign config
 pub async fn set_global_presign_config(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     ika_system_package_id: ObjectID,

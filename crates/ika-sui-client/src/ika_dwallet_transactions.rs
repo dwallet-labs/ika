@@ -24,8 +24,6 @@ use ika_types::sui::{
     SIGN_DURING_DKG_REQUEST_FUNCTION_NAME, VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME,
     VERIFY_PRESIGN_CAP_FUNCTION_NAME,
 };
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg};
@@ -33,6 +31,8 @@ use sui_types::transaction::{Argument, CallArg, ObjectArg};
 use crate::ika_validator_transactions::{
     construct_unsigned_txn, execute_transaction, get_dwallet_2pc_mpc_coordinator_call_arg,
 };
+use crate::transaction_context::TransactionContext;
+use crate::transport::ExecutedTransaction;
 
 /// Payment coin arguments for dWallet coordinator transactions.
 ///
@@ -50,17 +50,14 @@ impl PaymentCoinArgs {
     async fn resolve(
         &self,
         ptb: &mut ProgrammableTransactionBuilder,
-        context: &WalletContext,
+        context: &impl TransactionContext,
     ) -> Result<(Argument, Argument), Error> {
         let client = context.grpc_client()?;
-        let ika_coin_ref = client
-            .transaction_builder()
-            .get_object_ref(self.ika_coin_id)
-            .await?;
+        let ika_coin_ref = client.get_object_ref(self.ika_coin_id).await?;
         let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
         let sui_coin_arg = match self.sui_coin_id {
             Some(id) => {
-                let sui_coin_ref = client.transaction_builder().get_object_ref(id).await?;
+                let sui_coin_ref = client.get_object_ref(id).await?;
                 ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?
             }
             None => Argument::GasCoin,
@@ -94,7 +91,7 @@ pub fn register_session_identifier(
 
 /// Register a user encryption key on the coordinator.
 pub async fn register_encryption_key(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     curve: u32,
@@ -144,7 +141,7 @@ pub async fn register_encryption_key(
 /// Returns the transaction response; the `DWalletCap` is extracted from created objects.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_dwallet_dkg(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_network_encryption_key_id: ObjectID,
@@ -182,10 +179,7 @@ pub async fn request_dwallet_dkg(
         Some(params) => {
             // Get the verified presign cap as owned object
             let client = context.grpc_client()?;
-            let presign_cap_ref = client
-                .transaction_builder()
-                .get_object_ref(params.presign_cap_id)
-                .await?;
+            let presign_cap_ref = client.get_object_ref(params.presign_cap_id).await?;
             let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
                 presign_cap_ref,
             )))?;
@@ -267,7 +261,7 @@ pub async fn request_dwallet_dkg(
 /// Request dWallet DKG with public user secret key share variant.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_dwallet_dkg_with_public_share(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_network_encryption_key_id: ObjectID,
@@ -301,10 +295,7 @@ pub async fn request_dwallet_dkg_with_public_share(
     let sign_during_dkg_arg = match sign_during_dkg {
         Some(params) => {
             let client = context.grpc_client()?;
-            let presign_cap_ref = client
-                .transaction_builder()
-                .get_object_ref(params.presign_cap_id)
-                .await?;
+            let presign_cap_ref = client.get_object_ref(params.presign_cap_id).await?;
             let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
                 presign_cap_ref,
             )))?;
@@ -439,7 +430,7 @@ pub fn request_presign(
 /// Request a presign as a standalone transaction.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_presign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -491,7 +482,7 @@ pub async fn request_presign_tx(
 /// all presign caps transferred to the sender.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_batch_presign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -542,7 +533,7 @@ pub async fn request_batch_presign_tx(
 /// Request multiple global presigns in a single transaction.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_batch_global_presign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_network_encryption_key_id: ObjectID,
@@ -605,7 +596,7 @@ pub async fn request_batch_global_presign_tx(
 /// Request a global presign using network encryption key.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_global_presign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_network_encryption_key_id: ObjectID,
@@ -665,7 +656,7 @@ pub async fn request_global_presign_tx(
 
 /// Verify a presign capability.
 pub async fn verify_presign_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     presign_cap_id: ObjectID,
@@ -683,10 +674,7 @@ pub async fn verify_presign_cap(
     )?;
 
     let client = context.grpc_client()?;
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(presign_cap_id).await?;
     let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -711,7 +699,7 @@ pub async fn verify_presign_cap(
 /// `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_sign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_cap_id: ObjectID,
@@ -745,10 +733,7 @@ pub async fn request_sign_tx(
 
     // Get dwallet_cap as owned object
     let client = context.grpc_client()?;
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;
@@ -765,10 +750,7 @@ pub async fn request_sign_tx(
     )?;
 
     // Get presign cap and optionally verify it in the PTB
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -849,7 +831,7 @@ pub fn approve_imported_key_message(
 /// When `verify_presign` is true, `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_imported_key_sign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     imported_key_dwallet_cap_id: ObjectID,
@@ -883,10 +865,7 @@ pub async fn request_imported_key_sign_tx(
 
     // Get imported key dwallet cap as owned object
     let client = context.grpc_client()?;
-    let cap_ref = client
-        .transaction_builder()
-        .get_object_ref(imported_key_dwallet_cap_id)
-        .await?;
+    let cap_ref = client.get_object_ref(imported_key_dwallet_cap_id).await?;
     let cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(cap_ref)))?;
 
     // Approve imported key message
@@ -901,10 +880,7 @@ pub async fn request_imported_key_sign_tx(
     )?;
 
     // Get presign cap and optionally verify it in the PTB
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -952,7 +928,7 @@ pub async fn request_imported_key_sign_tx(
 /// When `verify_presign` is true, `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_future_sign_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -986,10 +962,7 @@ pub async fn request_future_sign_tx(
     let dwallet_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&dwallet_id)?))?;
 
     let client = context.grpc_client()?;
-    let presign_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(verified_presign_cap_id)
-        .await?;
+    let presign_cap_ref = client.get_object_ref(verified_presign_cap_id).await?;
     let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
@@ -1040,7 +1013,7 @@ pub async fn request_future_sign_tx(
 /// Request imported key dWallet verification.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_imported_key_dwallet_verification(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_network_encryption_key_id: ObjectID,
@@ -1117,7 +1090,7 @@ pub async fn request_imported_key_dwallet_verification(
 /// Request to make dWallet user secret key shares public.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_make_shares_public(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -1173,7 +1146,7 @@ pub async fn request_make_shares_public(
 /// Request re-encryption of user share for a different address.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_re_encrypt_user_share(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -1238,7 +1211,7 @@ pub async fn request_re_encrypt_user_share(
 
 /// Accept a re-encrypted user share.
 pub async fn accept_encrypted_user_share(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_id: ObjectID,
@@ -1278,7 +1251,7 @@ pub async fn accept_encrypted_user_share(
 /// Standalone approve message transaction (for composability outside of sign flow).
 #[allow(clippy::too_many_arguments)]
 pub async fn approve_message_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     dwallet_cap_id: ObjectID,
@@ -1299,10 +1272,7 @@ pub async fn approve_message_tx(
     )?;
 
     let client = context.grpc_client()?;
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;
@@ -1378,7 +1348,7 @@ fn build_option_none(
 /// (e.g., zero-fee operations on localnet). The created coin persists in the
 /// wallet and is reused by subsequent commands.
 pub async fn create_zero_ika_coin(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_package_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, Error> {
@@ -1417,7 +1387,7 @@ pub async fn create_zero_ika_coin(
 /// and submits the final sign request.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_future_sign_fulfill_tx(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
     partial_user_signature_cap_id: ObjectID,
@@ -1449,10 +1419,7 @@ pub async fn request_future_sign_fulfill_tx(
 
     // Verify the partial user signature cap
     let client = context.grpc_client()?;
-    let partial_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(partial_user_signature_cap_id)
-        .await?;
+    let partial_cap_ref = client.get_object_ref(partial_user_signature_cap_id).await?;
     let partial_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         partial_cap_ref,
     )))?;
@@ -1465,10 +1432,7 @@ pub async fn request_future_sign_fulfill_tx(
     );
 
     // Create message approval
-    let dwallet_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(dwallet_cap_id)
-        .await?;
+    let dwallet_cap_ref = client.get_object_ref(dwallet_cap_id).await?;
     let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         dwallet_cap_ref,
     )))?;

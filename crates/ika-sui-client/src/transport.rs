@@ -7,26 +7,91 @@
 //! - [`crate::grpc::SuiGrpcClient`]: direct gRPC to a Sui fullnode.
 //! - `SuiMirrorTransport` (in `ika-network`): peer-relayed reads via Ika p2p.
 
+use std::str::FromStr;
+
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
-pub use sui_rpc_api::client::ExecutedTransaction;
+use sui_rpc::proto::sui::rpc::v2::changed_object::OutputObjectState;
+use sui_rpc::proto::sui::rpc::v2::owner::OwnerKind;
+use sui_rpc::proto::sui::rpc::v2::{ChangedObject, CleverError};
+use sui_sdk_types::BalanceChange;
+use sui_types::TypeTag;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::committee::Committee;
-use sui_types::digests::CheckpointDigest;
-use sui_types::effects::TransactionEffects;
+use sui_types::digests::{ChainIdentifier, CheckpointDigest};
+use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
+use sui_types::effects::{TransactionEffects, TransactionEvents};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
+use sui_types::move_package::UpgradeCap;
 use sui_types::object::{Object, Owner};
-use sui_types::transaction::Transaction;
+use sui_types::signature::GenericSignature;
+use sui_types::transaction::{Transaction, TransactionData};
+
+/// A Sui transaction together with its execution result.
+///
+/// This keeps Ika's public client surface independent of Sui main's RPC
+/// compatibility wrapper. The direct gRPC implementation fills it from
+/// `sui-rust-sdk` protobuf responses.
+#[derive(Clone, Debug, Serialize)]
+pub struct ExecutedTransaction {
+    pub transaction: TransactionData,
+    pub signatures: Vec<GenericSignature>,
+    pub effects: TransactionEffects,
+    pub clever_error: Option<CleverError>,
+    pub events: Option<TransactionEvents>,
+    pub event_json: Vec<Option<serde_json::Value>>,
+    pub changed_objects: Vec<ChangedObject>,
+    pub balance_changes: Vec<BalanceChange>,
+    pub checkpoint: Option<u64>,
+    #[serde(skip)]
+    pub timestamp_ms: Option<u64>,
+}
+
+impl ExecutedTransaction {
+    pub fn get_new_package_obj(&self) -> Option<ObjectRef> {
+        self.changed_objects
+            .iter()
+            .find(|object| matches!(object.output_state(), OutputObjectState::PackageWrite))
+            .and_then(|object| {
+                Some((
+                    object.object_id().parse().ok()?,
+                    object.output_version().into(),
+                    object.output_digest().parse().ok()?,
+                ))
+            })
+    }
+
+    pub fn get_new_package_upgrade_cap(&self) -> Option<ObjectRef> {
+        let upgrade_cap = UpgradeCap::type_().to_canonical_string(true);
+
+        self.changed_objects
+            .iter()
+            .find(|object| {
+                matches!(object.output_state(), OutputObjectState::ObjectWrite)
+                    && matches!(
+                        object.output_owner().kind(),
+                        OwnerKind::Address | OwnerKind::ConsensusAddress
+                    )
+                    && object.object_type() == upgrade_cap
+            })
+            .and_then(|object| {
+                Some((
+                    object.object_id().parse().ok()?,
+                    object.output_version().into(),
+                    object.output_digest().parse().ok()?,
+                ))
+            })
+    }
+}
 
 /// Minimal, transport-agnostic result of submitting a transaction: the tx
 /// digest plus its committed [`TransactionEffects`]. Unlike
-/// `sui_rpc_api::client::ExecutedTransaction` (which has private fields and a
-/// `Serialize`-only shape), this is constructible *and* `Deserialize`-able, so
-/// it can be carried back over the anemo relay for a peer-only validator. The
-/// only field any caller reads is `effects` (status / object changes).
+/// [`ExecutedTransaction`] (which has a `Serialize`-only shape), this is
+/// constructible *and* `Deserialize`-able, so it can be carried back over the
+/// anemo relay for a peer-only validator. The only field any caller reads is
+/// `effects` (status / object changes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmittedTransaction {
     pub digest: TransactionDigest,
@@ -48,7 +113,7 @@ pub enum TransportError {
 /// dynamic field on the wrapper keyed by the wrapper's `version`.
 pub fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<ObjectID, String> {
     let name_bytes = bcs::to_bytes(&version).map_err(|e| format!("encode u64 name: {e}"))?;
-    sui_types::dynamic_field::derive_dynamic_field_id(parent, &sui_types::TypeTag::U64, &name_bytes)
+    derive_dynamic_field_id(parent, &TypeTag::U64, &name_bytes)
         .map_err(|e| format!("derive child id: {e}"))
 }
 
@@ -73,11 +138,11 @@ pub fn derive_object_field_wrapper_id(
     name_type: &str,
     name_value_bcs: &[u8],
 ) -> Option<ObjectID> {
-    let inner = sui_types::TypeTag::from_str(name_type).ok()?;
-    let wrapper = sui_types::TypeTag::Struct(Box::new(
-        sui_types::dynamic_field::DynamicFieldInfo::dynamic_object_field_wrapper(inner),
-    ));
-    sui_types::dynamic_field::derive_dynamic_field_id(parent, &wrapper, name_value_bcs).ok()
+    let inner = TypeTag::from_str(name_type).ok()?;
+    let wrapper = TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
+        inner,
+    )));
+    derive_dynamic_field_id(parent, &wrapper, name_value_bcs).ok()
 }
 
 /// True iff a *proof-bound* `owner` proves the object is a genuine dynamic-field
@@ -284,9 +349,7 @@ pub trait SuiWriter: Send + Sync {
     /// string `get_chain_identifier` goes through `Display`, which is the
     /// 4-byte short id — useless for `ValidDuring`, which validators compare
     /// against the FULL identifier.
-    async fn get_sui_chain_identifier(
-        &self,
-    ) -> Result<sui_types::digests::ChainIdentifier, TransportError>;
+    async fn get_sui_chain_identifier(&self) -> Result<ChainIdentifier, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,
@@ -296,10 +359,9 @@ pub trait SuiWriter: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
 
-    fn wrapper_tag(inner: sui_types::TypeTag) -> sui_types::TypeTag {
-        sui_types::TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
+    fn wrapper_tag(inner: TypeTag) -> TypeTag {
+        TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
             inner,
         )))
     }
@@ -316,12 +378,11 @@ mod tests {
         let name_bcs = bcs::to_bytes(&7u64).unwrap();
 
         let wrapped = derive_object_field_wrapper_id(parent, "u64", &name_bcs).unwrap();
-        let bare = derive_dynamic_field_id(parent, &sui_types::TypeTag::U64, &name_bcs).unwrap();
+        let bare = derive_dynamic_field_id(parent, &TypeTag::U64, &name_bcs).unwrap();
         assert_ne!(wrapped, bare, "must derive from Wrapper<K>, not bare K");
 
         let canonical =
-            derive_dynamic_field_id(parent, &wrapper_tag(sui_types::TypeTag::U64), &name_bcs)
-                .unwrap();
+            derive_dynamic_field_id(parent, &wrapper_tag(TypeTag::U64), &name_bcs).unwrap();
         assert_eq!(wrapped, canonical);
     }
 
@@ -336,7 +397,7 @@ mod tests {
             "0x0000000000000000000000000000000000000000000000000000000000000002::object::ID";
 
         let wrapped = derive_object_field_wrapper_id(parent, id_type, &name_bcs).unwrap();
-        let inner = sui_types::TypeTag::from_str(id_type).unwrap();
+        let inner = TypeTag::from_str(id_type).unwrap();
         assert_eq!(
             wrapped,
             derive_dynamic_field_id(parent, &wrapper_tag(inner), &name_bcs).unwrap()

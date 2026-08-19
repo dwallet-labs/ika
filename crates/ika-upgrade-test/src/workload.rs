@@ -17,25 +17,32 @@
 //! create → presign → sign, parsing each `--json` result.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::Config;
+use ika_sui_client::SuiClient as IkaClient;
+use ika_sui_client::faucet::request_tokens_from_faucet;
+use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::metrics::SuiClientMetrics;
+use ika_sui_client::transaction_builder::build_transaction_data;
 use ika_types::ika_coin::INKU_PER_IKA;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use ika_types::sui::DWalletCoordinatorInner;
 use move_core_types::language_storage::StructTag;
 use rand::rngs::OsRng;
 use serde::Serialize;
 use shared_crypto::intent::{Intent, IntentMessage};
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore, Keystore};
-use sui_rpc_api::Client as SuiGrpcClient;
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_types::base_types::SuiAddress;
 use sui_types::coin::Coin;
 use sui_types::crypto::{Signature, SuiKeyPair, get_key_pair_from_rng};
 use sui_types::effects::TransactionEffectsAPI;
-use sui_types::transaction::Transaction;
+use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
+use sui_types::transaction::{CallArg, Command, ObjectArg, Transaction};
 
 const ENV_ALIAS: &str = "localnet";
 const FUND_GAS_BUDGET: u64 = 100_000_000;
@@ -133,7 +140,7 @@ impl WorkloadDriver {
         let file = IkaConfigFile {
             envs: HashMap::from([(ENV_ALIAS.to_string(), network_config.clone())]),
         };
-        std::fs::write(
+        fs::write(
             &ika_config,
             serde_yaml::to_string(&file).context("serialize ika config")?,
         )
@@ -153,10 +160,6 @@ impl WorkloadDriver {
     /// User `completed_sessions_count` from the coordinator — the on-chain truth
     /// for whether a user session (e.g. a sign) has finished.
     async fn user_completed_count(&self) -> Result<u64> {
-        use ika_sui_client::SuiClient as IkaClient;
-        use ika_sui_client::metrics::SuiClientMetrics;
-        use ika_types::sui::DWalletCoordinatorInner;
-
         let ika = IkaClient::new_grpc(
             &self.grpc_url,
             SuiClientMetrics::new_for_testing(),
@@ -178,11 +181,11 @@ impl WorkloadDriver {
         self.user_address
     }
 
-    pub fn client_config_path(&self) -> &std::path::Path {
+    pub fn client_config_path(&self) -> &Path {
         &self.client_config
     }
 
-    pub fn ika_config_path(&self) -> &std::path::Path {
+    pub fn ika_config_path(&self) -> &Path {
         &self.ika_config
     }
 
@@ -228,7 +231,7 @@ impl WorkloadDriver {
                 Err(e) if is_transient(&e) => {
                     tracing::debug!(attempt, error = %e, "transient, retrying ika dwallet call");
                     last_err = Some(e);
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
                 Err(e) => return Err(e),
             }
@@ -424,20 +427,10 @@ fn json_str(value: &serde_json::Value, field: &str) -> Result<String> {
         .with_context(|| format!("response missing string field `{field}`: {value}"))
 }
 
-/// Request SUI gas for `recipient` from the localnet faucet. The localnet
-/// faucet sometimes returns a 200 with an error-shaped body; treat that as OK.
 async fn faucet_sui(faucet_url: &str, recipient: SuiAddress) -> Result<()> {
-    let body = serde_json::json!({ "FixedAmountRequest": { "recipient": recipient.to_string() } });
-    match reqwest::Client::new()
-        .post(faucet_url)
-        .json(&body)
-        .send()
+    request_tokens_from_faucet(recipient, faucet_url)
         .await
-    {
-        Ok(_) => {}
-        Err(e) if e.to_string().contains("200 OK") => {}
-        Err(e) => return Err(e).context("faucet request"),
-    }
+        .context("faucet request")?;
     // Give the faucet a moment to deliver the gas object.
     tokio::time::sleep(Duration::from_secs(3)).await;
     Ok(())
@@ -457,7 +450,7 @@ async fn transfer_one_ika(
     recipient: SuiAddress,
 ) -> Result<()> {
     let publisher_address: SuiAddress = (&publisher.public()).into();
-    let client = SuiGrpcClient::new(grpc_url)?;
+    let client = SuiGrpcClient::connect(grpc_url)?;
     let ika_type = format!("{}::ika::IKA", network_config.packages.ika_package_id);
     let ika_type: StructTag = ika_type.parse().context("parse IKA coin type")?;
     let ika_coin_type = Coin::type_(ika_type.clone().into());
@@ -473,29 +466,30 @@ async fn transfer_one_ika(
             )
             .await?;
         let ika_coin = match coins.items.into_iter().next() {
-            Some(coin) => coin.id(),
+            Some(coin) => coin.compute_object_reference(),
             None => bail!("publisher {publisher_address} owns no {ika_type}"),
         };
-        let tx_data = client
-            .transaction_builder()
-            .pay(
-                publisher_address,
-                vec![ika_coin],
-                vec![recipient],
-                vec![WORKLOAD_USER_IKA_INKU],
-                None,
-                FUND_GAS_BUDGET,
-            )
-            .await?;
+        let mut transaction_builder = ProgrammableTransactionBuilder::new();
+        let ika_coin =
+            transaction_builder.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin)))?;
+        let amount = transaction_builder.pure(WORKLOAD_USER_IKA_INKU)?;
+        let transferred_coin =
+            transaction_builder.command(Command::SplitCoins(ika_coin, vec![amount]));
+        let recipient = transaction_builder.pure(recipient)?;
+        transaction_builder.command(Command::TransferObjects(vec![transferred_coin], recipient));
+        let tx_data = build_transaction_data(
+            &client,
+            publisher_address,
+            FUND_GAS_BUDGET,
+            transaction_builder.finish(),
+        )
+        .await?;
         let signature = Signature::new_secure(
             &IntentMessage::new(Intent::sui_transaction(), &tx_data),
             publisher,
         );
         let transaction = Transaction::from_data(tx_data, vec![signature]);
-        match client
-            .execute_transaction_and_wait_for_checkpoint(&transaction)
-            .await
-        {
+        match client.execute_transaction_and_wait(&transaction).await {
             Ok(resp) => {
                 if resp.effects.status().is_ok() {
                     return Ok(());

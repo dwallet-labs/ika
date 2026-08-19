@@ -10,6 +10,9 @@ use anyhow::Result;
 use clap::Subcommand;
 use ika_config::initiation::InitiationParameters;
 use ika_protocol_config::Chain;
+use ika_sui_client::faucet::request_tokens_from_faucet;
+use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::transaction_context::SdkTransactionContext;
 use ika_swarm_config::sui_client::{
     ika_system_add_upgrade_cap_by_cap, ika_system_initialize,
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap,
@@ -18,7 +21,6 @@ use ika_swarm_config::sui_client::{
     publish_ika_package_to_sui, publish_ika_system_package_to_sui, setup_contract_paths,
 };
 use serde::{Deserialize, Serialize};
-use sui::client_commands::request_tokens_from_faucet;
 use sui_config::SUI_KEYSTORE_FILENAME;
 use sui_config::{Config, SUI_CLIENT_CONFIG, sui_config_dir};
 use sui_keys::key_derive::generate_new_key;
@@ -299,8 +301,7 @@ async fn mint_tokens(
 
     println!("Using publisher address: {publisher_address}");
 
-    let context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let ika_supply_id = minted_ika(
         publisher_address,
@@ -341,8 +342,8 @@ async fn init_env(
     )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
-    let mut context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let mut initiation_parameters = InitiationParameters::new();
     if let Some(epoch_duration_ms) = epoch_duration_ms {
@@ -354,7 +355,7 @@ async fn init_env(
 
     let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_common_package_id.unwrap(),
         publish_config.ika_system_package_id,
@@ -385,7 +386,7 @@ async fn init_env(
 
     ika_system_set_witness_approving_advance_epoch(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_system_package_id,
         ika_system_object_id,
@@ -416,7 +417,7 @@ async fn init_env(
 
     ika_system_add_upgrade_cap_by_cap(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         publish_config.ika_system_package_id,
         ika_system_object_id,
@@ -495,14 +496,14 @@ async fn initialize_system(
     )?;
     println!("Using SUI configuration from: {sui_config_path:?}");
 
-    let mut context = WalletContext::new(&sui_config_path)?;
-    let client = context.grpc_client()?;
+    let context = SdkTransactionContext::from_sui_client_config(&sui_config_path)?;
+    let client = SuiGrpcClient::connect(&sui_grpc_addr)?;
 
     let initiation_parameters = InitiationParameters::new();
 
     let (dwallet_coordinator_object_id, dwallet_initial_shared_version) = ika_system_initialize(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         ika_system_package_id,
         ika_system_object_id,
@@ -520,7 +521,7 @@ async fn initialize_system(
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
-        &mut context,
+        &context,
         client.clone(),
         ika_system_package_id,
         ika_dwallet_2pc_mpc_package_id,

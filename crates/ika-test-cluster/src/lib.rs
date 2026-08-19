@@ -29,6 +29,7 @@ use ika_swarm::memory::{Swarm, SwarmBuilder};
 
 pub mod flows;
 pub use flows::{ImportedKeyHandle, PresignHandle};
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
@@ -47,7 +48,6 @@ use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU16, Ordering};
 use sui_keys::key_derive::generate_new_key;
-use sui_rpc_api::Client as SuiGrpcClient;
 use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
 use sui_swarm_config::network_config_builder::ConfigBuilder;
 use sui_types::base_types::{ObjectID, SuiAddress};
@@ -315,7 +315,7 @@ impl IkaTestCluster {
             .await
         );
 
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         retry_on_object_contention!(
             "request_add_validator",
             request_add_validator(
@@ -375,7 +375,7 @@ impl IkaTestCluster {
                 .account_key_pair
                 .public(),
         );
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         retry_on_object_contention!(
             "request_remove_validator",
             request_remove_validator(
@@ -428,7 +428,7 @@ impl IkaTestCluster {
     /// the actual MPC takes another epoch boundary to settle —
     /// callers typically pair this with `wait_for_new_network_key`.
     pub async fn request_network_key_dkg(&mut self) -> Result<()> {
-        let client = self.test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.sui_grpc_url)?;
         ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
             self.publisher_address,
             self.test_cluster.wallet_mut(),
@@ -874,7 +874,7 @@ impl IkaTestCluster {
         dwallet_id: ObjectID,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let mut client = SuiGrpcClient::new(&self.sui_grpc_url)?;
+        let client = SuiGrpcClient::new(&self.sui_grpc_url).await?;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut last_observed_state = String::from("(no get_object response yet)");
         loop {
@@ -1080,7 +1080,7 @@ pub(crate) async fn fetch_event_field(
     event_type_substr: &str,
     field_name: &str,
 ) -> Option<String> {
-    let mut client = SuiGrpcClient::new(sui_grpc_url).ok()?;
+    let client = SuiGrpcClient::new(sui_grpc_url).await.ok()?;
     let transaction = client.get_transaction(tx_digest).await.ok()?;
     let events = transaction.events?;
     for (index, event) in events.data.iter().enumerate() {
@@ -1118,6 +1118,9 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
+    /// Override the on-chain minimum only for tests that exercise committee
+    /// shrinkage below the production default.
+    min_validator_count: Option<u64>,
     /// Epoch duration of the underlying **Sui** localnet (NOT ika's epoch). When
     /// `None` (default) Sui keeps its 24h `for_local_testing` epoch, so the Sui
     /// validator committee never rotates during a test and the OCS Sui-committee
@@ -1214,6 +1217,7 @@ impl IkaTestClusterBuilder {
         Self {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
+            min_validator_count: None,
             sui_epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
@@ -1270,6 +1274,12 @@ impl IkaTestClusterBuilder {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Override the on-chain minimum active-validator count for this cluster.
+    pub fn with_min_validator_count(mut self, min_validator_count: u64) -> Self {
+        self.min_validator_count = Some(min_validator_count);
         self
     }
 
@@ -1413,7 +1423,7 @@ impl IkaTestClusterBuilder {
         // contracts temp dir so the pubfile lives and dies with that TempDir.
         std::env::set_current_dir(contract_paths.contracts_dir.path())?;
 
-        let client = test_cluster.wallet().grpc_client()?;
+        let client = SuiGrpcClient::connect(&sui_grpc_url)?;
 
         let packages = publish_ika_packages(
             test_cluster.wallet_mut(),
@@ -1426,6 +1436,9 @@ impl IkaTestClusterBuilder {
         let mut initiation_parameters = InitiationParameters::new();
         if let Some(epoch_duration_ms) = self.epoch_duration_ms {
             initiation_parameters.epoch_duration_ms = epoch_duration_ms;
+        }
+        if let Some(min_validator_count) = self.min_validator_count {
+            initiation_parameters.min_validator_count = min_validator_count;
         }
         if let Some(protocol_version) = self.protocol_version {
             initiation_parameters.protocol_version = protocol_version.as_u64();

@@ -122,6 +122,9 @@ them has a bug — determine which before changing either.
 - [`conventions/sui-version-bump.md`](conventions/sui-version-bump.md)
   — every location the Sui version lives and the bump procedure
   (enforced by `scripts/check-sui-version-consistency.sh` in CI).
+- [`conventions/sui-client-dependencies.md`](conventions/sui-client-dependencies.md)
+  — which Sui client layer to use: standalone `sui-rust-sdk` for network
+  RPC, and the narrow wallet/consensus cases that still require Sui main.
 - [`conventions/simtest.md`](conventions/simtest.md) — what simtest is,
   why it is slow by design, when to use it vs `#[tokio::test]`, and the
   msim gotcha catalogue.

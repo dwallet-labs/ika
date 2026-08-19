@@ -1,12 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use ika_sui_client::transaction_context::TransactionContext;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sui_config::PersistedConfig;
-use sui_sdk::wallet_context::WalletContext;
 
 pub mod context;
 pub mod output;
@@ -29,7 +29,7 @@ pub struct IkaPackagesConfigFile {
 impl sui_config::Config for IkaPackagesConfigFile {}
 
 pub(crate) fn read_ika_sui_config_yaml(
-    context: &WalletContext,
+    context: &impl TransactionContext,
     config_path: &PathBuf,
 ) -> Result<IkaNetworkConfig, anyhow::Error> {
     let config: IkaPackagesConfigFile = PersistedConfig::read(config_path).map_err(|err| {
@@ -39,10 +39,10 @@ pub(crate) fn read_ika_sui_config_yaml(
              or use `--ika-config <PATH>` to specify a custom path."
         ))
     })?;
-    let sui_env = context.get_active_env()?.alias.clone();
+    let sui_env = context.environment_alias()?;
     let config = config
         .envs
-        .get(&sui_env)
+        .get(sui_env)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Ika network config not found for Sui environment: {sui_env}.\n\

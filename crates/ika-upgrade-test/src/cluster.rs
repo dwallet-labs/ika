@@ -23,6 +23,7 @@ use ika_config::node::{NodeConfig, SuiDataSource};
 use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
@@ -1901,7 +1902,7 @@ impl ClusterOfProcesses {
             "request_add_validator_candidate",
             request_add_validator_candidate(
                 joiner_address,
-                &mut self.wallet,
+                &self.wallet,
                 &metadata,
                 self.packages.ika_system_package_id,
                 self.packages.ika_common_package_id,
@@ -1915,7 +1916,7 @@ impl ClusterOfProcesses {
             "stake_ika",
             stake_ika(
                 self.publisher_address,
-                &mut self.wallet,
+                &self.wallet,
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
                 self.system.init_system_shared_version,
@@ -1925,12 +1926,12 @@ impl ClusterOfProcesses {
             .await
         );
 
-        let client = self.wallet.grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.grpc_url)?;
         retry_on_object_contention!(
             "request_add_validator",
             request_add_validator(
                 joiner_address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
@@ -2050,12 +2051,12 @@ impl ClusterOfProcesses {
             .get(index)
             .with_context(|| format!("validator index {index} out of range"))?
             .clone();
-        let client = self.wallet.grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.grpc_url)?;
         retry_on_object_contention!(
             "request_remove_validator",
             request_remove_validator(
                 slot.address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,
@@ -2074,14 +2075,14 @@ impl ClusterOfProcesses {
     /// only fills with `internal_presign_sessions` on) — the same ordering a
     /// real mainnet rollout from v1.1.8 must follow.
     pub async fn set_global_presign_config(&mut self) -> Result<()> {
-        let client = self.wallet.grpc_client()?;
+        let client = SuiGrpcClient::connect(&self.grpc_url)?;
         let (curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key) =
             GenesisGlobalPresignConfig::Full.curve_to_signature_algorithm_maps();
         retry_on_object_contention!(
             "set_global_presign_config",
             set_global_presign_config(
                 self.publisher_address,
-                &mut self.wallet,
+                &self.wallet,
                 client.clone(),
                 self.packages.ika_system_package_id,
                 self.system.ika_system_object_id,

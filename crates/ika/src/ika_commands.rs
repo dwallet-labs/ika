@@ -21,12 +21,12 @@ use crate::protocol_commands::IkaProtocolCommand;
 #[cfg(feature = "protocol-commands")]
 use crate::system_commands::IkaSystemCommand;
 use crate::validator_commands::IkaValidatorCommand;
+use ika_sui_client::grpc::SuiGrpcClient;
+use ika_sui_client::transaction_context::SdkTransactionContext;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORITIES;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
-use sui_rpc_api::Client as SuiGrpcClient;
-use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
 
@@ -294,8 +294,8 @@ impl IkaCommand {
                         let config_path = config
                             .or(client_config)
                             .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                        let mut context = WalletContext::new(&config_path)?;
-                        cmd.execute(&mut context).await?.print(!use_json);
+                        let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
+                        cmd.execute(&context).await?.print(!use_json);
                     }
                     None => {
                         // Print help
@@ -317,9 +317,9 @@ impl IkaCommand {
                 let config_path = config
                     .or(client_config)
                     .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                let mut context = WalletContext::new(&config_path)?;
+                let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!use_json);
+                    cmd.execute(&context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
@@ -331,8 +331,8 @@ impl IkaCommand {
             IkaCommand::DWallet { cmd } => {
                 let config_path =
                     client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-                let mut context = WalletContext::new(&config_path)?;
-                cmd.execute(&mut context, json, quiet, _ika_config, _gas_budget)
+                let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
+                cmd.execute(&context, json, quiet, _ika_config, _gas_budget)
                     .await
             }
             #[cfg(feature = "protocol-commands")]
@@ -392,7 +392,7 @@ async fn start(
         );
     }
 
-    let sui_client = SuiGrpcClient::new(&sui_fullnode_grpc_url)?;
+    let sui_client = SuiGrpcClient::new(&sui_fullnode_grpc_url).await?;
     if let Err(e) = sui_client.get_chain_identifier().await {
         bail!(
             "Cannot reach the Sui gRPC endpoint at {sui_fullnode_grpc_url}: {e}.\n\

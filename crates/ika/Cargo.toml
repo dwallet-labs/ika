@@ -36,11 +36,9 @@ colored.workspace = true
 
 telemetry-subscribers.workspace = true
 
-sui.workspace = true
 sui-config.workspace = true
 
 sui-keys.workspace = true
-sui-rpc-api.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
 serde_yaml.workspace = true

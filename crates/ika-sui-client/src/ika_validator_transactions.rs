@@ -34,20 +34,18 @@ use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use serde::Serialize;
-use shared_crypto::intent::Intent;
-use sui::client_commands::{SuiClientCommandResult, execute_dry_run};
-use sui::fire_drill::get_gas_obj_ref;
-use sui_keys::keystore::AccountKeystore;
-use sui_rpc_api::client::ExecutedTransaction;
-use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
 use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction, TransactionKind};
+use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use sui_types::transaction::{Command, TransactionData};
 use sui_types::{MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID};
+
+use crate::transaction_builder::build_transaction_data;
+use crate::transaction_context::TransactionContext;
+use crate::transport::ExecutedTransaction;
 #[derive(Serialize)]
 pub struct BecomeCandidateValidatorData {
     pub validator_id: ObjectID,
@@ -93,7 +91,7 @@ fn store_mcp_data_in_table_vec(
 
 /// Request to add a validator candidate transaction
 pub async fn request_add_validator_candidate(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     validator_initialization_metadata: &ValidatorInfo,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
@@ -249,7 +247,7 @@ pub async fn request_add_validator_candidate(
         .map(|(reference, _)| reference.0)
         .collect::<Vec<_>>();
 
-    let mut grpc_client = context.grpc_client()?;
+    let grpc_client = context.grpc_client()?;
     let mut validator_cap_id: Option<ObjectID> = None;
     let mut validator_operation_cap_id: Option<ObjectID> = None;
     let mut validator_commission_cap_id: Option<ObjectID> = None;
@@ -301,7 +299,7 @@ pub async fn request_add_validator_candidate(
 }
 
 pub async fn stake_ika(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     ika_supply_id: ObjectID,
@@ -311,10 +309,7 @@ pub async fn stake_ika(
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let client = context.grpc_client()?;
-    let ika_supply_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_supply_id)
-        .await?;
+    let ika_supply_ref = client.get_object_ref(ika_supply_id).await?;
 
     let ika_supply_id_arg =
         ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_supply_ref)))?;
@@ -347,17 +342,14 @@ pub async fn stake_ika(
 }
 
 pub async fn request_add_validator(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -382,17 +374,14 @@ pub async fn request_add_validator(
 }
 
 pub async fn request_remove_validator(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -413,17 +402,14 @@ pub async fn request_remove_validator(
 
 /// Request to remove a validator candidate transaction
 pub async fn request_remove_validator_candidate(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -449,7 +435,7 @@ pub async fn request_remove_validator_candidate(
 
 /// Set next commission rate for a validator
 pub async fn set_next_commission(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -457,10 +443,7 @@ pub async fn set_next_commission(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let new_commission_rate = ptb.input(CallArg::Pure(bcs::to_bytes(&new_commission_rate)?))?;
@@ -490,17 +473,14 @@ pub async fn set_next_commission(
 
 /// Withdraw stake from a validator's staking pool
 pub async fn withdraw_stake(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let staked_ika_ref = client
-        .transaction_builder()
-        .get_object_ref(staked_ika_id)
-        .await?;
+    let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(staked_ika_ref)))?];
@@ -526,17 +506,14 @@ pub async fn withdraw_stake(
 
 /// Request to withdraw stake from a validator's staking pool
 pub async fn request_withdraw_stake(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     staked_ika_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let staked_ika_ref = client
-        .transaction_builder()
-        .get_object_ref(staked_ika_id)
-        .await?;
+    let staked_ika_ref = client.get_object_ref(staked_ika_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(staked_ika_ref)))?];
@@ -560,7 +537,7 @@ pub async fn request_withdraw_stake(
 
 /// Report a validator as a bad or non-performant actor
 pub async fn report_validator(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -568,10 +545,7 @@ pub async fn report_validator(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let reportee_id = ptb.input(CallArg::Pure(bcs::to_bytes(&reportee_id)?))?;
@@ -601,7 +575,7 @@ pub async fn report_validator(
 
 /// Undo a report_validator action
 pub async fn undo_report_validator(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -609,10 +583,7 @@ pub async fn undo_report_validator(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let reportee_id = ptb.input(CallArg::Pure(bcs::to_bytes(&reportee_id)?))?;
@@ -642,17 +613,14 @@ pub async fn undo_report_validator(
 
 /// Rotate operation cap for a validator
 pub async fn rotate_operation_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -679,7 +647,7 @@ pub async fn rotate_operation_cap(
 }
 
 async fn construct_unsigned_ika_system_txn(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     sender: SuiAddress,
     function: &'static IdentStr,
     call_args: Vec<Argument>,
@@ -704,85 +672,38 @@ async fn construct_unsigned_ika_system_txn(
 }
 
 pub(crate) async fn construct_unsigned_txn(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     sender: SuiAddress,
     gas_budget: u64,
     ptb: ProgrammableTransactionBuilder,
 ) -> IkaResult<TransactionData> {
     let sui_client = context.grpc_client().map_err(|_| IkaError::SuiSDKError)?;
-    let gas_price = context
-        .get_reference_gas_price()
+    build_transaction_data(&sui_client, sender, gas_budget, ptb.finish())
         .await
-        .map_err(|_| IkaError::SuiSDKError)?;
-
-    let tx = ptb.finish();
-    let tx_kind = TransactionKind::ProgrammableTransaction(tx.clone());
-
-    let dry_run = execute_dry_run(
-        context,
-        sender,
-        tx_kind.clone(),
-        None,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
-    if let SuiClientCommandResult::DryRun(dry_run) = dry_run
-        && dry_run.transaction.effects.status().is_err()
-    {
-        let err_msg = format!("{:?}", dry_run.transaction.effects.status());
-        tracing::debug!(?dry_run.transaction.effects, "Dry run failed");
-        return Err(IkaError::DryRunFailed(err_msg));
-    };
-
-    let gas_budget = sui::client_commands::estimate_gas_budget(
-        context,
-        sender,
-        tx_kind,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .unwrap_or(gas_budget);
-
-    let rgp = sui_client
-        .get_reference_gas_price()
-        .await
-        .map_err(|_| IkaError::SuiSDKError)?;
-
-    let gas_obj_ref = get_gas_obj_ref(sender, &sui_client, gas_budget)
-        .await
-        .map_err(|_| IkaError::SuiSDKError)?;
-
-    Ok(TransactionData::new_programmable(
-        sender,
-        vec![gas_obj_ref],
-        tx,
-        gas_budget,
-        rgp,
-    ))
+        .map_err(|error| {
+            if error.is_simulation_failure() {
+                IkaError::DryRunFailed(error.to_string())
+            } else {
+                IkaError::SuiClientInternalError(error.to_string())
+            }
+        })
 }
 
 pub async fn execute_transaction(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     tx_data: TransactionData,
 ) -> anyhow::Result<ExecutedTransaction> {
-    let sender = context.active_address()?;
-
-    let signature = context
-        .config
-        .keystore
-        .sign_secure(&sender, &tx_data, Intent::sui_transaction())
-        .await?;
+    let signature = context.sign_transaction(&tx_data).await?;
     let transaction = Transaction::from_data(tx_data, vec![signature]);
-    context.execute_transaction_may_fail(transaction).await
+    context
+        .grpc_client()?
+        .execute_transaction_and_wait(&transaction)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn call_ika_system(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     function: &'static IdentStr,
     call_args: Vec<Argument>,
     gas_budget: u64,
@@ -807,17 +728,14 @@ pub async fn call_ika_system(
 
 /// Rotate commission cap for a validator
 pub async fn rotate_commission_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -845,7 +763,7 @@ pub async fn rotate_commission_cap(
 
 /// Collect commission from a validator
 pub async fn collect_commission(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_commission_cap_id: ObjectID,
@@ -853,10 +771,7 @@ pub async fn collect_commission(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_commission_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_commission_cap_id)
-        .await?;
+    let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let amount = ptb.input(CallArg::Pure(bcs::to_bytes(&amount)?))?;
@@ -888,7 +803,7 @@ pub async fn collect_commission(
 
 /// Set validator name
 pub async fn set_validator_name(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -896,10 +811,7 @@ pub async fn set_validator_name(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let name = ptb.input(CallArg::Pure(bcs::to_bytes(&name)?))?;
@@ -929,7 +841,7 @@ pub async fn set_validator_name(
 
 /// Get validator metadata
 pub async fn validator_metadata(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_id: ObjectID,
@@ -958,7 +870,7 @@ pub async fn validator_metadata(
 
 /// Set validator metadata
 pub async fn set_validator_metadata(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -966,10 +878,7 @@ pub async fn set_validator_metadata(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let metadata = ptb.input(CallArg::Pure(bcs::to_bytes(&metadata)?))?;
@@ -999,7 +908,7 @@ pub async fn set_validator_metadata(
 
 /// Set next epoch network address
 pub async fn set_next_epoch_network_address(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1007,10 +916,7 @@ pub async fn set_next_epoch_network_address(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let network_address = ptb.input(CallArg::Pure(bcs::to_bytes(&network_address)?))?;
@@ -1040,7 +946,7 @@ pub async fn set_next_epoch_network_address(
 
 /// Set next epoch p2p address
 pub async fn set_next_epoch_p2p_address(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1048,10 +954,7 @@ pub async fn set_next_epoch_p2p_address(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let p2p_address = ptb.input(CallArg::Pure(bcs::to_bytes(&p2p_address)?))?;
@@ -1081,7 +984,7 @@ pub async fn set_next_epoch_p2p_address(
 
 /// Set next epoch consensus address
 pub async fn set_next_epoch_consensus_address(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1089,10 +992,7 @@ pub async fn set_next_epoch_consensus_address(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let consensus_address = ptb.input(CallArg::Pure(bcs::to_bytes(&consensus_address)?))?;
@@ -1122,7 +1022,7 @@ pub async fn set_next_epoch_consensus_address(
 
 /// Set next epoch protocol pubkey bytes
 pub async fn set_next_epoch_protocol_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1131,10 +1031,7 @@ pub async fn set_next_epoch_protocol_pubkey_bytes(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let protocol_pubkey = ptb.input(CallArg::Pure(bcs::to_bytes(&protocol_pubkey)?))?;
@@ -1167,7 +1064,7 @@ pub async fn set_next_epoch_protocol_pubkey_bytes(
 
 /// Set next epoch network pubkey bytes
 pub async fn set_next_epoch_network_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1175,10 +1072,7 @@ pub async fn set_next_epoch_network_pubkey_bytes(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let network_pubkey = ptb.input(CallArg::Pure(bcs::to_bytes(&network_pubkey)?))?;
@@ -1208,7 +1102,7 @@ pub async fn set_next_epoch_network_pubkey_bytes(
 
 /// Set next epoch consensus pubkey bytes
 pub async fn set_next_epoch_consensus_pubkey_bytes(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1216,10 +1110,7 @@ pub async fn set_next_epoch_consensus_pubkey_bytes(
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let consensus_pubkey_bytes =
@@ -1250,17 +1141,14 @@ pub async fn set_next_epoch_consensus_pubkey_bytes(
 
 /// Verify validator cap
 pub async fn verify_validator_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_cap_id)
-        .await?;
+    let validator_cap_ref = client.get_object_ref(validator_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1286,17 +1174,14 @@ pub async fn verify_validator_cap(
 
 /// Verify operation cap
 pub async fn verify_operation_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1322,17 +1207,14 @@ pub async fn verify_operation_cap(
 
 /// Verify commission cap
 pub async fn verify_commission_cap(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_commission_cap_id: ObjectID,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_commission_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_commission_cap_id)
-        .await?;
+    let validator_commission_cap_ref = client.get_object_ref(validator_commission_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
@@ -1356,17 +1238,14 @@ pub async fn verify_commission_cap(
     execute_transaction(context, tx_data).await
 }
 pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
     next_mpc_data: &VersionedMPCData,
 ) -> Result<(ProgrammableTransactionBuilder, Argument), anyhow::Error> {
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let mut ptb = ProgrammableTransactionBuilder::new();
     let store_mcp_data_in_table_vec = store_mcp_data_in_table_vec(&mut ptb, next_mpc_data)?;
@@ -1392,7 +1271,7 @@ pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
 }
 
 pub async fn new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1429,7 +1308,7 @@ pub async fn new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
 
 /// Set next epoch MPC data bytes
 pub async fn set_next_epoch_mpc_data_bytes(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     validator_operation_cap_id: ObjectID,
@@ -1490,7 +1369,7 @@ pub async fn set_next_epoch_mpc_data_bytes(
 
 /// Set pricing vote for DWallet operations
 pub async fn set_pricing_vote(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_system_package_id: ObjectID,
     ika_system_object_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
@@ -1501,10 +1380,7 @@ pub async fn set_pricing_vote(
 ) -> Result<ExecutedTransaction, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client
-        .transaction_builder()
-        .get_object_ref(validator_operation_cap_id)
-        .await?;
+    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
     let call_args = vec![ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         validator_operation_cap_ref,
@@ -1602,7 +1478,7 @@ pub(crate) async fn new_pricing_info(
 }
 
 pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
 ) -> anyhow::Result<CallArg> {
     let Some(Owner::Shared {
@@ -1625,7 +1501,7 @@ pub(crate) async fn get_dwallet_2pc_mpc_coordinator_call_arg(
 }
 
 pub async fn add_ika_system_command_to_ptb(
-    context: &mut WalletContext,
+    context: &impl TransactionContext,
     function: &IdentStr,
     call_args: Vec<Argument>,
     ika_system_object_id: ObjectID,

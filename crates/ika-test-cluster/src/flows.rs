@@ -20,13 +20,13 @@ use dwallet_mpc_centralized_party::{
     sample_dwallet_keypair_inner,
 };
 use fastcrypto::traits::Signer as _;
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::ika_dwallet_transactions::{
     self, PaymentCoinArgs, request_future_sign_fulfill_tx, request_future_sign_tx,
     request_presign_tx, request_sign_tx,
 };
+use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
-use sui_rpc_api::Client as SuiGrpcClient;
-use sui_rpc_api::client::ExecutedTransaction;
 use sui_types::base_types::ObjectID;
 use sui_types::effects::TransactionEffectsAPI as _;
 
@@ -90,8 +90,8 @@ impl ImportedKeyHandle {
     }
 }
 
-fn grpc_client(sui_grpc_url: &str) -> Result<SuiGrpcClient> {
-    Ok(SuiGrpcClient::new(sui_grpc_url)?)
+async fn grpc_client(sui_grpc_url: &str) -> Result<SuiGrpcClient> {
+    Ok(SuiGrpcClient::new(sui_grpc_url).await?)
 }
 
 /// Object fields in Sui's gRPC JSON representation.
@@ -99,7 +99,7 @@ async fn fetch_object_fields(
     grpc_client: &SuiGrpcClient,
     object_id: ObjectID,
 ) -> Result<serde_json::Value> {
-    let mut grpc_client = grpc_client.clone();
+    let grpc_client = grpc_client.clone();
     let (_, json) = grpc_client.get_object_with_json(object_id).await?;
     json.ok_or_else(|| anyhow!("no content for object: {object_id}"))
 }
@@ -127,7 +127,7 @@ pub(crate) async fn find_created_object_by_type(
     response: &ExecutedTransaction,
     type_substr: &str,
 ) -> Result<ObjectID> {
-    let mut client = grpc_client(sui_grpc_url)?;
+    let client = grpc_client(sui_grpc_url).await?;
     for (reference, _) in response.effects.created() {
         let object_id = reference.0;
         let Ok(object) = client.get_object(object_id).await else {
@@ -160,7 +160,7 @@ pub(crate) async fn fetch_nested_event_field(
     event_type_substr: &str,
     path: &[&str],
 ) -> Option<String> {
-    let mut client = grpc_client(sui_grpc_url).ok()?;
+    let client = grpc_client(sui_grpc_url).await.ok()?;
     let transaction = client.get_transaction(tx_digest).await.ok()?;
     let events = transaction.events?;
     for (index, event) in events.data.iter().enumerate() {
@@ -197,7 +197,7 @@ async fn poll_session_until_completed(
     bytes_field: &str,
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>> {
-    let client = grpc_client(sui_grpc_url)?;
+    let client = grpc_client(sui_grpc_url).await?;
     let start = tokio::time::Instant::now();
     let mut last_observed = String::from("(no fetch yet)");
     let mut poll_count: u64 = 0;
@@ -253,7 +253,7 @@ impl IkaTestCluster {
     /// The dwallet's decentralized DKG public output from chain state
     /// (`state.public_output` of an Active dwallet).
     pub async fn dwallet_public_output(&self, dwallet_id: ObjectID) -> Result<Vec<u8>> {
-        let client = grpc_client(&self.sui_grpc_url)?;
+        let client = grpc_client(&self.sui_grpc_url).await?;
         let fields = fetch_object_fields(&client, dwallet_id).await?;
         fields
             .get("state")
@@ -292,7 +292,7 @@ impl IkaTestCluster {
         .context("request_presign_tx failed")?;
         let presign_cap_id =
             find_created_object_by_type(&self.sui_grpc_url, &response, "PresignCap").await?;
-        let client = grpc_client(&self.sui_grpc_url)?;
+        let client = grpc_client(&self.sui_grpc_url).await?;
         let cap_fields = fetch_object_fields(&client, presign_cap_id).await?;
         let presign_id: ObjectID = cap_fields
             .get("presign_id")
@@ -330,7 +330,7 @@ impl IkaTestCluster {
         .context("request_global_presign_tx failed")?;
         let presign_cap_id =
             find_created_object_by_type(&self.sui_grpc_url, &response, "PresignCap").await?;
-        let client = grpc_client(&self.sui_grpc_url)?;
+        let client = grpc_client(&self.sui_grpc_url).await?;
         let cap_fields = fetch_object_fields(&client, presign_cap_id).await?;
         let presign_id: ObjectID = cap_fields
             .get("presign_id")
@@ -688,7 +688,7 @@ impl IkaTestCluster {
         dwallet_id: ObjectID,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let client = grpc_client(&self.sui_grpc_url)?;
+        let client = grpc_client(&self.sui_grpc_url).await?;
         let start = tokio::time::Instant::now();
         loop {
             if start.elapsed() > timeout {

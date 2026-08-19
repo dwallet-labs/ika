@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use ika_sui_client::transaction_context::SdkTransactionContext;
 use sui_config::{SUI_CLIENT_CONFIG, sui_config_dir};
-use sui_sdk::wallet_context::WalletContext;
 
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
@@ -14,7 +14,7 @@ use crate::read_ika_sui_config_yaml;
 
 /// Shared CLI context providing wallet access, Ika network configuration, and output preferences.
 pub struct CliContext {
-    pub wallet: WalletContext,
+    pub wallet: SdkTransactionContext,
     pub ika_config: Option<IkaNetworkConfig>,
     pub json_output: bool,
     pub gas_budget: Option<u64>,
@@ -29,7 +29,7 @@ impl CliContext {
         gas_budget: Option<u64>,
     ) -> Result<Self> {
         let config_path = sui_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
-        let wallet = WalletContext::new(&config_path)?;
+        let wallet = SdkTransactionContext::from_sui_client_config(&config_path)?;
 
         let ika_config = ika_config
             .or_else(|| ika_config_dir().ok().map(|dir| dir.join(IKA_SUI_CONFIG)))
