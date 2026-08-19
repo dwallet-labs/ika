@@ -1446,10 +1446,14 @@ impl ClusterOfProcesses {
                 .with_context(|| format!("validator index {index} out of range"))?;
             let body = validator.metrics().await?;
             for sample in parse_metric_samples(&body, "ika_consensus_handler_processed")? {
-                let Some(kind) = sample.labels.get("kind") else {
+                // The label is "class", not "kind" — the counter is registered
+                // `&["class"]` while the value it carries comes from
+                // `classify()`. Reading the wrong label silently yields an
+                // empty breakdown rather than an error.
+                let Some(class) = sample.labels.get("class") else {
                     continue;
                 };
-                *by_kind.entry(kind.clone()).or_default() += sample.value as u64;
+                *by_kind.entry(class.clone()).or_default() += sample.value as u64;
             }
         }
         Ok(by_kind)
@@ -1511,6 +1515,22 @@ impl ClusterOfProcesses {
     /// Both naming bases are accepted for the subject, matching every other
     /// authority-label comparison here: the cluster names its authorities
     /// under whichever basis its protocol version selects.
+    /// How many times `needle` appears in one validator's `node.log`.
+    ///
+    /// Occurrence COUNTS rather than presence, because logs append across
+    /// restarts: for a line both binaries emit, "it appeared" is satisfied by
+    /// the pre-swap binary's output, and only "it appeared again" is evidence
+    /// about the binary under test.
+    pub fn log_line_count(&self, index: usize, needle: &str) -> Result<usize> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let log = std::fs::read_to_string(validator.log_path())
+            .with_context(|| format!("read validator log {}", validator.log_path().display()))?;
+        Ok(log.matches(needle).count())
+    }
+
     pub async fn mpc_output_sessions_from(
         &self,
         observer_index: usize,

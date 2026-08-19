@@ -32,37 +32,49 @@
 //!    A crash-loop cannot reach this assertion — the swap step blocks on the
 //!    node answering its admin server, and every later step re-reads it.
 //!
-//! 2. **It re-emits already-settled work, and the volume is measured.** Peers
-//!    still on the candidate count each re-submission on
+//! 2. **How much already-settled work it re-emits is MEASURED, not
+//!    predicted.** Peers still on the candidate count each re-submission on
 //!    `ika_skipped_consensus_txns` (incremented once per consensus transaction
 //!    whose digest is already in the folding node's processed set). That is
 //!    the right counter of the two: it is checked BEFORE the handler's LRU
-//!    fast path, and MPC-payload keys — the dominant term here — are
-//!    deliberately never cached in that LRU, so they always reach it rather
-//!    than `ika_skipped_consensus_txns_cache_hit`. The count
-//!    is taken as a delta over the rollback window and compared against a
-//!    CONTROL window of ordinary traffic — a full user lifecycle with nothing
-//!    restarted — because the counter is cumulative and submission races nudge
-//!    it, so a bare "nonzero" would prove nothing. The measured number is
-//!    release-notes material; a count at or below the control level means the
-//!    scenario failed to create the conditions it exists to measure.
+//!    fast path, and MPC-payload keys are deliberately never cached in that
+//!    LRU, so they always reach it rather than
+//!    `ika_skipped_consensus_txns_cache_hit`. The reading is a delta over the
+//!    rollback window against a CONTROL window of the same composition — one
+//!    full user lifecycle each, nothing restarted in the control — and the
+//!    difference between them is the figure the operator-facing note is
+//!    written from.
 //!
-//!    Note on composition: v1.3.1 is NOT free of settled-state suppression.
-//!    Its checkpoint-signature gate (`get_highest_verified_dwallet_checkpoint`)
-//!    reads the perpetual checkpoint store, which survives the rollback, so it
-//!    re-signs only the band between the verified watermark and what had been
-//!    certified — the band the candidate's broader gate closed. The spray is
-//!    therefore dominated by MPC messages and outputs replayed over the
-//!    rebuilt rounds, which the per-kind breakdown in the measurement step
-//!    reports.
+//!    The assertion is only a liveness floor on the counters. It is NOT that
+//!    the rollback window exceeds the control: the first version asserted
+//!    exactly that, on the theory that a re-derivation sprays re-submissions,
+//!    and the first measured run recorded 0 against a control of 171. That is
+//!    the phenomenon, not a broken test — so the prediction came out of the
+//!    assertion and the number goes in the report.
 //!
-//! 3. **It returns to full participation, witnessed by a peer.** After the
-//!    catch-up, a fresh workload is driven and a peer must record an MPC
-//!    output authored by the rolled-back validator for a session outside the
-//!    snapshot taken once catch-up finished. Sessions the re-derivation
-//!    re-emitted outputs for are inside that snapshot by construction, so the
-//!    spray cannot masquerade as participation, and the claim is a peer's
-//!    observation rather than the subject's own liveness metric.
+//!    Three layers suppress the spray, and only the first two were anticipated:
+//!    v1.3.1's checkpoint-signature gate
+//!    (`get_highest_verified_dwallet_checkpoint`) reads the perpetual
+//!    checkpoint store, which survives the rollback, so it re-signs only the
+//!    band between the verified watermark and what had been certified; the
+//!    candidate's broader gate closed that band. And #2023 catch-up mode —
+//!    entered on the rolled-back node with a 13k-round backlog — reconstructs
+//!    every replayed session as `reconstructed_from_consensus`, `active=false`
+//!    and suppresses recomputation until the backlog drains, so the MPC
+//!    messages and outputs that would have dominated a re-emission are never
+//!    recomputed to be re-sent. The per-class breakdown in the measurement
+//!    step reports whatever does show up.
+//!
+//! 3. **It returns to full participation, witnessed by a peer.** Once catch-up
+//!    mode has EXITED — the point at which v1.3.1 resumes computing rather
+//!    than reconstructing — a fresh workload is driven and a peer must record
+//!    an MPC output authored by the rolled-back validator for a session
+//!    outside the snapshot taken at that moment. Every session the
+//!    re-derivation reconstructed is inside that snapshot by construction, so
+//!    replayed work cannot masquerade as participation, and the claim is a
+//!    peer's observation rather than the subject's own liveness metric.
+//!    This, not the drain's catch-up time, is what measures how long a
+//!    rollback costs MPC.
 //!
 //! The whole experiment is bracketed by `expect_epoch_at_most`: an epoch
 //! boundary hands every validator a fresh epoch store and would make all three
@@ -188,6 +200,19 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // ── The event under test: the deployed release goes back on, on the
         //    same stores, mid-epoch, far from any boundary. ────────────────
         .record_skipped_consensus_txns("rollback", &peers)
+        // Probe the #2023 catch-up transitions BEFORE the swap. Both binaries
+        // emit these lines verbatim and node.log appends across restarts, so
+        // presence proves nothing — only a FRESH occurrence is about v1.3.1.
+        .record_log_line_count_on_validator(
+            "catch-up-entered",
+            SUBJECT,
+            "MPC service entered catch-up mode",
+        )
+        .record_log_line_count_on_validator(
+            "catch-up-exited",
+            SUBJECT,
+            "MPC service exited catch-up mode",
+        )
         .stop_and_swap(&[SUBJECT], old)
         .expect_all_validators_healthy()
         .wait_for_all_validators_local_epoch(2)
@@ -195,6 +220,21 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // fold, against empty fold-side tables, and its rebuilt per-round
         // tables reach the round its peers have consumed.
         .wait_for_mpc_round_to_reach_peers(SUBJECT, &peers)
+        // …and the re-derivation goes through #2023 catch-up mode, which is
+        // WHY it reaches the head so fast: the replayed stream reconstructs
+        // sessions rather than recomputing them. Both transitions are pinned,
+        // because entering without exiting is a validator that never resumes
+        // computing — a passing assertion 1 with none of its meaning.
+        //
+        // If the ENTER probe is what fails, read it as the scenario losing its
+        // subject rather than as a regression: catch-up needs a backlog past
+        // `enter_threshold` (5000 rounds), so no entry means the rollback
+        // landed too early in the epoch to force the deep re-derivation this
+        // scenario exists to exercise. The first measured run had 13,196
+        // rounds of backlog, so the margin is wide — but it is a margin, not a
+        // guarantee, and it shrinks if the epoch or the pre-rollback phase does.
+        .wait_for_new_log_line_on_validator("catch-up-entered", SUBJECT)
+        .wait_for_new_log_line_on_validator("catch-up-exited", SUBJECT)
         // The #2057 signature: the pinned consensus store has no tolerant path
         // when the watermark and the store disagree, and it aborts rather than
         // clamping. An absent watermark reads as 0, which the assert accepts —
@@ -203,16 +243,20 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .expect_log_line_absent("assertion failed: last_commit_index > replay_after_commit_index")
         .expect_log_line_absent("Should be able to read last consensus index")
         .expect_epoch_at_most(2)
-        // ASSERTION 2 — the spray, counted at the peers and compared against
-        // the control window. The measured number is logged prominently by the
-        // step itself; it is the "mid-epoch rollback re-emits" figure.
-        .expect_skipped_consensus_txns_delta("rollback", &peers, 1, Some("control"))
         // ASSERTION 3 — full participation returns. The snapshot is taken
-        // AFTER catch-up, so every session the re-derivation re-emitted an
-        // output for is already inside it and cannot satisfy the assertion.
+        // after catch-up mode has EXITED, so every session the re-derivation
+        // reconstructed is already inside it and cannot satisfy the assertion.
         .record_mpc_output_sessions("after-catch-up", WITNESS, SUBJECT)
         .run_workload("post-rollback")
         .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT)
+        // ASSERTION 2 — closed only NOW, so the rollback window spans the whole
+        // recovery AND carries exactly one workload, like the control window.
+        // Closing it at the catch-up (as the first version did) compared a
+        // window containing a full user lifecycle against one containing an
+        // idle 15 seconds, which is not a comparison. The floor is a liveness
+        // check on the counters; the difference against the control is the
+        // measured re-emission figure and is reported, not asserted.
+        .expect_skipped_consensus_txns_delta("rollback", &peers, 1, Some("control"))
         // Still the same epoch: everything above is mid-epoch behavior, not
         // the boundary reset that would make all three assertions free.
         .expect_epoch_at_most(2)
@@ -227,8 +271,8 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .await
         .expect(
             "the v1.3.1 release rolled back mid-epoch onto event-sourced stores must re-derive \
-             the epoch, re-emit a measurable volume of already-settled work, and return to MPC \
-             participation within the same epoch",
+             the epoch through its own catch-up path and return to MPC participation within the \
+             same epoch, with the already-settled work it re-sends measured at its peers",
         );
 
     // The headline number, restated where a reader of the run's last lines
@@ -245,12 +289,13 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .copied()
         .expect("the control window was measured or the run would have failed");
     tracing::info!(
-        re_emitted_consensus_transactions = re_emitted,
-        control_window_baseline = control,
+        rollback_window_total = re_emitted,
+        control_window_total = control,
+        re_emission_attributable_to_the_rollback = re_emitted as i64 - control as i64,
         "mid-epoch rollback PASSED: the v1.3.1 release re-derived the epoch from its first \
-         commit against empty fold-side tables, re-sent {re_emitted} already-folded consensus \
-         transactions to its peers (against {control} for an equivalent window of ordinary \
-         traffic), and was witnessed by a peer contributing MPC output again before the epoch \
-         boundary"
+         commit against empty fold-side tables and was witnessed by a peer contributing MPC \
+         output again before the epoch boundary. Its window re-sent {re_emitted} already-folded \
+         consensus transactions against {control} for a window of the same composition without \
+         a rollback in it — the difference is what a mid-epoch rollback costs the DAG"
     );
 }
