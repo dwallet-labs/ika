@@ -1191,6 +1191,17 @@ impl DWalletCheckpointService {
         );
         tasks.spawn(monitored_future!(builder.run(replay_waiter)));
 
+        // NOT gated on the replay waiter, unlike the builder above, and that
+        // asymmetry is load-bearing rather than an oversight. This loop is
+        // what prunes the checkpoint construction state below the certified
+        // watermark, so it has to be running THROUGH the boot replay: the
+        // replay re-collects every checkpoint signature of the epoch, and
+        // each one is dropped on the next aggregator pass instead of
+        // accumulating. Gating this on the replay would invert that and make
+        // the boot replay the worst case for signature retention — the memory
+        // bound in dev-docs/specs/event-sourced-epoch.md depends on this task
+        // starting immediately. The builder is gated for the opposite reason:
+        // its output submits to consensus, which has not started yet.
         if let Some(certified_checkpoint_output) = certified_checkpoint_output {
             let aggregator = DWalletCheckpointAggregator::new(
                 checkpoint_store.clone(),
@@ -1324,5 +1335,28 @@ mod tests {
             DWalletCheckpointAggregator::next_checkpoint_to_certify_from(None, 0),
             1
         );
+    }
+
+    /// The signature aggregator must never become replay-gated.
+    ///
+    /// It is what prunes the checkpoint construction state below the certified
+    /// watermark, so it has to run THROUGH the boot replay: the replay
+    /// re-collects every checkpoint signature of the epoch, and each is
+    /// dropped on the next aggregator pass instead of accumulating. Gating it
+    /// the way `DWalletCheckpointBuilder::run` is gated would look like tidying
+    /// away an inconsistency, and would silently make the boot replay the worst
+    /// case for signature retention — the memory bound in
+    /// `dev-docs/specs/event-sourced-epoch.md` rests on this task starting
+    /// immediately.
+    ///
+    /// Pinned at COMPILE time rather than by running the aggregator, which
+    /// would need an `AuthorityState` this module has no machinery for. If you
+    /// are here because this stopped compiling, you added a parameter to
+    /// `DWalletCheckpointAggregator::run` — read the paragraph above before
+    /// deleting this.
+    #[test]
+    fn the_signature_aggregator_takes_no_replay_waiter() {
+        fn accepts_only_self<F: std::future::Future>(_: fn(DWalletCheckpointAggregator) -> F) {}
+        accepts_only_self(DWalletCheckpointAggregator::run);
     }
 }

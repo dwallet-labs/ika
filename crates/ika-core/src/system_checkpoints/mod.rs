@@ -1105,6 +1105,17 @@ impl SystemCheckpointService {
         );
         tasks.spawn(monitored_future!(builder.run(replay_waiter)));
 
+        // NOT gated on the replay waiter, unlike the builder above, and that
+        // asymmetry is load-bearing rather than an oversight. This loop is
+        // what prunes the checkpoint construction state below the certified
+        // watermark, so it has to be running THROUGH the boot replay: the
+        // replay re-collects every checkpoint signature of the epoch, and
+        // each one is dropped on the next aggregator pass instead of
+        // accumulating. Gating this on the replay would invert that and make
+        // the boot replay the worst case for signature retention — the memory
+        // bound in dev-docs/specs/event-sourced-epoch.md depends on this task
+        // starting immediately. The builder is gated for the opposite reason:
+        // its output submits to consensus, which has not started yet.
         if let Some(certified_system_checkpoint_output) = certified_system_checkpoint_output {
             let aggregator = SystemCheckpointAggregator::new(
                 system_checkpoint_store.clone(),
@@ -1237,5 +1248,15 @@ mod tests {
             SystemCheckpointAggregator::next_checkpoint_to_certify_from(None, 0),
             1
         );
+    }
+
+    /// The system-checkpoint mirror of
+    /// `dwallet_checkpoints::tests::the_signature_aggregator_takes_no_replay_waiter`
+    /// — same dependency, same inversion if it is gated, same reason the pin is
+    /// a compile-time one.
+    #[test]
+    fn the_signature_aggregator_takes_no_replay_waiter() {
+        fn accepts_only_self<F: std::future::Future>(_: fn(SystemCheckpointAggregator) -> F) {}
+        accepts_only_self(SystemCheckpointAggregator::run);
     }
 }

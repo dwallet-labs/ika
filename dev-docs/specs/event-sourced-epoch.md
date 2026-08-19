@@ -447,6 +447,18 @@ The prune also makes the REPLAY flat rather than the worst case. A boot
 re-collects every checkpoint signature of the epoch against a watermark already
 at the head, so each is dropped on the next pass instead of accumulating.
 
+**That rests on the signature aggregator NOT being replay-gated**, which is an
+asymmetry worth stating because it looks like an inconsistency. The checkpoint
+BUILDER waits for the replay signal (`builder.run(replay_waiter)`); the
+aggregator does not (`aggregator.run()`), on both families. The aggregator is
+what prunes, so it has to be looping throughout the replay — it runs at least
+once a second — for the drop-on-next-pass argument above to hold. Symmetrizing
+the two spawns would look like tidying and would silently turn the boot replay
+into the worst case for signature retention. The builder is gated for the
+opposite reason: its output submits to consensus, which has not started yet.
+The prune's own correctness does not depend on this; only the replay bound
+does.
+
 **The processed-transaction dedup set — unbounded, measured, watched.** One
 entry per verified consensus transaction of the epoch, never pruned within it:
 a duplicate can arrive at any later commit, and evicting would let it be
