@@ -189,6 +189,19 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v131
 # removes an original validator (5→4).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v131_churn
 
+# THE ROLLBACK GATE, and the only backward direction in the matrix: the
+# candidate runs the network, then the v1.3.1 release is put BACK on one
+# validator mid-epoch, on stores the candidate has been writing. Asserts the
+# old binary re-derives the epoch against empty fold-side tables, COUNTS the
+# already-settled work it re-sends (measured at the peers against a control
+# window; the number is the operator-facing "mid-epoch rollback re-emits"
+# figure, printed by the step as `re_submitted_consensus_transactions`), and
+# that a peer witnesses it authoring MPC output again before the boundary.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=mid_epoch_rollback
+#   the whole experiment must fit inside ONE epoch (the boundary hands the
+#   node a fresh epoch store and ends it), so give a loaded runner more room
+#   with -f epoch_duration_ms=1200000 rather than letting it drift across.
+
 # Loaded runner slack: bump epochs.
 #   -f epoch_duration_ms=600000
 

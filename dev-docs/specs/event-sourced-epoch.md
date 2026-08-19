@@ -599,36 +599,65 @@ finds an epoch store holding NOTHING it recognises as progress: the per-round
 column families are absent, and so now are every fold-side table and any
 record of how far the handler got.
 
-Two consequences, and the second is new:
+The consequence is one thing, not two, because the two run in sequence: the
+old binary's fold starts from the epoch's first commit against empty tables and
+re-derives the whole epoch through its own table-WRITING path — and the tables
+it writes on the way are the same per-round tables its MPC drain reads. The
+argument that used to cover the re-fold ("`last_consensus_stats` holds the tally
+of a full replay, which is what the old binary would have written itself") is
+dead: there is no tally to inherit. What replaces it is that the old binary's
+own code rebuilds what it needs, so the drain is starved only for as long as the
+re-derivation takes, not for the rest of the epoch.
 
-- its MPC drain has no round history to read, so it processes nothing until
-  the epoch boundary hands it a fresh epoch store and a live stream —
-  degraded MPC for the remainder of the epoch, with checkpoints and the epoch
-  close still produced by its fold;
-- its fold starts from the epoch's first commit against empty tables and
-  re-derives the whole epoch through its own table-WRITING path. The
-  argument that used to cover this ("`last_consensus_stats` holds the tally of
-  a full replay, which is what the old binary would have written itself") is
-  dead: there is no tally to inherit. Whether an old binary's re-fold-from-zero
-  onto empty tables behaves is untested — it re-emits an epoch of checkpoint
-  signatures with none of the settled-state suppression this binary added,
-  which is a volume problem rather than a correctness one, but "rather than"
-  is an argument and not a measurement.
+Two things this costs, both of them transient:
 
-The upgrade matrix is where this gets tested rather than argued; it is the
-required evidence, and until it exists treat a mid-epoch rollback as costing
-that node's MPC participation for the rest of the epoch AND putting it through
-a full re-derivation on the old binary.
+- **restart-to-live, on the old binary too.** Its `replay_after` is
+  `last_processed_subdag_index()`, read from the absent watermark, so it is 0
+  and consensus re-sends the epoch from its first commit. The node follows
+  consensus and produces checkpoints throughout; its MPC participation returns
+  once the re-derivation reaches the round its peers have consumed.
+- **re-emission into the DAG.** The re-fold runs against an empty
+  `consensus_message_processed` table, so the old binary re-submits work it has
+  already settled and peers discard it as already-folded. The dominant term is
+  MPC messages and outputs replayed over the rebuilt rounds. It is NOT an
+  epoch of checkpoint signatures: v1.3.1's own submission gate
+  (`get_highest_verified_dwallet_checkpoint`) reads the perpetual checkpoint
+  store, which a rollback does not touch, so it re-signs only the band between
+  the verified watermark and what had been certified — the band this binary's
+  broader `get_highest_settled_dwallet_checkpoint_seq` closed. Earlier drafts of
+  this section claimed the old binary had no settled-state suppression at all;
+  it has the narrower one.
+
+Everything above is read off the two binaries' source; what MEASURES it is the
+`mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the candidate
+first and puts the v1.3.1 release back on one validator mid-epoch, on the same
+stores. It asserts the re-derivation reaches the peers' consumed round (the
+witness is `ika_last_process_mpc_consensus_round` on the rolled-back node,
+which v1.3.1 sets from the tables its own fold writes), counts the re-emission
+at the peers on `ika_skipped_consensus_txns` against a control window of
+ordinary traffic, and requires a peer to witness an MPC output authored by the
+rolled-back validator for a session created after the catch-up. The whole run
+is bracketed by an epoch ceiling, because a boundary would hand the node a
+fresh epoch store and make all three free.
+
+Two numbers this section still owes, both of which that scenario produces on
+its first green run and neither of which should be guessed in the meantime:
+how many already-settled consensus transactions a rollback re-sends, and how
+long the re-derivation leaves the node's MPC degraded.
 
 **Release note, for lifting verbatim into operator notes:** rolling this binary
-back mid-epoch does not restore the node's MPC participation until the next
-epoch boundary. The node starts, follows consensus, and keeps producing
-checkpoints, but its MPC drain has no round history to read and will sit out
-until the boundary hands it a fresh epoch store, while its consensus handler
-re-derives the epoch from its first commit. A rollback taken *at* a boundary is
-unaffected. This must not be discovered mid-incident: an operator rolling back
-to recover from something else needs to know the recovery costs MPC for up to
-one epoch.
+back mid-epoch puts that node through a full re-derivation of the epoch before
+it is fully live again. It starts, follows consensus and keeps producing
+checkpoints immediately, but its MPC drain has no round history until its own
+fold rewrites it from the epoch's first commit — so expect degraded MPC
+participation from that node for the length of the re-derivation, which scales
+with how far into the epoch the rollback is taken. While it re-derives, it
+re-submits work the network has already settled, and peers discard it as
+already-folded: expect DAG noise, not corruption. A rollback taken *at* a
+boundary is unaffected and costs neither. This must not be discovered
+mid-incident: an operator rolling back to recover from something else needs to
+know the recovery costs a re-derivation, and that the cost is paid once rather
+than until the next boundary.
 
 ## What this is tested by, and what it is not
 
@@ -695,11 +724,13 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   advances. This is the scenario the close-round re-roll above makes newly
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
-- **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
-  where the rollback section above gets tested rather than argued. It is now
-  an argument with two teeth: a rolled-back node loses MPC for the rest of the
-  epoch, and it re-derives the whole epoch through its own table-writing fold
-  onto empty tables, which nothing has exercised.
+- **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`). The
+  forward direction is covered by `v131_rollout` / `v131_churn`; the BACKWARD
+  direction — the rollback section above — is `mid_epoch_rollback`, which puts
+  the v1.3.1 release back on one validator mid-epoch and asserts the
+  re-derivation reaches the peers' consumed round, counts the already-settled
+  work it re-sends, and requires a peer to witness it authoring MPC output
+  again inside the same epoch.
 - **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
   on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
   the commit-channel backlog. This closes both directions the local harness
