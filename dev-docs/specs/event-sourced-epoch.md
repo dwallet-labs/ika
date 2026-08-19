@@ -614,19 +614,41 @@ Two things this costs, both of them transient:
 - **restart-to-live, on the old binary too.** Its `replay_after` is
   `last_processed_subdag_index()`, read from the absent watermark, so it is 0
   and consensus re-sends the epoch from its first commit. The node follows
-  consensus and produces checkpoints throughout; its MPC participation returns
-  once the re-derivation reaches the round its peers have consumed.
-- **re-emission into the DAG.** The re-fold runs against an empty
-  `consensus_message_processed` table, so the old binary re-submits work it has
-  already settled and peers discard it as already-folded. The dominant term is
-  MPC messages and outputs replayed over the rebuilt rounds. It is NOT an
-  epoch of checkpoint signatures: v1.3.1's own submission gate
-  (`get_highest_verified_dwallet_checkpoint`) reads the perpetual checkpoint
-  store, which a rollback does not touch, so it re-signs only the band between
-  the verified watermark and what had been certified — the band this binary's
-  broader `get_highest_settled_dwallet_checkpoint_seq` closed. Earlier drafts of
-  this section claimed the old binary had no settled-state suppression at all;
-  it has the narrower one.
+  consensus and produces checkpoints throughout. The drain itself catches up
+  fast — measured at 13,196 rounds of backlog entered and drained in **276 ms**,
+  because catch-up mode reconstructs rather than recomputes — so the cost is
+  NOT the drain. What an operator waits for is the resumption after catch-up
+  exits: sessions going active again and contributing output. That is the
+  interval the scenario's assertion 3 measures, and the drain's own catch-up
+  time is a misleading proxy for it.
+- **re-emission into the DAG — far less than this section used to claim.** The
+  re-fold does run against an empty `consensus_message_processed` table, so
+  nothing stops the old binary re-submitting on its own account. What stops it
+  is that it has little to re-submit, through THREE independent suppressions,
+  and earlier drafts of this section accounted for none of them:
+  - v1.3.1's checkpoint-signature gate
+    (`get_highest_verified_dwallet_checkpoint`) reads the perpetual checkpoint
+    store, which a rollback does not touch, so it re-signs only the band
+    between the verified watermark and what had been certified — the band this
+    binary's broader `get_highest_settled_dwallet_checkpoint_seq` closed. The
+    claim that the old binary has "none of the settled-state suppression this
+    binary added" was wrong; it has the narrower one.
+  - **#2023 catch-up mode, which is the big one.** A rolled-back node comes up
+    with the whole epoch as backlog, far past `enter_threshold`, so its MPC
+    service enters catch-up: every session the replayed stream carries is
+    reconstructed (`session_origin="reconstructed_from_consensus"`,
+    `active=false`) and no new computation runs until the backlog drains. The
+    MPC messages and outputs that would have dominated a re-emission are never
+    recomputed, so they are never re-sent. This is also why the drain reaches
+    the head so fast — it is not computing.
+  - the sessions that were already complete when the rollback happened are
+    complete again after reconstruction, so they produce no output to submit.
+
+  The first measured run recorded **0** re-submissions at the peers across the
+  catch-up, against 171 for a comparable window of ordinary traffic. Do not
+  read that as the final figure — it was measured over a window with no
+  workload in it, which the scenario has since corrected — but the direction is
+  settled: a mid-epoch rollback is not a spray.
 
 Everything above is read off the two binaries' source; what MEASURES it is the
 `mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the candidate
@@ -641,23 +663,30 @@ is bracketed by an epoch ceiling, because a boundary would hand the node a
 fresh epoch store and make all three free.
 
 Two numbers this section still owes, both of which that scenario produces on
-its first green run and neither of which should be guessed in the meantime:
-how many already-settled consensus transactions a rollback re-sends, and how
-long the re-derivation leaves the node's MPC degraded.
+its first GREEN run and neither of which should be guessed in the meantime:
+how many already-settled consensus transactions a rollback re-sends over a
+window that actually carries a workload, and how long the node's MPC stays
+degraded — measured as resumption after catch-up exits, not as drain time.
+The first run failed on an assertion that encoded the spray prediction rather
+than measuring it, which is how the suppression layers above were found.
 
 **Release note, for lifting verbatim into operator notes:** rolling this binary
 back mid-epoch puts that node through a full re-derivation of the epoch before
 it is fully live again. It starts, follows consensus and keeps producing
-checkpoints immediately, but its MPC drain has no round history until its own
-fold rewrites it from the epoch's first commit — so expect degraded MPC
-participation from that node for the length of the re-derivation, which scales
-with how far into the epoch the rollback is taken. While it re-derives, it
-re-submits work the network has already settled, and peers discard it as
-already-folded: expect DAG noise, not corruption. A rollback taken *at* a
-boundary is unaffected and costs neither. This must not be discovered
-mid-incident: an operator rolling back to recover from something else needs to
-know the recovery costs a re-derivation, and that the cost is paid once rather
-than until the next boundary.
+checkpoints immediately. Its MPC drain has no round history until its own fold
+rewrites it from the epoch's first commit, and while that backlog drains the
+node reconstructs the epoch's sessions instead of computing them — so expect
+that node to contribute no new MPC work until the backlog clears and its
+sessions resume. The backlog itself drains quickly (a 13k-round epoch in well
+under a second, because reconstruction is not computation); what to watch is
+the resumption after it. The same reconstruction is why a rollback is NOT the
+DAG spray an earlier draft of this note predicted: the node has little
+already-settled work left to re-submit, and what it does re-submit peers
+discard as already-folded. A rollback taken *at* a boundary is unaffected and
+costs neither. This must not be discovered mid-incident: an operator rolling
+back to recover from something else needs to know the recovery costs a
+re-derivation, and that the cost is paid once rather than until the next
+boundary.
 
 ## What this is tested by, and what it is not
 
