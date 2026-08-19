@@ -69,7 +69,7 @@ use tracing::{debug, error, instrument, trace_span, warn};
 /// watchdog, because commits keep arriving. That case is covered by
 /// observability rather than by self-exit: `ika_consensus_round_channel_depth`
 /// pinned at capacity together with `ika_consensus_fold_blocked_seconds_total`
-/// climbing while `ika_dwallet_mpc_consumed_round` is flat is a wedged drain,
+/// climbing while `ika_last_process_mpc_consensus_round` is flat is a wedged drain,
 /// and the MPC lag alarm fires on it. Do not "fix" this by moving the call
 /// back after the boundary.
 ///

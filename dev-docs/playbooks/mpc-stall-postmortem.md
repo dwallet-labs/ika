@@ -253,7 +253,7 @@ construction; divergence = determinism bug).
   while the fold waits, because a node holding a commit it received is not
   isolated. So a wedged drain produces no exit and no silence alarm. Its
   signature is `ika_consensus_fold_blocked_seconds_total` climbing while
-  `ika_dwallet_mpc_consumed_round` is flat and
+  `ika_last_process_mpc_consensus_round` is flat and
   `ika_consensus_round_channel_depth` sits at capacity. Check that pair
   before concluding the node is healthy because nothing alarmed.
   `ika_consensus_fold_blocked_sends_total` tells a wedge from a merely
