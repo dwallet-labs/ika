@@ -200,7 +200,8 @@ async fn test_validators_compute_idle_status_correctly() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -298,14 +299,18 @@ async fn test_status_updates_distributed_through_consensus() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         if round > 3 {
             // After a few rounds, verify each epoch store has received idle status updates
             for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-                let updates = epoch_store.round_to_idle_status_updates.lock().unwrap();
-                let total: usize = updates.values().map(|v| v.len()).sum();
+                let delivered = epoch_store.delivered_rounds.lock().unwrap();
+                let total: usize = delivered
+                    .iter()
+                    .map(|round| round.idle_status_updates.len())
+                    .sum();
                 info!(
                     "Round {}: Validator {} has {} total idle status updates in epoch store",
                     round, i, total
@@ -546,7 +551,8 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -620,7 +626,8 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -753,17 +760,28 @@ async fn test_no_idle_status_update_emitted_below_activation() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
     }
 
-    // And none may have reached any epoch store.
+    // And none may have reached any validator's drain.
     for (validator, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-        let updates = epoch_store.round_to_idle_status_updates.lock().unwrap();
-        let total: usize = updates.values().map(|round| round.len()).sum();
+        let delivered = epoch_store.delivered_rounds.lock().unwrap();
+        // Without this the assertion below passes on a harness that delivered
+        // nothing at all, which is exactly how it would fail silently.
+        let last_round = delivered
+            .last()
+            .unwrap_or_else(|| panic!("validator {validator} was handed no rounds at all"))
+            .round;
+        let total: usize = delivered
+            .iter()
+            .map(|round| round.idle_status_updates.len())
+            .sum();
         assert_eq!(
             total, 0,
-            "validator {validator} received IdleStatusUpdates below the activation"
+            "validator {validator} received IdleStatusUpdates below the activation, across \
+             rounds up to {last_round}"
         );
     }
 }

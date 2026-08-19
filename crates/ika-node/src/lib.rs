@@ -45,13 +45,14 @@ use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX, EpochStoreParams,
 };
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
 use ika_core::consensus_manager::ConsensusManager;
+use ika_core::consensus_manager::ReplayWaiter;
 use ika_core::consensus_throughput_calculator::{
     ConsensusThroughputCalculator, ConsensusThroughputProfiler, ThroughputProfileRanges,
 };
@@ -761,16 +762,16 @@ impl IkaNode {
             ValidatorComponentMetrics::new(&registry_service.default_registry());
         let validator_component_metrics_for_reconfig = validator_component_metrics.clone();
 
-        let epoch_store = AuthorityPerEpochStore::new(
-            config.authority_name(),
-            committee_arc.clone(),
-            &config.db_path().join("store"),
-            Some(epoch_options.options),
-            EpochMetrics::new(&registry_service.default_registry()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: config.authority_name(),
+            committee: committee_arc.clone(),
+            parent_path: config.db_path().join("store"),
+            db_options: Some(epoch_options.options),
+            metrics: EpochMetrics::new(&registry_service.default_registry()),
             epoch_start_configuration,
             chain_identifier,
             packages_config,
-        )?;
+        })?;
 
         // Allow the per-epoch handoff record path to persist freshly
         // certified attestations into perpetual storage.
@@ -2142,6 +2143,13 @@ impl IkaNode {
             (None, None)
         };
 
+        // Subscribed BEFORE `ConsensusManager::start` is spawned below, so the
+        // signal cannot be published into an empty subscriber set. Both
+        // checkpoint builders hold one, so neither builds — and therefore
+        // neither submits a signature — before consensus is accepting them.
+        let dwallet_checkpoint_replay_waiter = consensus_manager.replay_waiter();
+        let system_checkpoint_replay_waiter = consensus_manager.replay_waiter();
+
         let bls_dwallet = Self::start_dwallet_checkpoint_service(
             config,
             consensus_adapter.clone(),
@@ -2151,6 +2159,7 @@ impl IkaNode {
             state_sync_handle.clone(),
             dwallet_checkpoint_metrics.clone(),
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            dwallet_checkpoint_replay_waiter,
         );
         let (checkpoint_service, checkpoint_service_tasks): (
             Option<Arc<DWalletCheckpointService>>,
@@ -2169,6 +2178,7 @@ impl IkaNode {
             state_sync_handle.clone(),
             system_checkpoint_metrics.clone(),
             previous_epoch_last_system_checkpoint_sequence_number,
+            system_checkpoint_replay_waiter,
         );
         let (system_checkpoint_service, system_checkpoint_service_tasks): (
             Option<Arc<SystemCheckpointService>>,
@@ -2180,6 +2190,10 @@ impl IkaNode {
 
         let (dwallet_mpc_service_exit_sender, dwallet_mpc_service_exit_receiver) =
             watch::channel(());
+        // The transport's metrics publisher ends with the same epoch as the
+        // service it reports on, and on the same signal — but in a task of its
+        // own, so a wedged drain cannot take the reporting down with it.
+        let transport_metrics_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
         if let Err(e) =
             DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
         {
@@ -2195,8 +2209,32 @@ impl IkaNode {
             >
         });
 
+        // The bounded channel that carries every consensus round from the
+        // fold to the MPC drain. Installed on the epoch store BEFORE consensus
+        // starts (which happens further down, and only after this function
+        // returns), so no commit is ever folded without a receiver attached.
+        // Attached is not the same as consuming: the boot replay folds into
+        // this channel before consensus starts, so the service consumes from
+        // it while the replay runs — see
+        // `DWalletMPCService::drain_while_replaying`, which is what keeps a
+        // replay longer than the capacity from parking forever.
+        // Shared with the commit-liveness watchdog: while the fold is parked
+        // on this channel it is holding a commit, not missing one, so the
+        // watchdog must hold its clock rather than read the pause as
+        // isolation.
+        let fold_blocked = commit_liveness
+            .as_ref()
+            .map(|watchdog| watchdog.fold_blocked_flag())
+            .unwrap_or_default();
+        let (round_sender, round_receiver) = ika_core::authority::round_transport::round_transport(
+            ika_core::authority::round_transport::DEFAULT_ROUND_CHANNEL_CAPACITY,
+            fold_blocked,
+        );
+        epoch_store.install_round_transport(round_sender);
+
         let mut dwallet_mpc_service = DWalletMPCService::new(
             epoch_store.clone(),
+            round_receiver,
             dwallet_mpc_service_exit_receiver,
             EpochStoreSubmitToConsensus::new(epoch_store.clone(), consensus_adapter.clone()),
             config.clone(),
@@ -2298,6 +2336,18 @@ impl IkaNode {
         });
         let replay_waiter = consensus_manager.replay_waiter();
 
+        // The round transport's depth and blocked figures are published from a
+        // task of their own, NOT from the drain: they exist to report a drain
+        // that stopped consuming, and a publisher inside that drain goes
+        // silent in exactly that case.
+        let transport_publisher_metrics = dwallet_mpc_metrics.clone();
+        let transport_publisher_epoch_store = epoch_store.clone();
+        spawn_monitored_task!(DWalletMPCService::publish_round_transport_metrics(
+            transport_publisher_epoch_store,
+            transport_publisher_metrics,
+            transport_metrics_exit_receiver,
+        ));
+
         // Spawn the dWallet MPC Service now that we are done with bootstrapping both
         // from storage and from the consensus.
         spawn_monitored_task!(dwallet_mpc_service.spawn(replay_waiter));
@@ -2325,6 +2375,7 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<DWalletCheckpointService>, JoinSet<()>)> {
         if !epoch_store.protocol_config().bls_checkpoints() {
             info!("BLS checkpoints disabled, skipping DWallet checkpoint service");
@@ -2369,6 +2420,7 @@ impl IkaNode {
             max_tx_per_checkpoint,
             max_dwallet_checkpoint_size_bytes,
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            replay_waiter,
         ))
     }
 
@@ -2381,6 +2433,7 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         system_checkpoint_metrics: Arc<SystemCheckpointMetrics>,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<SystemCheckpointService>, JoinSet<()>)> {
         if !epoch_store.protocol_config().bls_checkpoints() {
             info!("BLS checkpoints disabled, skipping System checkpoint service");
@@ -2427,6 +2480,7 @@ impl IkaNode {
             max_tx_per_system_checkpoint as usize,
             max_system_checkpoint_size_bytes,
             previous_epoch_last_system_checkpoint_sequence_number,
+            replay_waiter,
         ))
     }
 

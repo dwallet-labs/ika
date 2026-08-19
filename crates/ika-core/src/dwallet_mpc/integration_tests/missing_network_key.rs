@@ -97,7 +97,8 @@ async fn network_key_received_after_start_event() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             consensus_round,
-        );
+        )
+        .await;
         consensus_round += 1;
     }
     let Some(network_key_checkpoint) = network_key_checkpoint else {
@@ -172,7 +173,8 @@ async fn network_key_received_after_start_event() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             consensus_round,
-        );
+        )
+        .await;
         consensus_round += 1;
     }
     info!("DWallet DKG first round completed");

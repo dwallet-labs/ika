@@ -22,10 +22,11 @@
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use ika_types::messages_dwallet_mpc::SessionType;
 use prometheus::{
-    GaugeVec, Histogram, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    GaugeVec, Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Registry,
     register_gauge_vec_with_registry, register_histogram_vec_with_registry,
     register_histogram_with_registry, register_int_counter_vec_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    register_int_counter_with_registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry,
 };
 use std::iter;
 use std::sync::Arc;
@@ -125,6 +126,22 @@ pub struct DWalletMPCMetrics {
     /// backlog is draining and the validator will return on its own, flat or
     /// rising means it is trapped and needs intervention.
     pub(crate) catchup_gap_rounds: IntGauge,
+    /// Rounds handed to the drain but not yet consumed.
+    pub(crate) round_channel_depth: IntGauge,
+    /// Cumulative seconds the consensus fold has spent parked on a full
+    /// round channel, including a park still in progress.
+    ///
+    /// A counter rather than a gauge, and not only for the naming rule: the
+    /// transport is per-epoch and its park accounting restarts at zero on
+    /// every boundary, so a gauge fed from it would fall back to zero four
+    /// times a day and `increase()` over the alerting window would be
+    /// meaningless. The publisher feeds the per-sample delta instead, which
+    /// makes this monotonic for the life of the process.
+    pub(crate) fold_blocked_seconds_total: IntCounter,
+    /// Rounds the fold has had to park on. Pairs with the seconds above:
+    /// seconds climbing while this is FLAT is one endless park (a wedged
+    /// drain); both climbing together is a drain that is merely slow.
+    pub(crate) fold_blocked_sends_total: IntCounter,
 
     /// Computation spawn decisions withheld by catch-up mode. Labels:
     /// `session_type` (only the suppressible types — `user` /
@@ -605,6 +622,30 @@ impl DWalletMPCMetrics {
                 "How far MPC round processing trails the consensus tip, in consensus rounds, \
                  as of the most recent service iteration; answers whether a catch-up-gated \
                  validator is draining or stuck (issue #2023)",
+                registry
+            )
+            .unwrap(),
+            round_channel_depth: register_int_gauge_with_registry!(
+                "ika_consensus_round_channel_depth",
+                "Consensus rounds handed to the MPC drain but not yet consumed. Pinned at the \
+                 channel capacity means the consensus fold is waiting on the drain",
+                registry
+            )
+            .unwrap(),
+            fold_blocked_seconds_total: register_int_counter_with_registry!(
+                "ika_consensus_fold_blocked_seconds_total",
+                "Cumulative seconds the consensus fold spent waiting for room in the MPC \
+                 round channel. Climbing while ika_dwallet_mpc_consumed_round is flat is a \
+                 wedged drain — the commit-liveness watchdog deliberately does NOT catch \
+                 that, because a waiting fold is not an isolated node",
+                registry
+            )
+            .unwrap(),
+            fold_blocked_sends_total: register_int_counter_with_registry!(
+                "ika_consensus_fold_blocked_sends_total",
+                "Consensus rounds the fold had to wait to hand over. Read with \
+                 ika_consensus_fold_blocked_seconds_total: seconds climbing while this stays \
+                 flat is a single endless park, i.e. a drain that has stopped consuming",
                 registry
             )
             .unwrap(),

@@ -88,6 +88,7 @@
 
 use ika_core::consensus_handler::ConsensusCommitSink;
 use prometheus::IntGauge;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -257,6 +258,22 @@ pub(crate) struct CommitLivenessWatchdog {
     bound: Duration,
     min_uptime: Duration,
     breach_action: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// True while the consensus fold is parked waiting for the MPC drain to
+    /// take a round.
+    ///
+    /// A HOLD input, exactly like the reconfiguration phase: a parked fold is
+    /// holding a commit it already received, so it is evidence of the
+    /// opposite of isolation. Without it the fold's block would starve the
+    /// arrival reports this watchdog runs on — the loop is not calling
+    /// `recv` while it is parked — and a deep burst would read as silence and
+    /// exit a healthy node.
+    ///
+    /// Considered and rejected: inferring the same thing from the upstream
+    /// commit channel's depth. Depth greater than zero says commits arrived,
+    /// but it stays greater than zero for a fold wedged for any OTHER reason
+    /// too, which would extend the hold to cases it should not cover. This
+    /// flag names the one legitimate reason.
+    fold_blocked: Arc<AtomicBool>,
 }
 
 impl CommitLivenessWatchdog {
@@ -274,7 +291,16 @@ impl CommitLivenessWatchdog {
             reconfig_phase_gauge,
             resolve_bound(),
             default_breach_action,
+            Arc::new(AtomicBool::new(false)),
         )
+    }
+
+    /// The flag the consensus fold raises while it is parked waiting for the
+    /// MPC drain. Handed to `round_transport` so the two share one cell:
+    /// whoever builds the transport must take it from here, or the watchdog
+    /// holds on a flag nothing ever sets.
+    pub(crate) fn fold_blocked_flag(&self) -> Arc<AtomicBool> {
+        self.fold_blocked.clone()
     }
 
     fn spawn_with(
@@ -282,6 +308,7 @@ impl CommitLivenessWatchdog {
         reconfig_phase_gauge: IntGauge,
         bound: Option<Duration>,
         breach_action: impl FnOnce() + Send + 'static,
+        fold_blocked: Arc<AtomicBool>,
     ) -> Option<Arc<Self>> {
         let bound = bound?;
         let watchdog = Arc::new(Self {
@@ -291,6 +318,7 @@ impl CommitLivenessWatchdog {
             bound,
             min_uptime: bound * MIN_UPTIME_BOUND_MULTIPLE,
             breach_action: Mutex::new(Some(Box::new(breach_action))),
+            fold_blocked,
         });
         watchdog.silence_gauge.set(NOT_ARMED);
         info!(
@@ -328,7 +356,8 @@ impl CommitLivenessWatchdog {
 
     /// One poll iteration. Returns `true` once the breach action has run.
     fn tick(&self, now: Instant) -> bool {
-        let held = self.reconfig_phase_gauge.get() != 0;
+        let held = self.reconfig_phase_gauge.get() != 0
+            || self.fold_blocked.load(std::sync::atomic::Ordering::Acquire);
         let tick = self
             .state
             .lock()
@@ -383,7 +412,7 @@ impl CommitLivenessWatchdog {
 }
 
 impl ConsensusCommitSink for CommitLivenessWatchdog {
-    fn commit_processed(&self, leader_round: u64) {
+    fn commit_received(&self, leader_round: u64) {
         let first = self
             .state
             .lock()
@@ -393,7 +422,7 @@ impl ConsensusCommitSink for CommitLivenessWatchdog {
             info!(
                 leader_round,
                 bound_secs = self.bound.as_secs(),
-                "commit-liveness watchdog armed on this process's first consensus commit"
+                "commit-liveness watchdog armed on the first consensus commit this process received"
             );
         }
     }
@@ -402,6 +431,7 @@ impl ConsensusCommitSink for CommitLivenessWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ika_core::authority::round_transport::{ConsensusRoundPayload, round_transport};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const BOUND: Duration = Duration::from_secs(900);
@@ -452,6 +482,52 @@ mod tests {
             let now = self.at(secs);
             self.state.tick(now, BOUND, MIN_UPTIME, reconfiguring)
         }
+
+        /// A tick taken while the consensus fold is parked on a full round
+        /// channel — the same `held` input the reconfiguration phase feeds.
+        fn tick_at_while_fold_blocked(&mut self, secs: u64) -> Tick {
+            let now = self.at(secs);
+            self.state.tick(now, BOUND, MIN_UPTIME, true)
+        }
+    }
+
+    /// The state machine honours a hold from the fold-blocked input.
+    ///
+    /// NOT sufficient on its own — it drives `tick` directly and so cannot
+    /// tell whether the watchdog actually DERIVES its hold from the shared
+    /// flag. `a_spawned_watchdog_holds_while_the_fold_is_blocked` covers the
+    /// wiring; this covers the arithmetic. Written this way because the first
+    /// draft was only this half, and deleting the wiring left it green.
+    #[test]
+    fn a_held_clock_survives_a_burst_and_still_breaches_after_it() {
+        let mut clock = Clock::new();
+        clock.commit_at(2_000);
+
+        // Two hours of burst, far past the bound, with no arrivals stamped
+        // because the loop is parked inside the fold.
+        let mut last_blocked_tick = 0;
+        for minute in 0..120 {
+            last_blocked_tick = 2_000 + minute * 60;
+            assert_eq!(
+                clock.tick_at_while_fold_blocked(last_blocked_tick),
+                Tick::Idle,
+                "a fold waiting on the drain is holding a commit, not missing one",
+            );
+        }
+
+        // The burst clears: the clock restarts from the last held tick, so
+        // the blocked time is not retroactively counted against the node.
+        assert_eq!(
+            clock.tick_at(last_blocked_tick + 60),
+            Tick::Silent(Duration::from_secs(60)),
+            "silence must be measured from the end of the hold, not its start",
+        );
+        // And a node that genuinely goes quiet after the burst still breaches,
+        // so the hold buys tolerance for blocking and nothing else.
+        assert_eq!(
+            clock.tick_at(last_blocked_tick + 1_000),
+            Tick::Breach(Duration::from_secs(1_000)),
+        );
     }
 
     #[test]
@@ -588,11 +664,12 @@ mod tests {
             gauge("test_reconfig_phase"),
             Some(BOUND),
             on_breach,
+            Arc::new(AtomicBool::new(false)),
         )
         .expect("an enabled watchdog spawns");
         assert_eq!(silence.get(), NOT_ARMED);
 
-        watchdog.commit_processed(1_234);
+        watchdog.commit_received(1_234);
         // One second past a poll boundary, so the last tick to have run is
         // the one at 600s rather than a race between two timers due at the
         // same instant.
@@ -611,6 +688,127 @@ mod tests {
         );
     }
 
+    /// THE hazard test: a fold parked on a full round channel must not
+    /// breach, and the watchdog must learn that from the shared flag rather
+    /// than from anything the test hands it.
+    ///
+    /// While the fold waits for the MPC drain, the consensus loop is not
+    /// calling `recv`, so no arrival is stamped and the silence clock runs
+    /// even though commits are queuing one hop upstream. Without the hold a
+    /// deep burst exits a healthy node after the bound, and the node replays
+    /// into the same burst — the crash loop this design removes,
+    /// reintroduced one hop below where it was fixed.
+    #[tokio::test(start_paused = true)]
+    async fn a_spawned_watchdog_holds_while_the_fold_is_blocked() {
+        let (fired, on_breach) = flag();
+        let silence = gauge("test_fold_blocked_commit_silence_seconds");
+        let fold_blocked = Arc::new(AtomicBool::new(false));
+        let watchdog = CommitLivenessWatchdog::spawn_with(
+            silence.clone(),
+            gauge("test_fold_blocked_reconfig_phase"),
+            Some(BOUND),
+            on_breach,
+            fold_blocked.clone(),
+        )
+        .expect("an enabled watchdog spawns");
+
+        watchdog.commit_received(1_234);
+        // The burst starts: the fold parks on a full channel and stamps no
+        // further arrivals.
+        fold_blocked.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(4 * BOUND.as_secs())).await;
+        assert!(
+            !fired.load(Ordering::SeqCst),
+            "a fold blocked on the drain must not read as consensus silence, however long              the burst lasts"
+        );
+
+        // The burst clears and the node goes genuinely quiet: it must still
+        // breach, so the hold buys tolerance for blocking and nothing else.
+        fold_blocked.store(false, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(2 * BOUND.as_secs())).await;
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "silence after the burst clears must still exit the node"
+        );
+    }
+
+    /// The same hazard driven end to end: a REAL round channel, filled by
+    /// real sends, holding a real watchdog.
+    ///
+    /// The test above sets the shared flag by hand, so it proves the watchdog
+    /// honours the flag but not that anything ever sets it. This wires the two
+    /// halves together the way the node does — one `Arc<AtomicBool>` handed to
+    /// both — so that removing either end (the transport's store, or the
+    /// watchdog's load) exits a node whose only problem is a slow drain.
+    #[tokio::test(start_paused = true)]
+    async fn a_full_round_channel_holds_the_watchdog_while_commits_queue() {
+        let (fired, on_breach) = flag();
+        let fold_blocked = Arc::new(AtomicBool::new(false));
+        let watchdog = CommitLivenessWatchdog::spawn_with(
+            gauge("test_full_channel_commit_silence_seconds"),
+            gauge("test_full_channel_reconfig_phase"),
+            Some(BOUND),
+            on_breach,
+            fold_blocked.clone(),
+        )
+        .expect("an enabled watchdog spawns");
+        // Capacity one so the second round provably parks the fold.
+        let (sender, mut receiver) = round_transport(1, fold_blocked);
+
+        watchdog.commit_received(1_234);
+        sender.send(round_payload(1)).await;
+
+        // Rounds 2..=8 queue behind a drain that is not consuming. The fold
+        // parks on the first of them and stamps no further arrivals.
+        let fold = {
+            let sender = sender.clone();
+            tokio::spawn(async move {
+                for round in 2..=8 {
+                    sender.send(round_payload(round)).await;
+                }
+            })
+        };
+        tokio::time::sleep(Duration::from_secs(4 * BOUND.as_secs())).await;
+
+        assert!(
+            sender.fold_blocked(),
+            "capacity is one and nothing has been consumed; the fold must be parked"
+        );
+        assert!(
+            !fired.load(Ordering::SeqCst),
+            "a node whose fold is parked on a full round channel is not an isolated node, and \
+             must not be exited however long the queue takes to clear"
+        );
+
+        // The drain catches up. The hold must lift with it, not outlive it.
+        for _ in 1..=8 {
+            receiver.recv().await.expect("the fold is still sending");
+        }
+        fold.await.unwrap();
+        assert!(!sender.fold_blocked(), "the hold lifts when the fold does");
+        tokio::time::sleep(Duration::from_secs(2 * BOUND.as_secs())).await;
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "silence once the queue has cleared is ordinary commit silence and must still exit"
+        );
+    }
+
+    fn round_payload(round: u64) -> ConsensusRoundPayload {
+        ConsensusRoundPayload {
+            round,
+            mpc_messages: Vec::new(),
+            mpc_outputs: Vec::new(),
+            internal_mpc_outputs: Vec::new(),
+            verified_dwallet_checkpoint_messages: Vec::new(),
+            verified_system_checkpoint_messages: Vec::new(),
+            idle_status_updates: Vec::new(),
+            sui_chain_observation_updates: Vec::new(),
+            global_presign_requests: Vec::new(),
+            noa_observations: Vec::new(),
+            noa_presign_demands: Vec::new(),
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_spawned_watchdog_holds_while_consensus_is_down() {
         let (fired, on_breach) = flag();
@@ -620,10 +818,11 @@ mod tests {
             gauge("test_held_reconfig_phase"),
             Some(BOUND),
             on_breach,
+            Arc::new(AtomicBool::new(false)),
         )
         .expect("an enabled watchdog spawns");
 
-        watchdog.commit_processed(1_234);
+        watchdog.commit_received(1_234);
         watchdog.consensus_stopped();
         tokio::time::sleep(Duration::from_secs(6 * 3_600)).await;
         assert!(
@@ -649,6 +848,7 @@ mod tests {
                 gauge("test_disabled_reconfig_phase"),
                 None,
                 on_breach,
+                Arc::new(AtomicBool::new(false)),
             )
             .is_none(),
             "IKA_COMMIT_LIVENESS_WATCHDOG_SECS=0 must install no watchdog at all"

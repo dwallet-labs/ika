@@ -241,6 +241,41 @@ pub struct EpochMetrics {
     /// but the corresponding mpc_data blob is missing/invalid in perpetual
     /// storage (it refuses to self-attest); 0 otherwise. Alert == 1.
     pub own_mpc_data_blob_unhealthy: IntGauge,
+
+    /// Consensus-transaction digests the epoch's fold is holding for dedup —
+    /// one per verified transaction of the epoch, never pruned within it.
+    ///
+    /// This is the epoch store's largest single in-memory structure and it
+    /// grows with the epoch's traffic, so it is the number to watch for the
+    /// memory cost of holding derived state in RAM. Multiply by ~69 bytes per
+    /// entry for its worst-case footprint.
+    pub processed_consensus_messages: IntGauge,
+
+    /// Peer checkpoint signatures held for aggregation, per family. Pruned
+    /// below the certified watermark, so on a running node a steady value near
+    /// the committee size is healthy and sustained growth means certification
+    /// has stalled. During a boot replay they sawtooth instead — the fold
+    /// re-inserts faster than the once-a-second prune — which is bounded and
+    /// normal.
+    pub pending_dwallet_checkpoint_signatures: IntGauge,
+    pub pending_system_checkpoint_signatures: IntGauge,
+
+    /// Entries in each builder's input queue, sampled where the queue is
+    /// MUTATED rather than on a builder pass.
+    ///
+    /// That is the whole point of them: the builders wait for the boot replay
+    /// before their first pass, while the MPC drain fills the queue throughout
+    /// it, so a builder-sampled depth reports nothing during the one window
+    /// where the queue grows without a consumer.
+    /// `ika_pending_dwallet_checkpoint_queue_depth` is the builder-sampled
+    /// view and stays the right one for "is the builder stuck"; these two are
+    /// the right one for "how much is the replay accumulating".
+    ///
+    /// Entries, not bytes. Each carries one consensus round's checkpoint
+    /// content, so multiply by the epoch's average checkpoint size for a
+    /// footprint.
+    pub pending_dwallet_checkpoints: IntGauge,
+    pub pending_system_checkpoints: IntGauge,
 }
 
 impl EpochMetrics {
@@ -476,6 +511,36 @@ impl EpochMetrics {
             own_mpc_data_blob_unhealthy: register_int_gauge_with_registry!(
                 "ika_own_mpc_data_blob_unhealthy",
                 "1 while this validator's own mpc_data blob is missing/invalid in perpetual storage",
+                registry
+            )
+            .unwrap(),
+            processed_consensus_messages: register_int_gauge_with_registry!(
+                "ika_epoch_processed_consensus_messages",
+                "Consensus-transaction digests the epoch's fold holds for dedup",
+                registry
+            )
+            .unwrap(),
+            pending_dwallet_checkpoint_signatures: register_int_gauge_with_registry!(
+                "ika_epoch_pending_dwallet_checkpoint_signatures",
+                "Peer dWallet checkpoint signatures held for aggregation",
+                registry
+            )
+            .unwrap(),
+            pending_system_checkpoint_signatures: register_int_gauge_with_registry!(
+                "ika_epoch_pending_system_checkpoint_signatures",
+                "Peer system checkpoint signatures held for aggregation",
+                registry
+            )
+            .unwrap(),
+            pending_dwallet_checkpoints: register_int_gauge_with_registry!(
+                "ika_epoch_pending_dwallet_checkpoints",
+                "Entries in the dWallet checkpoint builder's input queue, sampled on mutation",
+                registry
+            )
+            .unwrap(),
+            pending_system_checkpoints: register_int_gauge_with_registry!(
+                "ika_epoch_pending_system_checkpoints",
+                "Entries in the system checkpoint builder's input queue, sampled on mutation",
                 registry
             )
             .unwrap(),

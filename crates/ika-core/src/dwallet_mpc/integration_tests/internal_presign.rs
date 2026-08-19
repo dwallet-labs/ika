@@ -121,7 +121,8 @@ async fn run_one_round_discarding_all_messages(test_state: &mut IntegrationTestS
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as u64,
-    );
+    )
+    .await;
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -135,7 +136,8 @@ async fn run_one_round_delivering_messages(test_state: &mut IntegrationTestState
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         test_state.consensus_round as u64,
-    );
+    )
+    .await;
     test_state.consensus_round += 1;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -350,7 +352,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
     // Run 16 rounds, verifying exact instantiation predictions each round.
     //
-    // Key timing: within `process_consensus_rounds_from_storage`:
+    // Key timing: within `drain_consensus_rounds`:
     //   1. number_of_consensus_rounds += 1
     //   2. process status updates → update network_is_idle
     //   3. instantiate_internal_presign_sessions (reads pool from epoch_store)
@@ -365,7 +367,8 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         // Snapshot pre-loop state: this is exactly what step 3 sees for
@@ -565,7 +568,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -642,7 +646,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -674,7 +679,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -763,7 +769,8 @@ async fn test_internal_presign_continues_when_idle() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -1274,7 +1281,8 @@ async fn test_internal_presign_multi_key_install_lag_keeps_identifiers_uniform()
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         round_after_k1 + 1,
-    );
+    )
+    .await;
     test_state.consensus_round = (round_after_k1 + 2) as usize;
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration().await;
@@ -1601,7 +1609,7 @@ fn locally_minted_pool_ordinals(
 /// fresh process re-creates them); the epoch store is the only survivor.
 /// `last_session_to_complete_in_current_epoch` is restored directly, exactly
 /// as the tests around network-key creation set it.
-fn restart_validator_zero(
+async fn restart_validator_zero(
     test_state: &mut IntegrationTestState,
     seeds: &HashMap<AuthorityName, RootSeed>,
     bundles: &OffChainCommitteeBundles,
@@ -1624,6 +1632,12 @@ fn restart_validator_zero(
     test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager_mut()
         .last_session_to_complete_in_current_epoch = 400;
+    // The boot replay, in harness form: the replacement service brought a
+    // fresh transport with it, so the epoch's rounds have to be re-fed into it
+    // or the restarted validator would sit at round zero while its peers run
+    // on. A real node gets this by folding the epoch's commits out of the
+    // consensus store.
+    test_state.epoch_stores[0].replay_recorded_rounds().await;
 }
 
 /// Regression test for issue #1952: `next_internal_presign_sequence_number`
@@ -1766,7 +1780,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
         )
         .expect("insert_presigns");
 
-    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    restart_validator_zero(&mut test_state, &seeds, &bundles).await;
     assert!(
         test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
@@ -1928,7 +1942,7 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
         .max_filled_presign_pool_slot(algorithm, network_key_id)
         .expect("max_filled_presign_pool_slot")
         .expect("phase 3 refilled the pool");
-    restart_validator_zero(&mut test_state, &seeds, &bundles);
+    restart_validator_zero(&mut test_state, &seeds, &bundles).await;
     while test_state.epoch_stores[0]
         .pop_presign_for_testing(algorithm, network_key_id)
         .expect("pop_presign_for_testing")

@@ -594,7 +594,8 @@ async fn global_presign_request_uses_correct_metadata_test() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         // Now services can read from the round we just set up
         for service in test_state.dwallet_mpc_services.iter_mut() {

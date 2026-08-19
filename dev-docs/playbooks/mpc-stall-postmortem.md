@@ -236,9 +236,9 @@ construction; divergence = determinism bug).
   hunting is "never", not "slow". Before tightening, check whether the
   thing eventually happened after the budget expired.
 - **A validator that trails consensus is draining or dead, and the
-  difference is whether the gap falls.** A restart replays the epoch's
-  rounds from 0, so a huge `ika_mpc_consensus_round_lag` right after one
-  is expected, not a stall — the MPC service says so itself
+  difference is whether the gap falls.** A restart refolds the epoch from
+  its first commit and feeds every round to the drain again, so a huge
+  `ika_mpc_consensus_round_lag` right after one is expected, not a stall — the MPC service says so itself
   (`MPC service entered catch-up mode`), and
   `ika_dwallet_mpc_catchup_gap_rounds` falls fast while it drains
   (~40x the tip rate, with computation suppressed). What to act on is
@@ -246,7 +246,23 @@ construction; divergence = determinism bug).
   draining and MPC has stopped: `MPC subsystem has stopped keeping up
   with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`
   (draining, but the gap stopped falling). Restarting a validator that
-  is mid-drain only discards its progress and replays it.
+  is mid-drain only discards its progress and makes it refold the epoch.
+- **A drain that stopped consuming does NOT trip the commit-liveness
+  watchdog, by design.** The consensus fold hands rounds to the drain over a
+  bounded channel and waits when it is full; the watchdog holds its clock
+  while the fold waits, because a node holding a commit it received is not
+  isolated. So a wedged drain produces no exit and no silence alarm. Its
+  signature is `ika_consensus_fold_blocked_seconds_total` climbing while
+  `ika_dwallet_mpc_consumed_round` is flat and
+  `ika_consensus_round_channel_depth` sits at capacity. Check that pair
+  before concluding the node is healthy because nothing alarmed.
+  `ika_consensus_fold_blocked_sends_total` tells a wedge from a merely
+  slow drain: flat while the seconds climb is ONE park that never ended;
+  climbing alongside them is many short parks, i.e. a drain that is
+  behind but alive (the reading table is in
+  [`production-alerts.md`](production-alerts.md)). The seconds gauge
+  counts the park still in progress, so a permanently parked fold keeps
+  moving it — a flat reading is evidence, not a gap in the metric.
 - **The log's absence of a line is only meaningful at the right
   RUST_LOG.** Several load-bearing lines are debug-level; at info, do
   not conclude "X never happened" for a debug-level X.

@@ -22,6 +22,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::consensus_manager::ReplayWaiter;
 
 use ika_types::crypto::AuthorityStrongQuorumSignInfo;
 use ika_types::digests::DWalletCheckpointMessageDigest;
@@ -238,6 +239,39 @@ impl DWalletCheckpointStore {
         self.get_dwallet_checkpoint_by_digest(&highest_verified.1)
     }
 
+    /// The highest sequence number this node has SEEN SETTLED: the greater of
+    /// the state-sync-verified watermark and the head of the certificates this
+    /// node aggregated itself.
+    ///
+    /// Both inputs mean the same thing — a stake quorum signed that checkpoint
+    /// — so both are convergent: every honest validator arrives at the same
+    /// answer once it has seen the same certificates, in any order, and neither
+    /// is a record of how much work THIS node has done. That distinction is why
+    /// this is the right key to suppress signature re-submission against when a
+    /// restart rebuilds the epoch's checkpoints from consensus: a local
+    /// progress counter would be a second truth beside the consensus store, but
+    /// "this checkpoint is already certified" is an observation about the
+    /// network that any node can make independently.
+    ///
+    /// The two are combined because they move independently. The verified
+    /// watermark is bumped only by state sync (`insert_verified_checkpoint`),
+    /// never by local aggregation, so a node that certified a checkpoint itself
+    /// but has not synced past it would otherwise still re-sign it.
+    pub fn get_highest_settled_dwallet_checkpoint_seq(
+        &self,
+    ) -> IkaResult<Option<DWalletCheckpointSequenceNumber>> {
+        let highest_verified = self
+            .get_highest_verified_dwallet_checkpoint()?
+            .map(|checkpoint| *checkpoint.sequence_number());
+        let highest_certified = self
+            .certified_checkpoints
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(sequence_number, _)| sequence_number);
+        Ok(highest_verified.max(highest_certified))
+    }
+
     pub fn get_highest_synced_dwallet_checkpoint(
         &self,
     ) -> Result<Option<VerifiedDWalletCheckpointMessage>, TypedStoreError> {
@@ -450,8 +484,23 @@ impl DWalletCheckpointBuilder {
         }
     }
 
-    async fn run(mut self) {
+    async fn run(mut self, replay_waiter: ReplayWaiter) {
         info!("Starting DWalletCheckpointBuilder");
+
+        // Wait for the epoch's derived state to be rebuilt and consensus to be
+        // running before building anything. Mirrors how the MPC service waits
+        // on the same signal.
+        //
+        // The builder's output submits a signature per checkpoint, and a boot
+        // that rebuilds an old epoch regenerates this builder's whole input
+        // queue while consensus is still down (see
+        // dev-docs/specs/event-sourced-epoch.md). Without this gate the
+        // builder would drain that queue immediately and park one submission
+        // task per checkpoint on an unset consensus client — enough of them to
+        // trip the adapter's in-flight limit and reject the live traffic that
+        // follows. Ordering the work after the replay costs nothing: the node
+        // is not participating until then either way.
+        replay_waiter.wait_for_replay().await;
 
         // Collect info about the most recently built dwallet checkpoint for metrics.
         let checkpoint_message = self
@@ -791,6 +840,13 @@ impl DWalletCheckpointAggregator {
         let mut result = vec![];
         'outer: loop {
             let next_to_certify = self.next_checkpoint_to_certify()?;
+            // Everything below the watermark is unreachable from here — this
+            // loop only ever reads forward from it — so the epoch stops
+            // holding it. The checkpoint construction state is in memory now,
+            // and one copy of every checkpoint's content per signer for a
+            // whole epoch is not a footprint a validator can carry.
+            self.epoch_store
+                .prune_dwallet_checkpoint_construction(next_to_certify)?;
             let current = if let Some(current) = &mut self.current {
                 // It's possible that the checkpoint was already certified by
                 // the rest of the network, and we've already received the
@@ -850,21 +906,14 @@ impl DWalletCheckpointAggregator {
                 self.current.as_mut().unwrap()
             };
 
-            let epoch_tables = self
+            let pending_signatures = self
                 .epoch_store
-                .tables()
+                .pending_dwallet_checkpoint_signatures_from(
+                    current.checkpoint_message.sequence_number,
+                    current.next_index,
+                )
                 .expect("should not run past end of epoch");
-            let iter = epoch_tables
-                .pending_dwallet_checkpoint_signatures
-                .safe_iter_with_bounds(
-                    Some((
-                        current.checkpoint_message.sequence_number,
-                        current.next_index,
-                    )),
-                    None,
-                );
-            for item in iter {
-                let ((seq, index), received_data) = item?;
+            for ((seq, index), received_data) in pending_signatures {
                 if seq != current.checkpoint_message.sequence_number {
                     debug!(
                         checkpoint_seq =? current.checkpoint_message.sequence_number,
@@ -1118,6 +1167,7 @@ impl DWalletCheckpointService {
         max_messages_per_checkpoint: usize,
         max_checkpoint_size_bytes: usize,
         previous_epoch_last_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> (Arc<Self>, JoinSet<()> /* Handle to tasks */) {
         info!(
             max_messages_per_checkpoint,
@@ -1139,8 +1189,19 @@ impl DWalletCheckpointService {
             max_checkpoint_size_bytes,
             previous_epoch_last_checkpoint_sequence_number,
         );
-        tasks.spawn(monitored_future!(builder.run()));
+        tasks.spawn(monitored_future!(builder.run(replay_waiter)));
 
+        // NOT gated on the replay waiter, unlike the builder above, and that
+        // asymmetry is load-bearing rather than an oversight. This loop is
+        // what prunes the checkpoint construction state below the certified
+        // watermark, so it has to be running THROUGH the boot replay: the
+        // replay re-collects every checkpoint signature of the epoch, and
+        // each one is dropped on the next aggregator pass instead of
+        // accumulating. Gating this on the replay would invert that and make
+        // the boot replay the worst case for signature retention — the memory
+        // bound in dev-docs/specs/event-sourced-epoch.md depends on this task
+        // starting immediately. The builder is gated for the opposite reason:
+        // its output submits to consensus, which has not started yet.
         if let Some(certified_checkpoint_output) = certified_checkpoint_output {
             let aggregator = DWalletCheckpointAggregator::new(
                 checkpoint_store.clone(),
@@ -1274,5 +1335,28 @@ mod tests {
             DWalletCheckpointAggregator::next_checkpoint_to_certify_from(None, 0),
             1
         );
+    }
+
+    /// The signature aggregator must never become replay-gated.
+    ///
+    /// It is what prunes the checkpoint construction state below the certified
+    /// watermark, so it has to run THROUGH the boot replay: the replay
+    /// re-collects every checkpoint signature of the epoch, and each is
+    /// dropped on the next aggregator pass instead of accumulating. Gating it
+    /// the way `DWalletCheckpointBuilder::run` is gated would look like tidying
+    /// away an inconsistency, and would silently make the boot replay the worst
+    /// case for signature retention — the memory bound in
+    /// `dev-docs/specs/event-sourced-epoch.md` rests on this task starting
+    /// immediately.
+    ///
+    /// Pinned at COMPILE time rather than by running the aggregator, which
+    /// would need an `AuthorityState` this module has no machinery for. If you
+    /// are here because this stopped compiling, you added a parameter to
+    /// `DWalletCheckpointAggregator::run` — read the paragraph above before
+    /// deleting this.
+    #[test]
+    fn the_signature_aggregator_takes_no_replay_waiter() {
+        fn accepts_only_self<F: std::future::Future>(_: fn(DWalletCheckpointAggregator) -> F) {}
+        accepts_only_self(DWalletCheckpointAggregator::run);
     }
 }

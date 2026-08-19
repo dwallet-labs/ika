@@ -26,13 +26,25 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sui_types::committee::EpochId;
 use tokio::sync::{Mutex, broadcast};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{error, info};
+
+mod boot_replay;
 
 #[derive(PartialEq)]
 enum Running {
     True(EpochId, ProtocolVersion),
     False,
+}
+
+/// The commit-consumer monitor created by one `start()`, paired with the commit
+/// index the boot replay had already folded when it was created.
+///
+/// Both halves are needed to answer "did this consumer handle a live commit?",
+/// because the monitor's initial reading is the replay floor, not zero.
+struct StartedCommitConsumer {
+    monitor: Arc<CommitConsumerMonitor>,
+    replay_floor: CommitIndex,
 }
 
 /// Build the consensus-core [`ConsensusProtocolConfig`] from ika's
@@ -112,7 +124,7 @@ pub struct ConsensusManager {
 
     consensus_handler: Mutex<Option<MysticetiConsensusHandler>>,
 
-    consumer_monitor: ArcSwapOption<CommitConsumerMonitor>,
+    consumer_monitor: ArcSwapOption<StartedCommitConsumer>,
     consumer_monitor_sender: broadcast::Sender<Arc<CommitConsumerMonitor>>,
 
     running: Mutex<Running>,
@@ -183,9 +195,38 @@ impl ConsensusManager {
             .consensus_config()
             .expect("consensus_config should exist");
 
+        let node_parameters = consensus_config.parameters.clone().unwrap_or_default();
+        // `commit_sync_batch_size × commit_sync_batches_ahead` is what bounds
+        // this node's memory while the fold is parked on a slow MPC drain, so
+        // the number is ika's business and is pinned here rather than
+        // inherited: the commit syncer stops scheduling fetches once the
+        // consumer trails by that many unhandled commits
+        // (`consensus/core/src/commit_syncer.rs`), which is the only thing
+        // keeping a deep backlog on peers' disks instead of in this process's
+        // commit channel. Upstream's defaults are tuned for Sui's consumer,
+        // which never blocks; ours does, deliberately (see
+        // `dev-docs/specs/event-sourced-epoch.md`), so a retune upstream must
+        // not move our ceiling without us noticing.
+        //
+        // Held at upstream's current values — 100 × 32 = 3,200 unhandled
+        // commits — because lowering them also slows a legitimately-behind
+        // node's catch-up, and that trade should follow the real-payload
+        // measurement in ika #2064 rather than precede it. THIS is the lever
+        // if that measurement comes back badly: the resident cost is
+        // 3,200 × the size of a `CommittedSubDag`, which carries every
+        // validator's blocks for its round.
+        // Upstream shrinks the batch under simulation on purpose, so its
+        // simtests actually cross a batch boundary and exercise commit sync;
+        // pinning the production number unconditionally would have quietly
+        // taken that coverage away from ika's simtests, which is the opposite
+        // of what pinning it is for.
+        const UNHANDLED_COMMIT_CEILING_BATCH_SIZE: u32 = if cfg!(msim) { 5 } else { 100 };
+        const UNHANDLED_COMMIT_CEILING_BATCHES_AHEAD: usize = 32;
         let parameters = Parameters {
             db_path: self.get_store_path(epoch),
-            ..consensus_config.parameters.clone().unwrap_or_default()
+            commit_sync_batch_size: UNHANDLED_COMMIT_CEILING_BATCH_SIZE,
+            commit_sync_batches_ahead: UNHANDLED_COMMIT_CEILING_BATCHES_AHEAD,
+            ..node_parameters
         };
 
         let own_protocol_key = self.protocol_keypair.public();
@@ -212,20 +253,28 @@ impl ConsensusManager {
         // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
         let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
-        let consensus_handler = consensus_handler_initializer.new_consensus_handler();
+        let mut consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
-        let last_processed_commit_index =
-            consensus_handler.last_processed_subdag_index() as CommitIndex;
+        // Rebuild this epoch's derived state before consensus starts. The
+        // per-epoch store was opened with its derived tables deleted, so the
+        // handler begins from nothing and folds every finalized commit the
+        // consensus store holds. `replay_after` is then the store's own last
+        // finalized commit — not a watermark kept beside it — which is what
+        // makes `CommitObserver::recover_and_send_commits` unable to find the
+        // two out of order (ika #2057).
+        let replayed_through = boot_replay::replay_epoch_commits(
+            &parameters.db_path,
+            &mut consensus_handler,
+            &self.metrics,
+        )
+        .await;
+
         let (commit_consumer, commit_receiver) =
-            CommitConsumerArgs::new(last_processed_commit_index, last_processed_commit_index);
+            CommitConsumerArgs::new(replayed_through, replayed_through);
         let monitor = commit_consumer.monitor();
 
-        let handler = MysticetiConsensusHandler::new(
-            last_processed_commit_index,
-            consensus_handler,
-            commit_receiver,
-            monitor.clone(),
-        );
+        let handler =
+            MysticetiConsensusHandler::new(consensus_handler, commit_receiver, monitor.clone());
 
         let mut consensus_handler = self.consensus_handler.lock().await;
         *consensus_handler = Some(handler);
@@ -233,9 +282,19 @@ impl ConsensusManager {
         // If there is a previous consumer monitor, it indicates that the consensus engine has been restarted, due to an epoch change. However, that on its
         // own doesn't tell us much whether it participated on an active epoch or an old one. We need to check if it has handled any commits to determine this.
         // If indeed any commits did happen, then we assume that node did participate on previous run.
+        //
+        // "Any commits" means any commit beyond the one the boot replay had
+        // already folded when that consumer was created: the monitor starts at
+        // the replay floor, so comparing against zero would report every node
+        // that merely replayed an existing store as having participated, and
+        // suppress the amnesia recovery a node that handled nothing live needs.
+        let started_consumer = Arc::new(StartedCommitConsumer {
+            monitor: monitor.clone(),
+            replay_floor: replayed_through,
+        });
         let participated_on_previous_run =
-            if let Some(previous_monitor) = self.consumer_monitor.swap(Some(monitor.clone())) {
-                previous_monitor.highest_handled_commit() > 0
+            if let Some(previous) = self.consumer_monitor.swap(Some(started_consumer)) {
+                previous.monitor.highest_handled_commit() > previous.replay_floor
             } else {
                 false
             };
@@ -282,6 +341,12 @@ impl ConsensusManager {
         )
         .await;
         let client = authority.transaction_client();
+        // The store handle, taken BEFORE the authority is sealed into its Arc:
+        // `shutdown` does `Arc::try_unwrap` on that and panics on a surviving
+        // reference, so the head publisher must hold the store rather than the
+        // authority. Feeds the catch-up gate the one backlog measure the fold
+        // cannot supply — see `spawn_observed_head_publisher`.
+        let consensus_store = authority.store();
 
         let registry_id = self.registry_service.add(registry.clone());
 
@@ -290,6 +355,10 @@ impl ConsensusManager {
 
         // Initialize the client to send transactions to this Mysticeti instance.
         self.client.set(client);
+
+        if let Some(handler) = consensus_handler.as_mut() {
+            handler.spawn_observed_head_publisher(consensus_store, epoch_store.clone());
+        }
 
         // Send the consumer monitor to the replay waiter.
         let _ = self.consumer_monitor_sender.send(monitor);
@@ -393,27 +462,46 @@ impl UpdatableConsensusClient {
         }
     }
 
+    /// Waits until consensus has started for the current epoch.
+    ///
+    /// Deliberately unbounded, and deliberately not fatal. A submission that
+    /// arrives before consensus is up is a normal boot state, not a defect:
+    /// the node rebuilds the epoch's derived state by replaying the consensus
+    /// store before consensus starts
+    /// (`dev-docs/specs/event-sourced-epoch.md`), and on an old epoch that
+    /// legitimately takes tens of minutes, while the epoch tasks and the
+    /// capability notification submit on their own timers from the moment the
+    /// components exist. This used to abort the process after 300 seconds —
+    /// and with `panic = "abort"` in the release profile, one such submission
+    /// would take a healthy, recovering node down.
+    ///
+    /// The wait cannot leak: every caller reaches this through
+    /// `ConsensusAdapter::submit_and_wait`, which runs inside
+    /// `within_alive_epoch` and is dropped at the epoch boundary. The warning
+    /// below is what a genuinely stuck start looks like now.
     async fn get(&self) -> Arc<Arc<dyn ConsensusClient>> {
-        const START_TIMEOUT: Duration = Duration::from_secs(300);
         const RETRY_INTERVAL: Duration = Duration::from_millis(100);
-        if let Ok(client) = timeout(START_TIMEOUT, async {
-            loop {
-                let Some(client) = self.client.load_full() else {
-                    sleep(RETRY_INTERVAL).await;
-                    continue;
-                };
+        const SLOW_START_WARN_INTERVAL: Duration = Duration::from_secs(300);
+
+        let waiting_since = Instant::now();
+        let mut warnings = 0_u32;
+        loop {
+            if let Some(client) = self.client.load_full() {
                 return client;
             }
-        })
-        .await
-        {
-            return client;
+            let waited = waiting_since.elapsed();
+            if waited >= SLOW_START_WARN_INTERVAL * (warnings + 1) {
+                warnings += 1;
+                error!(
+                    waited_secs = waited.as_secs(),
+                    "a consensus submission has been waiting for consensus to start; this is \
+                     expected while the node replays an old epoch to rebuild its derived state, \
+                     and a defect if `ika_consensus_boot_replay_folded_commit_index` is not \
+                     advancing",
+                );
+            }
+            sleep(RETRY_INTERVAL).await;
         }
-
-        panic!(
-            "Timed out after {:?} waiting for Consensus to start!",
-            START_TIMEOUT,
-        );
     }
 
     pub fn set(&self, client: Arc<dyn ConsensusClient>) {
@@ -477,6 +565,16 @@ impl Clone for ReplayWaiter {
 pub struct ConsensusManagerMetrics {
     start_latency: IntGauge,
     shutdown_latency: IntGauge,
+    /// The commit index the boot replay set out to reach — the consensus
+    /// store's last finalized commit for this epoch.
+    pub(crate) boot_replay_target_commit_index: IntGauge,
+    /// How far the boot replay has folded. Equal to the target once the node
+    /// is live; the distance between the two is the remaining boot work, which
+    /// on an old epoch is the dominant term in time-to-live.
+    pub(crate) boot_replay_folded_commit_index: IntGauge,
+    /// Wall-clock seconds the boot replay took. Compared against the epoch's
+    /// age, this is the number the restart-latency budget is set from.
+    pub(crate) boot_replay_latency_seconds: IntGauge,
 }
 
 impl ConsensusManagerMetrics {
@@ -491,6 +589,24 @@ impl ConsensusManagerMetrics {
             shutdown_latency: register_int_gauge_with_registry!(
                 "ika_consensus_manager_shutdown_latency",
                 "The latency of shutting down consensus nodes",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_target_commit_index: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_target_commit_index",
+                "Last finalized consensus commit index this boot's derived-state replay must reach",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_folded_commit_index: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_folded_commit_index",
+                "Consensus commit index this boot's derived-state replay has folded so far",
+                registry,
+            )
+            .unwrap(),
+            boot_replay_latency_seconds: register_int_gauge_with_registry!(
+                "ika_consensus_boot_replay_latency_seconds",
+                "Seconds the derived-state replay took to reach the consensus store head",
                 registry,
             )
             .unwrap(),

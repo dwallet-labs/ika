@@ -12,7 +12,7 @@ use ika_types::digests::ChainIdentifier;
 use ika_types::error::{IkaError, IkaResult};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +26,7 @@ use typed_store::rocksdb::Options;
 use super::epoch_start_configuration::EpochStartConfigTrait;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::authority::round_transport::{ConsensusRoundPayload, RoundTransportSender};
 use crate::authority::{AuthorityCapabilitiesVotingResults, AuthorityMetrics, AuthorityState};
 use crate::dwallet_checkpoints::{
     BuilderDWalletCheckpointMessage, DWalletCheckpointHeight, DWalletCheckpointServiceNotify,
@@ -50,7 +51,6 @@ use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
 use crate::epoch::epoch_metrics::EpochMetrics;
-use crate::epoch_tasks::mpc_data_announcement_sender::ready_signal_deadline_ms;
 use crate::stake_aggregator::StakeAggregator;
 use crate::system_checkpoints::{
     BuilderSystemCheckpoint, PendingSystemCheckpoint, PendingSystemCheckpointInfo,
@@ -60,6 +60,7 @@ use crate::system_checkpoints::{
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use fastcrypto::ed25519::Ed25519Signature;
+use fastcrypto::hash::{Blake2b256, HashFunction};
 use group::PartyID;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
@@ -86,7 +87,7 @@ use ika_types::messages_system_checkpoints::{
 use ika_types::noa_checkpoint::NOAPresignDemandId;
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
 use ika_types::validator_metadata::{
-    SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
 use mpc::WeightedThresholdAccessStructure;
 use mysten_common::sync::notify_once::NotifyOnce;
@@ -98,9 +99,6 @@ use tokio::time::Instant;
 use typed_store::DBMapUtils;
 use typed_store::Map;
 
-/// The key where the latest consensus index is stored in the database.
-// TODO: Make a single table (e.g., called `variables`) storing all our lonely variables in one place.
-const LAST_CONSENSUS_STATS_ADDR: u64 = 0;
 const OVERRIDE_PROTOCOL_UPGRADE_BUFFER_STAKE_INDEX: u64 = 0;
 pub const EPOCH_DB_PREFIX: &str = "epoch_";
 
@@ -422,8 +420,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         checkpoint: PendingDWalletCheckpoint,
     ) -> IkaResult<()>;
 
-    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>>;
-
     /// Publishes the consensus round the MPC service has finished consuming,
     /// and whether its catch-up gate was engaged when it finished.
     ///
@@ -445,30 +441,16 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// loop dies, which is the one case the detector exists for.
     fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool);
 
-    fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>>;
+    /// The highest consensus round this node has OBSERVED — the catch-up
+    /// gate's "how far is there to go". Not the highest folded: under the
+    /// blocking round transport the fold cannot run more than the channel's
+    /// capacity ahead of the drain, so its position would understate the gap
+    /// by orders of magnitude.
+    fn observed_consensus_head_round(&self) -> Round;
 
-    fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>>;
-
-    fn next_dwallet_internal_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>>;
-
-    fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
-
-    fn next_verified_system_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>>;
+    /// The round transport, for publishing its depth and blocked-time
+    /// gauges. `None` on a node that folds but runs no drain.
+    fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>>;
 
     /// Inserts presigns into the pool for the given signature algorithm and network encryption key.
     fn insert_presigns(
@@ -503,18 +485,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<u64>>;
 
-    /// Returns the next idle status updates after the given consensus round.
-    fn next_idle_status_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>>;
-
-    /// Returns the next Sui chain observation updates after the given consensus round.
-    fn next_sui_chain_observation_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>>;
-
     /// Assign a presign to a demand — atomically, and idempotently in the
     /// demand's identity, so the per-epoch replay every consumer performs
     /// after a restart re-reads the same assignment instead of popping a
@@ -526,24 +496,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<PresignAssignmentOutcome>;
-
-    /// Returns the next global presign requests after the given consensus round.
-    fn next_global_presign_request(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>>;
-
-    /// Returns the next NOA observations after the given consensus round.
-    fn next_noa_observation(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>>;
-
-    /// Returns the next NOA presign demands after the given consensus round.
-    fn next_noa_presign_demand(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>>;
 
     /// Reads a NOA sign demand's terminal resolution, if it has one.
     ///
@@ -693,45 +645,21 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>>;
 }
 
-/// The first per-round row STRICTLY after `last_consensus_round` — or the
-/// first row at all on a fresh start (`None`).
-///
-/// Deliberately an exclusive lower bound rather than the previous pattern of
-/// positioning the iterator AT the anchor row and skipping one (`nth(1)`):
-/// the skip variant is only correct while the row at exactly
-/// `last_consensus_round` exists in the table. If that anchor row is ever
-/// absent — a pruned table, a partially rebuilt epoch store — `nth(1)`
-/// consumes the first UNREAD row as if it were the anchor, and because every
-/// per-round stream skips the same round in lockstep, the downstream
-/// dense-stream alignment checks cannot catch it: a consensus round's MPC
-/// messages would silently never be processed. With the exclusive bound a
-/// missing anchor degrades to reading the next live row, which is the
-/// intended semantics ("everything after what I processed").
-fn next_round_row<V>(
-    table: &DBMap<Round, V>,
-    last_consensus_round: Option<Round>,
-) -> IkaResult<Option<(Round, V)>>
-where
-    V: serde::Serialize + serde::de::DeserializeOwned,
-{
-    Ok(table
-        .safe_iter_with_bounds(
-            last_consensus_round.map(|round| round.saturating_add(1)),
-            None,
-        )
-        .next()
-        .transpose()?)
-}
-
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn insert_pending_dwallet_checkpoint(
         &self,
         checkpoint: PendingDWalletCheckpoint,
     ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        Ok(tables
-            .pending_dwallet_checkpoints
-            .insert(&checkpoint.height(), &checkpoint)?)
+        self.ensure_epoch_alive()?;
+        let queued = {
+            let mut construction = self.checkpoint_construction.write();
+            construction
+                .pending_dwallet_checkpoints
+                .insert(checkpoint.height(), checkpoint);
+            construction.pending_dwallet_checkpoints.len()
+        };
+        self.metrics.pending_dwallet_checkpoints.set(queued as i64);
+        Ok(())
     }
 
     fn record_mpc_consumed_consensus_round(&self, round: Round, catching_up: bool) {
@@ -743,60 +671,12 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             })));
     }
 
-    fn last_dwallet_mpc_message_round(&self) -> IkaResult<Option<Round>> {
-        let tables = self.tables()?;
-        Ok(tables
-            .dwallet_mpc_messages
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(r, _)| r))
+    fn observed_consensus_head_round(&self) -> Round {
+        self.observed_consensus_head_round.load(Ordering::Acquire)
     }
 
-    fn next_dwallet_mpc_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCMessage>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_mpc_messages, last_consensus_round)
-    }
-
-    fn next_dwallet_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletMPCOutput>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_mpc_outputs, last_consensus_round)
-    }
-
-    fn next_dwallet_internal_mpc_output(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.dwallet_internal_mpc_outputs, last_consensus_round)
-    }
-
-    fn next_verified_dwallet_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>> {
-        let tables = self.tables()?;
-        next_round_row(
-            &tables.verified_dwallet_checkpoint_messages,
-            last_consensus_round,
-        )
-    }
-
-    fn next_verified_system_checkpoint_message(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>> {
-        let tables = self.tables()?;
-        next_round_row(
-            &tables.verified_system_checkpoint_messages,
-            last_consensus_round,
-        )
+    fn round_transport_for_metrics(&self) -> Option<Arc<RoundTransportSender>> {
+        self.round_transport()
     }
 
     fn insert_presigns(
@@ -833,46 +713,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<u64>> {
         let tables = self.tables()?;
         tables.max_filled_presign_pool_slot(signature_algorithm, dwallet_network_encryption_key_id)
-    }
-
-    fn next_idle_status_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.idle_status_updates, last_consensus_round)
-    }
-
-    fn next_sui_chain_observation_update(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.sui_chain_observation_updates, last_consensus_round)
-    }
-
-    fn next_global_presign_request(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.global_presign_requests, last_consensus_round)
-    }
-
-    fn next_noa_observation(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.noa_observations, last_consensus_round)
-    }
-
-    fn next_noa_presign_demand(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAPresignDemand>)>> {
-        let tables = self.tables()?;
-        next_round_row(&tables.noa_presign_demands, last_consensus_round)
     }
 
     fn noa_presign_demand_resolution(
@@ -1049,8 +889,12 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     }
 
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
-        let tables = self.tables()?;
-        Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
+        self.ensure_epoch_alive()?;
+        Ok(!self
+            .folded_epoch_state
+            .read()
+            .frozen_validator_mpc_data_input_set
+            .is_empty())
     }
 
     fn get_frozen_mpc_data_input_set_trait(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
@@ -1088,6 +932,146 @@ impl NetworkKeyBlobSource for AuthorityPerEpochStore {
     }
 }
 
+/// The epoch state the consensus fold derives, as one commit-boundary group.
+///
+/// Every field here was a per-epoch table that the fold wrote in a single
+/// RocksDB batch, and they share ONE lock for the same reason that was one
+/// batch: a `WriteBatch` is atomic to concurrent readers, so a single lock
+/// acquisition reproduces exactly the visibility it gave — the freeze
+/// partition, the close marker and the two grace anchors still become
+/// observable together or not at all. Mutated only at the commit boundary,
+/// where the batch was committed, so the fold's own mid-commit reads still see
+/// the state as of the previous commit.
+///
+/// Nothing here is durable, and that is the design: the epoch's derived state
+/// is rebuilt by replaying the epoch's commits on every boot
+/// (`dev-docs/specs/event-sourced-epoch.md`).
+#[derive(Default)]
+struct FoldedEpochState {
+    /// The fold's running index and per-author message tallies.
+    last_consensus_stats: Option<ExecutionIndicesWithStats>,
+    /// `commit_timestamp_ms` of the epoch's FIRST processed commit — the
+    /// consensus-clock anchor of the mpc_data ready-signal backstop deadline.
+    epoch_first_commit_timestamp_ms: Option<u64>,
+    /// Every authority whose `EndOfPublish*` vote has been sequenced. Uncapped,
+    /// unlike the `end_of_publish` stake aggregator, which stops accepting
+    /// votes at quorum.
+    end_of_publish_votes: BTreeSet<AuthorityName>,
+    /// Leader round of the commit that first observed the EndOfPublish stake
+    /// quorum — the close-grace anchor.
+    end_of_publish_quorum_round: Option<u64>,
+    /// Size of the `end_of_publish` aggregator at that same commit — the
+    /// `all_voted` fast path's input, which the uncapped set above cannot
+    /// answer (see `process_end_of_publish_vote`).
+    end_of_publish_quorum_voted_count: Option<u64>,
+    /// Set by the commit that emitted the deferred epoch-close message set.
+    epoch_close_emitted: bool,
+    /// Leader round of the commit that first observed the mpc_data
+    /// ready-signal stake quorum — the freeze-grace anchor.
+    mpc_data_ready_quorum_round: Option<u64>,
+    /// Leader round of the commit the freeze fired at. Observability only —
+    /// nothing in the protocol reads it back; it exists so the freeze-round
+    /// gauge reports the round the partition was decided at rather than
+    /// whichever round the fold happens to be on.
+    mpc_data_freeze_round: Option<u64>,
+    /// The frozen `validator -> blob_hash` input set, and its other half.
+    /// Decided at one commit boundary and never revisited within the epoch.
+    frozen_validator_mpc_data_input_set: BTreeMap<AuthorityName, [u8; 32]>,
+    epoch_excluded_validators: BTreeSet<AuthorityName>,
+    /// Per-signer signatures over this epoch's handoff attestation, as
+    /// sequenced. Summed by the epoch-close gate.
+    handoff_signatures: BTreeMap<AuthorityName, Ed25519Signature>,
+}
+
+/// The checkpoint-construction state: the two builders' input queues, their
+/// outputs, and the peer signatures their aggregators consume.
+///
+/// One lock for all six because a builder mutates a queue and its output
+/// together, which is exactly the pair `process_pending_dwallet_checkpoint`
+/// used to write in one batch: a reader that saw the queue drained without the
+/// output that replaced it would rebuild those heights as if they were never
+/// built. Separate from [`FoldedEpochState`] because the builders and the MPC
+/// drain write here off the commit path, and holding the fold's lock across a
+/// builder pass would couple two loops that have no reason to wait on each
+/// other.
+///
+/// RETENTION. The two signature maps and the two builder-output maps are
+/// pruned below the certified watermark rather than kept for the epoch, which
+/// their durable predecessors were. That is safe because both families are
+/// local: a signature map's only consumer is this node's own aggregator, which
+/// reads strictly forward from `next_checkpoint_to_certify()` and resets
+/// itself when it falls below that watermark, and neither family feeds any
+/// consensus-visible decision. Without the prune the epoch retains one copy of
+/// every checkpoint's full content per signer, which is unbounded in the
+/// epoch's traffic — and the boot replay, which re-collects every signature of
+/// the epoch, is the worst case rather than the steady state.
+///
+/// The residual: retention is now bounded by CERTIFICATION LAG. A validator
+/// whose certification stalls holds every signature since the stall, which is
+/// correct — a signature must be kept until the checkpoint it signs is
+/// certified — but it means growth here is the visible symptom of a
+/// certification stall. `ika_epoch_pending_dwallet_checkpoint_signatures` and
+/// `ika_epoch_pending_system_checkpoint_signatures` are that signal.
+///
+/// That describes the STEADY state. During a boot replay the fold re-inserts
+/// at replay speed while the prune fires about once a second, so the two
+/// series sawtooth, with teeth of one prune interval of the fold's
+/// re-insertion rate — full checkpoint-message rows, so tens to hundreds of
+/// megabytes on a deep replay of a busy epoch. Bounded and self-draining, and
+/// not a stall: the envelope is the number to read, not the peak.
+#[derive(Default)]
+struct CheckpointConstructionState {
+    /// Built from the fold's rounds by the MPC drain, consumed by the dWallet
+    /// checkpoint builder, which deletes everything at or below the height it
+    /// built from.
+    pending_dwallet_checkpoints: BTreeMap<DWalletCheckpointHeight, PendingDWalletCheckpoint>,
+    /// The dWallet builder's output over that queue, by sequence number.
+    builder_dwallet_checkpoint_messages:
+        BTreeMap<DWalletCheckpointSequenceNumber, BuilderDWalletCheckpointMessage>,
+    /// Peers' dWallet checkpoint signatures, keyed by
+    /// `(sequence number, arrival index)`.
+    pending_dwallet_checkpoint_signatures:
+        BTreeMap<(DWalletCheckpointSequenceNumber, u64), DWalletCheckpointSignatureMessage>,
+    /// The system-checkpoint mirrors of the three above.
+    pending_system_checkpoints: BTreeMap<SystemCheckpointHeight, PendingSystemCheckpoint>,
+    builder_system_checkpoint_messages:
+        BTreeMap<DWalletCheckpointSequenceNumber, BuilderSystemCheckpoint>,
+    pending_system_checkpoint_signatures:
+        BTreeMap<(DWalletCheckpointSequenceNumber, u64), SystemCheckpointSignatureMessage>,
+}
+
+impl FoldedEpochState {
+    /// Drops everything back to the state a freshly opened epoch store has.
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+impl CheckpointConstructionState {
+    /// Drops everything back to the state a freshly opened epoch store has.
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// The identity and configuration an epoch store is opened with.
+///
+/// Grouped so the constructors take two arguments rather than eight.
+/// Instantiated directly; every field is public and none is derived from
+/// another.
+pub struct EpochStoreParams {
+    pub name: AuthorityName,
+    pub committee: Arc<Committee>,
+    /// The `store` directory the per-epoch databases live under, NOT the
+    /// epoch's own directory — `AuthorityEpochTables::path` appends that.
+    pub parent_path: PathBuf,
+    pub db_options: Option<Options>,
+    pub metrics: Arc<EpochMetrics>,
+    pub epoch_start_configuration: EpochStartConfiguration,
+    pub chain_identifier: ChainIdentifier,
+    pub packages_config: IkaNetworkConfig,
+}
+
 pub struct AuthorityPerEpochStore {
     /// The name of this authority.
     pub name: AuthorityName,
@@ -1105,6 +1089,26 @@ pub struct AuthorityPerEpochStore {
     // needed for re-opening epoch db.
     parent_path: PathBuf,
     db_options: Option<Options>,
+
+    /// The commit boundary hands each round's inputs to the MPC drain over
+    /// this bounded channel, BLOCKING when it is full. Absent on a node that
+    /// runs no drain (a fullnode or notifier), where the payload is dropped —
+    /// nothing downstream of the drain exists there to want it.
+    round_transport: ArcSwapOption<RoundTransportSender>,
+
+    /// The highest consensus round this node has OBSERVED, which is not the
+    /// same as the highest it has folded.
+    ///
+    /// The catch-up gate needs "how far behind is the drain", and under a
+    /// blocking transport the fold's own position cannot answer that: the
+    /// fold is never more than the channel's capacity ahead of the drain, so
+    /// a gap measured against it is pinned far below the gate's entry
+    /// threshold and the gate would silently never engage. This is fed from
+    /// the two places that see further than the fold — the boot replay
+    /// publishes the consensus store's head before it starts folding, and the
+    /// live path reports each commit on arrival, before the fold can block on
+    /// it.
+    observed_consensus_head_round: AtomicU64,
 
     consensus_notify_read: NotifyRead<SequencedConsensusTransactionKey, ()>,
 
@@ -1256,6 +1260,64 @@ pub struct AuthorityPerEpochStore {
     /// deadlines built on this; the max makes it monotone locally
     /// regardless.
     max_processed_commit_timestamp_ms: AtomicU64,
+
+    /// The commit-boundary group of derived state — see [`FoldedEpochState`].
+    folded_epoch_state: RwLock<FoldedEpochState>,
+
+    /// Checkpoint construction — see [`CheckpointConstructionState`].
+    checkpoint_construction: RwLock<CheckpointConstructionState>,
+
+    /// Digests of the consensus transactions this epoch's fold has processed,
+    /// the dedup set `is_consensus_message_processed` answers from.
+    ///
+    /// `Blake2b256(bcs(key))` rather than the key: three
+    /// `ConsensusTransactionKey` variants embed their whole MPC payload (see
+    /// `ConsensusTransactionKey::embeds_payload`), so a set of keys would be
+    /// budgeted by entry count times an unbounded per-entry size. Hashing
+    /// makes the entry cost 32 bytes regardless of the transaction.
+    ///
+    /// One entry per verified transaction of the epoch, never pruned within
+    /// it — a duplicate can arrive at any later commit, and evicting would let
+    /// it be processed twice. So this grows with the epoch's traffic;
+    /// `ika_epoch_processed_consensus_messages` is what makes that visible.
+    processed_consensus_messages: RwLock<HashSet<ConsensusMessageDigest>>,
+
+    /// Most recently advertised capabilities per authority, folded whole into
+    /// the protocol-upgrade vote tally.
+    authority_capabilities: RwLock<BTreeMap<AuthorityName, AuthorityCapabilitiesV1>>,
+
+    /// Latest `ValidatorMpcDataAnnouncement` per current-committee validator,
+    /// newest timestamp wins.
+    validator_mpc_data_announcements: RwLock<BTreeMap<AuthorityName, ValidatorMpcDataAnnouncement>>,
+
+    /// Latest `EpochMpcDataReadySignal` per signer, last write wins.
+    epoch_mpc_data_ready_signals: RwLock<BTreeMap<AuthorityName, EpochMpcDataReadySignal>>,
+}
+
+/// `Blake2b256` of the BCS-serialized [`SequencedConsensusTransactionKey`] —
+/// the identity of a processed consensus transaction, at a fixed 32 bytes.
+type ConsensusMessageDigest = [u8; 32];
+
+/// Hashes a consensus transaction key down to its
+/// [`ConsensusMessageDigest`].
+///
+/// 32 bytes rather than 16 because a collision here does not merely waste
+/// work: two distinct transactions sharing a digest means the second is
+/// treated as already processed and its effects never happen, on this
+/// validator only. That is a divergence, so the collision probability has to
+/// be negligible at any epoch size rather than merely small.
+///
+/// The same BCS bytes the durable table used as its key, so this is the same
+/// identity by a different name — including the append-only discipline on
+/// `ConsensusTransactionKey`'s variants, which is what keeps a key's identity
+/// stable while an epoch is being replayed by a newer binary.
+fn consensus_message_digest(
+    key: &SequencedConsensusTransactionKey,
+) -> IkaResult<ConsensusMessageDigest> {
+    let key = bcs::to_bytes(key).map_err(|e| IkaError::BCSError(e.to_string()))?;
+    let mut hasher = Blake2b256::default();
+    hasher.update(&key);
+    Ok(hasher.finalize().into())
 }
 
 /// The reconfiguration state of the authority.
@@ -1282,23 +1344,30 @@ type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec
 /// presign's session identifier, blending index, and serialized value.
 type PreparedPresignPop = (DBBatch, SessionIdentifier, u16, Vec<u8>);
 
-/// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
+/// The per-epoch state that SURVIVES a restart.
+///
+/// Only state no replay reproduces belongs here — presign material and the
+/// idempotency markers that make replaying against it safe, this validator's
+/// private VSS outputs, the content-addressed output caches, and the
+/// operator's buffer-stake override. Everything the epoch's consensus commits
+/// determine lives in memory on [`AuthorityPerEpochStore`] and is rebuilt by
+/// the boot replay; a durable copy of it would be a second truth the replay
+/// never rewinds, holding rows for commits the consensus store may no longer
+/// have (ika #2057). The split is structural — a field here survives by
+/// definition — so adding one is that decision, with no classification step
+/// in between to catch it: see
+/// `dev-docs/preserved-epoch-state-audit.md` and the
+/// `the_epoch_store_keeps_only_state_no_replay_reproduces` test.
 ///
 /// WRITE DISCIPLINE — read before adding a table, a write site, or a
-/// consumer. This store deliberately holds two persistence patterns, and
-/// confusing them has produced real divergence bugs (#1829, #1917/#1920).
-/// Every field below therefore ends its doc comment with one
-/// `write-discipline:` line, in one of these forms:
+/// consumer. Confusing a table's write pattern with its readers' expectations
+/// has produced real divergence bugs (#1829, #1917/#1920). Every field below
+/// therefore ends its doc comment with one `write-discipline:` line, in one of
+/// these forms:
 ///
-/// - `write-discipline: commit-batched` — the only writer is
-///   `ConsensusCommitOutput::write_to_batch`, so the row lands in the same
-///   atomic batch as the processed-markers of the commit that produced it.
-///   A crash before that batch replays the whole commit and re-derives the
-///   row. This is the required discipline for anything a consensus-visible
-///   decision (close round, freeze partition, checkpoint content) reads.
 /// - `write-discipline: direct — safe because <reason>: <consumer>` — the
-///   row is written outside the commit batch, followed by the argument that
-///   makes the table's consumers survive that. Fixed vocabulary:
+///   row is written outside the commit boundary, followed by the argument
+///   that makes the table's consumers survive that. Fixed vocabulary:
 ///   `pure-function-of-table` (every consumer folds the WHOLE table, with no
 ///   arrival-order or size cap), `idempotent-replay` (re-running the
 ///   producing work rewrites the same key with the same value),
@@ -1319,217 +1388,6 @@ type PreparedPresignPop = (DBBatch, SessionIdentifier, u16, Vec<u8>);
 #[derive(DBMapUtils)]
 #[allow(clippy::type_complexity)]
 pub struct AuthorityEpochTables {
-    /// Track which transactions have been processed in handle_consensus_transaction. We must be
-    /// sure to advance next_shared_object_versions exactly once for each transaction we receive from
-    /// consensus. But, we may also be processing transactions from checkpoints, so we need to
-    /// track this state separately.
-    ///
-    /// Entries in this table can be garbage collected whenever we can prove that we won't receive
-    /// another handle_consensus_transaction call for the given digest. This probably means at
-    /// epoch change.
-    ///
-    /// write-discipline: commit-batched — this IS the marker the other
-    /// commit-batched tables are made atomic with; a marker durable ahead of
-    /// its commit's effects would let `is_consensus_message_processed` skip a
-    /// transaction whose effects were lost.
-    consensus_message_processed: DBMap<SequencedConsensusTransactionKey, bool>,
-
-    /// The following table is used to store a single value (the corresponding key is a constant). The value
-    /// represents the index of the latest consensus message this authority processed, running hash of
-    /// transactions, and accumulated stats of consensus output.
-    /// This field is written by a single process (consensus handler).
-    ///
-    /// write-discipline: commit-batched — `get_last_consensus_stats` seeds the
-    /// consensus handler's replay cursor at startup, so a row durable ahead of
-    /// its commit's effects would skip that commit entirely.
-    last_consensus_stats: DBMap<u64, ExecutionIndicesWithStats>,
-
-    /// This table has information for the checkpoints for which we constructed all the data
-    /// from consensus, but not yet constructed actual checkpoint.
-    ///
-    /// Key in this table is the consensus commit height and not a checkpoint sequence number.
-    ///
-    /// Non-empty list of transactions here might result in empty list when we are forming checkpoint.
-    /// Because we don't want to create checkpoints with empty content(see CheckpointBuilder::write_checkpoint),
-    /// the sequence number of checkpoint does not match height here.
-    ///
-    /// write-discipline: direct — safe because idempotent-replay: written by
-    /// the `DWalletMPCService` round loop, keyed by the consensus round it
-    /// derived the messages from, out of commit-batched inputs
-    /// (`dwallet_mpc_messages` / `dwallet_mpc_outputs` /
-    /// `verified_dwallet_checkpoint_messages`). A crash before the service's
-    /// cursor advances re-derives the same height with the same content. Its
-    /// only consumer is this node's checkpoint builder
-    /// (`process_pending_dwallet_checkpoint`).
-    #[default_options_override_fn = "pending_checkpoints_table_default_config"]
-    pending_dwallet_checkpoints: DBMap<DWalletCheckpointHeight, PendingDWalletCheckpoint>,
-
-    /// write-discipline: commit-batched — the `DWalletMPCService` replay walks
-    /// this table in lockstep with `dwallet_mpc_messages` and requires it to be
-    /// dense and round-aligned with the commits that produced it.
-    #[default_options_override_fn = "verified_dwallet_checkpoint_messages_table_default_config"]
-    verified_dwallet_checkpoint_messages:
-        DBMap<DWalletCheckpointHeight, Vec<DWalletCheckpointMessageKind>>,
-
-    /// write-discipline: commit-batched — same round-alignment requirement as
-    /// `verified_dwallet_checkpoint_messages`, on the system-checkpoint stream.
-    #[default_options_override_fn = "verified_system_checkpoint_messages_table_default_config"]
-    verified_system_checkpoint_messages: DBMap<Round, Vec<SystemCheckpointMessageKind>>,
-
-    /// Stores pending signatures
-    /// The key in this table is checkpoint sequence number and an arbitrary integer
-    ///
-    /// write-discipline: direct — safe because local-only: the only consumer is
-    /// this node's signature aggregator (`dwallet_checkpoints`), whose output is
-    /// a stake-quorum certificate submitted to Sui. Which quorum subset it
-    /// aggregates, and when a peer's row lands, is not observable to peers and
-    /// feeds no consensus-visible decision.
-    pub(crate) pending_dwallet_checkpoint_signatures:
-        DBMap<(DWalletCheckpointSequenceNumber, u64), DWalletCheckpointSignatureMessage>,
-
-    /// Maps sequence number to checkpoint summary, used by CheckpointBuilder to build checkpoint within epoch
-    ///
-    /// write-discipline: direct — safe because idempotent-replay: written in the
-    /// same batch that deletes the `pending_dwallet_checkpoints` entries it
-    /// consumed, so a crash before that batch rebuilds the identical summary
-    /// from the unchanged pending queue. Consumers
-    /// (`last_built_dwallet_checkpoint_message*`) read only this node's own
-    /// build progress.
-    pub(crate) builder_dwallet_checkpoint_message_v1:
-        DBMap<DWalletCheckpointSequenceNumber, BuilderDWalletCheckpointMessage>,
-
-    /// write-discipline: commit-batched for inserts (`write_to_batch`), so the
-    /// system-checkpoint builder never sees a pending entry for a commit whose
-    /// effects were lost. The build-time delete of the consumed prefix is
-    /// direct and local-only — it rides the same batch as the
-    /// `builder_system_checkpoint_v1` rows that replace it.
-    #[default_options_override_fn = "pending_checkpoints_table_default_config"]
-    pending_system_checkpoints: DBMap<SystemCheckpointHeight, PendingSystemCheckpoint>,
-
-    /// Stores pending signatures
-    /// The key in this table is ika system checkpoint sequence number and an arbitrary integer
-    ///
-    /// write-discipline: direct — safe because local-only: mirrors
-    /// `pending_dwallet_checkpoint_signatures` on the system-checkpoint
-    /// aggregator.
-    pub(crate) pending_system_checkpoint_signatures:
-        DBMap<(DWalletCheckpointSequenceNumber, u64), SystemCheckpointSignatureMessage>,
-
-    /// Maps sequence number to ika system checkpoint summary, used by SystemCheckpointBuilder to build checkpoint within epoch
-    ///
-    /// write-discipline: direct — safe because idempotent-replay: mirrors
-    /// `builder_dwallet_checkpoint_message_v1` (written in the same batch that
-    /// deletes the pending entries it consumed).
-    builder_system_checkpoint_v1: DBMap<DWalletCheckpointSequenceNumber, BuilderSystemCheckpoint>,
-
-    /// Record of the capabilities advertised by each authority.
-    ///
-    /// write-discipline: direct — safe because pure-function-of-table:
-    /// `get_capabilities_v1` folds the WHOLE table into the protocol-upgrade
-    /// vote tally, with no arrival-order or size cap, and the
-    /// `generation >=` guard in `record_capabilities_v1` makes a replayed
-    /// receipt a no-op.
-    authority_capabilities_v1: DBMap<AuthorityName, AuthorityCapabilitiesV1>,
-
-    /// Validators that sent a EndOfPublish message in this epoch.
-    ///
-    /// write-discipline: commit-batched — the vote set must never run ahead of
-    /// the commit that sequenced it, or the aggregator rehydrates on restart
-    /// with votes the replayed commit has not re-counted and the close gate
-    /// fires at a different round than peers (#1917/#1920).
-    end_of_publish: DBMap<AuthorityName, ()>,
-
-    /// Single-entry (key `0`) record of the consensus leader round at which
-    /// a stake-quorum of EndOfPublish votes was first observed this epoch.
-    /// Anchors the `end_of_publish_grace_rounds` (protocol config) close grace; persisted so a
-    /// validator restarting mid-grace closes the epoch at the same round as
-    /// its peers (the close — and the final checkpoint it builds — must be
-    /// consensus-deterministic).
-    ///
-    /// write-discipline: commit-batched — must commit atomically with the
-    /// commit that observed the quorum; the close-grace consumer
-    /// (`should_close_epoch`) would otherwise anchor on a round no commit
-    /// re-derives.
-    end_of_publish_quorum_round: DBMap<u64, u64>,
-
-    /// Single-entry (key `0`) record of how many authorities were in the
-    /// in-memory `end_of_publish` aggregator at the commit that first
-    /// observed quorum — the input to the close's `all_voted` fast path.
-    ///
-    /// Persisted for the same reason as `end_of_publish_quorum_round`, and it
-    /// is NOT derivable from `end_of_publish` above. That table records every
-    /// vote, but the live aggregator stops accepting inserts the moment
-    /// quorum is reached, so its membership is a prefix of the CONSENSUS
-    /// ARRIVAL ORDER — which the table does not store (its value is `()`, and
-    /// iteration is by `AuthorityName`). Rebuilding the aggregator from the
-    /// table on restart therefore yields the FULL vote set, a larger count
-    /// than a never-restarted peer holds; without this record a restarted
-    /// validator could satisfy `all_voted`, skip the grace, and close the
-    /// epoch at a different round than the rest of the committee. See #1917.
-    ///
-    /// write-discipline: commit-batched — written in the same batch as
-    /// `end_of_publish_quorum_round` so the anchor and the pinned count can
-    /// never disagree. This field is the canonical example of why the
-    /// discipline must name its reader: the value exists ONLY because the
-    /// `all_voted` consumer folds an arrival-order-capped view of the
-    /// uncapped `end_of_publish` table.
-    end_of_publish_quorum_voted_count: DBMap<u64, u64>,
-
-    /// Single-entry (key `0`) marker set when the deferred epoch-close
-    /// message set was emitted. Written atomically with that commit's batch;
-    /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
-    /// restarted validator does not re-emit the close at a later commit
-    /// (which would fork its checkpoint stream from peers).
-    ///
-    /// write-discipline: commit-batched — the marker and the close messages it
-    /// records must land or die together; the consumer is the epoch-store-open
-    /// `reconfig_state` restore.
-    epoch_close_emitted: DBMap<u64, ()>,
-
-    /// Single-entry (key `0`) record of the consensus leader round at which
-    /// a stake-quorum of `EpochMpcDataReadySignal`s was first observed this
-    /// epoch. Anchors the `mpc_data_freeze_grace_rounds` (protocol config)
-    /// freeze grace; written atomically with the observing commit's batch so
-    /// every validator (including one restarting mid-grace) freezes at the
-    /// same round on the same signal set.
-    ///
-    /// write-discipline: commit-batched — same atomicity requirement as
-    /// `end_of_publish_quorum_round`; the freeze-grace consumer
-    /// (`freeze_mpc_data_if_first`'s caller) must anchor on a round every
-    /// validator re-derives from the same commit.
-    mpc_data_ready_quorum_round: DBMap<u64, u64>,
-
-    /// Single-entry (key `0`) record of the consensus leader round at which
-    /// this epoch's mpc_data input set was frozen. Written atomically with
-    /// the freeze commit's batch (alongside
-    /// `frozen_validator_mpc_data_input_set`). Observability-only: nothing
-    /// in the protocol reads it back — it re-seeds the
-    /// `ika_dwallet_mpc_data_freeze_round` gauge after a restart, so the
-    /// gauge never invents a freeze round from the current round. Absent
-    /// when the freeze hasn't fired (or fired under a binary predating this
-    /// table, in which case the gauge stays at its `-1` sentinel).
-    ///
-    /// write-discipline: commit-batched — written with the freeze partition it
-    /// timestamps. Its only consumer is the gauge re-seed, but batching costs
-    /// nothing here and keeps the observability claim ("this is the round the
-    /// frozen set was decided at") true by construction.
-    mpc_data_freeze_round: DBMap<u64, u64>,
-
-    /// Single-key (0) table holding the `commit_timestamp_ms` of the FIRST
-    /// consensus commit this validator processed this epoch — the
-    /// consensus-clock anchor of the mpc_data ready-signal 3/4-epoch
-    /// backstop deadline (`ready_signal_deadline_ms`). Persisted (written
-    /// atomically with the first commit's batch) because replay after a
-    /// restart resumes from the last processed commit, so the first
-    /// commit's timestamp is otherwise unrecoverable. Identical across
-    /// honest validators up to consensus determinism; consumed only for
-    /// emit timing, never for signal content.
-    ///
-    /// write-discipline: commit-batched — the anchor must be the timestamp of a
-    /// commit that actually persisted, so the ready-signal backstop deadline
-    /// consumer computes the same deadline before and after a restart.
-    epoch_first_commit_timestamp_ms: DBMap<u64, u64>,
-
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
     ///
@@ -1540,31 +1398,6 @@ pub struct AuthorityEpochTables {
     /// `get_effective_buffer_stake_bps`, only shifts when THIS validator votes
     /// to upgrade, and the protocol tolerates validators disagreeing on it.
     override_protocol_upgrade_buffer_stake: DBMap<u64, u64>,
-
-    /// Holds all the DWallet MPC related messages that have been
-    /// received since the beginning of the epoch.
-    /// The key is the consensus round number,
-    /// the value is the dWallet-mpc messages that have been received in that
-    /// round.
-    ///
-    /// write-discipline: commit-batched — this is the dense per-round driver
-    /// the `DWalletMPCService` replay advances on; a round present here without
-    /// its commit's other streams trips the replay's round-equality check.
-    #[default_options_override_fn = "dwallet_mpc_messages_table_default_config"]
-    dwallet_mpc_messages: DBMap<Round, Vec<DWalletMPCMessage>>,
-    /// Consensus round -> Output.
-    ///
-    /// write-discipline: commit-batched — replayed in lockstep with
-    /// `dwallet_mpc_messages` by the MPC service.
-    #[default_options_override_fn = "dwallet_mpc_outputs_table_default_config"]
-    dwallet_mpc_outputs: DBMap<Round, Vec<DWalletMPCOutput>>,
-    /// Consensus round -> Output.
-    ///
-    /// write-discipline: commit-batched — same round-aligned replay as
-    /// `dwallet_mpc_outputs` (written only while `internal_presign_sessions`
-    /// is live, which the replay reads gate on identically).
-    #[default_options_override_fn = "dwallet_internal_mpc_outputs_table_default_config"]
-    dwallet_internal_mpc_outputs: DBMap<Round, Vec<DWalletInternalMPCOutput>>,
 
     /// Internal presign pools, keyed by (network_encryption_key_id, session_sequence_number).
     /// Each entry contains presigns generated by that session, along with the session identifier.
@@ -1679,44 +1512,6 @@ pub struct AuthorityEpochTables {
     /// checkpoint-message bytes that must match across the committee (#1934).
     served_global_presigns: DBMap<u64, (SessionIdentifier, u16, Vec<u8>)>,
 
-    /// Idle status updates by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    idle_status_updates: DBMap<Round, Vec<IdleStatusUpdate>>,
-
-    /// Sui chain observation updates by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    sui_chain_observation_updates: DBMap<Round, Vec<SuiChainObservationUpdate>>,
-
-    /// Global presign requests by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    global_presign_requests: DBMap<Round, Vec<ConsensusGlobalPresignRequest>>,
-
-    /// NOA checkpoint observations by consensus round.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages` for the MPC service replay.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
-
-    /// NOA sign presign demands by consensus round. Drained in consensus order
-    /// to assign each demand a presign identically on every validator.
-    ///
-    /// write-discipline: commit-batched — round-aligned with
-    /// `dwallet_mpc_messages`; the drain that assigns presigns walks this table
-    /// in consensus order, so a round persisted without its commit would let
-    /// two validators drain different demand sequences.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    noa_presign_demands: DBMap<Round, Vec<ConsensusNOAPresignDemand>>,
-
     /// Terminal resolution of each NOA sign demand, keyed by the demand's
     /// `demand_id` digest: the presign assigned to it, or a marker that the
     /// park bound dropped it. Written by the consensus-order drain and read by
@@ -1819,111 +1614,6 @@ pub struct AuthorityEpochTables {
     /// divergence.
     presign_private_outputs: DBMap<(CommitmentSizedNumber, u16), Vec<u8>>,
 
-    /// Latest `ValidatorMpcDataAnnouncement` observed for each
-    /// current-committee validator this epoch, signed with their
-    /// authority BLS key. The consensus handler verifies the
-    /// signature against `self.committee()` before insert, and only
-    /// the strictly-newer-timestamp entry per validator wins (replays
-    /// and duplicates are dropped). Off-chain consumers (later steps)
-    /// freeze a snapshot of this table when 2f+1 ready signals land.
-    ///
-    /// write-discipline: direct — safe because local-only + idempotent-replay:
-    /// the strict-newer-timestamp guard in `insert_validator_mpc_data_announcement`
-    /// makes a replayed announcement a no-op, and no consensus-visible decision
-    /// reads it — `freeze_mpc_data_if_first` deliberately tallies the ready
-    /// signals ONLY (reading this table there would let a locally-dropped
-    /// relayed announcement shrink one validator's frozen set). Its consumers
-    /// are this node's blob fetcher and its own emitted `validated_peers`.
-    pub(crate) validator_mpc_data_announcements: DBMap<AuthorityName, ValidatorMpcDataAnnouncement>,
-
-    /// Map signer -> `EpochMpcDataReadySignal` for this epoch.
-    /// We keep the full signal (not just the unit value) so the
-    /// freeze gate can read each signer's `validated_peers` set
-    /// when tallying per-announcer attestations. Re-broadcasts
-    /// from the same signer are last-write-wins; in practice an
-    /// honest validator only emits once per epoch.
-    ///
-    /// write-discipline: direct — safe because pure-function-of-table: every
-    /// consensus-visible consumer (`freeze_mpc_data_if_first`'s tally, the
-    /// ready-quorum anchor) folds the WHOLE table with no arrival-order or
-    /// size cap, so a crash can only leave it holding the replayed commit's
-    /// own signals — which the original run also counted before deciding.
-    /// Adding a consumer that snapshots or caps this table reintroduces the
-    /// #1917 shape; the decision it feeds must then be pinned through
-    /// `ConsensusCommitOutput` instead. One single-row consumer is exempt
-    /// from the fold-the-whole-table reason because it is local-only:
-    /// `MpcDataAnnouncementSender::new` reads this signer's OWN row to seed
-    /// its re-emit pacing after a restart (issue #1942) — nothing
-    /// consensus-visible reads that seed, and reading a stale row only
-    /// delays this node's own re-emit.
-    pub(crate) epoch_mpc_data_ready_signals:
-        DBMap<AuthorityName, ika_types::validator_metadata::EpochMpcDataReadySignal>,
-
-    /// Frozen `validator -> blob_hash` snapshot taken at the
-    /// consensus position where the first quorum of
-    /// `EpochMpcDataReadySignal`s landed this epoch. Membership is
-    /// per-announcer attestation-gated: a validator V appears in
-    /// this map iff a stake-quorum of signers attested via
-    /// `validated_peers` to having V's blob locally + decode-
-    /// validated. Announcers that don't reach that threshold are
-    /// recorded in `epoch_excluded_validators` instead.
-    /// Empty until quorum; populated once and never modified within
-    /// the epoch (`freeze_mpc_data_if_first` is idempotent on a
-    /// non-empty table). Written through the freeze commit's
-    /// `ConsensusCommitOutput` batch — never per-row — so the whole
-    /// partition lands atomically with the commit's processed-markers
-    /// (issue #1829: a partial write latched a shrunken, divergent
-    /// frozen set forever).
-    ///
-    /// write-discipline: commit-batched — see above; the freeze is
-    /// once-per-epoch and never revisited, so a partial write is permanent.
-    pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
-
-    /// Announcers that crossed the freeze gate's "announcement
-    /// present" test but didn't have a quorum of signers attest to
-    /// having a valid blob for them. Written at the same logical
-    /// point as `frozen_validator_mpc_data_input_set`. The set is
-    /// consensus-deterministic (every honest validator computes
-    /// the same tally from the same consensus-ordered signals);
-    /// downstream MPC / handoff consumers treat membership here
-    /// as "this validator is excluded from the working set for
-    /// this epoch — same semantics as today's `bad chain mpc_data
-    /// → ignore that validator`."
-    ///
-    /// write-discipline: commit-batched — the other half of the freeze
-    /// partition; must land in the same batch as
-    /// `frozen_validator_mpc_data_input_set` or the two disagree about who is
-    /// in the epoch's working set.
-    pub(crate) epoch_excluded_validators: DBMap<AuthorityName, ()>,
-
-    /// Per-signer Ed25519 signatures over this epoch's handoff
-    /// attestation, captured from consensus order. Verified against
-    /// the validator's locally-computed expected attestation +
-    /// `ConsensusPubkeyProvider` before insert; replays are no-ops.
-    /// On quorum, the in-memory `HandoffAggregator` produces a
-    /// `CertifiedHandoffAttestation` which is persisted forever in
-    /// `AuthorityPerpetualTables` (perpetual persist lands in step
-    /// 7c).
-    ///
-    /// write-discipline: commit-batched (#1927). Every writer — the consensus
-    /// `EndOfPublishV2` arm, the buffered drain in
-    /// `install_expected_handoff_attestation`, and that same function's
-    /// stale-row cleanup — stages into `staged_handoff_signature_rows`, which
-    /// the next commit folds into its `ConsensusCommitOutput`. So a row is
-    /// durable exactly when the commit it was staged under is, and the close
-    /// gate that sums this table (`handoff_signatures_meet_quorum`) reads a
-    /// state attributable to a commit rather than to whatever had reached
-    /// RocksDB by the instant it looked.
-    ///
-    /// This does NOT make the gate a pure function of the sequence: WHICH
-    /// commit a drained row lands under still follows this validator's local
-    /// attestation install, so peers can still cross quorum at different
-    /// commits. Retiring that residue is the sequence-pure tally in
-    /// dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md (item 3),
-    /// which has its own prerequisites; see the NOTE at the gate's call site
-    /// for what holds close-safety in the meantime.
-    pub(crate) handoff_signatures: DBMap<AuthorityName, Ed25519Signature>,
-
     /// Local cache of network DKG output digests for this epoch,
     /// keyed by `dwallet_network_encryption_key_id`. Populated by
     /// the MPC producer when it builds an output for consensus;
@@ -1949,49 +1639,7 @@ pub struct AuthorityEpochTables {
     pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
-fn verified_dwallet_checkpoint_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn verified_system_checkpoint_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn pending_checkpoints_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn dwallet_mpc_messages_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn dwallet_mpc_outputs_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn dwallet_internal_mpc_outputs_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
 fn internal_presign_pool_table_default_config() -> DBOptions {
-    default_db_options()
-        .optimize_for_write_throughput()
-        .optimize_for_large_values_no_scan(1 << 10)
-}
-
-fn internal_sessions_status_updates_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -2024,17 +1672,6 @@ impl AuthorityEpochTables {
 
     pub fn path(epoch: EpochId, parent_path: &Path) -> PathBuf {
         parent_path.join(format!("{EPOCH_DB_PREFIX}{epoch}"))
-    }
-
-    pub fn get_last_consensus_index(&self) -> IkaResult<Option<ExecutionIndices>> {
-        Ok(self
-            .last_consensus_stats
-            .get(&LAST_CONSENSUS_STATS_ADDR)?
-            .map(|s| s.index))
-    }
-
-    pub fn get_last_consensus_stats(&self) -> IkaResult<Option<ExecutionIndicesWithStats>> {
-        Ok(self.last_consensus_stats.get(&LAST_CONSENSUS_STATS_ADDR)?)
     }
 
     /// Returns a reference to the presign pool table for the given signature algorithm.
@@ -2549,21 +2186,38 @@ impl AuthorityPerEpochStore {
         !matches!(&reconfig_state.status, &ReconfigCertStatus::RejectAllTx)
     }
 
-    #[instrument(name = "AuthorityPerEpochStore::new", level = "error", skip_all, fields(epoch = committee.epoch))]
-    pub fn new(
-        name: AuthorityName,
-        committee: Arc<Committee>,
-        parent_path: &Path,
-        db_options: Option<Options>,
-        metrics: Arc<EpochMetrics>,
-        epoch_start_configuration: EpochStartConfiguration,
-        chain_identifier: ChainIdentifier,
-        packages_config: IkaNetworkConfig,
-    ) -> IkaResult<Arc<Self>> {
+    /// Opens the epoch's store.
+    ///
+    /// Every piece of epoch state the consensus commits determine starts here
+    /// EMPTY — it is in memory, so opening the store is the only state it can
+    /// have — and is rebuilt by the boot replay folding the epoch's commits
+    /// (`dev-docs/specs/event-sourced-epoch.md`). What the store on disk holds
+    /// is the state no replay reproduces: presign material and the idempotency
+    /// markers that make replaying against it safe, this validator's private
+    /// VSS outputs, the content-addressed output caches, and the operator's
+    /// buffer-stake override.
+    #[instrument(name = "AuthorityPerEpochStore::new", level = "error", skip_all, fields(epoch = params.committee.epoch))]
+    pub fn new(params: EpochStoreParams) -> IkaResult<Arc<Self>> {
+        let EpochStoreParams {
+            name,
+            committee,
+            parent_path,
+            db_options,
+            metrics,
+            epoch_start_configuration,
+            chain_identifier,
+            packages_config,
+        } = params;
         let current_time = Instant::now();
         let epoch_id = committee.epoch;
 
-        let tables = AuthorityEpochTables::open(epoch_id, parent_path, db_options.clone());
+        let tables = AuthorityEpochTables::open(epoch_id, &parent_path, db_options.clone());
+
+        info!(
+            epoch = epoch_id,
+            "opened the epoch store; its consensus-derived state starts empty and is rebuilt \
+             by replaying the epoch's consensus commits",
+        );
 
         let epoch_alive_notify = NotifyOnce::new();
         assert_eq!(
@@ -2584,57 +2238,23 @@ impl AuthorityPerEpochStore {
         metrics
             .current_voting_right
             .set(committee.weight(&name) as i64);
-        // EpochMetrics is node-lifetime (shared across epoch stores), so the
-        // per-epoch off-chain-metadata gauges must be reset here — and
-        // re-seeded from the per-epoch tables where state survives a
-        // mid-epoch restart, so a restart doesn't false-alarm (e.g. a
-        // freeze-epoch gauge stuck at 0 after the freeze already fired).
-        let recorded_ready_signals = tables
-            .epoch_mpc_data_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .count();
-        metrics
-            .dwallet_mpc_data_ready_signals
-            .set(recorded_ready_signals as i64);
+        // EpochMetrics is node-lifetime (shared across epoch stores), so every
+        // per-epoch gauge must be reset here. There is nothing to re-seed them
+        // FROM any more: the state they report is in memory, so opening a
+        // store — for a new epoch or after a restart mid-epoch — starts it
+        // empty, and the boot replay re-drives each gauge through the same
+        // setters the live fold uses as it re-folds the epoch's commits.
+        metrics.dwallet_mpc_data_ready_signals.set(0);
         metrics.dwallet_mpc_data_ready_signal_stake.set(0);
         metrics.dwallet_mpc_data_locally_validated_peers.set(0);
-        let recorded_announcements = tables
-            .validator_mpc_data_announcements
-            .safe_iter()
-            .filter_map(Result::ok)
-            .count();
-        metrics
-            .dwallet_mpc_data_announcements_received
-            .set(recorded_announcements as i64);
-        let frozen_set_present = !tables.frozen_validator_mpc_data_input_set.is_empty();
-        if frozen_set_present {
-            metrics.dwallet_mpc_data_freeze_epoch.set(epoch_id as i64);
-        }
-        let excluded_validators = tables
-            .epoch_excluded_validators
-            .safe_iter()
-            .filter_map(Result::ok)
-            .count();
-        metrics
-            .dwallet_mpc_data_excluded_validators
-            .set(excluded_validators as i64);
-        let persisted_handoff_signers: Vec<AuthorityName> = tables
-            .handoff_signatures
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(signer, _)| signer)
-            .collect();
-        let persisted_handoff_stake: u64 = persisted_handoff_signers
-            .iter()
-            .map(|signer| committee.weight(signer))
-            .sum();
-        metrics
-            .dwallet_handoff_signatures_collected
-            .set(persisted_handoff_signers.len() as i64);
-        metrics
-            .dwallet_handoff_signatures_stake
-            .set(persisted_handoff_stake as i64);
+        metrics.dwallet_mpc_data_announcements_received.set(0);
+        // `-1`, not the epoch id: this gauge carries the epoch whose freeze
+        // fired, so leaving the previous epoch's value standing would report a
+        // freeze that has not happened yet in this one.
+        metrics.dwallet_mpc_data_freeze_epoch.set(-1);
+        metrics.dwallet_mpc_data_excluded_validators.set(0);
+        metrics.dwallet_handoff_signatures_collected.set(0);
+        metrics.dwallet_handoff_signatures_stake.set(0);
         metrics.dwallet_handoff_signatures_buffered.set(0);
         metrics.own_mpc_data_blob_unhealthy.set(0);
         let protocol_version = epoch_start_configuration
@@ -2644,73 +2264,37 @@ impl AuthorityPerEpochStore {
             ProtocolConfig::get_for_version(protocol_version, chain_identifier.chain());
         // Freeze-progress gauges. `-1` is the "not reached / not available"
         // sentinel throughout — epoch 0 and round 0 are valid values, so a
-        // zero default would read as a plausible-but-wrong anchor. Round
-        // anchors are re-seeded from the per-epoch tables so a mid-epoch
-        // restart restores the true countdown state instead of resetting it.
-        metrics.dwallet_mpc_data_ready_quorum_round.set(
-            tables
-                .mpc_data_ready_quorum_round
-                .get(&0)?
-                .map_or(-1, |round| round as i64),
-        );
-        metrics.dwallet_mpc_data_freeze_round.set(
-            tables
-                .mpc_data_freeze_round
-                .get(&0)?
-                .map_or(-1, |round| round as i64),
-        );
+        // zero default would read as a plausible-but-wrong anchor. Each round
+        // anchor starts at the sentinel and is re-published by the replay when
+        // it re-folds the commit that decided it.
+        metrics.dwallet_mpc_data_ready_quorum_round.set(-1);
+        metrics.dwallet_mpc_data_freeze_round.set(-1);
         metrics.dwallet_mpc_data_freeze_grace_rounds.set(
             protocol_config
                 .mpc_data_freeze_grace_rounds_as_option()
                 .map_or(-1, |grace| grace as i64),
         );
-        let last_committed_leader_round = tables
-            .get_last_consensus_stats()?
-            .map(|stats| stats.index.last_committed_round);
-        metrics
-            .last_committed_leader_consensus_round
-            .set(last_committed_leader_round.map_or(-1, |round| round as i64));
-        // Ready-signal deadline: restore the persisted 3/4-epoch backstop
-        // anchor. The publication-grace term is deliberately absent here —
-        // its anchor is local in-memory sender state that resets on restart,
-        // and the sender re-tightens the gauge once it re-observes the
-        // next-epoch committee (matching the emit gate's actual post-restart
-        // behavior). Consensus-clock seconds, not local wall clock.
-        let ready_signal_deadline_seconds = tables
-            .epoch_first_commit_timestamp_ms
-            .get(&0)?
-            .and_then(|first_commit_ts_ms| {
-                ready_signal_deadline_ms(
-                    Some(first_commit_ts_ms),
-                    epoch_start_configuration
-                        .epoch_start_state()
-                        .epoch_duration_ms(),
-                    None,
-                )
-            })
-            .map_or(-1, |deadline_ms| (deadline_ms / 1000) as i64);
+        metrics.last_committed_leader_consensus_round.set(-1);
+        // Ready-signal deadline: its anchor is the epoch's first commit
+        // timestamp, which the replay re-observes at that same commit, so the
+        // gauge starts at the sentinel and the fold re-publishes it. The
+        // publication-grace term is deliberately absent here — its anchor is
+        // local in-memory sender state, and the sender re-tightens the gauge
+        // once it re-observes the next-epoch committee. Consensus-clock
+        // seconds, not local wall clock.
         metrics
             .dwallet_mpc_data_ready_signal_deadline_timestamp_seconds
-            .set(ready_signal_deadline_seconds);
-        let end_of_publish =
-            StakeAggregator::from_iter(committee.clone(), tables.end_of_publish.safe_iter())?;
-        // Restore the closed state across a restart: the deferred close
-        // persists `epoch_close_emitted` atomically with the closing commit,
-        // so reopening with `AcceptAllCerts` here would both re-emit the
-        // close set at a later commit (forking this validator's checkpoint
-        // stream from peers) and re-open transaction acceptance that the
-        // rest of the committee has closed.
-        let initial_reconfig_status = if tables.epoch_close_emitted.get(&0)?.is_some() {
-            ReconfigCertStatus::RejectAllTx
-        } else {
-            ReconfigCertStatus::AcceptAllCerts
-        };
+            .set(-1);
+        // The close is re-decided by the replay at the commit that decided it
+        // originally, so the store opens accepting transactions and the fold
+        // moves it to `RejectAllTx` when it re-reaches that commit.
+        let initial_reconfig_status = ReconfigCertStatus::AcceptAllCerts;
         let s = Arc::new(Self {
             name,
             committee: committee.clone(),
             protocol_config,
             tables: ArcSwapOption::new(Some(Arc::new(tables))),
-            parent_path: parent_path.to_path_buf(),
+            parent_path,
             db_options,
             epoch_alive_notify,
             user_certs_closed_notify: NotifyOnce::new(),
@@ -2725,7 +2309,7 @@ impl AuthorityPerEpochStore {
             reconfig_state: RwLock::new(ReconfigState {
                 status: initial_reconfig_status,
             }),
-            end_of_publish: Mutex::new(end_of_publish),
+            end_of_publish: Mutex::new(StakeAggregator::new(committee.clone())),
             joiner_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
             mpc_service_progress: ArcSwapOption::empty(),
@@ -2739,6 +2323,14 @@ impl AuthorityPerEpochStore {
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
             self_blob_unhealthy_warned: AtomicBool::new(false),
             max_processed_commit_timestamp_ms: AtomicU64::new(0),
+            round_transport: ArcSwapOption::empty(),
+            observed_consensus_head_round: AtomicU64::new(0),
+            folded_epoch_state: RwLock::new(FoldedEpochState::default()),
+            checkpoint_construction: RwLock::new(CheckpointConstructionState::default()),
+            processed_consensus_messages: RwLock::new(HashSet::new()),
+            authority_capabilities: RwLock::new(BTreeMap::new()),
+            validator_mpc_data_announcements: RwLock::new(BTreeMap::new()),
+            epoch_mpc_data_ready_signals: RwLock::new(BTreeMap::new()),
         });
 
         s.update_buffer_stake_metric();
@@ -2767,6 +2359,155 @@ impl AuthorityPerEpochStore {
         }
     }
 
+    /// The `all_voted` input pinned at the quorum-observing commit, or `None`
+    /// before quorum. See [`FoldedEpochState::end_of_publish_quorum_voted_count`].
+    ///
+    /// Production reads it inside the close gate, straight off the lock; this
+    /// exists so the close tests can assert on the pinned value itself.
+    #[cfg(test)]
+    fn end_of_publish_quorum_voted_count(&self) -> IkaResult<Option<u64>> {
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .folded_epoch_state
+            .read()
+            .end_of_publish_quorum_voted_count)
+    }
+
+    /// Places derived state as if an EARLIER commit's boundary had folded it,
+    /// for tests whose subject is a LATER commit's decision.
+    ///
+    /// Test-only because production has exactly one writer of this state — the
+    /// commit boundary — and that is the property the rest of this file exists
+    /// to keep.
+    #[cfg(test)]
+    fn seed_folded_state_for_test(&self, seed: impl FnOnce(&mut FoldedEpochState)) {
+        seed(&mut self.folded_epoch_state.write());
+    }
+
+    /// Reads derived state a production consumer has no accessor for, for
+    /// tests that assert on what a commit folded rather than on what a
+    /// decision made of it.
+    #[cfg(test)]
+    fn read_folded_state_for_test<T>(&self, read: impl FnOnce(&FoldedEpochState) -> T) -> T {
+        read(&self.folded_epoch_state.read())
+    }
+
+    /// Every piece of derived epoch state, serialized and keyed by the name it
+    /// is known by, for comparing one fold of a commit prefix against another.
+    ///
+    /// Serialized rather than `Debug`-formatted because the property under
+    /// test is byte-identity of the rebuilt state, not that it looks alike;
+    /// keyed one entry per piece rather than one blob so a failure names what
+    /// diverged.
+    #[cfg(test)]
+    pub(crate) fn derived_state_snapshot(&self) -> BTreeMap<&'static str, Vec<u8>> {
+        fn encode<T: Serialize>(value: &T) -> Vec<u8> {
+            bcs::to_bytes(value).expect("serializing derived epoch state")
+        }
+
+        let state = self.folded_epoch_state.read();
+        let construction = self.checkpoint_construction.read();
+        BTreeMap::from([
+            ("last_consensus_stats", encode(&state.last_consensus_stats)),
+            (
+                "epoch_first_commit_timestamp_ms",
+                encode(&state.epoch_first_commit_timestamp_ms),
+            ),
+            ("end_of_publish_votes", encode(&state.end_of_publish_votes)),
+            (
+                "end_of_publish_quorum_round",
+                encode(&state.end_of_publish_quorum_round),
+            ),
+            (
+                "end_of_publish_quorum_voted_count",
+                encode(&state.end_of_publish_quorum_voted_count),
+            ),
+            ("epoch_close_emitted", encode(&state.epoch_close_emitted)),
+            (
+                "mpc_data_ready_quorum_round",
+                encode(&state.mpc_data_ready_quorum_round),
+            ),
+            (
+                "mpc_data_freeze_round",
+                encode(&state.mpc_data_freeze_round),
+            ),
+            (
+                "frozen_validator_mpc_data_input_set",
+                encode(&state.frozen_validator_mpc_data_input_set),
+            ),
+            (
+                "epoch_excluded_validators",
+                encode(&state.epoch_excluded_validators),
+            ),
+            ("handoff_signatures", encode(&state.handoff_signatures)),
+            (
+                "pending_dwallet_checkpoints",
+                encode(&construction.pending_dwallet_checkpoints),
+            ),
+            (
+                "builder_dwallet_checkpoint_messages",
+                encode(&construction.builder_dwallet_checkpoint_messages),
+            ),
+            (
+                "pending_dwallet_checkpoint_signatures",
+                encode(&construction.pending_dwallet_checkpoint_signatures),
+            ),
+            (
+                "pending_system_checkpoints",
+                encode(&construction.pending_system_checkpoints),
+            ),
+            (
+                "builder_system_checkpoint_messages",
+                encode(&construction.builder_system_checkpoint_messages),
+            ),
+            (
+                "pending_system_checkpoint_signatures",
+                encode(&construction.pending_system_checkpoint_signatures),
+            ),
+            (
+                // Ordered, so two runs that inserted the same digests in
+                // different orders still compare equal.
+                "processed_consensus_messages",
+                encode(
+                    &self
+                        .processed_consensus_messages
+                        .read()
+                        .iter()
+                        .copied()
+                        .collect::<BTreeSet<_>>(),
+                ),
+            ),
+            (
+                "authority_capabilities",
+                encode(&*self.authority_capabilities.read()),
+            ),
+            (
+                "validator_mpc_data_announcements",
+                encode(&*self.validator_mpc_data_announcements.read()),
+            ),
+            (
+                "epoch_mpc_data_ready_signals",
+                encode(&*self.epoch_mpc_data_ready_signals.read()),
+            ),
+        ])
+    }
+
+    /// `EpochEnded` once this store has been released, for the in-memory
+    /// accessors.
+    ///
+    /// Every reader of derived state used to reach it through [`Self::tables`]
+    /// and inherit that error for free. In memory the state is simply CLEARED
+    /// at release, so without this check a read after the boundary would
+    /// answer "empty" — no frozen set, no close, no votes — where it used to
+    /// say the epoch is over. The MPC drain's graceful stop depends on the
+    /// error rather than on the answer.
+    fn ensure_epoch_alive(&self) -> IkaResult<()> {
+        if self.tables.load().is_none() {
+            return Err(IkaError::EpochEnded(self.epoch()));
+        }
+        Ok(())
+    }
+
     // Ideally the epoch tables handle should have the same lifetime as the outer AuthorityPerEpochStore,
     // and this function should be unnecessary. But unfortunately, Arc<AuthorityPerEpochStore> outlives the
     // epoch significantly right now, so we need to manually release the tables to release its memory usage.
@@ -2774,6 +2515,48 @@ impl AuthorityPerEpochStore {
         // When the logic to release DB handles becomes obsolete, it may still be useful
         // to make sure AuthorityEpochTables is not used after the next epoch starts.
         self.tables.store(None);
+        // The derived state is memory now, so dropping the tables no longer
+        // releases it. It is the LARGER half — the processed-message digests
+        // and the checkpoint construction state both grow with the epoch's
+        // traffic — and this store outlives its epoch, so without this an
+        // epoch's worth of it would survive every boundary for as long as some
+        // task still holds the Arc.
+        //
+        // Order matters, and it is deliberately this way round: readers start
+        // failing `ensure_epoch_alive` BEFORE the state they would have read
+        // disappears. It narrows the window rather than closing it — a reader
+        // that passed the check an instant earlier can still see cleared state
+        // and read it as an empty epoch — which is a real difference from the
+        // durable version, where holding the tables `Arc` kept the rows alive
+        // for that reader. It is not reachable in production: the caller
+        // releases only after the epoch's components have been replaced, so
+        // the fold, the drain and the builders are already stopped.
+        self.folded_epoch_state.write().clear();
+        self.checkpoint_construction.write().clear();
+        // `HashSet::clear` keeps the allocated table; the epoch's capacity is
+        // exactly what must not survive, so replace the whole set.
+        *self.processed_consensus_messages.write() = HashSet::new();
+        self.authority_capabilities.write().clear();
+        self.validator_mpc_data_announcements.write().clear();
+        self.epoch_mpc_data_ready_signals.write().clear();
+    }
+
+    /// Installs the bounded round transport. Must happen before the first
+    /// commit is folded, or the drain misses every round folded before it.
+    pub fn install_round_transport(&self, sender: Arc<RoundTransportSender>) {
+        self.round_transport.store(Some(sender));
+    }
+
+    /// The installed round transport, if this node runs an MPC drain.
+    pub fn round_transport(&self) -> Option<Arc<RoundTransportSender>> {
+        self.round_transport.load_full()
+    }
+
+    /// Records a consensus round this node has observed. Monotone, so an
+    /// out-of-order report cannot walk the head backwards.
+    pub fn record_observed_consensus_head_round(&self, round: Round) {
+        self.observed_consensus_head_round
+            .fetch_max(round, Ordering::AcqRel);
     }
 
     pub fn get_parent_path(&self) -> PathBuf {
@@ -2804,16 +2587,16 @@ impl AuthorityPerEpochStore {
         assert_eq!(self.epoch() + 1, new_committee.epoch);
         self.record_reconfig_halt_duration_metric();
         self.record_epoch_total_duration_metric();
-        Self::new(
+        Self::new(EpochStoreParams {
             name,
-            Arc::new(new_committee),
-            &self.parent_path,
-            self.db_options.clone(),
-            self.metrics.clone(),
+            committee: Arc::new(new_committee),
+            parent_path: self.parent_path.clone(),
+            db_options: self.db_options.clone(),
+            metrics: self.metrics.clone(),
             epoch_start_configuration,
             chain_identifier,
-            self.packages_config.clone(),
-        )
+            packages_config: self.packages_config.clone(),
+        })
     }
 
     pub fn new_at_next_epoch_for_testing(&self) -> IkaResult<Arc<Self>> {
@@ -2862,21 +2645,24 @@ impl AuthorityPerEpochStore {
         self.epoch_start_state().protocol_version()
     }
 
+    /// The fold's running index and per-author tallies as of the last commit
+    /// it folded, or the zero value before it has folded any.
+    ///
+    /// The zero value is what a boot reads, every time: this is no longer a
+    /// startup cursor but a running aggregate the replay re-accumulates from
+    /// the epoch's first commit.
     pub fn get_last_consensus_stats(&self) -> IkaResult<ExecutionIndicesWithStats> {
-        match self.tables()?.get_last_consensus_stats()? {
-            Some(stats) => Ok(stats),
-            None => {
-                let indices = self
-                    .tables()?
-                    .get_last_consensus_index()
-                    .map(|x| x.unwrap_or_default())?;
-                Ok(ExecutionIndicesWithStats {
-                    index: indices,
-                    hash: 0, // unused
-                    stats: ConsensusStats::default(),
-                })
-            }
-        }
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .folded_epoch_state
+            .read()
+            .last_consensus_stats
+            .clone()
+            .unwrap_or_else(|| ExecutionIndicesWithStats {
+                index: ExecutionIndices::default(),
+                hash: 0, // unused
+                stats: ConsensusStats::default(),
+            }))
     }
 
     /// Returns true if all messages with the given keys were processed by consensus.
@@ -2895,20 +2681,24 @@ impl AuthorityPerEpochStore {
         &self,
         key: &SequencedConsensusTransactionKey,
     ) -> IkaResult<bool> {
-        Ok(self
-            .tables()?
-            .consensus_message_processed
-            .contains_key(key)?)
+        self.ensure_epoch_alive()?;
+        let digest = consensus_message_digest(key)?;
+        Ok(self.processed_consensus_messages.read().contains(&digest))
     }
 
     pub fn check_consensus_messages_processed(
         &self,
         keys: impl Iterator<Item = SequencedConsensusTransactionKey>,
     ) -> IkaResult<Vec<bool>> {
-        Ok(self
-            .tables()?
-            .consensus_message_processed
-            .multi_contains_keys(keys)?)
+        self.ensure_epoch_alive()?;
+        let digests = keys
+            .map(|key| consensus_message_digest(&key))
+            .collect::<IkaResult<Vec<_>>>()?;
+        let processed = self.processed_consensus_messages.read();
+        Ok(digests
+            .iter()
+            .map(|digest| processed.contains(digest))
+            .collect())
     }
 
     pub async fn consensus_messages_processed_notify(
@@ -3018,11 +2808,12 @@ impl AuthorityPerEpochStore {
     /// Record most recently advertised capabilities of all authorities
     pub fn record_capabilities_v1(&self, capabilities: &AuthorityCapabilitiesV1) -> IkaResult {
         info!(capabilities=?capabilities, "received capabilities v1");
+        self.ensure_epoch_alive()?;
         let authority = &capabilities.authority;
-        let tables = self.tables()?;
 
         // Read-compare-write pattern assumes we are only called from the consensus handler task.
-        if let Some(cap) = tables.authority_capabilities_v1.get(authority)?
+        let mut recorded = self.authority_capabilities.write();
+        if let Some(cap) = recorded.get(authority)
             && cap.generation >= capabilities.generation
         {
             debug!(
@@ -3031,38 +2822,44 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
-        tables
-            .authority_capabilities_v1
-            .insert(authority, capabilities)?;
+        recorded.insert(*authority, capabilities.clone());
+        drop(recorded);
         self.update_protocol_upgrade_metrics();
         Ok(())
     }
 
     pub fn get_capabilities_v1(&self) -> IkaResult<Vec<AuthorityCapabilitiesV1>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .authority_capabilities_v1
-            .safe_iter()
-            .map(|item| item.map(|(_, v)| v))
-            .collect::<Result<Vec<_>, _>>()?)
+            .authority_capabilities
+            .read()
+            .values()
+            .cloned()
+            .collect())
     }
 
-    /// Whether `authority`'s EndOfPublish vote has been sequenced and
-    /// recorded in this epoch's durable table. The handoff signature
-    /// sender uses this to confirm its own `EndOfPublishV2` actually
-    /// landed before it stops re-submitting: a successful
-    /// `submit_to_consensus` only means the tx was handed to the
-    /// background submitter, which can still fail to sequence at the
-    /// epoch boundary (exactly when `EndOfPublishV2` fires) or on crash.
-    /// Restart-safe — the table is reloaded into the in-memory
-    /// aggregator at epoch-store construction.
+    /// Whether `authority`'s EndOfPublish vote has been sequenced and folded
+    /// this epoch. The handoff signature sender uses this to confirm its own
+    /// `EndOfPublishV2` actually landed before it stops re-submitting: a
+    /// successful `submit_to_consensus` only means the tx was handed to the
+    /// background submitter, which can still fail to sequence at the epoch
+    /// boundary (exactly when `EndOfPublishV2` fires) or on crash.
     ///
-    /// Votes become visible here at the batch write of the commit that
+    /// Uncapped, unlike the `end_of_publish` stake aggregator, which stops
+    /// accepting votes at quorum and so cannot answer this for a straggler.
+    ///
+    /// Votes become visible here at the commit boundary of the commit that
     /// sequenced them, not the instant they are processed (they ride
-    /// `ConsensusCommitOutput`), so a `true` here means the vote is durable —
-    /// which is precisely what this check is asking.
+    /// `ConsensusCommitOutput`). After a restart this reads false until the
+    /// replay re-reaches that commit, so the sender re-submits once more —
+    /// one transaction, deduplicated by consensus.
     pub fn has_recorded_end_of_publish_vote(&self, authority: &AuthorityName) -> IkaResult<bool> {
-        Ok(self.tables()?.end_of_publish.get(authority)?.is_some())
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .folded_epoch_state
+            .read()
+            .end_of_publish_votes
+            .contains(authority))
     }
 
     /// Record a current-committee validator's self-submitted
@@ -3233,10 +3030,9 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
-        let tables = self.tables()?;
-        if let Some(existing) = tables
-            .validator_mpc_data_announcements
-            .get(&announcement.validator)?
+        self.ensure_epoch_alive()?;
+        let mut announcements = self.validator_mpc_data_announcements.write();
+        if let Some(existing) = announcements.get(&announcement.validator)
             && existing.timestamp_ms >= announcement.timestamp_ms
         {
             // Strict `>=`: an incoming announcement with timestamp
@@ -3253,18 +3049,13 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
-        tables
-            .validator_mpc_data_announcements
-            .insert(&announcement.validator, announcement)?;
+        announcements.insert(announcement.validator, announcement.clone());
         // Once per validator per epoch (re-announces are rare and strictly
         // newer-timestamped). Covers all three entry points — self, relayed
         // joiner, and buffered replay — and answers "did this node record
         // V's announcement" when the frozen set later excludes V.
-        let recorded_announcements = tables
-            .validator_mpc_data_announcements
-            .safe_iter()
-            .filter_map(Result::ok)
-            .count();
+        let recorded_announcements = announcements.len();
+        drop(announcements);
         self.metrics
             .dwallet_mpc_data_announcements_received
             .set(recorded_announcements as i64);
@@ -3956,19 +3747,16 @@ impl AuthorityPerEpochStore {
         std::mem::take(&mut *self.staged_handoff_signature_rows.lock())
     }
 
-    /// The durable `handoff_signatures` rows as they will stand once `staged`
-    /// is written — i.e. the committed table overlaid with a set of pending
-    /// ops. Callers that must not see uncommitted state pass nothing and read
-    /// the table directly instead.
+    /// The folded `handoff_signatures` rows as they will stand once `staged`
+    /// is folded — i.e. the committed set overlaid with a set of pending ops.
+    /// Callers that must not see uncommitted state pass nothing and read the
+    /// folded set alone.
     fn handoff_signature_rows_with(
         &self,
         staged: &BTreeMap<AuthorityName, Option<Ed25519Signature>>,
     ) -> IkaResult<BTreeMap<AuthorityName, Ed25519Signature>> {
-        let mut rows = self
-            .tables()?
-            .handoff_signatures
-            .safe_iter()
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        self.ensure_epoch_alive()?;
+        let mut rows = self.folded_epoch_state.read().handoff_signatures.clone();
         for (signer, op) in staged {
             match op {
                 Some(signature) => rows.insert(*signer, signature.clone()),
@@ -4194,21 +3982,44 @@ impl AuthorityPerEpochStore {
         &self,
         validator: &AuthorityName,
     ) -> IkaResult<Option<ValidatorMpcDataAnnouncement>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
             .validator_mpc_data_announcements
-            .get(validator)?)
+            .read()
+            .get(validator)
+            .cloned())
     }
 
-    /// This signer's own recorded `EpochMpcDataReadySignal`, if one has
-    /// landed this epoch. `MpcDataAnnouncementSender::new` seeds its
-    /// re-emit gates from it so a mid-epoch restart resumes above the
-    /// already-sequenced sequence numbers instead of colliding with them.
+    /// Every recorded announcement as `(validator, blob_hash)` — what the
+    /// consumers that only want to know which blob to fetch or validate need.
+    pub fn validator_mpc_data_announcement_hashes(
+        &self,
+    ) -> IkaResult<Vec<(AuthorityName, [u8; 32])>> {
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .validator_mpc_data_announcements
+            .read()
+            .iter()
+            .map(|(authority, announcement)| (*authority, announcement.blob_hash))
+            .collect())
+    }
+
+    /// This signer's own recorded `EpochMpcDataReadySignal`, if one has been
+    /// folded this epoch. `MpcDataAnnouncementSender::new` seeds its re-emit
+    /// gates from it so a restart resumes above the already-sequenced sequence
+    /// numbers instead of colliding with them — which now depends on the boot
+    /// replay having refolded that signal, exactly as every other consumer of
+    /// derived state does.
     pub fn get_epoch_mpc_data_ready_signal(
         &self,
         signer: &AuthorityName,
-    ) -> IkaResult<Option<ika_types::validator_metadata::EpochMpcDataReadySignal>> {
-        Ok(self.tables()?.epoch_mpc_data_ready_signals.get(signer)?)
+    ) -> IkaResult<Option<EpochMpcDataReadySignal>> {
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .epoch_mpc_data_ready_signals
+            .read()
+            .get(signer)
+            .cloned())
     }
 
     /// Computes the set of authorities whose mpc_data blob is
@@ -4225,12 +4036,7 @@ impl AuthorityPerEpochStore {
         let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
             return Ok(Vec::new());
         };
-        let tables = self.tables()?;
-        let mut announcements: Vec<(AuthorityName, [u8; 32])> = Vec::new();
-        for entry in tables.validator_mpc_data_announcements.safe_iter() {
-            let (authority, announcement) = entry?;
-            announcements.push((authority, announcement.blob_hash));
-        }
+        let announcements = self.validator_mpc_data_announcement_hashes()?;
         let decision = crate::validator_metadata::decide_locally_validated_peers(
             self.name,
             announcements,
@@ -4290,20 +4096,20 @@ impl AuthorityPerEpochStore {
         self_blob_hash: [u8; 32],
     ) -> IkaResult<Vec<(AuthorityName, [u8; 32])>> {
         let validated = self.compute_locally_validated_peers()?;
-        let tables = self.tables()?;
+        let announcements = self.validator_mpc_data_announcements.read();
         let mut pairs = Vec::with_capacity(validated.len());
         for name in validated {
-            let hash =
-                if let Some(announcement) = tables.validator_mpc_data_announcements.get(&name)? {
-                    announcement.blob_hash
-                } else if name == self.name {
-                    self_blob_hash
-                } else {
-                    // A validated non-self peer is always in the table (its
-                    // blob hash had to be known to fetch + validate the
-                    // blob). Skip defensively rather than emit a bogus pair.
-                    continue;
-                };
+            let hash = if let Some(announcement) = announcements.get(&name) {
+                announcement.blob_hash
+            } else if name == self.name {
+                self_blob_hash
+            } else {
+                // A validated non-self peer always has a recorded
+                // announcement (its blob hash had to be known to fetch +
+                // validate the blob). Skip defensively rather than emit a
+                // bogus pair.
+                continue;
+            };
             pairs.push((name, hash));
         }
         Ok(pairs)
@@ -4439,8 +4245,12 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
-        let tables = self.tables()?;
-        let existing = tables.epoch_mpc_data_ready_signals.get(&signal.authority)?;
+        self.ensure_epoch_alive()?;
+        let existing = self
+            .epoch_mpc_data_ready_signals
+            .read()
+            .get(&signal.authority)
+            .cloned();
         let committee = self.committee();
         // Canonicalize via the pure helper — dedup + a current-committee
         // quorum-coverage floor + a deterministic length cap. CRITICAL:
@@ -4572,20 +4382,17 @@ impl AuthorityPerEpochStore {
                 );
             }
         }
-        let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
+        let canonical = EpochMpcDataReadySignal {
             authority: signal.authority,
             epoch: signal.epoch,
             sequence_number: signal.sequence_number,
             validated_peers: canonical_peers,
         };
-        tables
-            .epoch_mpc_data_ready_signals
-            .insert(&signal.authority, &canonical)?;
-        let recorded_ready_signals = tables
-            .epoch_mpc_data_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .count();
+        let recorded_ready_signals = {
+            let mut signals = self.epoch_mpc_data_ready_signals.write();
+            signals.insert(signal.authority, canonical);
+            signals.len()
+        };
         self.metrics
             .dwallet_mpc_data_ready_signals
             .set(recorded_ready_signals as i64);
@@ -4719,12 +4526,13 @@ impl AuthorityPerEpochStore {
             .collect())
     }
 
-    fn freeze_mpc_data_if_first(
-        &self,
-        tables: &AuthorityEpochTables,
-        output: &mut ConsensusCommitOutput,
-    ) -> IkaResult {
-        if !tables.frozen_validator_mpc_data_input_set.is_empty() {
+    fn freeze_mpc_data_if_first(&self, output: &mut ConsensusCommitOutput) -> IkaResult {
+        if !self
+            .folded_epoch_state
+            .read()
+            .frozen_validator_mpc_data_input_set
+            .is_empty()
+        {
             return Ok(());
         }
         let committee = self.committee();
@@ -4737,12 +4545,12 @@ impl AuthorityPerEpochStore {
         // frozen set and diverge from peers. Materialized as a
         // `BTreeMap` so the pure tally function can be unit-tested
         // without an `AuthorityPerEpochStore`.
-        let mut signals: std::collections::BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> =
-            std::collections::BTreeMap::new();
-        for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
-            let (signer, signal) = entry?;
-            signals.insert(signer, signal.validated_peers);
-        }
+        let signals: BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> = self
+            .epoch_mpc_data_ready_signals
+            .read()
+            .iter()
+            .map(|(signer, signal)| (*signer, signal.validated_peers.clone()))
+            .collect();
         let committee_for_tally = committee.clone();
         let attested = crate::validator_metadata::compute_freeze_partition(
             &signals,
@@ -4806,15 +4614,14 @@ impl AuthorityPerEpochStore {
     /// handoff item generation, reconfig MPC kickoff) treat
     /// membership as "this validator is excluded from MPC this
     /// epoch — same semantics as on-chain bad mpc_data today."
-    pub fn get_epoch_excluded_validators(
-        &self,
-    ) -> IkaResult<std::collections::HashSet<AuthorityName>> {
+    pub fn get_epoch_excluded_validators(&self) -> IkaResult<HashSet<AuthorityName>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
+            .folded_epoch_state
+            .read()
             .epoch_excluded_validators
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(authority, _)| authority)
+            .iter()
+            .copied()
             .collect())
     }
 
@@ -4823,11 +4630,13 @@ impl AuthorityPerEpochStore {
     pub fn get_frozen_validator_mpc_data_input_set(
         &self,
     ) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
+            .folded_epoch_state
+            .read()
             .frozen_validator_mpc_data_input_set
-            .safe_iter()
-            .filter_map(Result::ok)
+            .iter()
+            .map(|(authority, digest)| (*authority, *digest))
             .collect())
     }
 
@@ -4846,39 +4655,40 @@ impl AuthorityPerEpochStore {
     }
 
     /// Commit timestamp of the epoch's first processed consensus commit
-    /// (the persisted ready-signal backstop anchor), or `None` before any
-    /// commit landed.
+    /// (the ready-signal backstop anchor), or `None` before any commit
+    /// landed. The replay starts at that same first commit, so it is
+    /// re-observed rather than remembered.
     pub(crate) fn epoch_first_commit_timestamp_ms(&self) -> IkaResult<Option<u64>> {
-        self.tables()?
-            .epoch_first_commit_timestamp_ms
-            .get(&0)
-            .map_err(IkaError::from)
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .folded_epoch_state
+            .read()
+            .epoch_first_commit_timestamp_ms)
     }
 
     /// The consensus round at which this epoch's mpc_data ready-signal
-    /// stake quorum was first observed (the freeze-grace anchor, written
-    /// with that commit's batch), or `None` if quorum hasn't been reached.
+    /// stake quorum was first observed (the freeze-grace anchor, recorded
+    /// at that commit's boundary), or `None` if quorum hasn't been reached.
     /// Consensus-anchored: identical across honest validators.
     pub(crate) fn mpc_data_ready_quorum_round(&self) -> IkaResult<Option<u64>> {
-        self.tables()?
-            .mpc_data_ready_quorum_round
-            .get(&0)
-            .map_err(IkaError::from)
+        self.ensure_epoch_alive()?;
+        Ok(self.folded_epoch_state.read().mpc_data_ready_quorum_round)
     }
 
     /// The consensus leader round at which this validator observed the
-    /// `EndOfPublish` stake quorum — the persisted anchor of the
-    /// deferred-close grace countdown — or `None` if quorum hasn't been
-    /// reached this epoch.
+    /// `EndOfPublish` stake quorum — the anchor of the deferred-close grace
+    /// countdown — or `None` if quorum hasn't been reached this epoch.
     pub fn end_of_publish_quorum_round(&self) -> IkaResult<Option<u64>> {
-        Ok(self.tables()?.end_of_publish_quorum_round.get(&0)?)
+        self.ensure_epoch_alive()?;
+        Ok(self.folded_epoch_state.read().end_of_publish_quorum_round)
     }
 
     /// Whether this validator has already emitted the epoch-close
-    /// checkpoint message set. Persisted through the emitting commit's
-    /// batch so a restart cannot re-emit the close at a later commit.
+    /// checkpoint message set. Recorded at the emitting commit's boundary,
+    /// and re-decided at that same commit by the replay.
     pub fn is_epoch_close_emitted(&self) -> IkaResult<bool> {
-        Ok(self.tables()?.epoch_close_emitted.get(&0)?.is_some())
+        self.ensure_epoch_alive()?;
+        Ok(self.folded_epoch_state.read().epoch_close_emitted)
     }
 
     pub async fn user_certs_closed_notify(&self) {
@@ -5204,16 +5014,6 @@ impl AuthorityPerEpochStore {
         Some(VerifiedSequencedConsensusTransaction(transaction))
     }
 
-    fn db_batch(&self) -> IkaResult<DBBatch> {
-        Ok(self.tables()?.last_consensus_stats.batch())
-    }
-
-    #[cfg(test)]
-    pub fn db_batch_for_test(&self) -> DBBatch {
-        self.db_batch()
-            .expect("test should not be write past end of epoch")
-    }
-
     #[instrument(level = "debug", skip_all)]
     pub(crate) async fn process_consensus_transactions_and_commit_boundary<
         C: DWalletCheckpointServiceNotify,
@@ -5231,17 +5031,18 @@ impl AuthorityPerEpochStore {
     )> {
         let mut output = ConsensusCommitOutput::new(consensus_commit_info.round);
 
-        // Epoch consensus clock: advance the in-memory running max of
-        // processed commit timestamps, and persist the FIRST commit's
-        // timestamp once (the ready-signal backstop anchor — replay
-        // resumes from the last processed commit, so "first" is
-        // unrecoverable unless written with its own commit's batch).
+        // Epoch consensus clock: advance the running max of processed commit
+        // timestamps, and record the FIRST commit's timestamp once (the
+        // ready-signal backstop anchor). Recorded through the commit boundary
+        // like every other anchor, so it is attributable to the commit that
+        // set it — the replay starts at that same first commit and re-observes
+        // the identical value.
         self.max_processed_commit_timestamp_ms
             .fetch_max(consensus_commit_info.timestamp, Ordering::AcqRel);
         if self
-            .tables()?
+            .folded_epoch_state
+            .read()
             .epoch_first_commit_timestamp_ms
-            .get(&0)?
             .is_none()
         {
             output.set_epoch_first_commit_timestamp_ms(consensus_commit_info.timestamp);
@@ -5291,12 +5092,24 @@ impl AuthorityPerEpochStore {
             self.write_pending_system_checkpoint(&mut output, &pending_system_checkpoint)?;
         }
 
-        let mut batch = self.db_batch()?;
-        output.write_to_batch(self, &mut batch)?;
-        batch.write()?;
+        // Take the drain's inputs before the batch, hand them over after it.
+        // After, so the drain never sees a round whose commit did not land;
+        // outside the batch, so a wait on the drain does not hold a write
+        // batch open.
+        let round_payload = output.take_round_payload();
 
-        // Only after batch is written, notify checkpoint service to start building any new
-        // pending checkpoints.
+        // The commit boundary: everything this commit derived becomes visible
+        // in one lock acquisition, which is what the single RocksDB batch this
+        // replaced gave concurrent readers.
+        output.apply_to_epoch_state(self)?;
+
+        if let Some(transport) = self.round_transport() {
+            // BLOCKS while the drain is behind — see `round_transport`.
+            transport.send(round_payload).await;
+        }
+
+        // Only after the commit's state is applied, notify checkpoint service
+        // to start building any new pending checkpoints.
         if self.protocol_config().bls_checkpoints()
             && make_checkpoint
             && !verified_system_checkpoint_messages.is_empty()
@@ -5443,11 +5256,11 @@ impl AuthorityPerEpochStore {
                 (end_of_publish.has_quorum(), end_of_publish.keys().count())
             };
             if has_quorum {
-                // The anchor round is written through the commit batch (not
-                // out-of-band) so it commits atomically with the commit that
-                // observed quorum — a crash before the batch replays the
-                // whole commit and re-derives the same round.
-                let quorum_round = match self.tables()?.end_of_publish_quorum_round.get(&0)? {
+                // The anchor round is recorded through the commit boundary
+                // (not the instant it is decided) so it becomes visible with
+                // the rest of the commit that observed quorum.
+                let quorum_round = match self.folded_epoch_state.read().end_of_publish_quorum_round
+                {
                     Some(round) => round,
                     None => {
                         // Once per epoch: the anchor of the deferred-close
@@ -5467,28 +5280,28 @@ impl AuthorityPerEpochStore {
                     }
                 };
                 // The `all_voted` input is pinned at the quorum-observing
-                // commit and read back from storage thereafter, so it cannot
-                // grow underneath a restart (#1917). Reading the LIVE
-                // aggregator here would make the close round depend on
-                // whether this validator happened to restart: the live count
-                // stops at the quorum-crossing membership, while the
-                // restart-hydrated one is the full vote set.
+                // commit and read back thereafter, so post-quorum stragglers
+                // cannot grow it (#1917). It is NOT derivable from the vote
+                // set: that set is uncapped, while the live aggregator stops
+                // at the quorum-crossing membership — a prefix of consensus
+                // arrival order the set does not record. The replay refills
+                // the aggregator in that same order, so it caps at the same
+                // member and re-pins the same count at the same commit.
                 //
-                // Written in the same commit batch as the anchor above, so
-                // the two are always consistent. The `None` arm also covers
-                // an epoch that reached quorum under a binary predating this
-                // record: the in-memory count is then exactly what that
-                // binary itself used at this commit, so adopting it keeps
-                // close timing identical across the upgrade.
-                let quorum_voted_count =
-                    match self.tables()?.end_of_publish_quorum_voted_count.get(&0)? {
-                        Some(count) => count,
-                        None => {
-                            let count = voted_count as u64;
-                            output.set_end_of_publish_quorum_voted_count(count);
-                            count
-                        }
-                    };
+                // Recorded at the same commit boundary as the anchor above,
+                // so the two can never disagree.
+                let quorum_voted_count = match self
+                    .folded_epoch_state
+                    .read()
+                    .end_of_publish_quorum_voted_count
+                {
+                    Some(count) => count,
+                    None => {
+                        let count = voted_count as u64;
+                        output.set_end_of_publish_quorum_voted_count(count);
+                        count
+                    }
+                };
                 let all_voted = quorum_voted_count >= self.committee().num_members() as u64;
                 // Consensus leader rounds advance in sequence but NOT by a
                 // fixed +1 per commit — rounds skip when a leader is not
@@ -5596,15 +5409,12 @@ impl AuthorityPerEpochStore {
         //     consensus progress, not wall-clock — giving slower
         //     validators' blobs time to propagate before the set is pinned.
         if !self.is_mpc_data_frozen().unwrap_or(false) {
-            let tables = self.tables()?;
-            let mut signals: std::collections::BTreeMap<
-                AuthorityName,
-                Vec<(AuthorityName, [u8; 32])>,
-            > = std::collections::BTreeMap::new();
-            for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
-                let (signer, signal) = entry?;
-                signals.insert(signer, signal.validated_peers);
-            }
+            let signals: BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> = self
+                .epoch_mpc_data_ready_signals
+                .read()
+                .iter()
+                .map(|(signer, signal)| (*signer, signal.validated_peers.clone()))
+                .collect();
             let committee = self.committee();
             let signal_stake: u64 = signals
                 .keys()
@@ -5614,7 +5424,8 @@ impl AuthorityPerEpochStore {
                 .dwallet_mpc_data_ready_signal_stake
                 .set(signal_stake as i64);
             if signal_stake >= committee.quorum_threshold() {
-                let quorum_round = match tables.mpc_data_ready_quorum_round.get(&0)? {
+                let quorum_round = match self.folded_epoch_state.read().mpc_data_ready_quorum_round
+                {
                     Some(round) => round,
                     None => {
                         // Once per epoch: the anchor of the freeze grace
@@ -5647,7 +5458,7 @@ impl AuthorityPerEpochStore {
                 let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
                     >= self.protocol_config().mpc_data_freeze_grace_rounds();
                 if full_coverage || grace_elapsed {
-                    self.freeze_mpc_data_if_first(&tables, output)?;
+                    self.freeze_mpc_data_if_first(output)?;
                     self.metrics
                         .dwallet_mpc_data_freeze_round
                         .set(consensus_commit_info.round as i64);
@@ -6138,18 +5949,26 @@ impl AuthorityPerEpochStore {
         &self,
         last: Option<DWalletCheckpointHeight>,
     ) -> IkaResult<Vec<(DWalletCheckpointHeight, PendingDWalletCheckpoint)>> {
-        let tables = self.tables()?;
-        let db_iter = tables
+        self.ensure_epoch_alive()?;
+        let construction = self.checkpoint_construction.read();
+        Ok(construction
             .pending_dwallet_checkpoints
-            .safe_iter_with_bounds(last.map(|height| height + 1), None);
-        Ok(db_iter.collect::<Result<Vec<_>, _>>()?)
+            .range(last.map_or(0, |height| height + 1)..)
+            .map(|(height, pending)| (*height, pending.clone()))
+            .collect())
     }
 
     pub fn get_pending_checkpoint(
         &self,
         index: &DWalletCheckpointHeight,
     ) -> IkaResult<Option<PendingDWalletCheckpoint>> {
-        Ok(self.tables()?.pending_dwallet_checkpoints.get(index)?)
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .checkpoint_construction
+            .read()
+            .pending_dwallet_checkpoints
+            .get(index)
+            .cloned())
     }
 
     pub fn process_pending_dwallet_checkpoint(
@@ -6157,11 +5976,13 @@ impl AuthorityPerEpochStore {
         commit_height: DWalletCheckpointHeight,
         checkpoint_messages: Vec<DWalletCheckpointMessage>,
     ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        // All created checkpoints are inserted in builder_checkpoint_summary in a single batch.
-        // This means that upon restart we can use BuilderCheckpointSummary::commit_height
-        // from the last built summary to resume building checkpoints.
-        let mut batch = tables.pending_dwallet_checkpoints.batch();
+        self.ensure_epoch_alive()?;
+        // The built messages are recorded and the queue entries they consumed
+        // are dropped under ONE lock — the pair the durable version wrote in
+        // one batch. A reader that saw the queue drained without the output
+        // that replaced it would rebuild those heights as if they were never
+        // built.
+        let mut construction = self.checkpoint_construction.write();
         for (position_in_commit, summary) in checkpoint_messages.into_iter().enumerate() {
             let sequence_number = summary.sequence_number;
             let summary = BuilderDWalletCheckpointMessage {
@@ -6169,69 +5990,66 @@ impl AuthorityPerEpochStore {
                 checkpoint_height: Some(commit_height),
                 position_in_commit,
             };
-            batch.insert_batch(
-                &tables.builder_dwallet_checkpoint_message_v1,
-                [(&sequence_number, summary)],
-            )?;
+            construction
+                .builder_dwallet_checkpoint_messages
+                .insert(sequence_number, summary);
         }
-
-        // find all pending checkpoints <= commit_height and remove them
-        let iter = tables
+        // Every pending checkpoint at or below the height just built is
+        // consumed.
+        construction.pending_dwallet_checkpoints = construction
             .pending_dwallet_checkpoints
-            .safe_range_iter(0..=commit_height);
-        let keys = iter
-            .map(|c| c.map(|(h, _)| h))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        batch.delete_batch(&tables.pending_dwallet_checkpoints, &keys)?;
-
-        Ok(batch.write()?)
+            .split_off(&(commit_height + 1));
+        let queued = construction.pending_dwallet_checkpoints.len();
+        drop(construction);
+        self.metrics.pending_dwallet_checkpoints.set(queued as i64);
+        Ok(())
     }
 
     pub fn last_built_dwallet_checkpoint_message_builder(
         &self,
     ) -> IkaResult<Option<BuilderDWalletCheckpointMessage>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_dwallet_checkpoint_message_v1
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(_, s)| s))
+            .checkpoint_construction
+            .read()
+            .builder_dwallet_checkpoint_messages
+            .last_key_value()
+            .map(|(_, summary)| summary.clone()))
     }
 
     pub fn last_built_dwallet_checkpoint_message(
         &self,
     ) -> IkaResult<Option<(DWalletCheckpointSequenceNumber, DWalletCheckpointMessage)>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_dwallet_checkpoint_message_v1
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(seq, s)| (seq, s.checkpoint_message)))
+            .checkpoint_construction
+            .read()
+            .builder_dwallet_checkpoint_messages
+            .last_key_value()
+            .map(|(seq, summary)| (*seq, summary.checkpoint_message.clone())))
     }
 
     pub fn get_built_dwallet_checkpoint_message(
         &self,
         sequence: DWalletCheckpointSequenceNumber,
     ) -> IkaResult<Option<DWalletCheckpointMessage>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_dwallet_checkpoint_message_v1
-            .get(&sequence)?
-            .map(|s| s.checkpoint_message))
+            .checkpoint_construction
+            .read()
+            .builder_dwallet_checkpoint_messages
+            .get(&sequence)
+            .map(|summary| summary.checkpoint_message.clone()))
     }
 
     pub fn get_last_dwallet_checkpoint_signature_index(&self) -> IkaResult<u64> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
+            .checkpoint_construction
+            .read()
             .pending_dwallet_checkpoint_signatures
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|((_, index), _)| index)
-            .unwrap_or(1))
+            .last_key_value()
+            .map_or(1, |((_, index), _)| *index))
     }
 
     pub fn insert_checkpoint_signature(
@@ -6240,10 +6058,124 @@ impl AuthorityPerEpochStore {
         index: u64,
         info: &DWalletCheckpointSignatureMessage,
     ) -> IkaResult<()> {
-        Ok(self
-            .tables()?
+        self.ensure_epoch_alive()?;
+        let held = {
+            let mut construction = self.checkpoint_construction.write();
+            construction
+                .pending_dwallet_checkpoint_signatures
+                .insert((checkpoint_seq, index), info.clone());
+            construction.pending_dwallet_checkpoint_signatures.len()
+        };
+        self.metrics
             .pending_dwallet_checkpoint_signatures
-            .insert(&(checkpoint_seq, index), info)?)
+            .set(held as i64);
+        Ok(())
+    }
+
+    /// Peer signatures for `sequence_number`, from `from_index` up — the
+    /// forward-only read the signature aggregator makes.
+    ///
+    /// Returns the whole tail rather than just this sequence number's rows
+    /// because the caller uses the first key of a different sequence number as
+    /// its "no more signatures yet" signal.
+    pub fn pending_dwallet_checkpoint_signatures_from(
+        &self,
+        sequence_number: DWalletCheckpointSequenceNumber,
+        from_index: u64,
+    ) -> IkaResult<
+        Vec<(
+            (DWalletCheckpointSequenceNumber, u64),
+            DWalletCheckpointSignatureMessage,
+        )>,
+    > {
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .checkpoint_construction
+            .read()
+            .pending_dwallet_checkpoint_signatures
+            .range((sequence_number, from_index)..)
+            .map(|(key, message)| (*key, message.clone()))
+            .collect())
+    }
+
+    /// The system-checkpoint mirror of
+    /// [`Self::pending_dwallet_checkpoint_signatures_from`].
+    pub fn pending_system_checkpoint_signatures_from(
+        &self,
+        sequence_number: SystemCheckpointSequenceNumber,
+        from_index: u64,
+    ) -> IkaResult<
+        Vec<(
+            (SystemCheckpointSequenceNumber, u64),
+            SystemCheckpointSignatureMessage,
+        )>,
+    > {
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .checkpoint_construction
+            .read()
+            .pending_system_checkpoint_signatures
+            .range((sequence_number, from_index)..)
+            .map(|(key, message)| (*key, message.clone()))
+            .collect())
+    }
+
+    /// Drops the dWallet checkpoint construction state below
+    /// `next_to_certify` — the sequence number the aggregator is currently
+    /// trying to certify.
+    ///
+    /// Nothing below it is reachable: the aggregator reads signatures
+    /// strictly forward from `(next_to_certify, its index)` and resets its
+    /// in-flight aggregator whenever it finds itself below the watermark, and
+    /// both families are local to this node (their write discipline is
+    /// `local-only` — which quorum subset this node aggregates and when a
+    /// peer's row lands are not observable to peers and feed no
+    /// consensus-visible decision).
+    ///
+    /// Without this the epoch retains one copy of every checkpoint's full
+    /// content per signer, for the epoch's whole length, in memory. It also
+    /// makes the boot replay flat rather than the worst case: the replay
+    /// re-collects every signature of the epoch against a watermark that is
+    /// already at the head, so each one is dropped on the next pass instead of
+    /// accumulating. Flat across the replay, not within it — this runs about
+    /// once a second while the fold re-inserts at replay speed, so the two
+    /// series sawtooth during a boot (see [`CheckpointConstructionState`]).
+    ///
+    /// Retention is therefore bounded by CERTIFICATION LAG, not by the epoch:
+    /// a node whose certification stalls holds every signature since the
+    /// stall, which is correct — a signature must be kept until the checkpoint
+    /// it signs is certified — and is what
+    /// `ika_epoch_pending_dwallet_checkpoint_signatures` makes visible.
+    ///
+    /// The HIGHEST built message is retained whatever the watermark says: it
+    /// is the sequence-number cursor `create_checkpoints` reads through
+    /// [`Self::last_built_dwallet_checkpoint_message`], so dropping it would
+    /// restart this epoch's numbering at the previous epoch's anchor.
+    pub fn prune_dwallet_checkpoint_construction(
+        &self,
+        next_to_certify: DWalletCheckpointSequenceNumber,
+    ) -> IkaResult<()> {
+        self.ensure_epoch_alive()?;
+        let held = {
+            let mut construction = self.checkpoint_construction.write();
+            let retain_from = construction
+                .builder_dwallet_checkpoint_messages
+                .last_key_value()
+                .map_or(next_to_certify, |(highest, _)| {
+                    next_to_certify.min(*highest)
+                });
+            let mut built = std::mem::take(&mut construction.builder_dwallet_checkpoint_messages);
+            construction.builder_dwallet_checkpoint_messages = built.split_off(&retain_from);
+            let mut signatures =
+                std::mem::take(&mut construction.pending_dwallet_checkpoint_signatures);
+            construction.pending_dwallet_checkpoint_signatures =
+                signatures.split_off(&(next_to_certify, 0));
+            construction.pending_dwallet_checkpoint_signatures.len()
+        };
+        self.metrics
+            .pending_dwallet_checkpoint_signatures
+            .set(held as i64);
+        Ok(())
     }
 
     pub(crate) fn write_pending_system_checkpoint(
@@ -6278,18 +6210,27 @@ impl AuthorityPerEpochStore {
         &self,
         last: Option<SystemCheckpointHeight>,
     ) -> IkaResult<Vec<(SystemCheckpointHeight, PendingSystemCheckpoint)>> {
-        let tables = self.tables()?;
-        let db_iter = tables
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .checkpoint_construction
+            .read()
             .pending_system_checkpoints
-            .safe_iter_with_bounds(last.map(|height| height + 1), None);
-        Ok(db_iter.collect::<Result<Vec<_>, _>>()?)
+            .range(last.map_or(0, |height| height + 1)..)
+            .map(|(height, pending)| (*height, pending.clone()))
+            .collect())
     }
 
     pub fn get_pending_system_checkpoint(
         &self,
         index: &SystemCheckpointHeight,
     ) -> IkaResult<Option<PendingSystemCheckpoint>> {
-        Ok(self.tables()?.pending_system_checkpoints.get(index)?)
+        self.ensure_epoch_alive()?;
+        Ok(self
+            .checkpoint_construction
+            .read()
+            .pending_system_checkpoints
+            .get(index)
+            .cloned())
     }
 
     pub fn process_pending_system_checkpoint(
@@ -6297,11 +6238,10 @@ impl AuthorityPerEpochStore {
         commit_height: SystemCheckpointHeight,
         system_checkpoint_messages: Vec<SystemCheckpointMessage>,
     ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        // All created system_checkpoints are inserted in builder_system_checkpoint_summary in a single batch.
-        // This means that upon restart we can use BuilderSystemCheckpointSummary::commit_height
-        // from the last built summary to resume building system_checkpoints.
-        let mut batch = tables.pending_system_checkpoints.batch();
+        self.ensure_epoch_alive()?;
+        // One lock across the built messages and the queue entries they
+        // consumed, for the reason `process_pending_dwallet_checkpoint` gives.
+        let mut construction = self.checkpoint_construction.write();
         for (position_in_commit, summary) in system_checkpoint_messages.into_iter().enumerate() {
             let sequence_number = summary.sequence_number;
             let summary = BuilderSystemCheckpoint {
@@ -6309,69 +6249,64 @@ impl AuthorityPerEpochStore {
                 checkpoint_height: Some(commit_height),
                 position_in_commit,
             };
-            batch.insert_batch(
-                &tables.builder_system_checkpoint_v1,
-                [(&sequence_number, summary)],
-            )?;
+            construction
+                .builder_system_checkpoint_messages
+                .insert(sequence_number, summary);
         }
-
-        // find all pending system_checkpoints <= commit_height and remove them
-        let iter = tables
+        construction.pending_system_checkpoints = construction
             .pending_system_checkpoints
-            .safe_range_iter(0..=commit_height);
-        let keys = iter
-            .map(|c| c.map(|(h, _)| h))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        batch.delete_batch(&tables.pending_system_checkpoints, &keys)?;
-
-        Ok(batch.write()?)
+            .split_off(&(commit_height + 1));
+        let queued = construction.pending_system_checkpoints.len();
+        drop(construction);
+        self.metrics.pending_system_checkpoints.set(queued as i64);
+        Ok(())
     }
 
     pub fn last_built_system_checkpoint_message_builder(
         &self,
     ) -> IkaResult<Option<BuilderSystemCheckpoint>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_system_checkpoint_v1
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(_, s)| s))
+            .checkpoint_construction
+            .read()
+            .builder_system_checkpoint_messages
+            .last_key_value()
+            .map(|(_, summary)| summary.clone()))
     }
 
     pub fn last_built_system_checkpoint_message(
         &self,
     ) -> IkaResult<Option<(SystemCheckpointSequenceNumber, SystemCheckpointMessage)>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_system_checkpoint_v1
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|(seq, s)| (seq, s.checkpoint_message)))
+            .checkpoint_construction
+            .read()
+            .builder_system_checkpoint_messages
+            .last_key_value()
+            .map(|(seq, summary)| (*seq, summary.checkpoint_message.clone())))
     }
 
     pub fn get_built_system_checkpoint_message(
         &self,
         sequence: SystemCheckpointSequenceNumber,
     ) -> IkaResult<Option<SystemCheckpointMessage>> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
-            .builder_system_checkpoint_v1
-            .get(&sequence)?
-            .map(|s| s.checkpoint_message))
+            .checkpoint_construction
+            .read()
+            .builder_system_checkpoint_messages
+            .get(&sequence)
+            .map(|summary| summary.checkpoint_message.clone()))
     }
 
     pub fn get_last_system_checkpoint_signature_index(&self) -> IkaResult<u64> {
+        self.ensure_epoch_alive()?;
         Ok(self
-            .tables()?
+            .checkpoint_construction
+            .read()
             .pending_system_checkpoint_signatures
-            .reversed_safe_iter_with_bounds(None, None)?
-            .next()
-            .transpose()?
-            .map(|((_, index), _)| index)
-            .unwrap_or(1))
+            .last_key_value()
+            .map_or(1, |((_, index), _)| *index))
     }
 
     pub fn insert_system_checkpoint_signature(
@@ -6380,10 +6315,48 @@ impl AuthorityPerEpochStore {
         index: u64,
         info: &SystemCheckpointSignatureMessage,
     ) -> IkaResult<()> {
-        Ok(self
-            .tables()?
+        self.ensure_epoch_alive()?;
+        let held = {
+            let mut construction = self.checkpoint_construction.write();
+            construction
+                .pending_system_checkpoint_signatures
+                .insert((system_checkpoint_seq, index), info.clone());
+            construction.pending_system_checkpoint_signatures.len()
+        };
+        self.metrics
             .pending_system_checkpoint_signatures
-            .insert(&(system_checkpoint_seq, index), info)?)
+            .set(held as i64);
+        Ok(())
+    }
+
+    /// The system-checkpoint mirror of
+    /// [`Self::prune_dwallet_checkpoint_construction`] — same watermark, same
+    /// locality argument, same retention of the highest built message.
+    pub fn prune_system_checkpoint_construction(
+        &self,
+        next_to_certify: SystemCheckpointSequenceNumber,
+    ) -> IkaResult<()> {
+        self.ensure_epoch_alive()?;
+        let held = {
+            let mut construction = self.checkpoint_construction.write();
+            let retain_from = construction
+                .builder_system_checkpoint_messages
+                .last_key_value()
+                .map_or(next_to_certify, |(highest, _)| {
+                    next_to_certify.min(*highest)
+                });
+            let mut built = std::mem::take(&mut construction.builder_system_checkpoint_messages);
+            construction.builder_system_checkpoint_messages = built.split_off(&retain_from);
+            let mut signatures =
+                std::mem::take(&mut construction.pending_system_checkpoint_signatures);
+            construction.pending_system_checkpoint_signatures =
+                signatures.split_off(&(next_to_certify, 0));
+            construction.pending_system_checkpoint_signatures.len()
+        };
+        self.metrics
+            .pending_system_checkpoint_signatures
+            .set(held as i64);
+        Ok(())
     }
 
     pub fn record_epoch_reconfig_start_time_metric(&self) {
@@ -6614,176 +6587,121 @@ impl ConsensusCommitOutput {
     /// which includes the MPC messages, outputs and verified checkpoint messages.
     ///
     /// We depend upon this batch writing logic, in `last_dwallet_mpc_message_round()` which should be the same for the outputs and verified checkpoint messages as well.
-    pub fn write_to_batch(
-        self,
-        epoch_store: &AuthorityPerEpochStore,
-        batch: &mut DBBatch,
-    ) -> IkaResult {
-        let tables = epoch_store.tables()?;
-
-        // Streams added after mainnet-v1.1.8 are persisted only once the protocol
-        // feature that introduced them is live, gated on the same flag the
-        // `DWalletMPCService` replay reads gate on. This keeps the on-disk
-        // consensus-output schema at a given protocol version identical to what an
-        // older binary writes: without it, a newer binary replaying an older
-        // binary's history (a rolling mainnet-v1.1.8 -> dev binary swap) finds
-        // these tables sparse where the dense per-round driver
-        // (`dwallet_mpc_messages`) expects them aligned, and the replay
-        // round-equality check trips.
-        let internal_presign = epoch_store
-            .protocol_config()
-            .internal_presign_sessions_enabled();
-        let noa = epoch_store.protocol_config().noa_checkpoints();
-
-        // Written by every binary including mainnet-v1.1.8 — dense, one per round.
-        batch.insert_batch(
-            &tables.dwallet_mpc_messages,
-            [(self.consensus_round, self.dwallet_mpc_round_messages)],
-        )?;
-        batch.insert_batch(
-            &tables.dwallet_mpc_outputs,
-            [(self.consensus_round, self.dwallet_mpc_round_outputs)],
-        )?;
-        batch.insert_batch(
-            &tables.verified_dwallet_checkpoint_messages,
-            [(
-                self.consensus_round,
-                self.verified_dwallet_checkpoint_messages,
-            )],
-        )?;
-        // `network_key_data_messages` (the consensus network-key vote stream)
-        // is removed on this branch — the handoff cert supersedes it.
-
-        // Internal presign & sign sessions (#1623): internal MPC outputs, global
-        // presign requests, and idle-status (presign-pool) updates.
-        if internal_presign {
-            batch.insert_batch(
-                &tables.dwallet_internal_mpc_outputs,
-                [(
-                    self.consensus_round,
-                    self.dwallet_internal_mpc_round_outputs,
-                )],
-            )?;
-            batch.insert_batch(
-                &tables.global_presign_requests,
-                [(self.consensus_round, self.global_presign_requests)],
-            )?;
-            batch.insert_batch(
-                &tables.idle_status_updates,
-                [(self.consensus_round, self.idle_status_updates)],
-            )?;
+    /// Moves this commit's drain inputs out of the output so they can be
+    /// handed to the MPC drain over the round transport.
+    ///
+    /// Everything here is MOVED: none of it is written to a table any more.
+    /// The two verified-message sets are the fold's own output and are also
+    /// consumed in-memory by the checkpoint path in the same function, which
+    /// is why they are cloned there rather than here.
+    pub(crate) fn take_round_payload(&mut self) -> ConsensusRoundPayload {
+        ConsensusRoundPayload {
+            round: self.consensus_round,
+            mpc_messages: std::mem::take(&mut self.dwallet_mpc_round_messages),
+            mpc_outputs: std::mem::take(&mut self.dwallet_mpc_round_outputs),
+            internal_mpc_outputs: std::mem::take(&mut self.dwallet_internal_mpc_round_outputs),
+            verified_dwallet_checkpoint_messages: std::mem::take(
+                &mut self.verified_dwallet_checkpoint_messages,
+            ),
+            verified_system_checkpoint_messages: std::mem::take(
+                &mut self.verified_system_checkpoint_messages,
+            ),
+            idle_status_updates: std::mem::take(&mut self.idle_status_updates),
+            sui_chain_observation_updates: std::mem::take(&mut self.sui_chain_observation_updates),
+            global_presign_requests: std::mem::take(&mut self.global_presign_requests),
+            noa_observations: std::mem::take(&mut self.noa_observations),
+            noa_presign_demands: std::mem::take(&mut self.noa_presign_demands),
         }
+    }
 
-        // NOA signed-checkpoint cluster (#1664/#1672): system-checkpoint messages,
-        // NOA observations, and the Sui-chain-observation context they consume.
-        if noa {
-            batch.insert_batch(
-                &tables.verified_system_checkpoint_messages,
-                [(
-                    self.consensus_round,
-                    self.verified_system_checkpoint_messages,
-                )],
-            )?;
-            batch.insert_batch(
-                &tables.noa_observations,
-                [(self.consensus_round, self.noa_observations)],
-            )?;
-            batch.insert_batch(
-                &tables.noa_presign_demands,
-                [(self.consensus_round, self.noa_presign_demands)],
-            )?;
-            batch.insert_batch(
-                &tables.sui_chain_observation_updates,
-                [(self.consensus_round, self.sui_chain_observation_updates)],
-            )?;
+    /// The commit boundary: folds everything this commit derived into the
+    /// epoch store's in-memory state.
+    ///
+    /// This is where the fold's single RocksDB batch was written, and the
+    /// [`FoldedEpochState`] lock is held across the whole group for the same
+    /// reason the batch was one batch: no reader may see the freeze partition
+    /// without the freeze round, or the close marker without the votes that
+    /// justified it.
+    ///
+    /// The processed-message digests are folded under their own lock, after.
+    /// They no longer need to be atomic with the commit's effects — that
+    /// requirement was about crash durability, and a crash now loses the whole
+    /// epoch's derived state rather than half a commit's. Ordering still
+    /// matters and is preserved: the digests land before
+    /// `process_notifications` wakes anything waiting on them, so a waiter
+    /// that observes the notification also observes the digest.
+    pub fn apply_to_epoch_state(self, epoch_store: &AuthorityPerEpochStore) -> IkaResult {
+        epoch_store.ensure_epoch_alive()?;
+
+        let mut state = epoch_store.folded_epoch_state.write();
+        state.end_of_publish_votes.extend(self.end_of_publish_votes);
+        // Removals and upserts: the map holds at most one op per signer, so
+        // the two sets are disjoint and the order is cosmetic — but keeping
+        // them separate keeps it that way if the staging ever grows a
+        // per-signer history.
+        for (signer, op) in self.handoff_signature_rows {
+            match op {
+                Some(signature) => state.handoff_signatures.insert(signer, signature),
+                None => state.handoff_signatures.remove(&signer),
+            };
         }
-
-        batch.insert_batch(
-            &tables.end_of_publish,
-            self.end_of_publish_votes
-                .into_iter()
-                .map(|authority| (authority, ())),
-        )?;
-        // Deletes first, then upserts: the map holds at most one op per
-        // signer, so the two sets are disjoint and the order is cosmetic —
-        // but writing it explicitly keeps it that way if the staging ever
-        // grows a per-signer history.
-        batch.delete_batch(
-            &tables.handoff_signatures,
-            self.handoff_signature_rows
-                .iter()
-                .filter(|(_, op)| op.is_none())
-                .map(|(signer, _)| signer),
-        )?;
-        batch.insert_batch(
-            &tables.handoff_signatures,
-            self.handoff_signature_rows
-                .iter()
-                .filter_map(|(signer, op)| op.as_ref().map(|signature| (signer, signature))),
-        )?;
         if let Some(round) = self.end_of_publish_quorum_round {
-            batch.insert_batch(&tables.end_of_publish_quorum_round, [(0u64, round)])?;
+            state.end_of_publish_quorum_round = Some(round);
         }
         if let Some(voted_count) = self.end_of_publish_quorum_voted_count {
-            batch.insert_batch(
-                &tables.end_of_publish_quorum_voted_count,
-                [(0u64, voted_count)],
-            )?;
+            state.end_of_publish_quorum_voted_count = Some(voted_count);
         }
         if self.epoch_close_emitted {
-            batch.insert_batch(&tables.epoch_close_emitted, [(0u64, ())])?;
+            state.epoch_close_emitted = true;
         }
         if let Some(round) = self.mpc_data_ready_quorum_round {
-            batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
+            state.mpc_data_ready_quorum_round = Some(round);
         }
         if let Some(partition) = self.mpc_data_freeze_partition {
             // The freeze fires at THIS commit's boundary, so the commit's
-            // leader round IS the freeze round; persisted in the same batch
-            // so a crash replays the whole commit and re-records the same
-            // round.
-            batch.insert_batch(
-                &tables.mpc_data_freeze_round,
-                [(0u64, self.consensus_round)],
-            )?;
-            batch.insert_batch(
-                &tables.frozen_validator_mpc_data_input_set,
-                partition.frozen,
-            )?;
-            batch.insert_batch(
-                &tables.epoch_excluded_validators,
-                partition
-                    .excluded
-                    .into_iter()
-                    .map(|authority| (authority, ())),
-            )?;
+            // leader round IS the freeze round, and it lands with the
+            // partition it timestamps.
+            state.mpc_data_freeze_round = Some(self.consensus_round);
+            state
+                .frozen_validator_mpc_data_input_set
+                .extend(partition.frozen);
+            state.epoch_excluded_validators.extend(partition.excluded);
         }
         if let Some(timestamp_ms) = self.epoch_first_commit_timestamp_ms {
-            batch.insert_batch(
-                &tables.epoch_first_commit_timestamp_ms,
-                [(0u64, timestamp_ms)],
-            )?;
+            state.epoch_first_commit_timestamp_ms = Some(timestamp_ms);
+        }
+        if let Some(consensus_commit_stats) = self.consensus_commit_stats {
+            state.last_consensus_stats = Some(consensus_commit_stats);
+        }
+        drop(state);
+
+        if !self.pending_system_checkpoints.is_empty() {
+            let queued = {
+                let mut construction = epoch_store.checkpoint_construction.write();
+                for checkpoint in self.pending_system_checkpoints {
+                    construction
+                        .pending_system_checkpoints
+                        .insert(checkpoint.height(), checkpoint);
+                }
+                construction.pending_system_checkpoints.len()
+            };
+            epoch_store
+                .metrics
+                .pending_system_checkpoints
+                .set(queued as i64);
         }
 
-        batch.insert_batch(
-            &tables.consensus_message_processed,
-            self.consensus_messages_processed
-                .iter()
-                .map(|key| (key, true)),
-        )?;
-
-        if let Some(consensus_commit_stats) = &self.consensus_commit_stats {
-            batch.insert_batch(
-                &tables.last_consensus_stats,
-                [(LAST_CONSENSUS_STATS_ADDR, consensus_commit_stats)],
-            )?;
-        }
-
-        batch.insert_batch(
-            &tables.pending_system_checkpoints,
-            self.pending_system_checkpoints
-                .into_iter()
-                .map(|cp| (cp.height(), cp)),
-        )?;
+        let digests = self
+            .consensus_messages_processed
+            .iter()
+            .map(consensus_message_digest)
+            .collect::<IkaResult<Vec<_>>>()?;
+        let mut processed = epoch_store.processed_consensus_messages.write();
+        processed.extend(digests);
+        epoch_store
+            .metrics
+            .processed_consensus_messages
+            .set(processed.len() as i64);
 
         Ok(())
     }
@@ -6837,47 +6755,18 @@ mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use ika_types::noa_checkpoint::{NOACheckpointKindName, NOACheckpointTxRef};
+    use ika_types::supported_protocol_versions::{
+        SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
+    };
     use tokio::time::advance;
 
-    /// `next_round_row` must return the first row STRICTLY after the anchor —
-    /// including when the anchor row itself is ABSENT from the table. The
-    /// previous `nth(1)` pattern positioned the iterator at the lower bound
-    /// and skipped one entry, which consumed the first UNREAD row as the
-    /// skip target whenever the anchor row was missing — and because every
-    /// per-round stream would skip the same round in lockstep, the
-    /// dense-stream alignment checks (which compare the streams to each
-    /// other) could never catch it.
-    #[tokio::test]
-    async fn next_round_row_does_not_skip_a_live_round_when_the_anchor_row_is_absent() {
-        let dir = tempfile::tempdir().unwrap();
-        let tables = AuthorityEpochTables::open(0, dir.path(), None);
-        let messages = &tables.dwallet_mpc_messages;
-
-        // Rounds 1, 2, 3, 6, 7 present — a gap at 4..=5.
-        for round in [1u64, 2, 3, 6, 7] {
-            messages
-                .insert(&round, &Vec::<DWalletMPCMessage>::new())
-                .unwrap();
-        }
-
-        // Fresh start: the first row.
-        assert_eq!(next_round_row(messages, None).unwrap().unwrap().0, 1);
-        // Anchor present: the strictly-next row, across a gap too.
-        assert_eq!(next_round_row(messages, Some(1)).unwrap().unwrap().0, 2);
-        assert_eq!(next_round_row(messages, Some(3)).unwrap().unwrap().0, 6);
-        // Anchor ABSENT (no row at 4): the first live row after it — round 6
-        // — must be RETURNED, not consumed as the skip target. (`nth(1)`
-        // returned round 7 here, silently dropping round 6.)
-        assert_eq!(next_round_row(messages, Some(4)).unwrap().unwrap().0, 6);
-        // Past the end: no row, and no wraparound at the maximum round.
-        assert!(next_round_row(messages, Some(7)).unwrap().is_none());
-        assert!(next_round_row(messages, Some(u64::MAX)).unwrap().is_none());
-    }
     use crate::dwallet_checkpoints::DWalletCheckpointService;
     use crate::handoff_cert::{build_handoff_attestation, sign_handoff_attestation};
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
     use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
     use fastcrypto::traits::{KeyPair, ToFromBytes};
+    use ika_types::crypto::AuthorityKeyPair;
+    use ika_types::messages_dwallet_checkpoint::SignedDWalletCheckpointMessage;
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use prometheus::Registry;
     use sui_types::base_types::ObjectID;
@@ -6946,16 +6835,19 @@ mod tests {
         let committee = Arc::new(committee);
         let names: Vec<AuthorityName> = committee.names().copied().collect();
         let dir = tempfile::tempdir().unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
             committee,
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
-            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap(),
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
         (epoch_store, dir)
     }
@@ -7268,16 +7160,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
 
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
@@ -7307,12 +7199,6 @@ mod tests {
         // the backstop (grace < 4*grace) — the precise window where base closes
         // and the fix defers.
         let anchor = 100u64;
-        epoch_store
-            .tables()
-            .unwrap()
-            .end_of_publish_quorum_round
-            .insert(&0u64, &anchor)
-            .unwrap();
         let close_window_round = anchor + grace;
         let commit_info = ConsensusCommitInfo::new_for_test(close_window_round, 0, true);
         let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
@@ -7321,14 +7207,15 @@ mod tests {
         // 3). Only the signer KEYS are summed by weight, so the signature value
         // is irrelevant to `handoff_signatures_meet_quorum`.
         let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
-        for name in names.iter().take(2) {
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &dummy_signature)
-                .unwrap();
-        }
+        epoch_store.seed_folded_state_for_test(|state| {
+            state.end_of_publish_quorum_round = Some(anchor);
+            state.handoff_signatures.extend(
+                names
+                    .iter()
+                    .take(2)
+                    .map(|name| (*name, dummy_signature.clone())),
+            );
+        });
         assert!(
             !epoch_store
                 .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(close_window_round))
@@ -7365,12 +7252,11 @@ mod tests {
         );
 
         // STEP 2: bring the handoff signatures to quorum (the 3rd signer).
-        epoch_store
-            .tables()
-            .unwrap()
-            .handoff_signatures
-            .insert(&names[2], &dummy_signature)
-            .unwrap();
+        epoch_store.seed_folded_state_for_test(|state| {
+            state
+                .handoff_signatures
+                .insert(names[2], dummy_signature.clone());
+        });
         assert!(
             epoch_store
                 .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(close_window_round))
@@ -7406,20 +7292,19 @@ mod tests {
         );
     }
 
-    /// #1917: a validator that RESTARTS after every EndOfPublish vote has landed
-    /// must still close at the same round as its never-restarted peers.
+    /// #1917: the `all_voted` input must be the quorum-CROSSING membership,
+    /// not every vote the quorum-observing commit happened to carry.
     ///
-    /// The two views of the vote set disagree by construction. The live
-    /// aggregator stops accepting inserts at the quorum-crossing membership (3
-    /// of 4 here), while `record_end_of_publish_vote` persists ALL votes and
-    /// restart hydration rebuilds the aggregator from that full table (4 of 4).
-    /// Reading `all_voted` from the live aggregator therefore flips it from
-    /// false to true across a restart, making `eop_ready` true immediately and
-    /// closing the epoch before the grace elapses — while peers keep waiting.
+    /// The two views of the vote set disagree by construction, within a single
+    /// boot. The live aggregator stops accepting inserts once quorum is
+    /// crossed (3 of 4 here), while the folded vote set records ALL four. A
+    /// close gate reading the vote set — or an aggregator that kept
+    /// accepting — would see 4 of 4, make `all_voted` true, and close the
+    /// epoch immediately instead of after the grace, while peers keep waiting.
     ///
-    /// The fix pins the count at the quorum-observing commit and reads it back
-    /// from storage. This test DISCRIMINATES fix from base: on base, the
-    /// post-restart commit closes and both STEP 3 assertions fail.
+    /// This test DISCRIMINATES fix from base: remove the pre-quorum guard in
+    /// `process_end_of_publish_vote`, or read the count from the vote set, and
+    /// the commit below closes the epoch.
     ///
     /// Committee size 4 is deliberate — it is the smallest size where the test
     /// helper's quorum formula `(2n).div_ceil(3)` and the chain's
@@ -7427,7 +7312,7 @@ mod tests {
     /// they differ (2 vs 3) and quorum is unanimity on chain, where `all_voted`
     /// is legitimately true and there is nothing to discriminate.
     #[tokio::test]
-    async fn epoch_close_all_voted_survives_restart_after_all_votes_land() {
+    async fn the_pinned_all_voted_count_is_the_quorum_crossing_membership() {
         let (base_committee, names) = freeze_test_committee();
         let dir = tempfile::tempdir().unwrap();
         let epoch_store = open_freeze_test_store(
@@ -7440,50 +7325,40 @@ mod tests {
         assert!(grace > 1, "test needs a non-trivial grace window");
 
         // Handoff-cert quorum satisfied throughout, so the close hinges purely
-        // on EndOfPublish readiness — i.e. on `all_voted` vs the grace.
+        // on EndOfPublish readiness — i.e. on `all_voted` vs the grace. Seeded
+        // as if an earlier commit had folded it.
         let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
-        for name in names.iter().take(3) {
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &dummy_signature)
-                .unwrap();
-        }
+        epoch_store.seed_folded_state_for_test(|state| {
+            state.handoff_signatures.extend(
+                names
+                    .iter()
+                    .take(3)
+                    .map(|name| (*name, dummy_signature.clone())),
+            );
+        });
         assert!(
             epoch_store
                 .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(0))
                 .unwrap()
         );
 
-        // STEP 1: reproduce the live path's two views as they stand once
-        // EARLIER commits have durably landed every vote — the table holds all
-        // four, while the in-memory aggregator stopped at the quorum-crossing
-        // membership (the pre-quorum guard in `process_end_of_publish_vote`).
-        // Written straight to the table here because these votes belong to
-        // already-committed batches, not the commit this test drives.
-        for name in names.iter() {
-            epoch_store
-                .tables()
-                .unwrap()
-                .end_of_publish
-                .insert(name, &())
-                .unwrap();
-        }
-        {
-            let mut end_of_publish = epoch_store.end_of_publish.lock();
-            for name in names.iter().take(3) {
-                end_of_publish.insert_generic(*name, ());
-            }
-            assert!(end_of_publish.has_quorum(), "quorum at 3 of 4");
-            assert_eq!(end_of_publish.keys().count(), 3, "live view is capped");
-        }
-
-        // STEP 2: the quorum-observing commit pins both the anchor and the
-        // count. Well inside the grace, so no close fires here.
+        // The quorum-observing commit carries ALL FOUR votes: the third
+        // crosses quorum, the fourth is the one that must not inflate the
+        // pinned count. This is the common shape at an epoch boundary, where
+        // every validator votes off the same signal.
         let quorum_round = 100u64;
         let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
         let mut output = ConsensusCommitOutput::new(quorum_round);
+        for name in names.iter() {
+            epoch_store
+                .process_end_of_publish_vote(&mut output, name)
+                .unwrap();
+        }
+        assert_eq!(
+            epoch_store.end_of_publish.lock().keys().count(),
+            3,
+            "the live aggregator must cap at the quorum-crossing membership",
+        );
         epoch_store
             .process_consensus_transactions::<DWalletCheckpointService>(
                 &mut output,
@@ -7495,40 +7370,24 @@ mod tests {
             )
             .await
             .unwrap();
-        let mut batch = epoch_store.db_batch().unwrap();
-        output.write_to_batch(&epoch_store, &mut batch).unwrap();
-        batch.write().unwrap();
+        output.apply_to_epoch_state(&epoch_store).unwrap();
         assert!(
             epoch_store.should_accept_tx(),
             "no close yet — the grace has not elapsed"
         );
         assert_eq!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .end_of_publish_quorum_voted_count
-                .get(&0u64)
-                .unwrap(),
+            epoch_store.end_of_publish_quorum_voted_count().unwrap(),
             Some(3),
             "the capped count must be pinned at the quorum-observing commit"
         );
-        drop(epoch_store);
-
-        // STEP 3: restart. Hydration rebuilds the aggregator from the full
-        // table, so the LIVE view now says 4 of 4 — the input that would make
-        // `all_voted` true and close the epoch early.
-        let epoch_store = open_freeze_test_store(
-            dir.path(),
-            &base_committee,
-            0,
-            EpochMetrics::new(&Registry::new()),
-        );
         assert_eq!(
-            epoch_store.end_of_publish.lock().keys().count(),
-            4,
-            "restart hydrates the FULL vote set — this is the hazard being guarded"
+            epoch_store.end_of_publish_quorum_round().unwrap(),
+            Some(quorum_round),
+            "the grace anchor must be the quorum-observing commit's round"
         );
 
+        // One round past quorum, well inside the grace: still open, because
+        // `all_voted` reads the pinned 3 rather than the four votes folded.
         let mut output = ConsensusCommitOutput::new(quorum_round + 1);
         let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
             .process_consensus_transactions::<DWalletCheckpointService>(
@@ -7543,8 +7402,8 @@ mod tests {
             .unwrap();
         assert!(
             epoch_store.should_accept_tx(),
-            "#1917: the restarted validator must NOT close early — `all_voted` \
-             must come from the pinned count (3), not the hydrated view (4)"
+            "#1917: the epoch must NOT close early — `all_voted` must come from \
+             the pinned count (3), not the full vote set (4)"
         );
         assert!(
             !dwallet_messages
@@ -7554,86 +7413,80 @@ mod tests {
         );
     }
 
-    /// #1917 crash-replay variant: a crash between PROCESSING the
-    /// quorum-observing commit and WRITING its batch must not let the pinned
-    /// count come back larger than the consensus sequence implies.
+    /// #1917 restart variant: a validator that restarts and re-folds the
+    /// quorum-observing commit must re-pin the SAME count and the SAME anchor,
+    /// so it closes at the same round as its never-restarted peers.
     ///
-    /// This is the window that survives pinning the count alone. If the vote
-    /// insert is an out-of-band table write, it is durable the moment the
-    /// commit is processed, while the anchor and the count ride the batch. Lose
-    /// the batch and the table is AHEAD of the replayed commit: hydration
-    /// rebuilds an already-over-quorum aggregator, the replayed commit's
-    /// pre-quorum guard therefore counts nothing, and the count re-pins at the
-    /// hydrated size instead of the quorum-crossing one — `all_voted` true, and
-    /// the epoch closes early exactly as in #1917. It needs the quorum commit
-    /// to carry more than the crossing vote, which is the common shape at an
-    /// epoch boundary where every validator votes off the same signal.
+    /// This is the property the whole design rests on, at its sharpest point.
+    /// The count is not recoverable from the vote set — that set is uncapped
+    /// while the aggregator stops at the quorum-crossing membership — so its
+    /// re-derivation depends entirely on the replay refilling the aggregator
+    /// in the same consensus order. Nothing else makes the two runs agree:
+    /// there is no durable record left to fall back on.
     ///
-    /// Routing the vote insert through `ConsensusCommitOutput` closes it: the
-    /// table can only ever be as current as the last committed batch.
-    ///
-    /// No failpoint needed — "crash before the batch write" is faithfully
-    /// modelled by processing the commit and simply never writing its batch.
+    /// A restart is modelled by opening a fresh store, which is exactly what a
+    /// restart now does to derived state.
     #[tokio::test]
-    async fn epoch_close_all_voted_survives_crash_before_quorum_commit_batch() {
+    async fn a_restart_re_derives_the_same_pinned_count_and_grace_anchor() {
         let (base_committee, names) = freeze_test_committee();
         let dir = tempfile::tempdir().unwrap();
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        let quorum_round = 100u64;
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+
+        // The quorum-observing commit carries ALL FOUR votes: the third
+        // crosses quorum, the fourth is the one that must not inflate the
+        // pinned count on either run.
+        async fn fold_the_quorum_commit(
+            epoch_store: &Arc<AuthorityPerEpochStore>,
+            names: &[AuthorityName],
+            quorum_round: u64,
+            authority_metrics: &Arc<AuthorityMetrics>,
+        ) {
+            let mut output = ConsensusCommitOutput::new(quorum_round);
+            for name in names.iter() {
+                epoch_store
+                    .process_end_of_publish_vote(&mut output, name)
+                    .unwrap();
+            }
+            epoch_store
+                .process_consensus_transactions::<DWalletCheckpointService>(
+                    &mut output,
+                    &[],
+                    &None,
+                    &None::<Arc<SystemCheckpointService>>,
+                    &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
+                    authority_metrics,
+                )
+                .await
+                .unwrap();
+            output.apply_to_epoch_state(epoch_store).unwrap();
+        }
+
         let epoch_store = open_freeze_test_store(
             dir.path(),
             &base_committee,
             0,
             EpochMetrics::new(&Registry::new()),
         );
-
-        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
-        for name in names.iter().take(3) {
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &dummy_signature)
-                .unwrap();
-        }
-
-        // The quorum-observing commit carries ALL FOUR votes: the third crosses
-        // quorum, the fourth is the one that must not inflate the pinned count.
-        let quorum_round = 100u64;
-        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
-        let mut output = ConsensusCommitOutput::new(quorum_round);
-        for name in names.iter() {
-            epoch_store
-                .process_end_of_publish_vote(&mut output, name)
-                .unwrap();
-        }
-        epoch_store
-            .process_consensus_transactions::<DWalletCheckpointService>(
-                &mut output,
-                &[],
-                &None,
-                &None::<Arc<SystemCheckpointService>>,
-                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
-                &authority_metrics,
-            )
-            .await
-            .unwrap();
-
-        // CRASH: the batch is dropped, never written. Nothing this commit
-        // produced — votes, anchor, count — may have reached storage.
-        drop(output);
-        assert!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .end_of_publish
-                .safe_iter()
-                .next()
-                .is_none(),
-            "votes must ride the commit batch — an out-of-band insert would \
-             have survived the crash and is what reopens the #1917 window"
-        );
+        epoch_store.seed_folded_state_for_test(|state| {
+            state.handoff_signatures.extend(
+                names
+                    .iter()
+                    .take(3)
+                    .map(|name| (*name, dummy_signature.clone())),
+            );
+        });
+        fold_the_quorum_commit(&epoch_store, &names, quorum_round, &authority_metrics).await;
+        let first_count = epoch_store.end_of_publish_quorum_voted_count().unwrap();
+        let first_anchor = epoch_store.end_of_publish_quorum_round().unwrap();
+        assert_eq!(first_count, Some(3));
+        assert_eq!(first_anchor, Some(quorum_round));
+        epoch_store.release_db_handles();
         drop(epoch_store);
 
-        // Replay: consensus redelivers the lost commit, this time to completion.
+        // Restart: the store reopens with no derived state at all, and the
+        // replay redelivers the same commit.
         let epoch_store = open_freeze_test_store(
             dir.path(),
             &base_committee,
@@ -7643,39 +7496,34 @@ mod tests {
         assert_eq!(
             epoch_store.end_of_publish.lock().keys().count(),
             0,
-            "hydration must see the pre-commit state, not a half-applied commit"
+            "a reopened store must hold no votes; anything it kept would be \
+             counted twice by the replay"
         );
-        let mut output = ConsensusCommitOutput::new(quorum_round);
-        for name in names.iter() {
-            epoch_store
-                .process_end_of_publish_vote(&mut output, name)
-                .unwrap();
-        }
-        epoch_store
-            .process_consensus_transactions::<DWalletCheckpointService>(
-                &mut output,
-                &[],
-                &None,
-                &None::<Arc<SystemCheckpointService>>,
-                &ConsensusCommitInfo::new_for_test(quorum_round, 0, true),
-                &authority_metrics,
-            )
-            .await
-            .unwrap();
-        let mut batch = epoch_store.db_batch().unwrap();
-        output.write_to_batch(&epoch_store, &mut batch).unwrap();
-        batch.write().unwrap();
+        assert_eq!(
+            epoch_store.end_of_publish_quorum_voted_count().unwrap(),
+            None,
+            "a reopened store must hold no pinned count",
+        );
+        epoch_store.seed_folded_state_for_test(|state| {
+            state.handoff_signatures.extend(
+                names
+                    .iter()
+                    .take(3)
+                    .map(|name| (*name, dummy_signature.clone())),
+            );
+        });
+        fold_the_quorum_commit(&epoch_store, &names, quorum_round, &authority_metrics).await;
 
         assert_eq!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .end_of_publish_quorum_voted_count
-                .get(&0u64)
-                .unwrap(),
-            Some(3),
-            "#1917: replay must re-derive the quorum-crossing count (3), not the \
-             number of votes the commit carried (4)"
+            epoch_store.end_of_publish_quorum_voted_count().unwrap(),
+            first_count,
+            "#1917: the replay must re-pin the quorum-crossing count (3), not \
+             the number of votes the commit carried (4)"
+        );
+        assert_eq!(
+            epoch_store.end_of_publish_quorum_round().unwrap(),
+            first_anchor,
+            "#1917: the replay must re-anchor the grace at the same round"
         );
         assert!(
             epoch_store.should_accept_tx(),
@@ -7702,16 +7550,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
 
         let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
@@ -7735,24 +7583,18 @@ mod tests {
         }
 
         let anchor = 100u64;
-        epoch_store
-            .tables()
-            .unwrap()
-            .end_of_publish_quorum_round
-            .insert(&0u64, &anchor)
-            .unwrap();
-
         // Handoff signatures SUB-quorum (2 of 4) — and they STAY there: the
         // quorum never forms in this test.
         let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
-        for name in names.iter().take(2) {
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &dummy_signature)
-                .unwrap();
-        }
+        epoch_store.seed_folded_state_for_test(|state| {
+            state.end_of_publish_quorum_round = Some(anchor);
+            state.handoff_signatures.extend(
+                names
+                    .iter()
+                    .take(2)
+                    .map(|name| (*name, dummy_signature.clone())),
+            );
+        });
         assert!(
             !epoch_store
                 .handoff_signatures_meet_quorum(&ConsensusCommitOutput::new(anchor))
@@ -7862,16 +7704,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
 
         // Perpetual tables in their own tempdir, installed the way node startup
@@ -7888,15 +7730,12 @@ mod tests {
         // Persist a quorum (3 of 4) of REAL handoff signatures over it. install
         // replays these into a fresh aggregator; at the 3rd it crosses quorum and
         // mints the cert during replay.
-        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
-            let message = sign_handoff_attestation(attestation.clone(), *name, keypair);
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &message.signature)
-                .unwrap();
-        }
+        epoch_store.seed_folded_state_for_test(|state| {
+            for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
+                let message = sign_handoff_attestation(attestation.clone(), *name, keypair);
+                state.handoff_signatures.insert(*name, message.signature);
+            }
+        });
 
         assert!(
             perpetual_tables
@@ -7953,16 +7792,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
 
         let epoch = 0u64;
@@ -7976,25 +7815,17 @@ mod tests {
         // the gate assertion below actually reacts to the fix (with a
         // sub-quorum the final !gate assertion would pass even with the
         // deletion reverted — a vacuous check).
-        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
-            let message = sign_handoff_attestation(attestation_a.clone(), *name, keypair);
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .insert(name, &message.signature)
-                .unwrap();
-        }
+        epoch_store.seed_folded_state_for_test(|state| {
+            for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
+                let message = sign_handoff_attestation(attestation_a.clone(), *name, keypair);
+                state.handoff_signatures.insert(*name, message.signature);
+            }
+        });
         epoch_store
             .install_expected_handoff_attestation(attestation_a)
             .unwrap();
         assert_eq!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            epoch_store.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             3,
             "the three A-endorsing rows are present after installing A"
         );
@@ -8021,18 +7852,11 @@ mod tests {
             !epoch_store.handoff_signatures_meet_quorum(&output).unwrap(),
             "the close gate must not count the superseded rows"
         );
-        let mut batch = epoch_store.db_batch().unwrap();
-        output.write_to_batch(&epoch_store, &mut batch).unwrap();
-        batch.write().unwrap();
+        output.apply_to_epoch_state(&epoch_store).unwrap();
         assert_eq!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            epoch_store.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             0,
-            "stale A-endorsing rows must be deleted from the table on re-install to B"
+            "stale A-endorsing rows must be dropped on re-install to B"
         );
     }
 
@@ -8074,16 +7898,16 @@ mod tests {
             EpochStartSystem::new_for_testing_with_epoch(committee.epoch),
         )
         .unwrap();
-        AuthorityPerEpochStore::new(
+        AuthorityPerEpochStore::new(EpochStoreParams {
             name,
             committee,
-            dir,
-            None,
-            EpochMetrics::new(&Registry::new()),
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap()
     }
 
@@ -8122,9 +7946,7 @@ mod tests {
             .await
             .unwrap();
         let gate = store.handoff_signatures_meet_quorum(&output).unwrap();
-        let mut batch = store.db_batch().unwrap();
-        output.write_to_batch(store, &mut batch).unwrap();
-        batch.write().unwrap();
+        output.apply_to_epoch_state(store).unwrap();
         (gate, dwallet_messages)
     }
 
@@ -8195,14 +8017,9 @@ mod tests {
             "#1927: the close gate must agree at every commit across the skew"
         );
         assert_eq!(
-            store_a
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            store_a.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             2,
-            "A's rows are durable, each carried by the commit that sequenced it"
+            "A's rows are folded, each by the commit that sequenced it"
         );
         assert_eq!(
             store_b.pending_handoff_signatures.lock().len(),
@@ -8216,16 +8033,10 @@ mod tests {
             .install_expected_handoff_attestation(attestation.clone())
             .unwrap();
         assert_eq!(
-            store_b
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            store_b.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             0,
-            "#1927: drained rows must not be durable until a commit carries them — \
-             pre-fix the install wrote them to the table at wall-clock local time, \
-             attributable to no commit at all"
+            "#1927: drained rows must not land until a commit carries them — pre-fix the \
+             install applied them at wall-clock local time, attributable to no commit at all"
         );
         assert_eq!(
             store_b.staged_handoff_signature_rows.lock().len(),
@@ -8245,59 +8056,51 @@ mod tests {
                 "both stores must observe the handoff quorum at the same commit"
             );
             assert_eq!(
-                store
-                    .tables()
-                    .unwrap()
-                    .handoff_signatures
-                    .safe_iter()
-                    .count(),
+                store.read_folded_state_for_test(|state| state.handoff_signatures.len()),
                 3,
-                "every row is durable exactly once its commit's batch is written"
+                "every row lands exactly once its commit reaches the boundary"
             );
         }
     }
 
-    /// #1927 crash-replay variant: a crash between PROCESSING the commit that
-    /// carries the quorum-crossing handoff signatures and WRITING its batch
-    /// must not leave the `handoff_signatures` table ahead of the last
-    /// committed commit.
+    /// #1927 replay variant: a crash between PROCESSING the commit that
+    /// carries the quorum-crossing handoff signatures and REACHING its
+    /// boundary must leave the gate deciding exactly as the replay will.
     ///
-    /// Pre-fix `record_handoff_signature` inserted on sight, so the rows were
-    /// durable the moment the commit was processed while the close marker,
-    /// the votes and the anchor rode the batch. The table then described a
-    /// commit that never landed — the out-of-band-write class of #1829/#1917,
-    /// on the other half of the same gate.
+    /// Pre-fix `record_handoff_signature` applied rows on sight, so they took
+    /// effect the moment the commit was processed while the close marker, the
+    /// votes and the anchor waited for the boundary. The gate could then be
+    /// decided against state no commit carried — the out-of-band-write class
+    /// of #1829/#1917, on the other half of the same gate.
     ///
-    /// No failpoint needed: "crash before the batch write" is modelled
-    /// faithfully by processing the commit and never writing its batch.
+    /// No failpoint needed: "crash before the commit boundary" is modelled
+    /// faithfully by processing the commit and never applying its output.
     #[tokio::test]
-    async fn handoff_gate_survives_crash_before_signature_commit_batch() {
+    async fn handoff_gate_survives_a_crash_before_the_signature_commit_boundary() {
         let (committee, names, keypairs) = handoff_test_committee();
         let dir = tempfile::tempdir().unwrap();
         let attestation = build_handoff_attestation(0, [0xC5u8; 32], vec![]).unwrap();
         let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
 
-        // Already-committed state from EARLIER commits: the EndOfPublish
-        // quorum, its grace anchor and its pinned count. Written straight to
-        // the tables because they belong to batches that already landed; the
-        // reopen below is what loads them into the in-memory aggregator.
+        // State from EARLIER commits: the EndOfPublish quorum, its grace
+        // anchor and its pinned count, seeded as if their commits had already
+        // reached the boundary, so the close hinges purely on the handoff
+        // gate.
         let anchor = 100u64;
-        {
-            let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
-            let tables = store.tables().unwrap();
-            for name in names.iter().take(3) {
-                tables.end_of_publish.insert(name, &()).unwrap();
-            }
-            tables
-                .end_of_publish_quorum_round
-                .insert(&0u64, &anchor)
-                .unwrap();
-            tables
-                .end_of_publish_quorum_voted_count
-                .insert(&0u64, &3u64)
-                .unwrap();
-        }
         let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
+        store.seed_folded_state_for_test(|state| {
+            state
+                .end_of_publish_votes
+                .extend(names.iter().take(3).copied());
+            state.end_of_publish_quorum_round = Some(anchor);
+            state.end_of_publish_quorum_voted_count = Some(3);
+        });
+        {
+            let mut end_of_publish = store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+        }
         let grace = store.protocol_config().end_of_publish_grace_rounds();
         assert!(grace > 1, "test needs a non-trivial grace window");
         assert!(
@@ -8345,27 +8148,37 @@ mod tests {
         // storage.
         drop(output);
         assert_eq!(
-            store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            store.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             0,
-            "#1927: signature rows must ride the commit batch — an out-of-band \
-             insert survives the crash and leaves the durable table describing a \
-             commit that never landed"
+            "#1927: signature rows must ride the commit boundary — an on-sight insert \
+             survives the crash and leaves the gate reading state no commit carried"
         );
+        store.release_db_handles();
         drop(store);
 
-        // Replay: consensus redelivers the lost commit, this time to
+        // Replay: the reopened store holds nothing, so the replay re-folds the
+        // earlier commits too — modelled here by re-seeding the state they
+        // produced — and then redelivers the lost commit, this time to
         // completion. The gate and the close round must come out identical to
         // the original run.
         let store = open_handoff_test_store(dir.path(), committee.clone(), names[0]);
         assert!(
             store.should_accept_tx(),
-            "the close marker rode the lost batch, so the reopened epoch is open"
+            "the close never reached a boundary, so the reopened epoch is open"
         );
+        store.seed_folded_state_for_test(|state| {
+            state
+                .end_of_publish_votes
+                .extend(names.iter().take(3).copied());
+            state.end_of_publish_quorum_round = Some(anchor);
+            state.end_of_publish_quorum_voted_count = Some(3);
+        });
+        {
+            let mut end_of_publish = store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+        }
         store
             .install_expected_handoff_attestation(attestation.clone())
             .unwrap();
@@ -8385,14 +8198,9 @@ mod tests {
             "replay must close at the same round the original run did"
         );
         assert_eq!(
-            store
-                .tables()
-                .unwrap()
-                .handoff_signatures
-                .safe_iter()
-                .count(),
+            store.read_folded_state_for_test(|state| state.handoff_signatures.len()),
             3,
-            "the replayed commit's batch is what makes the rows durable"
+            "the replayed commit's boundary is what makes the rows visible"
         );
     }
 
@@ -9022,16 +8830,16 @@ mod tests {
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(epoch))
                 .unwrap();
-        AuthorityPerEpochStore::new(
-            *base_committee.names().next().unwrap(),
+        AuthorityPerEpochStore::new(EpochStoreParams {
+            name: *base_committee.names().next().unwrap(),
             committee,
-            dir,
-            None,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
             metrics,
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap()
     }
 
@@ -9232,14 +9040,9 @@ mod tests {
             "metric wiring must not change WHAT freezes: exactly the attested set"
         );
         assert_eq!(
-            epoch_store
-                .tables()
-                .unwrap()
-                .mpc_data_freeze_round
-                .get(&0)
-                .unwrap(),
+            epoch_store.read_folded_state_for_test(|state| state.mpc_data_freeze_round),
             Some(100 + grace),
-            "the freeze round must be persisted with the freeze batch"
+            "the freeze round must be recorded at the freeze commit's boundary"
         );
 
         // Later commits leave the frozen anchors untouched.
@@ -9283,16 +9086,24 @@ mod tests {
         assert!(epoch_store.is_mpc_data_frozen().unwrap());
     }
 
-    /// Mid-grace restart: reopening the epoch store re-seeds the quorum
-    /// anchor, leader round, signal count, and deadline backstop from the
-    /// persisted tables (no plausible-but-wrong zeros, no fresh
-    /// countdown), keeps the freeze at `-1`, and the reopened store then
-    /// freezes at the same anchored round its peers do.
+    /// A restart resets every freeze-progress gauge to its sentinel, and the
+    /// re-fold of the same commits re-publishes the identical values.
+    ///
+    /// This replaces a pair of tests that asserted the gauges were RESTORED
+    /// from the tables at open. Nothing is restored any more: the state they
+    /// report lives in memory, so a reopen starts it empty and the boot replay
+    /// re-drives every gauge through the same setters the live fold uses.
+    ///
+    /// Both halves matter. A gauge left holding the pre-restart value would
+    /// report a quorum or a freeze the re-folding node has not reached yet;
+    /// a gauge the replay fails to re-publish would leave an operator reading
+    /// `-1` on a node that has long since frozen.
     #[tokio::test]
-    async fn freeze_metrics_restored_after_restart_before_freeze() {
+    async fn freeze_metrics_reset_on_restart_and_republished_by_the_refold() {
         let dir = tempfile::tempdir().unwrap();
         let (base_committee, names) = freeze_test_committee();
-        {
+        let signers: Vec<AuthorityName> = names[..3].to_vec();
+        let grace = {
             let registry = Registry::new();
             let epoch_store = open_freeze_test_store(
                 dir.path(),
@@ -9300,129 +9111,93 @@ mod tests {
                 0,
                 EpochMetrics::new(&registry),
             );
-            let signers: Vec<AuthorityName> = names[..3].to_vec();
             for signer in &signers {
                 epoch_store
                     .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &signers))
                     .unwrap();
             }
             drive_freeze_commit(&epoch_store, 100).await;
+            assert_eq!(
+                registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
+                100
+            );
+            let grace = epoch_store.protocol_config().mpc_data_freeze_grace_rounds();
             epoch_store.release_db_handles();
-        }
+            grace
+        };
 
-        // "Restart": a fresh registry + store over the same DB.
+        // Restart: a fresh registry + store over the same DB.
         let registry = Registry::new();
         let epoch_store =
             open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
+        for (gauge, sentinel) in [
+            ("ika_dwallet_mpc_data_ready_quorum_round", -1),
+            ("ika_dwallet_mpc_data_freeze_round", -1),
+            ("ika_dwallet_mpc_data_freeze_epoch", -1),
+            ("ika_last_committed_leader_consensus_round", -1),
+            (
+                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds",
+                -1,
+            ),
+            ("ika_dwallet_mpc_data_ready_signals", 0),
+        ] {
+            assert_eq!(
+                registry_gauge(&registry, gauge),
+                sentinel,
+                "`{gauge}` must reset at open — the replay has not re-reached the commit \
+                 that set it",
+            );
+        }
+        assert!(
+            !epoch_store.is_mpc_data_frozen().unwrap(),
+            "a reopened store holds no frozen set",
+        );
+
+        // The replay: the same signals, then the same commit.
+        for signer in &signers {
+            epoch_store
+                .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &signers))
+                .unwrap();
+        }
+        drive_freeze_commit(&epoch_store, 100).await;
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
-            100
+            100,
+            "the re-fold must re-anchor the quorum at the same round",
         );
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
-            -1
-        );
-        assert_eq!(
-            registry_gauge(&registry, "ika_last_committed_leader_consensus_round"),
-            100
+            -1,
+            "the grace has not elapsed on this run either",
         );
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
             3
         );
-        // Deadline backstop restored from the persisted first-commit
-        // anchor (commit 100 stamped 100_000 ms by the drive helper).
-        let expected_deadline_seconds = ready_signal_deadline_ms(
-            Some(100_000),
-            epoch_store.epoch_start_state().epoch_duration_ms(),
-            None,
-        )
-        .unwrap()
-            / 1000;
+        // The deadline backstop's anchor is re-observed at the same first
+        // commit the replay folded (stamped 100_000 ms by the drive helper).
+        // The gauge itself is the announcement sender's to publish, from
+        // exactly this value, on its next tick — which is why the reset above
+        // matters: a gauge left holding the pre-restart deadline would read as
+        // an anchor this run has not re-observed yet.
         assert_eq!(
-            registry_gauge(
-                &registry,
-                "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds"
-            ),
-            expected_deadline_seconds as i64
+            epoch_store.epoch_first_commit_timestamp_ms().unwrap(),
+            Some(100_000),
+            "the replay must re-observe the epoch's first-commit anchor",
         );
 
-        // The restarted validator freezes at the same anchored round.
-        let grace = epoch_store.protocol_config().mpc_data_freeze_grace_rounds();
+        // And the restarted validator freezes at the same anchored round its
+        // peers do.
         drive_freeze_commit(&epoch_store, 100 + grace).await;
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
             (100 + grace) as i64
         );
-        assert!(epoch_store.is_mpc_data_frozen().unwrap());
-    }
-
-    /// Restart after the freeze: the persisted freeze round re-seeds the
-    /// gauge. If the freeze round row is absent (a freeze recorded by a
-    /// binary predating its persistence), the gauge stays at `-1` — it is
-    /// never invented from the current round — while the frozen set and
-    /// freeze-epoch gauge still restore.
-    #[tokio::test]
-    async fn freeze_metrics_restored_after_restart_after_freeze() {
-        let dir = tempfile::tempdir().unwrap();
-        let (base_committee, names) = freeze_test_committee();
-        {
-            let registry = Registry::new();
-            let epoch_store = open_freeze_test_store(
-                dir.path(),
-                &base_committee,
-                0,
-                EpochMetrics::new(&registry),
-            );
-            for signer in &names {
-                epoch_store
-                    .record_epoch_mpc_data_ready_signal(&ready_signal(*signer, 0, &names))
-                    .unwrap();
-            }
-            drive_freeze_commit(&epoch_store, 200).await;
-            assert!(epoch_store.is_mpc_data_frozen().unwrap());
-            epoch_store.release_db_handles();
-        }
-
-        let registry = Registry::new();
-        let epoch_store =
-            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
-        assert_eq!(
-            registry_gauge(&registry, "ika_dwallet_mpc_data_ready_quorum_round"),
-            200
-        );
-        assert_eq!(
-            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
-            200
-        );
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_epoch"),
             0
         );
-
-        // Simulate a freeze recorded by a pre-persistence binary: the
-        // round row is missing while the frozen set is present.
-        epoch_store
-            .tables()
-            .unwrap()
-            .mpc_data_freeze_round
-            .remove(&0)
-            .unwrap();
-        epoch_store.release_db_handles();
-        drop(epoch_store);
-        let registry = Registry::new();
-        let epoch_store =
-            open_freeze_test_store(dir.path(), &base_committee, 0, EpochMetrics::new(&registry));
         assert!(epoch_store.is_mpc_data_frozen().unwrap());
-        assert_eq!(
-            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_round"),
-            -1,
-            "an unrecoverable freeze round must stay -1, never be invented"
-        );
-        assert_eq!(
-            registry_gauge(&registry, "ika_dwallet_mpc_data_freeze_epoch"),
-            0
-        );
     }
 
     /// `EpochMetrics` is node-lifetime: opening the NEXT epoch's store on
@@ -9472,6 +9247,625 @@ mod tests {
         assert_eq!(
             registry_gauge(&registry, "ika_dwallet_mpc_data_ready_signals"),
             0
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Event-sourced epoch: what the store keeps on disk, and the
+    // determinism of the fold that rebuilds everything else.
+    // Model: dev-docs/specs/event-sourced-epoch.md.
+    // ------------------------------------------------------------------
+
+    /// Adding a table to `AuthorityEpochTables` is a decision to make
+    /// something SURVIVE a restart, and this test is where that decision has
+    /// to be made deliberately.
+    ///
+    /// Epoch state derived from the consensus commits is held in memory and
+    /// rebuilt by the boot replay; what remains on disk is exactly the state
+    /// no replay reproduces — presign material and the idempotency markers
+    /// that make replaying against it safe, this validator's private VSS
+    /// outputs, the content-addressed output caches, and the operator's
+    /// buffer-stake override. A table added here that the fold writes would
+    /// reintroduce the second truth the design exists to delete: a durable
+    /// record the replay does not rewind, holding rows for commits the
+    /// consensus store may no longer have (ika #2057).
+    ///
+    /// So the list is pinned. If you are adding a table, say in
+    /// `dev-docs/preserved-epoch-state-audit.md` what a replay would have to
+    /// redo to rebuild it — and if the answer is "nothing, the commits carry
+    /// it", it belongs in memory instead.
+    #[test]
+    fn the_epoch_store_keeps_only_state_no_replay_reproduces() {
+        let expected: BTreeSet<&str> = BTreeSet::from([
+            "assigned_presigns_ecdsa_secp256k1",
+            "assigned_presigns_ecdsa_secp256r1",
+            "assigned_presigns_eddsa",
+            "assigned_presigns_eddsa_vss",
+            "assigned_presigns_schnorrkel_substrate",
+            "assigned_presigns_schnorrkel_substrate_vss",
+            "assigned_presigns_taproot",
+            "assigned_presigns_taproot_vss",
+            "filled_presign_pool_slots",
+            "internal_presign_pool_ecdsa_secp256k1",
+            "internal_presign_pool_ecdsa_secp256r1",
+            "internal_presign_pool_eddsa",
+            "internal_presign_pool_eddsa_vss",
+            "internal_presign_pool_schnorrkel_substrate",
+            "internal_presign_pool_schnorrkel_substrate_vss",
+            "internal_presign_pool_sizes",
+            "internal_presign_pool_taproot",
+            "internal_presign_pool_taproot_vss",
+            "network_dkg_output_digests",
+            "network_reconfiguration_output_digests",
+            "noa_presign_demand_resolutions",
+            "override_protocol_upgrade_buffer_stake",
+            "presign_private_outputs",
+            "served_global_presigns",
+            "used_presigns",
+        ]);
+        let actual: BTreeSet<String> = AuthorityEpochTables::describe_tables()
+            .into_keys()
+            .collect();
+        let actual: BTreeSet<&str> = actual.iter().map(String::as_str).collect();
+
+        let added: Vec<_> = actual.difference(&expected).copied().collect();
+        assert!(
+            added.is_empty(),
+            "new durable per-epoch tables: {added:?} — a table here survives every restart \
+             and is never rewound by the replay. If the consensus commits determine it, it \
+             belongs in the epoch store's in-memory state instead; if they do not, add it \
+             here and to dev-docs/preserved-epoch-state-audit.md with what a replay would \
+             have to redo to rebuild it.",
+        );
+        let removed: Vec<_> = expected.difference(&actual).copied().collect();
+        assert!(
+            removed.is_empty(),
+            "durable per-epoch tables that no longer exist: {removed:?}",
+        );
+    }
+
+    /// A committee-member name plus the store it will fold commits into.
+    fn derived_state_test_store(dir: &Path) -> (Arc<AuthorityPerEpochStore>, AuthorityName) {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let name = *committee.names().next().unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name,
+            committee,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
+        (epoch_store, name)
+    }
+
+    /// Drives `rounds` synthetic consensus commits through the real commit
+    /// boundary. The content is fixed, not sampled, so the same call folds the
+    /// same sequence every time — which is what makes the double-fold
+    /// comparison meaningful.
+    async fn fold_test_commits(
+        epoch_store: &Arc<AuthorityPerEpochStore>,
+        author: AuthorityName,
+        rounds: u64,
+    ) {
+        let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        for round in 1..=rounds {
+            let session_identifier = SessionIdentifier::new(SessionType::User, [round as u8; 32]);
+            let transactions = vec![
+                // Still writes a table: the protocol-upgrade vote tally.
+                // Kept in the fixture because the MPC kinds below no longer
+                // land in the epoch store at all — they go to the drain over
+                // the round channel — and without a table-writing kind the
+                // breadth checks in these tests would go vacuous.
+                ConsensusTransaction::new_capability_notification_v1(AuthorityCapabilitiesV1 {
+                    authority: author,
+                    // Built by hand rather than through `new`, which stamps
+                    // the generation from the wall clock: two folds of "the
+                    // same" commit would then carry different transactions
+                    // and the determinism comparison would fail on the
+                    // fixture rather than on the system. (It did, the first
+                    // time — which is the check working.)
+                    generation: 7,
+                    supported_protocol_versions:
+                        SupportedProtocolVersionsWithHashes::from_supported_versions(
+                            SupportedProtocolVersions {
+                                min: ProtocolVersion::MIN,
+                                max: ProtocolVersion::MAX,
+                            },
+                            Chain::Unknown,
+                        ),
+                    move_contracts_to_upgrade: Vec::new(),
+                }),
+                ConsensusTransaction::new_dwallet_mpc_message(
+                    author,
+                    session_identifier,
+                    vec![round as u8; 8],
+                ),
+                ConsensusTransaction::new_dwallet_mpc_output(
+                    author,
+                    session_identifier,
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                ConsensusTransaction::new_idle_status_update(IdleStatusUpdate {
+                    authority: author,
+                    nonce: [round as u8; 32],
+                    is_idle: round % 2 == 0,
+                }),
+            ];
+            let transactions = transactions
+                .into_iter()
+                .map(|transaction| {
+                    VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                        certificate_author_index: 0,
+                        certificate_author: author,
+                        consensus_index: ExecutionIndices {
+                            last_committed_round: round,
+                            sub_dag_index: round,
+                            transaction_index: 0,
+                        },
+                        transaction: SequencedConsensusTransactionKind::External(transaction),
+                    })
+                })
+                .collect();
+            let consensus_stats = ExecutionIndicesWithStats {
+                index: ExecutionIndices {
+                    last_committed_round: round,
+                    sub_dag_index: round,
+                    transaction_index: 0,
+                },
+                hash: 0,
+                stats: ConsensusStats::new(4),
+            };
+            epoch_store
+                .process_consensus_transactions_and_commit_boundary(
+                    transactions,
+                    &consensus_stats,
+                    &None::<Arc<DWalletCheckpointService>>,
+                    &None,
+                    &ConsensusCommitInfo::new_for_test(round, 1_000 + round, true),
+                    &metrics,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    /// A store, its committee's signing keys, and the names in order — for
+    /// the checkpoint-construction tests, which need real
+    /// `SignedDWalletCheckpointMessage`s (the prune does not verify them, but
+    /// there is no other way to build the type).
+    fn checkpoint_construction_test_store(
+        dir: &Path,
+    ) -> (
+        Arc<AuthorityPerEpochStore>,
+        Vec<AuthorityKeyPair>,
+        Vec<AuthorityName>,
+    ) {
+        let (committee, keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee,
+            parent_path: dir.to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration: EpochStartConfiguration::new(
+                EpochStartSystem::new_for_testing_with_epoch(0),
+            )
+            .unwrap(),
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
+        .unwrap();
+        (epoch_store, keys, names)
+    }
+
+    fn test_checkpoint_message(sequence_number: u64) -> DWalletCheckpointMessage {
+        DWalletCheckpointMessage {
+            epoch: 0,
+            sequence_number,
+            messages: Vec::new(),
+        }
+    }
+
+    /// Builds a peer's signature over `sequence_number`, the way the
+    /// checkpoint output path does.
+    fn test_checkpoint_signature(
+        sequence_number: u64,
+        signer: &AuthorityKeyPair,
+        authority: AuthorityName,
+    ) -> DWalletCheckpointSignatureMessage {
+        DWalletCheckpointSignatureMessage {
+            checkpoint_message: SignedDWalletCheckpointMessage::new(
+                0,
+                test_checkpoint_message(sequence_number),
+                signer,
+                authority,
+            ),
+        }
+    }
+
+    /// The prune's boundary is `< next_to_certify`, and it has to be exact:
+    /// the sequence the aggregator is working on right now is the one it is
+    /// still collecting signatures for.
+    ///
+    /// An off-by-one the wrong way drops the signatures for the checkpoint
+    /// being certified, which is not a memory bug but a LIVENESS bug — this
+    /// node stops certifying and waits for peers to re-send signatures they
+    /// have no reason to re-send.
+    #[tokio::test]
+    async fn the_checkpoint_prune_keeps_the_sequence_being_certified() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, keys, names) = checkpoint_construction_test_store(dir.path());
+
+        // Signatures spanning the watermark: one below, one at, one above.
+        for sequence_number in [4u64, 5, 6] {
+            epoch_store
+                .insert_checkpoint_signature(
+                    sequence_number,
+                    0,
+                    &test_checkpoint_signature(sequence_number, &keys[0], names[0]),
+                )
+                .unwrap();
+        }
+
+        epoch_store
+            .prune_dwallet_checkpoint_construction(5)
+            .unwrap();
+
+        let retained: Vec<u64> = epoch_store
+            .pending_dwallet_checkpoint_signatures_from(0, 0)
+            .unwrap()
+            .into_iter()
+            .map(|((sequence_number, _), _)| sequence_number)
+            .collect();
+        assert_eq!(
+            retained,
+            vec![5, 6],
+            "the prune must drop everything BELOW the watermark and keep the sequence being \
+             certified — dropping 5 here would strand this node's own aggregation",
+        );
+    }
+
+    /// The prune must never drop the HIGHEST built checkpoint message, however
+    /// far ahead the certified watermark runs.
+    ///
+    /// State sync can certify past this node's own build progress, which puts
+    /// `next_to_certify` above everything the builder has produced. That
+    /// message is the sequence-number cursor `create_checkpoints` reads
+    /// through `last_built_dwallet_checkpoint_message`; dropping it restarts
+    /// this epoch's numbering at the previous epoch's anchor, and every
+    /// checkpoint this node builds from then on is byte-divergent from the
+    /// committee's.
+    #[tokio::test]
+    async fn the_checkpoint_prune_keeps_the_sequence_number_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, _keys, _names) = checkpoint_construction_test_store(dir.path());
+
+        epoch_store
+            .process_pending_dwallet_checkpoint(
+                7,
+                vec![test_checkpoint_message(2), test_checkpoint_message(3)],
+            )
+            .unwrap();
+        assert_eq!(
+            epoch_store
+                .last_built_dwallet_checkpoint_message()
+                .unwrap()
+                .map(|(sequence_number, _)| sequence_number),
+            Some(3),
+        );
+
+        // State sync has certified far past what this node has built.
+        epoch_store
+            .prune_dwallet_checkpoint_construction(10)
+            .unwrap();
+
+        assert_eq!(
+            epoch_store
+                .last_built_dwallet_checkpoint_message()
+                .unwrap()
+                .map(|(sequence_number, _)| sequence_number),
+            Some(3),
+            "the highest built message is the sequence-number cursor; pruning it restarts \
+             this epoch's checkpoint numbering",
+        );
+    }
+
+    /// The submission dedup set is what tells a submitter its transaction
+    /// landed, and it must be updated before the notification that wakes it.
+    ///
+    /// `consensus_messages_processed_notify` registers first and then checks
+    /// the set, so a digest that lands after the notification fires would
+    /// leave a waiter parked forever — the consensus adapter's submit-and-wait
+    /// never returns, and the epoch task behind it stops re-emitting.
+    #[tokio::test]
+    async fn a_folded_transaction_is_marked_processed_before_its_waiter_wakes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        let transaction = ConsensusTransaction::new_idle_status_update(IdleStatusUpdate {
+            authority: author,
+            nonce: [3u8; 32],
+            is_idle: true,
+        });
+        let key = SequencedConsensusTransactionKey::External(transaction.key());
+
+        assert!(
+            !epoch_store.is_consensus_message_processed(&key).unwrap(),
+            "nothing is processed before the fold",
+        );
+
+        // A waiter parked exactly as the consensus adapter parks one.
+        let waiting_store = epoch_store.clone();
+        let waiting_key = key.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_store
+                .consensus_messages_processed_notify(vec![waiting_key])
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        let metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+        epoch_store
+            .process_consensus_transactions_and_commit_boundary(
+                vec![VerifiedSequencedConsensusTransaction(
+                    SequencedConsensusTransaction {
+                        certificate_author_index: 0,
+                        certificate_author: author,
+                        consensus_index: ExecutionIndices {
+                            last_committed_round: 1,
+                            sub_dag_index: 1,
+                            transaction_index: 0,
+                        },
+                        transaction: SequencedConsensusTransactionKind::External(transaction),
+                    },
+                )],
+                &ExecutionIndicesWithStats {
+                    index: ExecutionIndices {
+                        last_committed_round: 1,
+                        sub_dag_index: 1,
+                        transaction_index: 0,
+                    },
+                    hash: 0,
+                    stats: ConsensusStats::new(4),
+                },
+                &None::<Arc<DWalletCheckpointService>>,
+                &None,
+                &ConsensusCommitInfo::new_for_test(1, 1_000, true),
+                &metrics,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            epoch_store.is_consensus_message_processed(&key).unwrap(),
+            "the commit boundary must mark every transaction it folded processed — without \
+             it the submitter re-submits forever and the fold sees the duplicate as new",
+        );
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter must be woken by the commit that processed its transaction")
+            .unwrap()
+            .unwrap();
+    }
+
+    /// Reading derived state after the epoch store is released must FAIL, not
+    /// answer "empty".
+    ///
+    /// Every reader used to reach this state through `tables()`, which returns
+    /// `EpochEnded` once the handles are dropped. In memory the state is
+    /// cleared instead, so without an explicit check the same call would
+    /// report no frozen set, no close and no votes — indistinguishable from an
+    /// epoch that has not started. The MPC drain's graceful stop at the epoch
+    /// boundary is written against the ERROR: it stops the service iteration
+    /// on `EpochEnded` rather than acting on the answer.
+    #[tokio::test]
+    async fn derived_state_reads_fail_once_the_epoch_store_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        fold_test_commits(&epoch_store, author, 2).await;
+        assert!(epoch_store.get_capabilities_v1().unwrap().len() == 1);
+
+        epoch_store.release_db_handles();
+
+        // The memory itself must be gone, not merely unreadable. This store
+        // outlives its epoch — tasks hold the `Arc` well past the boundary —
+        // and the derived half is the larger one, so an epoch's worth of it
+        // surviving every boundary is a leak this design would have invented.
+        for (field, encoded) in epoch_store.derived_state_snapshot() {
+            assert!(
+                is_empty_derived_state(&encoded),
+                "`{field}` still holds state after the epoch store was released",
+            );
+        }
+
+        let epoch = epoch_store.epoch();
+        for (name, result) in [
+            (
+                "is_epoch_close_emitted",
+                epoch_store.is_epoch_close_emitted().err(),
+            ),
+            (
+                "end_of_publish_quorum_round",
+                epoch_store.end_of_publish_quorum_round().err(),
+            ),
+            (
+                "get_frozen_validator_mpc_data_input_set",
+                epoch_store.get_frozen_validator_mpc_data_input_set().err(),
+            ),
+            (
+                "get_capabilities_v1",
+                epoch_store.get_capabilities_v1().err(),
+            ),
+            (
+                "get_pending_dwallet_checkpoints",
+                epoch_store.get_pending_dwallet_checkpoints(None).err(),
+            ),
+            (
+                "insert_pending_dwallet_checkpoint",
+                epoch_store
+                    .insert_pending_dwallet_checkpoint(PendingDWalletCheckpoint::V1(
+                        crate::dwallet_checkpoints::PendingDWalletCheckpointV1 {
+                            messages: Vec::new(),
+                            details: crate::dwallet_checkpoints::PendingDWalletCheckpointInfo {
+                                checkpoint_height: 1,
+                            },
+                        },
+                    ))
+                    .err(),
+            ),
+        ] {
+            assert!(
+                matches!(result, Some(IkaError::EpochEnded(ended)) if ended == epoch),
+                "`{name}` must report the epoch has ended, not answer from cleared state",
+            );
+        }
+    }
+
+    /// Reopening the epoch store must leave NO derived state behind, and must
+    /// leave every durable table exactly as it was.
+    ///
+    /// Both directions are silent when wrong. Derived state that survived
+    /// would be folded onto a second time by the replay — the double-apply
+    /// this design exists to remove, and the shape that let a validator hold
+    /// rows for commits its consensus store no longer had (ika #2057).
+    /// Durable state that did NOT survive is simply gone: presign material,
+    /// secret shares and idempotency markers that nothing rebuilds, and a pool
+    /// that re-serves presigns peers consider spent.
+    #[tokio::test]
+    async fn a_reopened_store_holds_no_derived_state_and_keeps_its_durable_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        fold_test_commits(&epoch_store, author, 6).await;
+
+        // Two durable tables, populated the way production populates them: a
+        // retired presign and this validator's own secret presign share.
+        let tables = epoch_store.tables().unwrap();
+        let presign_session = SessionIdentifier::new(SessionType::InternalPresign, [9; 32]);
+        let private_output_session = CommitmentSizedNumber::from(7u64);
+        tables.mark_presign_as_used(presign_session, 0).unwrap();
+        tables
+            .store_presign_private_output(private_output_session, 0, vec![1, 2, 3])
+            .unwrap();
+
+        let folded = epoch_store.derived_state_snapshot();
+        let populated = folded
+            .iter()
+            .filter(|(_, encoded)| !is_empty_derived_state(encoded))
+            .count();
+        // Guards against the assertion below passing because the fold derived
+        // nothing at all.
+        assert!(
+            populated >= 4,
+            "the fold populated only {populated} pieces of derived state; the reopen \
+             assertion would be near-vacuous",
+        );
+        drop(tables);
+        epoch_store.release_db_handles();
+        drop(epoch_store);
+
+        let (epoch_store, _author) = derived_state_test_store(dir.path());
+        for (field, encoded) in epoch_store.derived_state_snapshot() {
+            assert!(
+                is_empty_derived_state(&encoded),
+                "`{field}` survived a reopen; the replay would fold onto it",
+            );
+        }
+        let tables = epoch_store.tables().unwrap();
+        assert!(
+            tables.is_presign_used(presign_session, 0).unwrap(),
+            "a retired-presign marker must survive the reopen; nothing rebuilds it",
+        );
+        assert_eq!(
+            tables
+                .get_presign_private_output(private_output_session, 0)
+                .unwrap(),
+            Some(vec![1, 2, 3]),
+            "this validator's own secret presign share must survive the reopen; no commit \
+             carries it",
+        );
+    }
+
+    /// Whether a BCS-encoded piece of derived state carries nothing: an empty
+    /// collection, a `None`, or a `false` all encode to a single zero byte.
+    fn is_empty_derived_state(encoded: &[u8]) -> bool {
+        encoded == [0]
+    }
+
+    /// The property the whole design rests on: derived state is a function of
+    /// the commit sequence and nothing else. Fold a sequence, restart, fold the
+    /// identical sequence again — every piece of derived state must come back
+    /// identical, and the durable tables must be untouched.
+    ///
+    /// Comparing the whole snapshot rather than a hand-picked list is what
+    /// makes this an enforcement rather than a spot check: a new piece of
+    /// derived state that is not in fact re-derivable shows up here as a
+    /// difference.
+    ///
+    /// The shape is consensus-core's own
+    /// `leader_schedule_v3::test_recovery_replay_produces_same_state_as_live`
+    /// — build state live, rebuild it from the store, require every observable
+    /// projection equal — applied to the whole per-epoch store instead of one
+    /// component's schedule.
+    #[tokio::test]
+    async fn folding_the_same_commits_twice_rebuilds_identical_derived_state() {
+        const ROUNDS: u64 = 6;
+        let dir = tempfile::tempdir().unwrap();
+
+        let (epoch_store, author) = derived_state_test_store(dir.path());
+        fold_test_commits(&epoch_store, author, ROUNDS).await;
+        let tables = epoch_store.tables().unwrap();
+        let preserved_marker = SessionIdentifier::new(SessionType::InternalPresign, [5; 32]);
+        tables.mark_presign_as_used(preserved_marker, 3).unwrap();
+
+        let first_fold = epoch_store.derived_state_snapshot();
+        let non_empty_first = first_fold
+            .values()
+            .filter(|encoded| !is_empty_derived_state(encoded))
+            .count();
+        assert!(
+            non_empty_first >= 4,
+            "only {non_empty_first} pieces of derived state were non-empty after the first \
+             fold; the comparison below would be near-vacuous",
+        );
+        drop(tables);
+        epoch_store.release_db_handles();
+        drop(epoch_store);
+
+        // The restart: reopening is exactly what a validator does at boot, and
+        // it is the whole of what a boot does to derived state.
+        let (epoch_store, author_again) = derived_state_test_store(dir.path());
+        assert_eq!(author, author_again, "the test committee must be stable");
+        let tables = epoch_store.tables().unwrap();
+        assert!(
+            tables.is_presign_used(preserved_marker, 3).unwrap(),
+            "the reopen dropped a durable table",
+        );
+
+        fold_test_commits(&epoch_store, author, ROUNDS).await;
+        let second_fold = epoch_store.derived_state_snapshot();
+
+        for (field, encoded) in &first_fold {
+            assert_eq!(
+                second_fold.get(field),
+                Some(encoded),
+                "`{field}` did not come back identical after a restart and a replay of the \
+                 same commits",
+            );
+        }
+        assert_eq!(
+            second_fold.keys().collect::<Vec<_>>(),
+            first_fold.keys().collect::<Vec<_>>(),
+            "the two snapshots described different sets of derived state",
         );
     }
 }

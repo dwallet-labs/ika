@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use sui_types::base_types::ConciseableName;
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::consensus_manager::ReplayWaiter;
 use ika_types::crypto::AuthorityStrongQuorumSignInfo;
 use ika_types::error::{IkaError, IkaResult, error_chain};
 use ika_types::message_envelope::Message;
@@ -235,6 +236,27 @@ impl SystemCheckpointStore {
         self.get_system_checkpoint_by_digest(&highest_verified.1)
     }
 
+    /// The highest system-checkpoint sequence number this node has seen
+    /// settled. Mirrors
+    /// [`crate::dwallet_checkpoints::DWalletCheckpointStore::get_highest_settled_dwallet_checkpoint_seq`]
+    /// — see there for why a certificate's existence, and not any local
+    /// progress counter, is the key a restart's re-signing is suppressed
+    /// against.
+    pub fn get_highest_settled_system_checkpoint_seq(
+        &self,
+    ) -> IkaResult<Option<SystemCheckpointSequenceNumber>> {
+        let highest_verified = self
+            .get_highest_verified_system_checkpoint()?
+            .map(|checkpoint| *checkpoint.sequence_number());
+        let highest_certified = self
+            .certified_checkpoints
+            .reversed_safe_iter_with_bounds(None, None)?
+            .next()
+            .transpose()?
+            .map(|(sequence_number, _)| sequence_number);
+        Ok(highest_verified.max(highest_certified))
+    }
+
     pub fn get_highest_synced_system_checkpoint(
         &self,
     ) -> Result<Option<VerifiedSystemCheckpointMessage>, TypedStoreError> {
@@ -443,8 +465,23 @@ impl SystemCheckpointBuilder {
     }
 
     // overkill
-    async fn run(mut self) {
+    async fn run(mut self, replay_waiter: ReplayWaiter) {
         info!("Starting SystemCheckpointBuilder");
+
+        // Wait for the epoch's derived state to be rebuilt and consensus to be
+        // running before building anything. Mirrors how the MPC service waits
+        // on the same signal.
+        //
+        // The builder's output submits a signature per checkpoint, and a boot
+        // that rebuilds an old epoch regenerates this builder's whole input
+        // queue while consensus is still down (see
+        // dev-docs/specs/event-sourced-epoch.md). Without this gate the
+        // builder would drain that queue immediately and park one submission
+        // task per checkpoint on an unset consensus client — enough of them to
+        // trip the adapter's in-flight limit and reject the live traffic that
+        // follows. Ordering the work after the replay costs nothing: the node
+        // is not participating until then either way.
+        replay_waiter.wait_for_replay().await;
 
         // Collect info about the most recently built system checkpoint for metrics.
         let checkpoint_message = self
@@ -729,6 +766,10 @@ impl SystemCheckpointAggregator {
         let mut result = vec![];
         'outer: loop {
             let next_to_certify = self.next_checkpoint_to_certify()?;
+            // See the dWallet aggregator: everything below the watermark is
+            // unreachable from here, and the epoch cannot hold it all.
+            self.epoch_store
+                .prune_system_checkpoint_construction(next_to_certify)?;
             let current = if let Some(current) = &mut self.current {
                 // It's possible that the checkpoint was already certified by
                 // the rest of the network, and we've already received the
@@ -788,21 +829,14 @@ impl SystemCheckpointAggregator {
                 self.current.as_mut().unwrap()
             };
 
-            let epoch_tables = self
+            let pending_signatures = self
                 .epoch_store
-                .tables()
+                .pending_system_checkpoint_signatures_from(
+                    current.checkpoint_message.sequence_number,
+                    current.next_index,
+                )
                 .expect("should not run past end of epoch");
-            let iter = epoch_tables
-                .pending_system_checkpoint_signatures
-                .safe_iter_with_bounds(
-                    Some((
-                        current.checkpoint_message.sequence_number,
-                        current.next_index,
-                    )),
-                    None,
-                );
-            for item in iter {
-                let ((seq, index), data) = item?;
+            for ((seq, index), data) in pending_signatures {
                 if seq != current.checkpoint_message.sequence_number {
                     debug!(
                         checkpoint_seq =? current.checkpoint_message.sequence_number,
@@ -1047,6 +1081,7 @@ impl SystemCheckpointService {
         max_messages_per_system_checkpoint: usize,
         max_system_checkpoint_size_bytes: usize,
         previous_epoch_last_checkpoint_sequence_number: u64,
+        replay_waiter: ReplayWaiter,
     ) -> (Arc<Self>, JoinSet<()> /* Handle to tasks */) {
         info!(
             max_messages_per_system_checkpoint,
@@ -1068,8 +1103,19 @@ impl SystemCheckpointService {
             max_system_checkpoint_size_bytes,
             previous_epoch_last_checkpoint_sequence_number,
         );
-        tasks.spawn(monitored_future!(builder.run()));
+        tasks.spawn(monitored_future!(builder.run(replay_waiter)));
 
+        // NOT gated on the replay waiter, unlike the builder above, and that
+        // asymmetry is load-bearing rather than an oversight. This loop is
+        // what prunes the checkpoint construction state below the certified
+        // watermark, so it has to be running THROUGH the boot replay: the
+        // replay re-collects every checkpoint signature of the epoch, and
+        // each one is dropped on the next aggregator pass instead of
+        // accumulating. Gating this on the replay would invert that and make
+        // the boot replay the worst case for signature retention — the memory
+        // bound in dev-docs/specs/event-sourced-epoch.md depends on this task
+        // starting immediately. The builder is gated for the opposite reason:
+        // its output submits to consensus, which has not started yet.
         if let Some(certified_system_checkpoint_output) = certified_system_checkpoint_output {
             let aggregator = SystemCheckpointAggregator::new(
                 system_checkpoint_store.clone(),
@@ -1202,5 +1248,15 @@ mod tests {
             SystemCheckpointAggregator::next_checkpoint_to_certify_from(None, 0),
             1
         );
+    }
+
+    /// The system-checkpoint mirror of
+    /// `dwallet_checkpoints::tests::the_signature_aggregator_takes_no_replay_waiter`
+    /// — same dependency, same inversion if it is gated, same reason the pin is
+    /// a compile-time one.
+    #[test]
+    fn the_signature_aggregator_takes_no_replay_waiter() {
+        fn accepts_only_self<F: std::future::Future>(_: fn(SystemCheckpointAggregator) -> F) {}
+        accepts_only_self(SystemCheckpointAggregator::run);
     }
 }
