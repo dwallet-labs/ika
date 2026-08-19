@@ -692,6 +692,28 @@ fn required_labeled_metric(
     Ok(value as u64)
 }
 
+/// The `session_seq` labels in one validator's scrape for which it recorded an
+/// MPC output authored by one of `subject`'s names
+/// (`ika_dwallet_mpc_user_session_output_received_from` = 1).
+///
+/// The authority filter is what makes the reading evidence about ONE
+/// validator: without it every session the observer saw any output for would
+/// match, and a subject contributing nothing would still look alive.
+fn output_sessions_authored_by(body: &str, subject: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    let samples = parse_metric_samples(body, "ika_dwallet_mpc_user_session_output_received_from")?;
+    Ok(samples
+        .into_iter()
+        .filter(|sample| sample.value >= 1.0)
+        .filter(|sample| {
+            sample
+                .labels
+                .get("authority")
+                .is_some_and(|authority| subject.contains(authority))
+        })
+        .filter_map(|sample| sample.labels.get("session_seq").cloned())
+        .collect())
+}
+
 fn metric_samples_for_protocol(
     body: &str,
     metric: &str,
@@ -1371,6 +1393,142 @@ impl ClusterOfProcesses {
             "malicious-metric observers {observer_indices:?} reported maximum {maximum}; expected at least {minimum}"
         );
         Ok(())
+    }
+
+    /// Cumulative `ika_skipped_consensus_txns` on each observer, in the order
+    /// of `observer_indices`.
+    ///
+    /// The counter increments once per consensus transaction whose digest is
+    /// already in the folding node's processed set — once per re-submission of
+    /// work that node has already folded. It is read on the PEERS of a node
+    /// under test, never on the node itself: a validator cannot count its own
+    /// re-emissions, because the dedup set that would recognise them is
+    /// exactly the state its restart discarded.
+    pub async fn skipped_consensus_txns(&self, observer_indices: &[usize]) -> Result<Vec<u64>> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no skipped-consensus-txn observers supplied"
+        );
+        let mut totals = Vec::with_capacity(observer_indices.len());
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            totals.push(required_unlabeled_metric(
+                &body,
+                &["ika_skipped_consensus_txns"],
+                validator,
+            )?);
+        }
+        Ok(totals)
+    }
+
+    /// Per-kind committed-consensus-transaction counts
+    /// (`ika_consensus_handler_processed`), summed over the observers. The
+    /// handler counts a transaction here BEFORE the dedup check, so a
+    /// re-emission lands in its own kind — which is what turns a bare
+    /// re-submission total into a breakdown of what was re-emitted.
+    pub async fn consensus_handler_processed_by_kind(
+        &self,
+        observer_indices: &[usize],
+    ) -> Result<BTreeMap<String, u64>> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no consensus-handler observers supplied"
+        );
+        let mut by_kind: BTreeMap<String, u64> = BTreeMap::new();
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            for sample in parse_metric_samples(&body, "ika_consensus_handler_processed")? {
+                let Some(kind) = sample.labels.get("kind") else {
+                    continue;
+                };
+                *by_kind.entry(kind.clone()).or_default() += sample.value as u64;
+            }
+        }
+        Ok(by_kind)
+    }
+
+    /// One validator's `ika_last_process_mpc_consensus_round` — the consensus
+    /// round its MPC service has consumed. Every binary the harness runs
+    /// exports it under this name, which is what makes the reading comparable
+    /// across a mixed-binary committee.
+    pub async fn mpc_consensus_round(&self, index: usize) -> Result<u64> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let body = validator.metrics().await?;
+        required_unlabeled_metric(&body, &["ika_last_process_mpc_consensus_round"], validator)
+    }
+
+    /// The lowest consumed MPC round across `indices` — the round every one of
+    /// them has reached, i.e. the head a lagging validator has to catch up to.
+    pub async fn min_mpc_consensus_round(&self, indices: &[usize]) -> Result<u64> {
+        ensure!(!indices.is_empty(), "no MPC-round observers supplied");
+        let mut minimum = u64::MAX;
+        for index in indices {
+            minimum = minimum.min(self.mpc_consensus_round(*index).await?);
+        }
+        Ok(minimum)
+    }
+
+    /// Poll `index` until its consumed MPC round reaches `target`, returning
+    /// the round it reached. Fails closed on the timeout, naming the distance
+    /// still to go.
+    pub async fn wait_for_mpc_consensus_round(
+        &self,
+        index: usize,
+        target: u64,
+        timeout: Duration,
+    ) -> Result<u64> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let round = self.mpc_consensus_round(index).await?;
+            if round >= target {
+                return Ok(round);
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "validator {index} consumed MPC round {round} after {timeout:?}; it never reached \
+                 the round {target} its peers had already consumed (short by {})",
+                target - round
+            );
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    /// The `session_seq` labels for which `observer_index` has recorded an MPC
+    /// output authored by `subject_index`'s authority
+    /// (`ika_dwallet_mpc_user_session_output_received_from` = 1).
+    ///
+    /// Both naming bases are accepted for the subject, matching every other
+    /// authority-label comparison here: the cluster names its authorities
+    /// under whichever basis its protocol version selects.
+    pub async fn mpc_output_sessions_from(
+        &self,
+        observer_index: usize,
+        subject_index: usize,
+    ) -> Result<BTreeSet<String>> {
+        let observer = self
+            .validators
+            .get(observer_index)
+            .with_context(|| format!("observer index {observer_index} out of range"))?;
+        let subject: BTreeSet<String> = self
+            .validator_authorities
+            .get(subject_index)
+            .with_context(|| format!("subject index {subject_index} out of range"))?
+            .both()
+            .into_iter()
+            .collect();
+        let body = observer.metrics().await?;
+        output_sessions_authored_by(&body, &subject)
     }
 
     /// Assert every authority that submitted a network-key reconfiguration
@@ -2245,6 +2403,57 @@ mod tests {
         assert_eq!(samples[0].labels["authority"], "k#01");
         assert_eq!(samples[0].labels["output_digest"], "deadbeef");
         assert_eq!(samples[0].value, 1.0);
+    }
+
+    /// One observer's view of who authored outputs for which sessions.
+    fn output_received_from_metrics(rows: &[(&str, &str, u64)]) -> String {
+        rows.iter()
+            .map(|(session_seq, authority, value)| {
+                format!(
+                    "ika_dwallet_mpc_user_session_output_received_from{{session_seq=\"{session_seq}\",authority=\"{authority}\"}} {value}\n"
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn output_sessions_are_selected_by_author_not_by_session() {
+        // The vacuity this guards: without the authority filter, sessions a
+        // peer authored would count as the subject participating, and a
+        // subject contributing nothing would still look alive.
+        let body = output_received_from_metrics(&[
+            ("11", "k#subject", 1),
+            ("12", "k#peer", 1),
+            ("13", "k#subject", 1),
+        ]);
+        let sessions =
+            output_sessions_authored_by(&body, &candidate("k#subject")).expect("well-formed");
+        assert_eq!(
+            sessions,
+            BTreeSet::from(["11".to_string(), "13".to_string()])
+        );
+    }
+
+    #[test]
+    fn an_unset_output_gauge_is_not_an_observed_output() {
+        // The gauge is registered per (session, authority) and reads 0 until
+        // an output actually arrives, so presence of the label is not
+        // evidence — only the value is.
+        let body = output_received_from_metrics(&[("11", "k#subject", 0)]);
+        let sessions =
+            output_sessions_authored_by(&body, &candidate("k#subject")).expect("well-formed");
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn output_sessions_accept_either_authority_naming() {
+        // A validator is named by its consensus key from protocol v6 on and by
+        // its BLS protocol key below it; the harness holds both and the label
+        // carries whichever the cluster's version selects.
+        let body = output_received_from_metrics(&[("11", "bls#subject", 1)]);
+        let both = BTreeSet::from(["k#subject".to_string(), "bls#subject".to_string()]);
+        let sessions = output_sessions_authored_by(&body, &both).expect("well-formed");
+        assert_eq!(sessions, BTreeSet::from(["11".to_string()]));
     }
 
     #[test]

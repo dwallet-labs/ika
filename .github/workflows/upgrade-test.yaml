@@ -48,6 +48,16 @@ name: Upgrade Test
 #                  not merely stay consensus-healthy while peers absorb the
 #                  sessions. Current build only; production presign-pool
 #                  sizing (the sustained-volume ingredient).
+#   mid_epoch_rollback — the only BACKWARD direction in the matrix: the
+#                  candidate runs the network, then the literal v1.3.1 release
+#                  is put back on one validator mid-epoch, on the same stores.
+#                  Asserts the old binary re-derives the epoch through its own
+#                  table-writing fold against empty fold-side tables, COUNTS
+#                  the already-settled work it re-sends (measured at the peers,
+#                  against a control window of ordinary traffic), and that a
+#                  peer witnesses it contributing MPC output again before the
+#                  boundary. Same OLD defaults as v131_rollout; needs a long
+#                  epoch so the whole experiment fits inside one.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -237,7 +247,7 @@ jobs:
           TEST: ${{ inputs.test || 'v131_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v131_rollout v131_churn malicious_v131 restart_spectator"
+          ALL="smoke workload v131_rollout v131_churn malicious_v131 restart_spectator mid_epoch_rollback"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -353,6 +363,7 @@ jobs:
             v131_churn)   RUN_FLAG=RUN_V131_CHURN ;;
             malicious_v131) RUN_FLAG=RUN_MALICIOUS_V131 ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
+            mid_epoch_rollback) RUN_FLAG=RUN_MID_EPOCH_ROLLBACK ;;
             v131_rollout)   RUN_FLAG=RUN_V131_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
@@ -362,6 +373,12 @@ jobs:
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
             v131_churn | malicious_v131)
+              : "${OLD_REF:=release/mainnet-v1.3.1}"
+              : "${OLD_BIN_NAME:=ika-validator}"
+              ;;
+            mid_epoch_rollback)
+              # Same release, opposite direction: OLD is what the node is
+              # rolled BACK to after the candidate has been writing its stores.
               : "${OLD_REF:=release/mainnet-v1.3.1}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -405,7 +422,7 @@ jobs:
           # exists again — it is the run standing behind a version flip on a
           # live network, which is where mocked agreement is most misleading.
           case "$TEST_NAME" in
-            v131_rollout|v131_churn|malicious_v131)
+            v131_rollout|v131_churn|malicious_v131|mid_epoch_rollback)
               if [ "$USE_MOCKS" = "true" ]; then
                 echo "$TEST_NAME is a cross-binary gate and must use real cryptography" >&2
                 exit 1
@@ -456,7 +473,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v131_rollout' || matrix.test == 'v131_churn' || matrix.test == 'malicious_v131' }}
+        if: ${{ matrix.test == 'v131_rollout' || matrix.test == 'v131_churn' || matrix.test == 'malicious_v131' || matrix.test == 'mid_epoch_rollback' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
