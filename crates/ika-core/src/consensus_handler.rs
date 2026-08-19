@@ -24,7 +24,9 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::{CommitConsumerMonitor, CommitIndex};
+use consensus_core::storage::Store;
+use consensus_core::storage::rocksdb_store::RocksDBStore;
+use consensus_core::{CommitAPI, CommitConsumerMonitor};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -35,29 +37,46 @@ use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use lru::LruCache;
 use mysten_metrics::{monitored_future, monitored_mpsc::UnboundedReceiver, monitored_scope};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use sui_macros::{fail_point_async, fail_point_if};
 use sui_types::base_types::EpochId;
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 use tracing::{debug, error, instrument, trace_span, warn};
 
-/// Notified once for every consensus commit this node finishes processing at
-/// the Ika commit boundary.
+/// Notified once for every consensus commit this node RECEIVES.
 ///
-/// The commit boundary is the one place where "this process is still being
-/// fed by the consensus mesh" is observable from inside the node: the round
-/// and timestamp gauges stamped there
-/// (`ika_last_committed_leader_consensus_round`,
-/// `ika_consensus_last_committed_timestamp_seconds`) freeze together with
-/// the subscriptions when a validator is isolated at an epoch boundary
-/// (ika #1864), and no other subsystem's progress distinguishes that from a
-/// quiet network — `ika_dwallet_mpc_catchup_gap_rounds` in particular reads
-/// 0 on an isolated node, because it is measured against a persisted round
-/// stream that freezes too.
+/// Arrival, not completion — and the distinction is load-bearing. The
+/// watchdog behind this sink exits the node when commits stop for longer than
+/// its bound, and it exists to catch a validator whose consensus
+/// subscriptions were lost at an epoch boundary (ika #1864): the failure it
+/// names is commits no longer ARRIVING. Nothing else distinguishes that from
+/// a quiet network — `ika_dwallet_mpc_catchup_gap_rounds` in particular reads
+/// 0 on an isolated node.
+///
+/// This used to be reported after the commit boundary finished, on the
+/// argument that a handler wedged inside the boundary has stopped making
+/// progress just as completely as one receiving nothing. That argument no
+/// longer holds, because the boundary can now block legitimately: it hands
+/// each round to the MPC drain over a bounded channel and waits when the
+/// drain is behind (`authority::round_transport`). A deep burst can hold the
+/// fold for longer than the watchdog's bound, and reporting on completion
+/// would make the node kill itself for being busy — then replay, meet the
+/// same burst, and do it again.
+///
+/// KNOWN GAP, deliberate: a fold that is genuinely WEDGED — as opposed to
+/// blocked on a drain that is still consuming — no longer trips this
+/// watchdog, because commits keep arriving. That case is covered by
+/// observability rather than by self-exit: `ika_consensus_round_channel_depth`
+/// pinned at capacity together with `ika_consensus_fold_blocked_seconds_total`
+/// climbing while `ika_dwallet_mpc_consumed_round` is flat is a wedged drain,
+/// and the MPC lag alarm fires on it. Do not "fix" this by moving the call
+/// back after the boundary.
 ///
 /// Consumers must be cheap and non-blocking: this runs on the commit path,
 /// once per commit, at sub-second cadence.
 pub trait ConsensusCommitSink: Send + Sync {
-    fn commit_processed(&self, leader_round: u64);
+    fn commit_received(&self, leader_round: u64);
 }
 
 pub struct ConsensusHandlerInitializer {
@@ -199,16 +218,53 @@ impl<C> ConsensusHandler<C> {
             commit_sink,
         }
     }
+}
 
-    /// Returns the last subdag index processed by the handler.
-    pub(crate) fn last_processed_subdag_index(&self) -> u64 {
-        self.last_consensus_stats.index.sub_dag_index
+impl<C> ConsensusHandler<C> {
+    /// Reports a commit's ARRIVAL to the commit-liveness watchdog.
+    ///
+    /// Called by every path that receives a commit — the live loop and the
+    /// boot replay alike — before the fold, so that a fold waiting on the MPC
+    /// drain never reads as consensus silence. Boot replay reports too, which
+    /// is what arms the watchdog on a node whose whole start is replay.
+    pub(crate) fn report_commit_received(&self, consensus_commit: &impl ConsensusCommitAPI) {
+        let round = consensus_commit.leader_round();
+        // Also the catch-up gate's view of how far there is to go. Recorded
+        // here, on arrival, because the fold's own position cannot answer it:
+        // the fold is never more than the round channel's capacity ahead of
+        // the drain.
+        self.epoch_store.record_observed_consensus_head_round(round);
+        if let Some(sink) = &self.commit_sink {
+            sink.commit_received(round);
+        }
+    }
+
+    /// Publishes the consensus store's head before the boot replay folds
+    /// anything.
+    ///
+    /// Arrival reporting alone is not enough during replay: the replay's
+    /// arrivals ARE its folds, so under a blocking transport they advance
+    /// only as fast as the drain and the gate would see a gap no larger than
+    /// the channel. Publishing the target up front is what lets the gate see
+    /// the real backlog — the hundreds of thousands of rounds it exists for.
+    pub(crate) fn publish_observed_consensus_head(&self, round: u64) {
+        self.epoch_store.record_observed_consensus_head_round(round);
     }
 }
 
 impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
+    /// Folds one consensus commit into this epoch's derived state.
+    ///
+    /// The same entry point serves live commits and the boot replay that
+    /// rebuilds the epoch from the consensus store
+    /// (`consensus_manager::boot_replay`) — deliberately, because the two must
+    /// produce identical state from identical commits, and a second fold
+    /// implementation is a second thing that can disagree.
     #[instrument(level = "debug", skip_all)]
-    async fn handle_consensus_commit(&mut self, consensus_commit: impl ConsensusCommitAPI) {
+    pub(crate) async fn handle_consensus_commit(
+        &mut self,
+        consensus_commit: impl ConsensusCommitAPI,
+    ) {
         let _scope = monitored_scope("ConsensusCommitHandler::handle_consensus_commit");
         let round = consensus_commit.leader_round();
 
@@ -406,15 +462,6 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             .await
             .expect("Unrecoverable error in consensus handler");
 
-        // A commit is only reported once it has been fully processed, not on
-        // entry: the commit-liveness watchdog behind this sink exists to catch
-        // a node that stops making commit progress, and a handler wedged
-        // inside the boundary above has stopped making it just as completely
-        // as one that receives nothing.
-        if let Some(sink) = &self.commit_sink {
-            sink.commit_processed(round);
-        }
-
         // update the calculated throughput
         self.throughput_calculator.add_transactions(
             timestamp,
@@ -439,38 +486,91 @@ pub(crate) struct MysticetiConsensusHandler {
 }
 
 impl MysticetiConsensusHandler {
+    /// Starts the task that folds commits as consensus delivers them.
+    ///
+    /// There is no already-processed skip here any more, and no watermark to
+    /// drive one. The boot replay has already folded every finalized commit the
+    /// consensus store holds, and consensus is started with that same index as
+    /// its `replay_after_commit_index`, so nothing consensus delivers has been
+    /// folded before. The watermark that used to gate this loop was a second
+    /// record of the same fact as the consensus store's head, kept in a
+    /// different database — and when the two disagreed the node could not start
+    /// at all (ika #2057).
     pub(crate) fn new(
-        last_processed_commit_at_startup: CommitIndex,
         mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
         commit_consumer_monitor: Arc<CommitConsumerMonitor>,
     ) -> Self {
-        debug!(
-            last_processed_commit_at_startup,
-            "Starting consensus replay"
-        );
         let mut tasks = JoinSet::new();
         tasks.spawn(monitored_future!(async move {
             // TODO: pause when execution is overloaded, so consensus can detect the backpressure.
             while let Some(consensus_commit) = commit_receiver.recv().await {
                 let commit_index = consensus_commit.commit_ref.index;
-                // Skip commits that were already processed before startup.
-                // These may be replayed by consensus for crash recovery purposes.
-                if commit_index <= last_processed_commit_at_startup {
-                    debug!(
-                        commit_index,
-                        last_processed_commit_at_startup,
-                        "Skipping already-processed replayed commit"
-                    );
-                } else {
-                    consensus_handler
-                        .handle_consensus_commit(consensus_commit)
-                        .await;
-                }
+                // Report ARRIVAL, before the fold — the fold can block on the
+                // drain for longer than the watchdog's bound, and a node that
+                // killed itself for that would replay into the same burst.
+                consensus_handler.report_commit_received(&consensus_commit);
+                consensus_handler
+                    .handle_consensus_commit(consensus_commit)
+                    .await;
                 commit_consumer_monitor.set_highest_handled_commit(commit_index);
             }
         }));
         Self { tasks }
+    }
+
+    /// Publishes the consensus store's own head round, on a task of its own,
+    /// until the epoch ends.
+    ///
+    /// The catch-up gate needs to know how far behind the drain is. It cannot
+    /// learn that from the fold: the fold BLOCKS on the round channel, so the
+    /// arrivals stamped in the loop above stop the moment the drain falls a
+    /// channel's-worth behind. Everything the fold can report is therefore
+    /// pinned within the capacity (1,024) of the drain's own cursor, always
+    /// far below the gate's entry threshold — and a validator that fell a
+    /// hundred thousand rounds behind WITHOUT restarting would never enter
+    /// catch-up at all, which is precisely the collapse the gate was built for
+    /// (#2023). Only a restart would fix it, via the boot replay's head
+    /// publication.
+    ///
+    /// The consensus store is the one place the true backlog is visible: it is
+    /// written by consensus-core as commits are decided, and nothing about
+    /// that path waits on the fold. `ConsensusAuthority::store()` hands out the
+    /// RUNNING instance's own handle, so this is not a second RocksDB open and
+    /// cannot contend for the lock.
+    ///
+    /// This shares the handler's `JoinSet` deliberately: the set is shut down
+    /// by `abort()` at the epoch boundary, which is exactly this task's
+    /// lifetime. It must NOT hold the `ConsensusAuthority` itself — shutdown
+    /// `Arc::try_unwrap`s that and panics on a surviving reference — and it
+    /// does not need to; the store handle is a separate `Arc`.
+    pub(crate) fn spawn_observed_head_publisher(
+        &mut self,
+        store: Arc<RocksDBStore>,
+        epoch_store: Arc<AuthorityPerEpochStore>,
+    ) {
+        const PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+        self.tasks.spawn(monitored_future!(async move {
+            loop {
+                match store.read_last_commit() {
+                    Ok(Some(commit)) => {
+                        epoch_store
+                            .record_observed_consensus_head_round(commit.leader().round as u64);
+                    }
+                    // An epoch whose consensus store has no commit yet: there
+                    // is no head to report and no backlog to be behind.
+                    Ok(None) => {}
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            "failed to read the consensus store's head; the catch-up gate will \
+                             keep the last head it was given until this recovers"
+                        );
+                    }
+                }
+                sleep(PUBLISH_INTERVAL).await;
+            }
+        }));
     }
 
     pub(crate) async fn abort(&mut self) {

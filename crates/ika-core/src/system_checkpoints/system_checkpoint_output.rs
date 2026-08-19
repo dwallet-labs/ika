@@ -73,11 +73,14 @@ impl<T: SubmitToConsensus> SystemCheckpointOutput for SubmitSystemCheckpointToCo
 
         let system_checkpoint_seq = system_checkpoint.sequence_number;
 
-        let highest_verified_system_checkpoint = system_checkpoint_store
-            .get_highest_verified_system_checkpoint()?
-            .map(|x| *x.sequence_number());
+        // Settled-state suppression, exactly as on the dWallet-checkpoint side
+        // (`SubmitDWalletCheckpointToConsensus::dwallet_checkpoint_created`):
+        // a restart re-derives the epoch's checkpoints from the commits, and
+        // only an already-certified sequence number may be skipped.
+        let highest_settled_system_checkpoint =
+            system_checkpoint_store.get_highest_settled_system_checkpoint_seq()?;
 
-        if Some(system_checkpoint_seq) > highest_verified_system_checkpoint {
+        if Some(system_checkpoint_seq) > highest_settled_system_checkpoint {
             debug!(
                 ?system_checkpoint,
                 "Sending system checkpoint signature to consensus."

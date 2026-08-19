@@ -50,7 +50,8 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
         consensus_round,
-    );
+    )
+    .await;
     for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
         dwallet_mpc_service.run_service_loop_iteration().await;
     }
@@ -138,7 +139,8 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         &mut sent_consensus_messages_collectors,
         &mut epoch_stores,
         consensus_round,
-    );
+    )
+    .await;
     consensus_round += 1;
     loop {
         if let Some(pending_checkpoint) = utils::advance_all_parties_and_wait_for_completions(
@@ -167,7 +169,8 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
             &mut sent_consensus_messages_collectors,
             &mut epoch_stores,
             consensus_round,
-        );
+        )
+        .await;
         consensus_round += 1;
     }
     info!("MPC flow completed successfully");

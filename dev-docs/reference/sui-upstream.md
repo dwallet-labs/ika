@@ -35,6 +35,26 @@ inherited.
   want has `consensus/`, `crates/`, `sui-execution/` at its root.) If it's
   absent, a `cargo fetch` / build populates it.
 
+  **Derive it every time, including for "just one line".** The failure mode
+  is silent by construction: a stale checkout is structurally identical, the
+  file is where you expect, the symbol is there, and the code reads
+  plausibly — nothing errors and nothing looks wrong. Reading a neighbouring
+  revision usually AGREES with the pinned one, so "what I read matched what
+  the code does" is not evidence you read the right tree; it is the
+  most likely outcome either way, right up until the one detail that moved.
+  Worked example: #2058 was implemented against `433212f` while the lockfile
+  resolved `51d177a`. Every claim happened to hold at both, so the mistake
+  cost only a re-verification pass — but that was luck, not method.
+
+  Two consequences worth internalising:
+
+  - **`Cargo.toml`'s tag is not enough to pick a directory.** It names the
+    tag; checkouts are named by REV. Resolve the rev from `Cargo.lock`, as
+    above, and check the directory prefix against it.
+  - **Cite the rev, not just the path,** when a line number lands in a
+    comment or a spec — `commit_observer.rs:162 (51d177a)` survives the next
+    bump as a checkable claim, where a bare line number silently rots.
+
 ## What to read for what
 
 - **Consensus (Mysticeti):** Sui's `consensus/core/` — block production,

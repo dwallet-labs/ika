@@ -132,9 +132,78 @@ gauge exists (#1978, #1980). It is computed locally: the MPC service publishes
 the consensus round it has consumed and the **consensus commit path** compares,
 because every way the MPC service stops also stops any check placed inside it.
 
+**This alert cannot fire while the consensus fold is BLOCKED on the drain.**
+The fold hands each round to the drain over a bounded channel and waits when
+it is full, so under a wedged drain the comparison freezes along with
+everything else on the commit path — moving the check to commit arrival would
+not help, because a parked fold is not receiving either. A drain that stops
+consuming therefore shows up as `ika_consensus_fold_blocked_seconds_total`
+climbing and `ika_consensus_round_channel_depth` pinned at capacity, with this
+gauge frozen at whatever it last read. Alert on that pair as well; do not read
+a quiet stopped-contributing gauge as "MPC is fine".
+
+`ika_consensus_fold_blocked_sends_total` separates the two shapes of that
+pair, and the distinction decides the response:
+
+| seconds | sends | reading |
+|---|---|---|
+| climbing | climbing | the drain is slow but alive — many short parks |
+| climbing | **flat** | one endless park: the drain has stopped consuming |
+| flat | flat | the fold is not waiting at all |
+
+All three are published by a task of their own rather than by the drain,
+precisely so they keep reporting when the drain is the thing that broke. The
+two `_total` series are process-lifetime counters fed the per-sample delta,
+not the transport's own figures copied across: the transport is per-epoch and
+its park accounting restarts at zero at every boundary, which would otherwise
+drop the series several times a day and break exactly the climbing-versus-flat
+reading above. `ika_consensus_round_channel_depth` is a gauge, and resets with
+the epoch because depth is an instantaneous value.
+
+## Alert 7: the MPC drain has stopped consuming (fold parked)
+
+```promql
+# One endless park: the fold has been waiting on the drain for minutes and
+# the drain has taken nothing in that time. Read the two together — the
+# seconds counter alone cannot tell a stuck drain from a slow one.
+increase(ika_consensus_fold_blocked_seconds_total[10m]) > 300
+  and increase(ika_consensus_fold_blocked_sends_total[10m]) == 0
+# for: 10m
+```
+
+```promql
+# The corroborating shape, and the one to put on the dashboard beside it:
+# the channel pinned at capacity while the drain's consumed round stands
+# still. Capacity is `DEFAULT_ROUND_CHANNEL_CAPACITY` (1024) unless a node
+# overrides it.
+ika_consensus_round_channel_depth >= 1024
+  and increase(ika_dwallet_mpc_consumed_round[10m]) == 0
+# for: 10m
+```
+
+This is the failure with **no second opinion**. The commit-liveness watchdog
+deliberately holds while the fold is parked — a parked fold is holding a
+commit it received, which is the opposite of the isolation that watchdog
+exists to catch — so it will not exit the node, and Alert 6's
+stopped-contributing gauge freezes rather than climbing (see below). These
+counters are the only thing that moves.
+
+Distinguish before acting, using the table below: **seconds climbing while
+sends stays flat** is a drain that has stopped, and the node is contributing
+no MPC work while still following consensus and signing checkpoints.
+**Both climbing** is a drain that is merely slow — heavy MPC load, expected
+under bursts, not an incident on its own.
+
+**Operator action** for the stopped case: the node needs a restart, which is
+safe and self-healing here — the epoch's derived state is rebuilt by replay
+from the consensus store on boot (`../specs/event-sourced-epoch.md`), and no
+MPC work is lost that the committee has not already agreed. Capture the MPC
+service's logs first; a drain that stops without dying is not a failure mode
+with a known cause yet, and ika #2064 tracks the end-to-end coverage for it.
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
-restarted mid-epoch replays the epoch from round 0, so its raw lag legitimately
-exceeds any stall threshold for as long as the replay runs. The gauge above
+restarted mid-epoch refolds the epoch from its first commit, so its raw lag
+legitimately exceeds any stall threshold for as long as that runs. The gauge above
 already accounts for the catch-up the MPC service is reporting (#2036); the raw
 lag is a dashboard signal, not a page.
 
@@ -151,7 +220,7 @@ ika_mpc_catch_up_stuck_condition_active == 1
 
 The complement: this validator IS draining a backlog, and the backlog has
 stopped shrinking. **Operator action**: do not restart — a restart discards the
-drain's progress and replays it. Check `ika_dwallet_mpc_catchup_gap_rounds` on
+drain's progress and refolds the epoch from its first commit. Check `ika_dwallet_mpc_catchup_gap_rounds` on
 the host; while that gap falls the drain is healthy and this gauge reads 0, so a
 `1` means it went flat or started growing, and something other than the backlog
 is holding the service up.
@@ -198,3 +267,32 @@ is holding the service up.
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)'s interpretation rules
   plus
   [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+- The five `ika_epoch_*` memory series report what an epoch's fold is holding
+  in RAM, which is where the epoch's derived state lives
+  ([`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md)). Read
+  them as three different things:
+  - `ika_epoch_pending_dwallet_checkpoint_signatures` /
+    `ika_epoch_pending_system_checkpoint_signatures` are pruned below the
+    certified watermark, so on a running node a steady value near the committee
+    size is healthy. **Sustained growth means certification has stalled** — the
+    signatures are correctly retained until the checkpoints they sign certify —
+    so read them against `ika_last_certified_dwallet_checkpoint` rather than as
+    a memory alarm in their own right. **During a boot they SAWTOOTH, and that
+    is normal**: the fold re-inserts at replay speed while the prune fires
+    about once a second, so each tooth is one prune interval of full
+    checkpoint-message rows (tens to hundreds of MB on a deep replay of a busy
+    epoch). Read the envelope, not the peak — a sawtooth that keeps returning
+    to its floor is healthy; a floor that climbs is the stall above;
+  - `ika_epoch_pending_dwallet_checkpoints` /
+    `ika_epoch_pending_system_checkpoints` are the builders' input queues,
+    sampled where they are mutated so they keep reporting during a boot replay
+    (when the builders are gated and the drain is not). A large value **during
+    a boot** is the expected replay peak and drains when the builders are
+    released; a large value on a running node is a stuck builder, which
+    `ika_pending_dwallet_checkpoint_queue_depth` and
+    `ika_last_constructed_dwallet_checkpoint` diagnose;
+  - `ika_epoch_processed_consensus_messages` grows monotonically with the
+    epoch's transaction count and drops at the boundary. It is the epoch's
+    largest single structure at roughly 69 bytes an entry; track it against
+    RSS. There is no threshold to alert on yet, because the mainnet rate is
+    unmeasured — establishing it is a release condition (ika #2064).

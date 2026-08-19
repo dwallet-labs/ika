@@ -447,6 +447,7 @@ fn hydrate_network_dkg_digests(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authority::authority_per_epoch_store::EpochStoreParams;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::authority::epoch_start_configuration::EpochStartConfiguration;
     use crate::epoch::epoch_metrics::EpochMetrics;
@@ -486,16 +487,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
             EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
-        let epoch_store = AuthorityPerEpochStore::new(
-            names[0],
-            committee.clone(),
-            dir.path(),
-            None,
-            EpochMetrics::new(&Registry::new()),
+        let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
+            name: names[0],
+            committee: committee.clone(),
+            parent_path: dir.path().to_path_buf(),
+            db_options: None,
+            metrics: EpochMetrics::new(&Registry::new()),
             epoch_start_configuration,
-            ChainIdentifier::default(),
-            IkaNetworkConfig::new_for_testing(),
-        )
+            chain_identifier: ChainIdentifier::default(),
+            packages_config: IkaNetworkConfig::new_for_testing(),
+        })
         .unwrap();
         let perpetual_dir = tempfile::tempdir().unwrap();
         let perpetual = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));

@@ -21,6 +21,13 @@ here updates the file in the same PR.
 
 ## Index
 
+### Top-level audits
+- [`preserved-epoch-state-audit.md`](preserved-epoch-state-audit.md) — what
+  the per-epoch store still keeps on disk and what a replay would have to
+  redo to rebuild each of it, plus the non-determinism audit of the fold.
+  Everything else an epoch derives is in memory by construction. Read with
+  [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md).
+
 ### specs/ — protocol behavioral contracts
 The protocol-level contract per subsystem: actors, messages, decision
 rules, invariants, failure modes. **Read the relevant spec before
@@ -30,6 +37,12 @@ them has a bug — determine which before changing either.
 - [`specs/validator-mpc-data-announcements.md`](specs/validator-mpc-data-announcements.md)
   — off-chain mpc_data pipeline: announcements, P2P, ready signals,
   the freeze decision, next-committee assembly.
+- [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md) — the
+  consensus store as the only truth for epoch-scoped state: derived state
+  held in memory, the bounded-batch replay that rebuilds it, why there is no
+  watermark, the determinism contract, what the fold accumulates and what
+  bounds it, the settled-state rule for replay-silent emission, and the
+  rollback story.
 - [`specs/handoff.md`](specs/handoff.md) — cross-epoch handoff:
   attestation, EndOfPublish V2, certificate, joiner bootstrap, the
   prepare-then-start barrier, network-key adoption guards.
@@ -122,6 +135,12 @@ them has a bug — determine which before changing either.
   conventions (new protocols auto-instrument through the exhaustive
   `[curve, signature_algorithm, key_role]` labels), and a generated name
   inventory.
+- [`conventions/consensus-output-consumption.md`](conventions/consensus-output-consumption.md)
+  — the rules for getting data out of consensus: the store is the only
+  durable truth, the fold is its only reader, consumers receive rounds over
+  bounded blocking channels, and the two commit sinks that are fed at
+  deliberately opposite points. Read before adding any consumer of
+  per-commit data.
 - [`conventions/epoch-table-write-discipline.md`](conventions/epoch-table-write-discipline.md)
   — every `AuthorityEpochTables` field declares whether it is written
   through the consensus commit batch or directly (and, if directly, the

@@ -266,7 +266,8 @@ async fn wait_for_network_owned_address_sign_output(
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -558,7 +559,8 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
@@ -641,7 +643,8 @@ async fn collect_two_noa_sign_outputs(
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration().await;
@@ -917,7 +920,8 @@ async fn test_late_instantiating_validator_preserves_buffered_sign_messages() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
 
         let all_late_buffering = late_parties.iter().all(|&i| {
@@ -1064,7 +1068,8 @@ async fn test_instantiation_normalizes_byzantine_native_placeholder() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         instantiate_rounds += 1;
         assert!(
@@ -1378,28 +1383,31 @@ async fn test_noa_presign_demand_draws_from_the_pool_its_identity_names() {
         .nth(1)
         .copied()
         .expect("committee has a second member");
-    // Every round gets a row on every validator, so the per-round streams have
-    // no gaps to skip; create this round's rows the way the harness does, then
-    // plant the demand in the target's row for it.
+    // Distribute this round to everyone the usual way, then hand the TARGET
+    // one more round carrying the demand. Rounds no longer have to be dense
+    // per validator — the drain only requires them ascending — so the target
+    // simply runs one round ahead of its peers here, and the shared counter
+    // skips past both.
     let round = test_state.consensus_round as u64;
     utils::send_advance_results_between_parties(
         &test_state.committee,
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         round,
-    );
-    test_state.epoch_stores[target]
-        .round_to_noa_presign_demands
-        .lock()
-        .unwrap()
-        .entry(round)
-        .or_default()
+    )
+    .await;
+    let mut demand_round_payload = utils::empty_round_payload(round + 1);
+    demand_round_payload
+        .noa_presign_demands
         .push(ConsensusNOAPresignDemand {
             authority: announcing_authority,
             demand_id: demand_id.clone(),
             network_encryption_key_id: network_key_id,
         });
-    test_state.consensus_round += 1;
+    test_state.epoch_stores[target]
+        .deliver_round(demand_round_payload)
+        .await;
+    test_state.consensus_round += 2;
 
     // Drain it: the service walks rounds in order, so keep rounds flowing
     // until it reaches the planted one and assigns.
@@ -1420,7 +1428,8 @@ async fn test_noa_presign_demand_draws_from_the_pool_its_identity_names() {
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
         drain_rounds += 1;
         assert!(
@@ -1487,7 +1496,7 @@ fn checkpoint_demand_id(sequence_number: u64) -> NOAPresignDemandId {
 /// Every round needs a row in the per-round streams or the service's reader
 /// never advances to it, so the round's rows are created first (exactly as the
 /// harness creates them) and the demand is planted into that round's entry.
-fn deliver_noa_presign_demand(
+async fn deliver_noa_presign_demand(
     test_state: &mut IntegrationTestState,
     demand_id: &NOAPresignDemandId,
     network_encryption_key_id: ObjectID,
@@ -1504,20 +1513,22 @@ fn deliver_noa_presign_demand(
         &mut test_state.sent_consensus_messages_collectors,
         &mut test_state.epoch_stores,
         round,
-    );
+    )
+    .await;
+    // The demand rides its own round on the target validator — see the
+    // equivalent in the assignment test above for why sparse rounds are fine.
+    let demand_round = round + 1;
+    let mut payload = utils::empty_round_payload(demand_round);
+    payload.noa_presign_demands.push(ConsensusNOAPresignDemand {
+        authority: announcing_authority,
+        demand_id: demand_id.clone(),
+        network_encryption_key_id,
+    });
     test_state.epoch_stores[PARK_TEST_TARGET]
-        .round_to_noa_presign_demands
-        .lock()
-        .unwrap()
-        .entry(round)
-        .or_default()
-        .push(ConsensusNOAPresignDemand {
-            authority: announcing_authority,
-            demand_id: demand_id.clone(),
-            network_encryption_key_id,
-        });
-    test_state.consensus_round += 1;
-    round
+        .deliver_round(payload)
+        .await;
+    test_state.consensus_round += 2;
+    demand_round
 }
 
 /// Runs `rounds` consensus rounds through the target validator's service, then
@@ -1532,7 +1543,8 @@ async fn flow_consensus_rounds(test_state: &mut IntegrationTestState, rounds: us
             &mut test_state.sent_consensus_messages_collectors,
             &mut test_state.epoch_stores,
             test_state.consensus_round as u64,
-        );
+        )
+        .await;
         test_state.consensus_round += 1;
     }
     test_state.dwallet_mpc_services[PARK_TEST_TARGET]
@@ -1562,7 +1574,7 @@ async fn test_noa_presign_demand_parks_on_an_unrecognised_network_key() {
     // A key no validator in this test holds a pool for.
     let unrecognised_key_id = ObjectID::random();
     let demand_id = checkpoint_demand_id(1);
-    deliver_noa_presign_demand(&mut test_state, &demand_id, unrecognised_key_id);
+    deliver_noa_presign_demand(&mut test_state, &demand_id, unrecognised_key_id).await;
 
     // Well short of the park bound, which is left at its production value.
     flow_consensus_rounds(&mut test_state, 5).await;
@@ -1605,7 +1617,7 @@ async fn test_noa_presign_demand_assigns_once_the_announced_key_pool_arrives() {
     let late_key_id = ObjectID::random();
     let demand_id = checkpoint_demand_id(2);
     let derived_algorithm = demand_id.expected_signature_algorithm();
-    deliver_noa_presign_demand(&mut test_state, &demand_id, late_key_id);
+    deliver_noa_presign_demand(&mut test_state, &demand_id, late_key_id).await;
 
     flow_consensus_rounds(&mut test_state, 3).await;
     assert_eq!(
@@ -1684,7 +1696,7 @@ async fn test_noa_presign_demand_is_dropped_at_the_park_bound() {
     let demand_id = checkpoint_demand_id(3);
     let derived_algorithm = demand_id.expected_signature_algorithm();
     let delivery_round =
-        deliver_noa_presign_demand(&mut test_state, &demand_id, never_adopted_key_id);
+        deliver_noa_presign_demand(&mut test_state, &demand_id, never_adopted_key_id).await;
 
     // One more round than the bound, so the drain reaches
     // `round - delivery_round >= PARK_ROUNDS`.
@@ -1826,7 +1838,7 @@ fn build_restartable_test_state() -> (
 /// epoch store — the in-process mid-epoch restart: every in-memory structure
 /// starts empty and the round cursor rewinds, while the store survives to be
 /// replayed.
-fn restart_target_validator(
+async fn restart_target_validator(
     test_state: &mut IntegrationTestState,
     seeds: &HashMap<AuthorityName, RootSeed>,
     bundles: &OffChainCommitteeBundles,
@@ -1852,6 +1864,13 @@ fn restart_target_validator(
         .last_session_to_complete_in_current_epoch = 400;
     test_state.dwallet_mpc_services[PARK_TEST_TARGET]
         .set_noa_presign_demand_park_rounds_for_testing(park_rounds);
+    // The boot replay, in harness form: the replacement service brought a
+    // fresh transport, so the epoch's rounds must be re-fed into it. Without
+    // this the replayed drain sees NOTHING and this test would pass for the
+    // wrong reason — nothing is resurrected because nothing is replayed.
+    test_state.epoch_stores[PARK_TEST_TARGET]
+        .replay_recorded_rounds()
+        .await;
 }
 
 /// A restart must not resurrect a demand the park bound already dropped.
@@ -1888,7 +1907,7 @@ async fn test_restart_does_not_resurrect_a_dropped_noa_presign_demand() {
     let late_key_id = ObjectID::random();
     let demand_id = checkpoint_demand_id(4);
     let derived_algorithm = demand_id.expected_signature_algorithm();
-    deliver_noa_presign_demand(&mut test_state, &demand_id, late_key_id);
+    deliver_noa_presign_demand(&mut test_state, &demand_id, late_key_id).await;
 
     flow_consensus_rounds(&mut test_state, PARK_ROUNDS as usize + 1).await;
     assert_eq!(
@@ -1911,7 +1930,7 @@ async fn test_restart_does_not_resurrect_a_dropped_noa_presign_demand() {
 
     // Restart: in-memory state is gone, the epoch store (rounds AND pool)
     // survives, and the round cursor rewinds so every round is re-drained.
-    restart_target_validator(&mut test_state, &seeds, &bundles, PARK_ROUNDS);
+    restart_target_validator(&mut test_state, &seeds, &bundles, PARK_ROUNDS).await;
     flow_consensus_rounds(&mut test_state, 3).await;
 
     assert_eq!(
@@ -1932,5 +1951,72 @@ async fn test_restart_does_not_resurrect_a_dropped_noa_presign_demand() {
         test_state.dwallet_mpc_services[PARK_TEST_TARGET].parked_noa_presign_demand_count(),
         0,
         "the dropped demand must not sit in the rebuilt queue either"
+    );
+}
+
+/// With `noa_checkpoints` OFF — every live network today — a sequenced NOA
+/// presign demand must be INERT at the drain. Acting on it pops the SHARED
+/// internal presign pool (`assign_presign_for_demand`), so a binary that
+/// processed demands while its peers' flag is off would drain a pool no peer
+/// draws on and answer demands no peer answers: a consensus-visible divergence
+/// decided by the binary rather than the protocol version — the class this
+/// repo rules out outright.
+///
+/// This test exists because nothing else pins the gate: every flag-off suite
+/// delivers empty NOA vectors, so deleting the drain's `noa_checkpoints()`
+/// gate flips no other test. Fault-validated by exactly that deletion.
+#[tokio::test]
+#[cfg(test)]
+async fn test_noa_presign_demand_is_inert_while_the_flag_is_off() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    // The DEFAULT guard: `noa_checkpoints` stays off, as on mainnet/testnet.
+    let _guard = utils::create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let announcing_authority = test_state
+        .committee
+        .names()
+        .nth(1)
+        .copied()
+        .expect("committee has a second member");
+    let demand_id = checkpoint_demand_id(9);
+    let demand = ConsensusNOAPresignDemand {
+        authority: announcing_authority,
+        demand_id: demand_id.clone(),
+        network_encryption_key_id: network_key_id,
+    };
+
+    // One round carrying the demand, delivered over the real transport to the
+    // target validator, then drained.
+    let round = test_state.consensus_round as u64;
+    let mut payload = utils::empty_round_payload(round);
+    payload.noa_presign_demands = vec![demand];
+    test_state.epoch_stores[PARK_TEST_TARGET]
+        .deliver_round(payload)
+        .await;
+    test_state.consensus_round += 1;
+    for _ in 0..3 {
+        test_state.dwallet_mpc_services[PARK_TEST_TARGET]
+            .run_service_loop_iteration()
+            .await;
+    }
+
+    assert_eq!(
+        test_state.dwallet_mpc_services[PARK_TEST_TARGET].parked_noa_presign_demand_count(),
+        0,
+        "a NOA presign demand sequenced while `noa_checkpoints` is off must never \
+         enter the assignment queue — acting on it is a binary-decided, \
+         consensus-visible divergence"
+    );
+    assert!(
+        !test_state.epoch_stores[PARK_TEST_TARGET]
+            .has_noa_presign_demand_resolution(&demand_id)
+            .expect("read resolution"),
+        "nor may it have been assigned or dropped: the whole stream is inert \
+         until the protocol version turns it on"
     );
 }

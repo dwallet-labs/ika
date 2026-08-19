@@ -57,6 +57,7 @@ pub mod authority_per_epoch_store;
 
 pub mod authority_perpetual_tables;
 pub mod epoch_start_configuration;
+pub mod round_transport;
 
 #[allow(unused)]
 /// Prometheus metrics which can be displayed in Grafana, queried and alerted on.
