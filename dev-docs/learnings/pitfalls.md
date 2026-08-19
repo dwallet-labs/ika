@@ -397,6 +397,19 @@ rule, not the instance.
   treating a finding as closed — the commit is a hypothesis, the code is the
   evidence. This applies to docs in this folder too: a status line is a
   claim, not proof.
+- **A benchmark can pass vacuously, exactly like a test.** A v2-vs-v3
+  epoch-state benchmark ran to completion and produced a clean-looking
+  comparison table while measuring almost nothing: its fixture keyed commits
+  by `[round as u8; 32]`, so the key space wrapped at 256 distinct values and
+  the dedup set under measurement plateaued there — 769 entries for 4,000
+  folded transactions. What caught it was not review of the harness but an
+  INSTRUMENTATION cross-check: the design's own processed-set gauge, read
+  alongside the timing numbers, contradicted the transaction count. → Rule:
+  every benchmark needs at least one internal consistency check tying what it
+  measured to what it claims to have driven (entries == transactions folded,
+  bytes == rows × size), asserted or eyeballed BEFORE the table is trusted —
+  a wall-clock number with no witness that the work happened is a claim, not
+  a measurement.
 
 ## Dead code & dependencies
 
