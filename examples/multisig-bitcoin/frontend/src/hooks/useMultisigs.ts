@@ -1,5 +1,5 @@
 import { Curve, DWalletWithState, objResToBcs, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { useQuery } from '@tanstack/react-query';
 import invariant from 'tiny-invariant';
 
@@ -23,7 +23,7 @@ export interface MultisigData {
 export const useMultisigs = (multisigIds: string[]) => {
 	const { multisigPackageId, coordinator } = useIds();
 	const account = useCurrentAccount();
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 	const { ikaClient } = useIkaClient();
 
 	return useQuery({
@@ -36,14 +36,12 @@ export const useMultisigs = (multisigIds: string[]) => {
 			}
 
 			// Fetch all multisig objects in parallel
-			const multisigsObjects = await suiClient.multiGetObjects({
-				ids: multisigIds,
-				options: {
-					showBcs: true,
-				},
+			const { objects: multisigsObjects } = await suiClient.getObjects({
+				objectIds: multisigIds,
+				include: { content: true },
 			});
 
-			const multisigs = multisigsObjects.map((obj) => Multisig.fromBase64(objResToBcs(obj)));
+			const multisigs = multisigsObjects.map((obj) => Multisig.parse(objResToBcs(obj)));
 
 			// Filter to only include multisigs where the user is a member
 			const userMultisigs = multisigs.filter((multisig) =>
@@ -58,7 +56,7 @@ export const useMultisigs = (multisigIds: string[]) => {
 			const dWalletIds = userMultisigs.map((multisig) => multisig.dwallet_cap.dwallet_id);
 			const dWallets = await ikaClient.getMultipleDWallets(dWalletIds);
 			const dWalletMap = new Map(
-				dWallets.map((dWallet) => [dWallet.id.id, dWallet as DWalletWithState<'Active'>]),
+				dWallets.map((dWallet) => [dWallet.id, dWallet as DWalletWithState<'Active'>]),
 			);
 
 			// Create MultisigData objects with all necessary info

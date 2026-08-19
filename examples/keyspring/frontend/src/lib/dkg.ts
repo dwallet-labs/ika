@@ -8,7 +8,7 @@ import {
 	SignatureAlgorithm,
 	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 
 const ADMIN_ADDRESS =
 	process.env.NEXT_PUBLIC_ADMIN_ADDRESS ||
@@ -38,8 +38,10 @@ export type WalletType = 'ethereum' | 'solana';
  */
 export function getIkaClient(): IkaClient {
 	const config = getNetworkConfig('testnet');
-	const suiClient = new SuiClient({
-		url: 'https://sui-testnet-rpc.publicnode.com',
+	// Public fullnodes serve gRPC; JSON-RPC has been retired.
+	const suiClient = new SuiGrpcClient({
+		network: 'testnet',
+		baseUrl: process.env.NEXT_PUBLIC_SUI_GRPC_URL || 'https://fullnode.testnet.sui.io:443',
 	});
 
 	return new IkaClient({

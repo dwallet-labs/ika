@@ -1,5 +1,5 @@
 import { objResToBcs } from '@ika.xyz/sdk';
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { useQuery } from '@tanstack/react-query';
 import invariant from 'tiny-invariant';
 
@@ -13,25 +13,21 @@ import { useIds } from './useObjects';
 export const useMultisigOwnerships = () => {
 	const { multisigPackageId } = useIds();
 	const account = useCurrentAccount();
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 
 	return useQuery({
 		queryKey: ['multisigOwnerships', account?.address, multisigPackageId],
 		queryFn: async () => {
 			invariant(account, 'Account not found');
 
-			const multisigOwnershipResponse = await suiClient.getOwnedObjects({
+			const multisigOwnershipResponse = await suiClient.listOwnedObjects({
 				owner: account.address,
-				options: {
-					showBcs: true,
-				},
-				filter: {
-					StructType: `${multisigPackageId}::multisig::MultisigOwnership`,
-				},
+				include: { content: true },
+				type: `${multisigPackageId}::multisig::MultisigOwnership`,
 			});
 
-			const ownerships = multisigOwnershipResponse.data.map((obj) =>
-				MultisigOwnership.fromBase64(objResToBcs(obj)),
+			const ownerships = multisigOwnershipResponse.objects.map((obj) =>
+				MultisigOwnership.parse(objResToBcs(obj)),
 			);
 
 			return ownerships;

@@ -39,7 +39,9 @@ bun install
 
 # Set your Sui admin key
 export SUI_ADMIN_SECRET_KEY="your-base64-encoded-key"
-export IKA_COIN_ID="your-ika-coin-id" # used for gas
+# Optional: MIST budget for the IKA fee per dWallet operation (default 1 IKA).
+# The coin is picked from the admin address's own IKA at build time.
+export IKA_FEE_BUDGET="1000000000"
 
 bun run dev
 ```

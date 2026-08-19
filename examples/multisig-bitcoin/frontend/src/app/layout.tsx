@@ -3,12 +3,10 @@
 import { Geist, Geist_Mono } from 'next/font/google';
 
 import './globals.css';
-import '@mysten/dapp-kit/dist/index.css';
 
 import ecc from '@bitcoinerlab/secp256k1';
 import { getNetworkConfig } from '@ika.xyz/sdk';
-import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { DAppKitProvider } from '@mysten/dapp-kit-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as bitcoin from 'bitcoinjs-lib';
 import { Toaster } from 'sonner';
@@ -16,6 +14,7 @@ import { Toaster } from 'sonner';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { IkaClientProvider } from '../components/providers/IkaClientProvider';
 import { MultisigProvider } from '../contexts/MultisigContext';
+import { dAppKit } from '../lib/sui';
 
 // Initialize ECC library for bitcoinjs-lib (required for crypto operations)
 // @bitcoinerlab/secp256k1 is pure JavaScript (no WASM) and works well in browsers
@@ -49,12 +48,6 @@ const queryClient = new QueryClient({
 	},
 });
 
-const { networkConfig } = createNetworkConfig({
-	localnet: { url: getFullnodeUrl('localnet') },
-	testnet: { url: getFullnodeUrl('testnet') },
-	mainnet: { url: getFullnodeUrl('mainnet') },
-});
-
 export default function RootLayout({
 	children,
 }: Readonly<{
@@ -72,32 +65,14 @@ export default function RootLayout({
 			<body className={`${geistMono.variable} antialiased`}>
 				<ErrorBoundary>
 					<QueryClientProvider client={queryClient}>
-						<SuiClientProvider
-							networks={networkConfig}
-							defaultNetwork="testnet"
-							createClient={(_, config) =>
-								new SuiClient({
-									url: config.url,
-									mvr: {
-										overrides: {
-											packages: {
-												'@local-pkg/multisig-contract':
-													'0x98eec1dd5a67695bf03d55d355c81eedfcca5f4aee196f295305acdd574b1e94',
-											},
-										},
-									},
-								})
-							}
-						>
-							<WalletProvider autoConnect>
-								<IkaClientProvider config={getNetworkConfig('testnet')}>
-									<MultisigProvider>
-										{children}
-										<Toaster position="top-right" richColors />
-									</MultisigProvider>
-								</IkaClientProvider>
-							</WalletProvider>
-						</SuiClientProvider>
+						<DAppKitProvider dAppKit={dAppKit}>
+							<IkaClientProvider config={getNetworkConfig('testnet')}>
+								<MultisigProvider>
+									{children}
+									<Toaster position="top-right" richColors />
+								</MultisigProvider>
+							</IkaClientProvider>
+						</DAppKitProvider>
 					</QueryClientProvider>
 				</ErrorBoundary>
 			</body>

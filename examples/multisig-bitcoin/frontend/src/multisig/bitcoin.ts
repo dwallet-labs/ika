@@ -9,9 +9,10 @@ import {
 	SignatureAlgorithm,
 } from '@ika.xyz/sdk';
 import { bcs } from '@mysten/sui/bcs';
-import { SuiClient } from '@mysten/sui/client';
+import type { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';
-import { sha256 } from '@noble/hashes/sha2';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import * as bitcoin from 'bitcoinjs-lib';
 
 import { transactionRequest } from '../generated/ika_btc_multisig/multisig';
@@ -50,7 +51,7 @@ export class MultisigBitcoinWallet {
 		network: 'testnet' | 'mainnet' = 'testnet',
 		private readonly publicKey: Uint8Array,
 		private readonly ikaClient: IkaClient,
-		private readonly suiClient: SuiClient,
+		private readonly suiClient: SuiGrpcClient,
 		private readonly packageAddress: string,
 		public readonly object: {
 			multisig: string;
@@ -869,7 +870,7 @@ export class MultisigBitcoinWallet {
 	 * This is required for script path spending to identify which script in the tree we're using.
 	 */
 	#getLeafHash(): Buffer {
-		const tagHash = Buffer.from(sha256('TapLeaf'));
+		const tagHash = Buffer.from(sha256(utf8ToBytes('TapLeaf')));
 		const version = Buffer.from([this.redeem.redeemVersion]); // 0xc0
 
 		// Encode script length as compact size
@@ -902,12 +903,10 @@ export class MultisigBitcoinWallet {
 	async #getMultisig(): Promise<typeof MultisigModule.Multisig.$inferType> {
 		const multisig = await this.suiClient
 			.getObject({
-				id: this.object.multisig,
-				options: {
-					showBcs: true,
-				},
+				objectId: this.object.multisig,
+				include: { content: true },
 			})
-			.then((obj) => MultisigModule.Multisig.fromBase64(objResToBcs(obj)));
+			.then((obj) => MultisigModule.Multisig.parse(objResToBcs(obj)));
 
 		return multisig;
 	}

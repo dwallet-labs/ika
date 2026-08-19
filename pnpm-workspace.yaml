@@ -1,5 +1,13 @@
 packages:
   - 'sdk/**'
+  - 'examples/*/frontend'
+  - 'examples/*/backend'
+  # ikavery is itself a small monorepo; its packages join this workspace
+  # directly rather than nesting a second package manager inside it. Its
+  # Solana half is not vendored here — this repo's examples are Ika-on-Sui.
+  - 'examples/ikavery/packages/*'
+  - 'examples/ikavery/sui/packages/sdk'
+  - 'examples/ikavery/sui/packages/frontend'
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
@@ -15,9 +23,20 @@ autoInstallPeers: false
 # v11 removed `onlyBuiltDependencies` in favour of `allowBuilds`, and made
 # `strictDepBuilds` the default — an un-allowed build script now fails the
 # install rather than printing a notice.
+# Note: pnpm rewrites this block in place when an install hits an unlisted
+# build script, replacing values with placeholders — re-add context after that.
+# The `false` entries are native accelerators and image/proto tooling pulled in
+# by the example apps. pnpm 10's allowlist already excluded them, so `false`
+# preserves that behaviour instead of newly running third-party postinstall
+# scripts: each falls back to pure JS or ships prebuilt binaries.
 allowBuilds:
+  bigint-buffer: false
+  bufferutil: false
   esbuild: true
+  protobufjs: false
+  sharp: false
   unrs-resolver: true
+  utf-8-validate: false
 
 overrides:
   'node-notifier': '10.0.0'
@@ -27,3 +46,47 @@ overrides:
   'semver@<7.5.2': '>=7.5.2'
   'postcss@<8.4.31': '>=8.4.31'
   'dompurify@>=3.0.0 <3.1.3': '>=3.1.3'
+
+# Versions of the libraries shared by the SDK and the example apps live HERE
+# and nowhere else: each package.json references them as `catalog:`. Before
+# this, the two examples and the SDK each pinned their own `@mysten/sui`, and
+# the examples drifted a whole major behind without anything noticing.
+#
+# Only genuinely shared libraries belong here. A dependency used by a single
+# package (elysia, bitcoinjs-lib, ethers) stays in that package's manifest —
+# cataloguing it would add indirection for nothing.
+catalog:
+  # Sui + Mysten stack. dapp-kit 2.x (the `@mysten/dapp-kit-react` rewrite) is
+  # the only one that speaks gRPC — the legacy `@mysten/dapp-kit` is JSON-RPC
+  # only and receives no further updates — so these move together or not at all.
+  '@mysten/sui': ^2.26.1
+  '@mysten/dapp-kit-react': ^2.1.19
+  '@mysten/dapp-kit-core': ^1.6.17
+  '@mysten/bcs': ^2.1.0
+  '@mysten/codegen': ^0.12.2
+  '@mysten/enoki': ^1.2.15
+  '@mysten/wallet-standard': ^0.21.17
+
+  # Crypto primitives. v2 renamed `randomPrivateKey` to `randomSecretKey`;
+  # the SDK is on v2, so an example on v1 gets two copies with incompatible
+  # APIs in one bundle.
+  '@noble/curves': ^2.3.0
+  '@noble/hashes': ^2.3.0
+
+  # Front-end framework, shared by both example UIs.
+  next: 16.3.1
+  react: 19.2.8
+  react-dom: 19.2.8
+  '@tanstack/react-query': ^5.101.4
+  tailwindcss: ^4.3.3
+  '@tailwindcss/postcss': ^4.3.3
+
+  # Toolchain. Node 24 (Krypton) is the Active LTS line as of this writing;
+  # @types/node tracks it rather than the newer Current release. The SDK's own
+  # `engines` floor stays permissive on purpose — a published library should not
+  # lock consumers to our runtime — so this LTS choice binds the apps we run.
+  typescript: ^6.0.3
+  '@types/node': ^24.13.3
+  '@types/react': ^19.2.18
+  '@types/react-dom': ^19.2.4
+  viem: ^2.55.17

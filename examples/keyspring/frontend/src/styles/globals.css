@@ -1,8 +1,27 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Space+Mono:wght@400;700&display=swap');
+@import 'tailwindcss';
+
+/* Tailwind v4 takes its theme from CSS rather than tailwind.config.js. These
+   are the same tokens the old config defined, so utility names are unchanged
+   (`text-primary`, `bg-primary`, `font-mono`). */
+@theme {
+	--color-primary: #00d4aa;
+	--color-primary-dark: #00b894;
+
+	--color-accent-purple: #8b5cf6;
+	--color-accent-blue: #3b82f6;
+	--color-accent-orange: #f97316;
+
+	--color-bg-primary: #0a0a0f;
+	--color-bg-secondary: #12121a;
+	--color-bg-card: #16161f;
+	--color-bg-elevated: #1c1c28;
+
+	--font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+	--font-mono: 'Space Mono', 'SF Mono', Monaco, monospace;
+
+	--animate-spin-slow: spin 2s linear infinite;
+}
 
 :root {
 	--bg-primary: #0a0a0f;

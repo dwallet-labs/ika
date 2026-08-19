@@ -1,0 +1,50 @@
+{
+	"name": "ikavery-frontend",
+	"version": "0.0.1",
+	"private": true,
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"start": "next start",
+		"lint": "cd ../../.. && biome check sui/packages/frontend",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@fesal-packages/ikavery-core": "workspace:*",
+		"@fesal-packages/ikavery-frontend-ui": "workspace:*",
+		"@fesal-packages/ikavery-sui-sdk": "workspace:*",
+		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/dapp-kit-core": "catalog:",
+		"@mysten/dapp-kit-react": "catalog:",
+		"@mysten/enoki": "catalog:",
+		"@mysten/sui": "catalog:",
+		"@mysten/wallet-standard": "catalog:",
+		"@noble/curves": "catalog:",
+		"@noble/hashes": "catalog:",
+		"@radix-ui/react-slot": "^1.2.4",
+		"@simplewebauthn/browser": "^13.3.0",
+		"@solana/spl-token": "^0.4.9",
+		"@solana/web3.js": "^1.95.5",
+		"@tanstack/react-query": "catalog:",
+		"@wallet-standard/core": "^1.1.0",
+		"class-variance-authority": "^0.7.1",
+		"clsx": "^2.1.1",
+		"framer-motion": "^13.1.0",
+		"idb-keyval": "^6.3.0",
+		"lucide-react": "^0.555.0",
+		"next": "catalog:",
+		"react": "catalog:",
+		"react-dom": "catalog:",
+		"tailwind-merge": "^3.4.0",
+		"zustand": "^5.0.15"
+	},
+	"devDependencies": {
+		"@tailwindcss/postcss": "catalog:",
+		"@types/node": "catalog:",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"postcss": "^8.5.4",
+		"tailwindcss": "catalog:",
+		"typescript": "catalog:"
+	}
+}

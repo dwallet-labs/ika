@@ -1,4 +1,4 @@
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { useMemo } from 'react';
 
 import { Multisig } from '../generated/ika_btc_multisig/multisig';

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
+import { useCurrentAccount, useCurrentClient } from '@mysten/dapp-kit-react';
 import { useQuery } from '@tanstack/react-query';
 import { Coins, Wallet } from 'lucide-react';
 
@@ -13,13 +13,13 @@ interface BalanceDisplayProps {
 
 export function BalanceDisplay({ ikaPackageId }: BalanceDisplayProps) {
 	const account = useCurrentAccount();
-	const suiClient = useSuiClient();
+	const suiClient = useCurrentClient();
 
 	const { data: suiBalance, isLoading: isLoadingSui } = useQuery({
 		queryKey: ['sui-balance', account?.address],
 		queryFn: async () => {
 			if (!account?.address) return null;
-			const balance = await suiClient.getBalance({
+			const { balance } = await suiClient.getBalance({
 				owner: account.address,
 			});
 			return balance;
@@ -32,7 +32,7 @@ export function BalanceDisplay({ ikaPackageId }: BalanceDisplayProps) {
 		queryKey: ['ika-balance', account?.address, ikaPackageId],
 		queryFn: async () => {
 			if (!account?.address || !ikaPackageId) return null;
-			const balance = await suiClient.getBalance({
+			const { balance } = await suiClient.getBalance({
 				owner: account.address,
 				coinType: `${ikaPackageId}::ika::IKA`,
 			});
@@ -66,7 +66,7 @@ export function BalanceDisplay({ ikaPackageId }: BalanceDisplayProps) {
 					) : (
 						<div className="flex items-baseline gap-1">
 							<span className="text-sm font-semibold text-primary">
-								{formatBalance(ikaBalance?.totalBalance)}
+								{formatBalance(ikaBalance?.balance)}
 							</span>
 							<span className="text-xs text-muted-foreground">IKA</span>
 						</div>
@@ -83,7 +83,7 @@ export function BalanceDisplay({ ikaPackageId }: BalanceDisplayProps) {
 					) : (
 						<div className="flex items-baseline gap-1">
 							<span className="text-sm font-semibold text-blue-500">
-								{formatBalance(suiBalance?.totalBalance)}
+								{formatBalance(suiBalance?.balance)}
 							</span>
 							<span className="text-xs text-muted-foreground">SUI</span>
 						</div>

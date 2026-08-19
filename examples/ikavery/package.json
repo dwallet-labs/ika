@@ -1,0 +1,13 @@
+{
+	"name": "ikavery",
+	"version": "0.0.1",
+	"private": true,
+	"description": "Quorum-gated key custody on Sui, powered by Ika 2PC-MPC dWallets",
+	"scripts": {
+		"move:build": "cd sui/packages/contracts/recovery && sui move build",
+		"move:test": "cd sui/packages/contracts/recovery && sui move test"
+	},
+	"engines": {
+		"node": ">=24"
+	}
+}

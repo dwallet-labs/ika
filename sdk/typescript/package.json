@@ -61,22 +61,22 @@
 		"@iarna/toml": "^2.2.5",
 		"@ika.xyz/build-scripts": "workspace:*",
 		"@kubernetes/client-node": "^1.4.0",
-		"@mysten/codegen": "^0.11.3",
-		"@types/node": "^26.1.0",
+		"@mysten/codegen": "catalog:",
+		"@types/node": "catalog:",
 		"@vitest/coverage-v8": "^4.1.9",
 		"@vitest/ui": "4.1.9",
 		"dotenv": "^17.4.2",
 		"execa": "^9.6.1",
 		"js-yaml": "^5.2.1",
 		"typedoc": "^0.28.19",
-		"typescript": "^6.0.3",
+		"typescript": "catalog:",
 		"vitest": "4.1.9"
 	},
 	"dependencies": {
 		"@ika.xyz/ika-wasm": "workspace:*",
-		"@mysten/bcs": "^2.1.0",
-		"@mysten/sui": "^2.20.1",
-		"@noble/curves": "^2.2.0",
-		"@noble/hashes": "^2.2.0"
+		"@mysten/bcs": "catalog:",
+		"@mysten/sui": "catalog:",
+		"@noble/curves": "catalog:",
+		"@noble/hashes": "catalog:"
 	}
 }

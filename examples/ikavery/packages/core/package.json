@@ -1,0 +1,59 @@
+{
+	"name": "@fesal-packages/ikavery-core",
+	"version": "0.1.0",
+	"description": "Shared crypto, passkey, and dWallet helpers used by the Ikavery Sui and Solana SDKs.",
+	"license": "BSD-3-Clause",
+	"author": "fesal <https://github.com/iamknownasfesal>",
+	"homepage": "https://ikavery.com",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/iamknownasfesal/ikavery"
+	},
+	"keywords": [
+		"ika",
+		"ikavery",
+		"dwallet",
+		"mpc",
+		"passkey",
+		"webauthn",
+		"sui",
+		"solana"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsc -p tsconfig.build.json",
+		"test": "bun test",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"lint": "cd ../.. && biome check packages/core",
+		"prepublishOnly": "bun run build"
+	},
+	"dependencies": {
+		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/sui": "catalog:",
+		"@noble/curves": "catalog:",
+		"@noble/hashes": "catalog:",
+		"@simplewebauthn/browser": "^13.3.0",
+		"@solana/spl-token": "^0.4.9",
+		"@solana/web3.js": "^1.95.4"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.1.13",
+		"typescript": "catalog:"
+	}
+}

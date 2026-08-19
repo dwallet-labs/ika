@@ -1,7 +1,8 @@
 'use client';
 
-import { ConnectButton, useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { AlertTriangle, Menu, Wallet } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 
 import { BalanceDisplay } from '@/components/common/BalanceDisplay';
@@ -37,6 +38,13 @@ import {
 	showLoadingToast,
 	showSuccessToast,
 } from '@/lib/error-handling';
+
+// dApp Kit 2.x ships its UI as web components, which register themselves
+// against `window` on import — that has to stay out of the prerender.
+const ConnectButton = dynamic(
+	() => import('@mysten/dapp-kit-react/ui').then((m) => m.ConnectButton),
+	{ ssr: false },
+);
 
 export default function Dashboard() {
 	const account = useCurrentAccount();
