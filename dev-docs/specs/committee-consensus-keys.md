@@ -1,69 +1,60 @@
 # Committee consensus keys
 
-Status: active and unconditional. The identity basis flipped at protocol v6,
-which is LIVE on mainnet and testnet; with `MIN_PROTOCOL_VERSION = 6` the
-`AuthorityName` IS the consensus key at every supported version and no
-version-gated basis choice remains in the code.
-Landed 2026-07-01, PR #1762. The design record — including the first,
-reverted identity-flip attempt and why it failed — is
+Status: active and unconditional. **`AuthorityName` IS the validator's
+Ed25519 consensus key, emitted as raw 32 bytes.** `MIN_PROTOCOL_VERSION`
+and `MAX_PROTOCOL_VERSION` are both 7, so no supported version chooses a
+different identity basis or a different encoding width, and the code that
+used to switch between them has been deleted rather than disabled.
+The design record — including the first, reverted identity-flip attempt
+and why it failed — is
 [`../plans/authority-name-consensus-key.md`](../plans/authority-name-consensus-key.md).
 
 A validator has **two** long-lived public keys with different jobs:
 
 | Key | Type | Role |
 |---|---|---|
-| BLS (`AuthorityPublicKey`) | aggregatable | aggregate stake certificates (BLS checkpoints) verify against it; below protocol v6 it was ALSO the validator's identity (`AuthorityName` was its byte encoding) |
-| consensus (`NetworkPublicKey`, Ed25519) | not aggregatable | signs **individually-signed** messages (handoff attestation signatures today); from protocol v6 it is ALSO the validator's identity — `AuthorityName` is the 32 key bytes zero-padded to the 48-byte container |
+| BLS (`AuthorityPublicKey`) | aggregatable | aggregate stake certificates (BLS checkpoints) verify against it. It is NOT the validator's identity, and is not recoverable from one |
+| consensus (`NetworkPublicKey`, Ed25519) | not aggregatable | signs **individually-signed** messages (handoff attestation signatures today), and IS the validator's identity — `AuthorityName` is its raw 32 bytes |
 
-A signer identifies itself by `AuthorityName` (BLS-derived), but an
-Ed25519 signature must verify against the consensus key. **The BLS name
-cannot recover the consensus key** — they are independent keypairs. So
-the mapping has to be carried as data, and this spec is the contract for
-where it comes from, who may trust it, and what happens when it is
-missing.
+So a signer identifies itself by its consensus key, and an Ed25519
+signature verifies against that same key. The direction that does not work
+is the BLS one: **a name cannot recover the BLS key** — they are
+independent keypairs. That map has to be carried as data, and this spec is
+the contract for where each map comes from, who may trust it, and what
+happens when one is missing.
 
 ## The decision rule
 
-**`Committee` carries the mapping.** Below protocol v6 `AuthorityName` is
-the BLS key; from v6 (`consensus_key_authority_names`) it is the
-zero-padded consensus key, and the BLS keys are then carried explicitly
-too (`Committee::new_with_protocol_keys` — a consensus-basis name cannot
-be decoded into a BLS key, and BLS aggregate-certificate verification
-still needs it; `Committee::load_inner`'s name-decode is lossy, failing
-closed at `public_key()` instead of panicking). The lossy decode makes
-the split wiring-dependent: a consensus-basis committee mis-built through
-`Committee::new` carries an EMPTY `expanded_keys` with no construction
-error. `public_key()` on it fails closed per lookup, and
-`name_translation()` — whose callers all fall back to identity on a
-missing entry, so a degraded map would silently reinstate the boundary
-misses it exists to prevent — logs a `should_never_happen` error naming
-every member whose BLS alias is unrecoverable. Both production
-`Committee::new` sites that can carry consensus-basis names are safe by
-audit, not by type: the `SuiSyncer::new_committee` committees feed only
-the reconfiguration MPC input, and the prior-committee fetch
-(`pubkey_provider_updater.rs`) verifies handoff certs through
-`consensus_key()` only — neither reaches `public_key()` or
-`name_translation()`.
+**`Committee` carries both mappings.** A name is the consensus key, so
+the consensus-key map is nearly an identity; the BLS map is the one that
+must come from chain. `Committee::new_with_protocol_keys` carries it, and
+that is now a **type-level** guarantee rather than an audited one: a
+committee built through plain `Committee::new` has an EMPTY
+`expanded_keys` and fails closed at `public_key()`. `Committee::load_inner`
+performs no name-decode at all — it returns an empty BLS map
+unconditionally, because no BLS key can be derived from an Ed25519 name.
+A committee that must verify BLS aggregate certificates therefore has to
+be built through `new_with_protocol_keys`; there is no longer a
+half-populated middle state to audit for.
 
 **Identity-basis rule.** A committee's names are always derived from the
-consensus key. The basis used to be decided per epoch from its protocol
-version, and the activation boundary carried a KNOWN LIMITATION: the
-next-epoch committee is assembled mid-epoch under the CURRENT epoch's
-version, while the next epoch rebuilds it under its OWN, so at the single
-activation boundary the two disagreed (this asymmetry is what wedged the
-first flip attempt). With `MIN_PROTOCOL_VERSION = 6` that boundary is
-behind every supported version and the mitigations that straddled it —
+consensus key, at every supported version. The basis used to be decided
+per epoch from its protocol version, and that activation boundary carried
+a KNOWN LIMITATION: the next-epoch committee is assembled mid-epoch under
+the CURRENT epoch's version, while the next epoch rebuilds it under its
+OWN, so at the single activation boundary the two disagreed — the
+asymmetry that wedged the first flip attempt. That boundary is now behind
+every supported version, and the mitigations that straddled it —
 dual-basis membership matching, the alternate next-committee pubkey set
 offered to cert verification, and the per-basis prior-committee candidate
-list — are gone. `EpochStartSystem::V2` still RECORDS the basis, because
-the field is part of the persisted BCS shape a v1.2.7 binary reads back
-after a downgrade; nothing reads it. **The same asymmetry governs any
-FUTURE change to the identity basis** — it would have to be gated on a
-protocol version and would reintroduce exactly this boundary.
+list — are gone. `EpochStartSystem::V2` still RECORDS the basis because
+the field is part of a persisted BCS shape; nothing reads it. **The same
+asymmetry governs any FUTURE change to the identity basis** — it would
+have to ride a protocol version and would reintroduce exactly this
+boundary.
 
-**Status: v6 is LIVE on mainnet and testnet, and is this binary's minimum.**
-Two known gaps come with it, both about consensus-key ROTATION (the basis
-flip itself is done):
+Two known gaps remain, both about consensus-key ROTATION rather than the
+basis flip, which is finished:
 
 1. **The cert-hash straddle across a consensus-key rotation — OPEN, and the
    one with fleet-wide blast radius.** A consensus
@@ -83,11 +74,11 @@ flip itself is done):
    not a routine action.
 
 2. **Prior-epoch artifacts are keyed by the rotating member's old identity**
-   — ACCEPTED DEGRADATION, deliberately not fixed. The prior epoch's handoff
-   cert names members under the keys they held then; `name_translation` is
-   built from the current committee and aliases only the current consensus
-   key and the BLS key, so a member that rotated at the boundary resolves to
-   nothing. Consequences, all confined to that one member for one epoch:
+   — ACCEPTED DEGRADATION, deliberately not fixed. Because the name IS the
+   consensus key, rotating that key changes the member's identity outright:
+   the prior epoch's handoff cert names it under the key it held then, and
+   nothing in the new epoch resolves that name to the same validator.
+   Consequences, all confined to that one member for one epoch:
    its `ValidatorMpcData` carry-forward misses and it lands in
    `epoch_excluded_validators` (only if it also did not freshly announce
    that epoch); prior-cert key ingest misses, leaving it MPC-dead for the
@@ -120,65 +111,37 @@ RAW validator records (`EpochStartValidatorInfoTrait::authority_name`,
 used by `verify_validator_keys`), which are a different name space from
 the committee identity.
 
-**Encoding width (protocol v7).** The identity is the consensus key at every
-supported version; what v7 changes is only how it is WRITTEN.
-`short_authority_names` switches `AuthorityName` from the 32 key bytes
-zero-padded into the 48-byte container to the raw 32 bytes.
+**Encoding width.** `AuthorityName` serializes as the raw 32 bytes,
+always. Through protocol v6 it was those bytes zero-padded into the
+48-byte container the BLS protocol key occupied; v7 flipped the whole
+committee to the short form at one epoch boundary. No supported version
+emits the padded form any more, so the machinery that carried the choice —
+a process-wide static, a thread-local override, and the cross-epoch
+retry that consumed them — is **deleted**, not disabled. Do not write new
+code that reasons about a width.
 
-Decoding has accepted both widths since v1.2.7 (`LenientAuthorityKeyBytes`),
-so no deployed binary rejects the short form. That tolerance is necessary but
-NOT sufficient, and the reason is the crux of this flip: signature and digest
-bytes are reconstructed by RE-SERIALIZING locally — `verify_handoff_signature`
-rebuilds the signed payload from its own decoded copy, and
-`hash_next_committee_pubkey_set` BCS-encodes a `Vec<AuthorityName>` before
-hashing. Two validators emitting different widths therefore compute different
-digests for the same committee and reject each other's signatures, even though
-each parses the other's messages perfectly. What the version gate buys is not
-readability but **simultaneous emission**.
+**Decoding stays lenient on purpose** (`LenientAuthorityName`): rows and
+archives written before the v7 boundary hold the 48-byte form, and a node
+must keep reading its own history. A 48-byte value whose tail is NOT zero
+is a pre-v6 BLS-basis name; it has no consensus-key representation, so it
+is REJECTED rather than silently truncated. Nothing live decodes such a
+record, and failing loudly is what keeps a truncated, wrong-identity name
+out of a committee.
 
-Two consequences worth knowing before touching this:
-
-1. **The width is process-wide state** (`AUTHORITY_NAME_SHORT_ENCODING`), set
-   from the protocol config when an epoch store is built. It is the only
-   protocol flag in ika consumed outside its call site, because serde has no
-   access to the config. A thread-scoped override exists for one purpose only
-   (below); do not reach for it to paper over a width mismatch elsewhere.
-2. **The handoff cert straddles the boundary.** It is signed at the end of
-   epoch N under the old width and verified in N+1 under the new one, so
-   `verify_certified_handoff_attestation` retries once at the other width
-   before rejecting. This does not widen what is accepted — both widths encode
-   the same attestation value. Anything new that verifies a re-serialized
-   cross-epoch payload must do the same.
-
-**Fault-validating the width gate.** The upgrade scenarios flip every
-validator together, so on their own they prove a COORDINATED flip works and
-nothing about an uncoordinated one. Two things close that gap:
-
-- `a_width_straggler_is_detected_and_excluded_from_the_handoff_quorum`
-  (`validator_metadata.rs`) shows a validator on the wrong width computes a
-  different `next_committee_pubkey_set_hash`, so its signature is rejected as
-  `AttestationMismatch` and the honest majority certifies without it. It carries
-  a vacuity guard: making the digest width-insensitive fails the test on the
-  guard, not on a downstream assertion.
-- `FAULT_INVERT_AUTHORITY_NAME_WIDTH` (a `test-testing`-gated env var read at
-  epoch-store construction) makes one real validator emit the opposite width,
-  so the out-of-process `v127_v7_upgrade` scenario can be run against a genuine
-  straggler. Build the faulty binary with
-  `--features test-testing` and set the variable on one validator; the run must
-  fail on the zero-malicious or output-convergence assertion.
-
-A BLS-basis name is never shortened: the short encoding applies only to values
-whose trailing 16 bytes are zero, which is what keeps historical BLS-basis
-committee records round-tripping unchanged.
-
-**Why the 48-byte container is not ambiguous across bases.** A
-consensus-basis name is the 32-byte Ed25519 key followed by 16 zero bytes;
-a BLS-basis name is a valid BLS12-381 G1 point. For the two to collide an
-attacker would need a valid G1 point whose last 16 bytes are zero AND whose
-discrete log it knows — roughly 2^128 grinding past the registration
-proof-of-possession. That is what makes `expanded_keys` alias translation
-safe: committees persisted under BLS-basis names stay readable without
-widening what is accepted.
+**Why that flip needed a protocol version, which is the part worth
+keeping.** Tolerant decoding was necessary but never sufficient. Signature
+and digest bytes are reconstructed by RE-SERIALIZING locally:
+`verify_handoff_signature` rebuilds the signed payload from its own decoded
+copy, and `hash_next_committee_pubkey_set` BCS-encodes a
+`Vec<AuthorityName>` before hashing. `AuthorityName` is also a field of
+`AuthorityCapabilitiesV1`, of ten MPC consensus messages, and of
+`HandoffItemKey`. Two validators emitting different widths therefore
+compute different digests for the same committee and reject each other's
+signatures while parsing each other's messages perfectly. What a version
+gate buys is not readability but **simultaneous emission** — the whole
+committee flipping together. Any future change to a wire encoding must ride
+a protocol version for the same reason; a per-binary switch splits the
+network.
 
 ```rust
 // ika-types/src/committee.rs
@@ -304,11 +267,12 @@ upgrades directly from 1.1.8 data dirs.
 
 ## Direction of travel
 
-The BLS key is still the identity because aggregate stake certificates
-need aggregatability. The plan records the intended end state: once those
-are replaced by consensus-key-signed certificates, `expanded_keys` /
-`public_key()` and the validators' BLS key can be dropped entirely and
-`AuthorityName` can become the consensus key. Until then, **both keys are
+The identity flip is done. What remains is the BLS key itself, which
+survives only because aggregate stake certificates need aggregatability.
+Once those are replaced by consensus-key-signed certificates,
+`expanded_keys` / `public_key()` and the validators' BLS key can be
+dropped entirely — the `TODO(consensus-key-certs)` on the field in
+`ika-types/src/committee.rs` marks the spot. Until then, **both keys are
 load-bearing and neither may be treated as derivable from the other.**
 
 Consumer today: [`handoff.md`](handoff.md) (attestation signatures and
