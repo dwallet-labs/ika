@@ -7,10 +7,24 @@ wire types, Move tooling, package metadata, execution internals, or test swarms.
 
 ## Network RPC
 
+**gRPC is the transport. JSON-RPC is gone.** The JSON-RPC Sui data source was
+deprecated and removed after the v1.2.x line; nothing in `crates/` reads Sui
+over it today. If you find a JSON-RPC-shaped path anywhere — in a stale
+branch, a vendored snippet, or a doc — resolve the divergence in gRPC's
+favour rather than restoring dual support. Adding a JSON-RPC read back is a
+regression, not a compatibility measure.
+
 `ika-sui-client/src/grpc.rs:SuiGrpcClient` is the direct fullnode transport. It
 must wrap `sui_rpc::Client`, not Sui main's unpublished
 `sui_rpc_api::Client`. The transport owns compatibility conversion from SDK
 protobuf/BCS responses into the `sui_types` values consumed by the rest of Ika.
+
+Every call on this client passes a node-wide shared rate-limit gate
+(`SuiGrpcClient::with_gate`, wired in `sui_connector/setup.rs`): when Sui
+rate-limits the node, the whole node backs off together instead of each
+caller rediscovering the limit. Anything you build on this client inherits
+that, so a slow read may be waiting on the gate rather than on the endpoint,
+and a long backoff can outlive a value you read before it.
 
 Read-only callers should reuse `ika_sui_client::grpc::SuiGrpcClient` instead of
 opening a second client implementation. Add narrow inherent methods to that

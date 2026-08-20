@@ -44,6 +44,16 @@ parts:
   without anybody remembering to update anything — which was the failure
   mode of every list-based version of this rule.
 
+  **The check has one blind spot, and it is worth knowing before you
+  trust a green run.** Its extractor matches `register_*_with_registry!`
+  only, so a metric registered on prometheus's *default* registry with the
+  bare `register_*!` form is neither validated nor inventoried. `ika-proxy`
+  registers nine that way and they ARE exported — `ika-proxy/src/metrics.rs`
+  gathers the default registry onto its `/metrics` — so ika's binaries do
+  in practice export a handful of unprefixed names. Treat rules 1 and 2 as
+  binding on everything the extractor can see, and register new metrics
+  with an explicit registry so they stay in scope.
+
   Note that `ika_consensus_*` **is** ika's to use — those are ika's own
   consensus-handling metrics (`ika_consensus_handler_processed` and
   friends), sitting alongside `ika_dwallet_*` and `ika_ocs_*`. They were
@@ -59,22 +69,39 @@ parts:
 alert fails silently forever. (Alert rules for the designed halt/block
 modes: `../playbooks/production-alerts.md`.)
 
-Names built dynamically (`format!`) are invisible to the extractor and
-documented in the allowlist by hand — currently the epoch-store pruner
-family (`ika_last_pruned_{consensus,authority}_db_epoch`,
-`successfully_pruned_*_dbs`, `error_pruning_*_dbs`).
+Names built dynamically (`format!`) are invisible to the extractor. The
+allowlist exists for them but is currently EMPTY, because the one such
+family — the epoch-store pruner's
+`ika_last_pruned_{consensus,authority}_db_epoch`,
+`ika_successfully_pruned_{kind}_dbs` and `ika_error_pruning_{kind}_dbs` —
+now builds the `ika_` prefix into the `format!` string itself. Prefer that
+over an allowlist entry.
 
 ## Types, suffixes, and labels
 
+These bind NEW metrics. The 1.2.0 rename was prefix-only and did not fix
+suffixes, so the existing set does not uniformly satisfy them — see the
+grandfathered cases below before concluding a name is a bug.
+
 - **Counters** (monotonic) end in `_total` and register with
-  `register_int_counter*` — e.g. `dwallet_mpc_global_presigns_served_total`,
-  `dwallet_mpc_network_key_instantiation_failures_total`.
+  `register_int_counter*` — e.g. `ika_dwallet_mpc_global_presigns_served_total`,
+  `ika_dwallet_mpc_network_key_instantiation_failures_total`.
 - **Gauges** (a current value) are a plain noun, often `_count` / `_size`
-  / `_in_flight` — e.g. `dwallet_mpc_internal_presign_pool_size`,
+  / `_in_flight` — e.g. `ika_dwallet_mpc_internal_presign_pool_size`,
   `ika_dwallet_mpc_malicious_actors_count`. Never give a gauge `_total`.
-  One legacy exception: `ika_dwallet_mpc_session_start_count` is a genuine
-  counter (converted from a gauge that was only ever incremented) whose
-  `_count` name predates the suffix convention and is kept so existing
+- **Grandfathered, do not copy.** Around thirty Sui-lineage counters carry
+  no `_total` (`ika_sequencing_certificate_*`, `ika_consensus_handler_processed`,
+  `ika_skipped_consensus_txns`, `ika_{dwallet,system}_checkpoint_errors`,
+  `ika_remote_*_forks`, `ika_archive_*_read`, `ika_sui_client_sui_rpc_errors`
+  and others) — the mechanical rename moved their prefix and left their
+  suffix alone. In the other direction, the six
+  `ika_sui_connector_{dwallet,system}_checkpoint_write*_total` series are
+  registered as **gauges** despite the `_total` suffix, so `rate()` and
+  `increase()` over them are silently meaningless. Read the registration,
+  not the name, before building an alert on any of these.
+  `ika_dwallet_mpc_session_start_count` is the reverse case and is fine: a
+  genuine counter (converted from a gauge that was only ever incremented)
+  whose `_count` name predates the convention and is kept so existing
   dashboards keep working.
 - **Per-protocol metrics are LABELLED, not duplicated per protocol.** The
   MPC computation gauges are `*_vec` keyed by
