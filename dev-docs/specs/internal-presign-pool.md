@@ -271,10 +271,12 @@ because it is what makes replay unsafe — see below.
 ## The replay contract
 
 **A restart replays the epoch, and the pool paths see it as one stream.** The
-consensus handler deletes its derived per-epoch tables and refolds the epoch's
-commits from the consensus store, handing each round to `DWalletMPCService`
-over a bounded channel as it goes — there are no per-round tables any more, so
-the drain does not replay a stored stream, it consumes the refold live. It
+consensus handler starts with empty in-memory derived state — there is nothing
+to delete, because state the commits determine is never written to disk — and
+refolds the epoch's commits from the consensus store in bounded batches,
+handing each round to `DWalletMPCService` over a bounded channel as it goes.
+There are no per-round tables, so the drain does not replay a stored stream;
+it consumes the refold live. It
 still sees every round of the epoch from the first, so it re-absorbs every
 internal presign output and re-drains every global presign request and NOA
 demand exactly as before. The demand queue and the delivery rounds the park

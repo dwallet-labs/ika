@@ -22,6 +22,12 @@ here.
   trust-anchor bootstrap and committee ratchet, freshness/rollback
   protection, the verified bag-walk + event pump, and the untrusted
   relay protocol (peer-only validators included).
+- [`event-sourced-epoch.md`](event-sourced-epoch.md) — the consensus store
+  as the only truth for epoch-scoped state: derived state held in memory,
+  the bounded-batch boot replay that rebuilds it, why there is no
+  watermark, the determinism contract, what the fold accumulates and what
+  bounds it, the settled-state rule for replay-silent emission, and what a
+  mid-epoch rollback actually costs.
 - [`validator-mpc-data-announcements.md`](validator-mpc-data-announcements.md)
   — the off-chain validator MPC-data pipeline: blob derivation,
   consensus announcements, P2P propagation, ready signals, the freeze

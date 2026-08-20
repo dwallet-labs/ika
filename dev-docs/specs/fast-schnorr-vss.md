@@ -1,9 +1,12 @@
 # Fast Schnorr (VSS) signing
 
-Status: gated behind `ProtocolConfig::fast_schnorr_supported` (on at protocol
-v4). At v4 it is reachable **only** on the internal network-owned-address (NOA)
-sign path; the external (user-dWallet-driven) VSS sign path is implemented but
-`#[ignore]`d and must not decode externally yet. Pairs with
+Status: `ProtocolConfig::fast_schnorr_supported` is still a live flag, but it
+is ON at every supported version — it was turned on in the v4 arm and
+`MIN_PROTOCOL_VERSION` is now 7 — so the reject branch that reads it is
+unreachable in practice. The feature is reachable **only** on the internal
+network-owned-address (NOA) sign path; the external (user-dWallet-driven) VSS
+sign path is implemented but `#[ignore]`d and must not decode externally yet.
+That external limit is a code state, not a protocol-version gate. Pairs with
 [`validator-mpc-data-announcements.md`](validator-mpc-data-announcements.md)
 (how the key material moves) and
 [`cross-binary-upgrade.md`](cross-binary-upgrade.md) (the version boundary).
@@ -37,15 +40,20 @@ The on-chain `(curve, signature_algorithm)` pair maps to a
 This map governs **external reachability** — what a user request may name.
 `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES` is the source of
 truth; a `(curve, algorithm)` absent from it does not decode externally (a unit
-test asserts `EdDSAVSS` does not decode externally). At v4 the only reachable
-VSS path is internal NOA-VSS.
+test asserts `EdDSAVSS` does not decode externally). The only reachable VSS
+path is internal NOA-VSS.
 
 ## Key material — the version-3 bundle + per-curve PVSS
 
-- At `network_encryption_key_version == 3` (protocol v4) every committee member
-  publishes the version-3 bundle, `ValidatorEncryptionKeysAndProofs` = the
-  class-groups CRT key + three per-curve PVSS HPKE keys. Below v4 it publishes
-  the bare `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8 shape).
+- Every committee member publishes the version-3 bundle OFF-CHAIN,
+  `ValidatorEncryptionKeysAndProofs` = the class-groups CRT key + three
+  per-curve PVSS HPKE keys. This is not an either/or with the bare
+  `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8 shape): that bare shape
+  is what is published ON CHAIN, always, while the full bundle always goes
+  off-chain. The two coexist by destination, not by version.
+  (`ProtocolConfig::network_encryption_key_version` is assigned per version
+  but has no getter and no consumer anywhere in the tree — nothing branches
+  on it. Do not write code that reads it without first giving it a reader.)
 - The VSS HPKE keypair is **deterministic from the validator root seed**: the
   published public key (`ValidatorMPCSecrets::from_seed`) and the orchestrator's
   secret (`vss_hpke_secret_key_from_seed`) both derive from the same
@@ -98,11 +106,13 @@ against the active committee directly.
 
 ## Decision rules
 
-- `fast_schnorr_supported` is the master gate (on at protocol v4).
+- `fast_schnorr_supported` is the master gate, and it is on at every
+  supported version.
 - The is-VSS request gate rejects a VSS request **only** when
   `fast_schnorr_supported` is off; it never parks or rejects an ordinary
-  (non-VSS) sign.
-- Internal NOA-VSS is reachable at v4; external user-driven VSS sign is not yet
+  (non-VSS) sign. With the flag on everywhere, that reject arm is currently
+  unreachable.
+- Internal NOA-VSS is reachable; external user-driven VSS sign is not yet
   enabled.
 - **Epoch-entry parking of VSS presign top-ups.** Internal presign top-up
   batches fire as soon as the network key is installed (fast, from the handoff
@@ -133,10 +143,11 @@ against the active committee directly.
   `NotApplicable` for the whole multi-minute V3 re-derivation, dropping that
   validator out of every VSS sign while its peers sign. A CURRENT-epoch
   terminal entry surfaces as `VssShamirCacheUnavailable` — a named, terminal
-  error distinct from the not-ready class. It is by-design reachable during
-  the v3→v4 boundary epoch (every key is pre-V3 then), so the internal-
-  session failure log treats it as an expected error class, not a
-  should-never-happen page.
+  error distinct from the not-ready class. The internal-session failure log
+  treats it as an expected error class rather than a should-never-happen
+  page. On a live network the only route to it is a genuinely failed
+  derivation: the other route, a pre-version-3 key, needed the v3→v4
+  boundary epoch, which no supported version can reach.
 - **Per-pool sequence counters (multi-key epochs).** The internal-presign
   session sequence number, the instantiated/completed guard counters, and the
   stale-batch-instantiated round are keyed per `(NetworkKeyId, curve,
@@ -202,7 +213,10 @@ against the active committee directly.
 ## Tests
 
 - Reachable (run in CI):
-  `network_owned_address_sign_{taproot,eddsa,schnorrkel_substrate}_vss` — the
-  internal NOA VSS sign flow, green in release.
-- Gated off: `test_external_vss_sign_*` — the external user-driven path, kept
-  `#[ignore]`d until it is enabled.
+  `test_network_owned_address_sign_{taproot,eddsa,schnorrkel_substrate}_vss` —
+  the internal NOA VSS sign flow, green in release.
+- Gated off: `test_external_vss_sign_eddsa` and `test_external_vss_sign_taproot`,
+  the external user-driven path, kept `#[ignore]`d until it is enabled. There
+  is deliberately no external SchnorrkelVSS test — it is blocked on a harness
+  limitation, not on the feature gate, so do not read the pair as a glob over
+  all three algorithms.
