@@ -1546,18 +1546,23 @@ impl ClusterOfProcesses {
     /// A caller looking for "did this validator ever author an output for a
     /// session created after X" must ACCUMULATE readings across a poll —
     /// sampling once, or polling slowly, misses short sessions entirely.
-    /// One validator's total completed MPC computations, summed over the
-    /// per-protocol `ika_dwallet_mpc_completions_count` series.
+    /// One validator's total completed SESSIONS, summed over the per-protocol
+    /// `ika_dwallet_mpc_completions_count` series.
     ///
-    /// The counterpart to the per-session output series above, and immune to
-    /// both of its problems: it is not zeroed when a session ends, and it does
-    /// not care whether this validator's output won a place in the quorum. It
-    /// answers "is this node doing MPC work" rather than "did the network
-    /// observe this node's contribution to session N", so the two are evidence
-    /// for different halves of the same claim.
+    /// Read the name carefully — it counts what
+    /// `mpc_manager.rs::complete_mpc_session` records, which fires when this
+    /// node processes a session reaching QUORUM while holding that session's
+    /// request metadata. It is not a count of cryptographic work this node
+    /// performed, and an earlier version of this harness claimed it was.
+    /// A pure spectator carrying no session state never increments it, which
+    /// is what makes it useful; "this validator computed" is the
+    /// peer-witness's claim, not this one's.
     ///
-    /// Process-scoped: a restart resets it, so only deltas taken within one
-    /// process lifetime mean anything.
+    /// Two properties to respect. It is process-scoped, so a restart resets it
+    /// and only deltas within one process lifetime mean anything. And it moves
+    /// LATER than a peer can observe this node's output — the peer sees the
+    /// output in consensus, this node counts it when its own drain reaches
+    /// that quorum — so a caller must poll rather than read once.
     pub async fn mpc_completions_total(&self, index: usize) -> Result<u64> {
         let validator = self
             .validators

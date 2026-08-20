@@ -229,7 +229,7 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .record_mpc_completions("calibration", SUBJECT)
         .run_workload("pre-rollback-control")
         .expect_new_mpc_output_session("calibration", WITNESS, SUBJECT, 2)
-        .expect_more_mpc_completions("calibration", SUBJECT)
+        .expect_more_mpc_completions("calibration", SUBJECT, 2)
         .expect_skipped_consensus_txns_delta("control", &peers, 0, None)
         .expect_epoch_at_most(2)
         // ── The event under test: the deployed release goes back on, on the
@@ -289,13 +289,25 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // new work — but it can be lost legitimately: any three of four
         // validators form a quorum, so the subject's output is sometimes
         // superfluous and never observed (measured on a healthy cluster: 147
-        // of 306 quorums reached without it). The completions delta is the
-        // narrower question no race can answer falsely. Calibration above
-        // proves both instruments can see a healthy subject in this cluster,
-        // which is what makes a post-rollback failure of either one readable
-        // as a statement about the rollback.
+        // of 306 quorums reached without it). The completions leg asks the
+        // narrower question of whether the node carries sessions through to
+        // completion at all, which a spectator fails and a merely-unlucky
+        // contributor passes.
+        //
+        // Both POLL. An earlier version read the completions total once and
+        // called it "the leg no race can answer falsely"; two fault dispatches
+        // then failed on it while a peer had witnessed the same subject
+        // contributing 5 ms earlier. The counter moves when the subject's own
+        // drain reaches the quorum, which is strictly after a peer can see the
+        // output — a claim that something is race-free belongs in an error
+        // message only once the race has been ruled out rather than asserted
+        // away.
+        //
+        // Calibration above proves both instruments can see a healthy subject
+        // in this cluster, which is what makes a post-rollback failure of
+        // either one readable as a statement about the rollback.
         .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT, 2)
-        .expect_more_mpc_completions("after-catch-up", SUBJECT)
+        .expect_more_mpc_completions("after-catch-up", SUBJECT, 2)
         // ASSERTION 2 — closed only NOW, so the rollback window spans the whole
         // recovery AND carries exactly one workload, like the control window.
         // Closing it at the catch-up (as the first version did) compared a

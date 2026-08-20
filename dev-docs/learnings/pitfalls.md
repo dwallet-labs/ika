@@ -227,6 +227,29 @@ rule, not the instance.
   worsens for a node that just restarted, which is the slow one.
   → Rule: pair a quorum-observable assertion with one that a race cannot
   answer falsely (a local completion counter), and read the pair.
+- **A counter read immediately after the event that should move it is a
+  race, and "this cannot be a race" is not a thing to assert in an error
+  message.** A scenario read a validator's completed-session total right
+  after a workload and failed two dispatches with the text "which no
+  quorum race can explain away" — while a peer had witnessed that same
+  validator contributing output 5 ms earlier. The counter increments when
+  the node's OWN drain reaches the session's quorum, strictly after a
+  peer can observe the output in consensus. → Rule: poll cumulative
+  counters to a bounded deadline rather than sampling them at the moment
+  of the triggering event, and never put an impossibility claim in an
+  assertion message unless the impossibility is established — the message
+  is what the next person debugs from, and a false one sends them to the
+  wrong system.
+- **Read what a metric's SET SITE records, not what its name suggests.**
+  The same counter was documented as "MPC computations this node
+  performed". `complete_mpc_session` fires it on observing a session
+  reach quorum while holding that session's request metadata — bookkeeping
+  progress, not cryptographic work. The name (`completions_count`) and the
+  metric help text (`"Number of completions"`) both invite the stronger
+  reading. → Rule: before an assertion rests on a metric, read the line
+  that increments it and write down what that line actually witnesses;
+  where the honest meaning is narrower than the claim, either narrow the
+  claim or find another series.
 - **A poll that outlives the window it is about produces a confident
   wrong diagnosis.** An assertion bounded only by a generous timeout ran
   30 minutes past an epoch boundary and blamed the subject for a
