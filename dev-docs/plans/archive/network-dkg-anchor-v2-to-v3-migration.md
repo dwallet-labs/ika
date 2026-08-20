@@ -1,5 +1,12 @@
 # Making the V3 network DKG output canonical (within v4 off-chain)
 
+> ARCHIVED PLAN — shipped as #1758;
+> `reconstruct_full_network_dkg_output` is live. **The migration TARGET has since
+> moved from V3 to V4**: pre-aggregation V3 is no longer decodable anywhere, and
+> a V3 anchor or reconfiguration output is now a hard error. This file is a
+> faithful record of the V3-era design and is wrong about current behavior; read
+> [`../../specs/handoff.md`](../../specs/handoff.md) instead. Not maintained.
+
 Status: landed (2026-07-01, PR #1758) — implementation validated end-to-end
 2026-06-28.
 Consensus-critical. Builds on the in-memory V3 reconstruction (`013cb1b75f`).

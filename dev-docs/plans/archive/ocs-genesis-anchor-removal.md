@@ -1,5 +1,12 @@
 # OCS: replace the trusted anchor with a genesis-rooted committee chain (plan)
 
+> ARCHIVED PLAN — shipped; the escape hatches it removes (`sui_trusted_anchor`,
+> `compiled_in_trusted_anchor`, `allow_unverified_committee_fallback`,
+> `sui_unsafe_genesis_committee`) have zero occurrences in `crates/` after #1898
+> (`eb7749edaa`). Current behavior, including the checkpoint-archive format, is
+> in [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Not maintained.
+
 **Status:** landed — implemented, including the full removal list; the
 final config escape hatches were removed by #1898 (`eb7749edaa`).
 **Depends on:** the OCS verified-Sui-reads subsystem

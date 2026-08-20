@@ -1,5 +1,10 @@
 # OCS #1744 pre-merge cleanup (plan)
 
+> ARCHIVED PLAN — a pre-merge checklist for #1744, every item shipped and
+> verified in the tree. Retained only so the inbound links from
+> [`../../reviews/archive/ocs-1744-pre-merge-review.md`](../../reviews/archive/ocs-1744-pre-merge-review.md)
+> still resolve; it carries nothing durable of its own. Not maintained.
+
 **Status:** landed — pre-merge cleanup (items 1–5) + `ocs-binding-1` landed
 2026-06-26 (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
 all review items (incl. the bag-pump hygiene) are closed.

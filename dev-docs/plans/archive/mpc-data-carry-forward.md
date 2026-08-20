@@ -1,5 +1,14 @@
 # Plan: carry-forward of stable mpc_data to fix the freeze wedge (#1742)
 
+> ARCHIVED PLAN — shipped as #1741 (`519c6f5442`); `carry_forward_stable_mpc_data`
+> is live. Current behavior is specified in
+> [`../../specs/validator-mpc-data-announcements.md`](../../specs/validator-mpc-data-announcements.md).
+> Kept for its rejected-alternatives analysis, which no spec carries: why
+> narrowing `voting_rights` breaks joiner certificate verification, why subset
+> reshare is unsafe (share decryption uses the chain committee's access
+> structure, not the key's), and that the chain never evicts dead validators.
+> Not maintained.
+
 Status: landed (2026-06-13, PR #1741) — shipped with the regression harness
 `test_validator_restart_mid_end_of_publish_grace`, which was red on exactly
 this wedge before the fix. The durable behavior lives in

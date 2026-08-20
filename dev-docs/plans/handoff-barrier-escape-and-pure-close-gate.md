@@ -1,5 +1,14 @@
 # Handoff barrier escape + sequence-pure epoch-close gate (future work)
 
+> **2026-08-20: the central safety premise no longer holds at HEAD and must
+> be re-derived before this is built.** The cert-less-entry argument below
+> rests on `all_cert_reconfiguration_outputs_held_locally` gating ONLY
+> reconfiguration outputs, with DKG outputs passing unconditionally. That
+> function is now `all_cert_network_key_outputs_held_locally` and gates both
+> (`crates/ika-node/src/lib.rs:3603-3620`); `specs/handoff.md` describes the
+> current behavior correctly. The rest of the plan is unreviewed against
+> that change. Nothing else here has been edited.
+
 Status: deferred — designed and cross-checked 2026-07-12, deliberately NOT
 built before the 1.2.0 release. The centerpiece (the barrier's cert-less
 chain fallback) relaxes the prepare-then-start barrier's block-forever

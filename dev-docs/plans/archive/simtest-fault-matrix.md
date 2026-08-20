@@ -1,5 +1,14 @@
 # Simtest fault matrix — deterministic edge-case coverage under the crypto mock
 
+> ARCHIVED PLAN — shipped as #1808 and #1809; the `tests/sim_fault_*.rs` suite
+> is live and green. Current guidance is
+> [`../../conventions/simtest.md`](../../conventions/simtest.md). Kept for three
+> findings no convention carries: that nodes boot AT epoch 1, so
+> `wait_for_epoch(1)` is a no-op as a healthy-boundary guard; the Move-enum-JSON
+> harness behavior; and the open question of the stale-batch expiry constant,
+> whose wall-clock meaning varies about sixfold with the consensus round rate.
+> Not maintained.
+
 Status: landed (2026-07-13). PR #1808 landed the fault suite (6
 enabled tests + 3 #[ignore]d reproducers of then-open findings); the
 follow-up flow-coverage PR #1809 root-caused and fixed the findings,

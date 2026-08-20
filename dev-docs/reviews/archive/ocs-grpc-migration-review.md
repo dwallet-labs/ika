@@ -1,5 +1,12 @@
 # OCS verified-Sui-reads — branch audit review
 
+> ARCHIVED RECORD — branch audit of `feat/ocs-grpc-migration` at `59f6a61d13`,
+> reviewed 2026-06-13, reconciled 2026-06-14, re-verified 2026-07-25. All
+> sixteen findings closed, and its distilled pitfalls already live in
+> [`../../learnings/pitfalls.md`](../../learnings/pitfalls.md). Current truth is
+> [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Kept as history; not maintained.
+
 **Reviewed:** the `feat/ocs-grpc-migration` branch (OCS verified-Sui-reads
 subsystem: gRPC transport, `SuiStateMirror` relay, peer-only validators,
 the push/cache fast path, the committee ratchet).

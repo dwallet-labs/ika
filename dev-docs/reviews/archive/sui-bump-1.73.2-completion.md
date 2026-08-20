@@ -1,5 +1,16 @@
 # Sui 1.72.3 → 1.73.2 bump — completion & adoption report
 
+> ARCHIVED RECORD — completion report for the Sui mainnet-v1.72.3 -> 1.73.2
+> bump, 2026-06-28 (item 7 resolved 2026-07-25). The pin is now mainnet-v1.77.2,
+> four bumps downstream, so nothing here describes the current version. The live
+> procedure is
+> [`../../conventions/sui-version-bump.md`](../../conventions/sui-version-bump.md),
+> which is strictly more complete and now carries this report's persisted-format
+> boot gate. One warning here is WRONG and was deliberately not carried over:
+> section 5.4 claims a bare `cargo update` destroys the dependency pinning, but
+> the inkrypto crates are git-REV pinned and `cargo update` cannot move a rev
+> pin — the convention instructs running it. Kept as history; not maintained.
+
 Branch: `feat/sui-bump-1.73.2`. Audience: senior eng (Omer). Scope: finish the
 version bump (compile + correctness) and adopt the upstream changes that fit ika.
 All file:line citations are against the working tree at

@@ -1,5 +1,11 @@
 # OCS / #1744 pre-merge code review (multi-agent)
 
+> ARCHIVED RECORD — pre-merge review of #1744 at `72e3c76f78`, 2026-06-25
+> (status refreshed 2026-06-26). The PR merged 2026-06-27 and every one of its
+> twelve findings carries a fixing commit. Current truth is
+> [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Kept as history; not maintained.
+
 **Branch:** `feat/ocs-grpc-migration` (#1744) at `72e3c76f78`, reviewed against `origin/dev`.
 **Date:** 2026-06-25.
 **Method:** 12 subsystem reviewers over the ~50 changed code files, then each finding

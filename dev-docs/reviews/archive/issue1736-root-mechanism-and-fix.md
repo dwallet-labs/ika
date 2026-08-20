@@ -1,5 +1,13 @@
 # #1736 — root mechanism of the silently-dead / laggard validator, and the fix
 
+> ARCHIVED RECORD — forensic review of the silently-dead / laggard validator
+> (ika #1736), written 2026-06-28 against `feat/ocs-grpc-migration`, with its
+> resolution block added 2026-07-25. The primary fix shipped as #1761 and the
+> issue closed 2026-08-06. Current truth for the prepare-then-start barrier,
+> certificate birth and network-key adoption is
+> [`../../specs/handoff.md`](../../specs/handoff.md). Kept as history; not
+> maintained.
+
 Repo: `feat/ocs-grpc-migration`. Read-only forensic synthesis grounded in code
 (every claim cites `file:line`). This consolidates a 5-stage pipeline trace and
 re-verifies the load-bearing claims against the source, because two of the stages

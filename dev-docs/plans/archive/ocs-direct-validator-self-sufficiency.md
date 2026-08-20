@@ -1,5 +1,13 @@
 # OCS direct-validator self-sufficiency (finding 17 durable fix)
 
+> ARCHIVED PLAN — shipped; `RetainedFullnodeTransport`, the perpetual verified
+> object cache and `verified_cache_retention_checkpoints` are live. Current
+> behavior is the "Retained state" section of
+> [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Kept for the trade-off record: why `ika-network` cannot depend on `ika-core`,
+> why the real-Sui-pruning cluster test was abandoned, and why fast-forward stops
+> at every end-of-epoch checkpoint. Not maintained.
+
 Status: landed — all slices done. The durable behavior of Slices 2 and 3
 (the persisted verified-object cache and its head; `RetainedFullnodeTransport`
 serving a mirrored peer's ratchet from retained end-of-epoch checkpoints) now
