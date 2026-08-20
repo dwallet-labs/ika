@@ -248,9 +248,10 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
             SUBJECT,
             "MPC service exited catch-up mode",
         )
-        .stop_and_swap(&[SUBJECT], old)
-        .expect_all_validators_healthy()
-        .wait_for_all_validators_local_epoch(2)
+        // FAULT F1: the subject is stopped and never restarted. Nothing
+        // re-derives, so assertion 1 must fail on the dead node rather than
+        // pass on its absence.
+        .stop_validator(SUBJECT)
         // ASSERTION 1 — it re-derives the epoch through its own table-writing
         // fold, against empty fold-side tables, and its rebuilt per-round
         // tables reach the round its peers have consumed.
