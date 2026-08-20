@@ -73,8 +73,10 @@ pub fn next_committee_pubkey_set(committee: &Committee) -> Vec<AuthorityName> {
         .collect()
 }
 
-/// Blake2b256 digest of the next committee's BLS pubkey set. Pubkeys
-/// are deduplicated and sorted strictly ascending before BCS encoding,
+/// Blake2b256 digest of the next committee's `AuthorityName` set —
+/// i.e. the members' Ed25519 *consensus* keys, which is what an
+/// `AuthorityName` is; no BLS key enters this hash. Names are
+/// deduplicated and sorted strictly ascending before BCS encoding,
 /// so callers don't need to normalize beforehand. This is the value
 /// embedded in `HandoffAttestation.next_committee_pubkey_set_hash`;
 /// verifiers recompute it from the next committee they observe and

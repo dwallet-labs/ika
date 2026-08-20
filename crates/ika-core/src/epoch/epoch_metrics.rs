@@ -267,7 +267,7 @@ pub struct EpochMetrics {
     /// before their first pass, while the MPC drain fills the queue throughout
     /// it, so a builder-sampled depth reports nothing during the one window
     /// where the queue grows without a consumer.
-    /// `ika_pending_dwallet_checkpoint_queue_depth` is the builder-sampled
+    /// `ika_dwallet_checkpoint_pending_queue_depth` is the builder-sampled
     /// view and stays the right one for "is the builder stuck"; these two are
     /// the right one for "how much is the replay accumulating".
     ///

@@ -1939,13 +1939,18 @@ where
 /// DKG's decryption-key-shares map (i.e. the output of `decrypt_decryption_key_shares` on
 /// the network DKG output).
 ///
-/// TODO(vss): when VSS-mode sign protocols are activated, this parameter's concrete type
-/// will resolve to a different shape (containing nonce shares / HPKE blobs / etc. derived
-/// from the presign protocol's `PrivateOutput`). The generic shape stays the same; only
-/// the source of the value changes. The presign session must persist each validator's own
-/// `<P::PresignParty as mpc::Party>::PrivateOutput` keyed by `(presign_id, validator_id)`
-/// so the sign session can recover it. That storage path does not exist today. See
-/// `docs/plan-bump-crypto-private-to-main.md` §4d.
+/// For VSS-mode protocols the same parameter resolves to a different concrete shape:
+/// the per-curve Shamir secret-key-share parts plus the presign's nonce shares and
+/// polynomial commitments, assembled by the `build_*_vss_sign_private_input` helpers
+/// above. Only the source of the value changes; the generic slot is the same.
+///
+/// That presign-derived half comes from the validator's own persisted presign private
+/// output: at presign finalize `split_vss_presign_private_outputs` splits the blended
+/// `PrivateOutput` and `store_presign_private_output` writes one row per blending index,
+/// keyed by `(presign session_id, presign_blending_index)`; at sign-party build
+/// `protocol_cryptographic_data.rs` recovers that key from the public presign via
+/// `vss_public_presign_identity` and reads the row back. The key carries no validator
+/// id because each validator persists only its own share, in its own epoch store.
 pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
@@ -2007,9 +2012,9 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     }
 }
 
-/// `decryption_key_shares` is the sign-protocol private input. See `compute_sign` for the
-/// AHE-mode source and the TODO(vss) note on what changes when VSS-mode sign protocols
-/// activate (the same plumbing applies to the combined DKG-and-sign path).
+/// `decryption_key_shares` is the sign-protocol private input. See `compute_sign` for
+/// both the AHE-mode and the VSS-mode source of that value — the same plumbing applies
+/// to the combined DKG-and-sign path.
 pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
     curve: DWalletCurve,
     party_id: PartyID,

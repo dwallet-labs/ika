@@ -1958,9 +1958,9 @@ impl DWalletMPCManager {
                 // epoch-specific reconfiguration digest must match.
                 if cert_dkg_digest != Some(&local_dkg_digest) {
                     // The DKG digest is stable WITHIN a representation but
-                    // migrates once, V2->V3: when the cert-pinned
-                    // reconfiguration output becomes V3 and this validator
-                    // flips its mirror to the reconstructed V3 output, the
+                    // migrates once, V2->V4: when the cert-pinned
+                    // reconfiguration output becomes V4 and this validator
+                    // flips its mirror to the reconstructed V4 output, the
                     // overlay's DKG digest moves past the PRIOR epoch's V2 cert
                     // for one epoch. As with the reconfiguration digest below,
                     // that mismatch is the expected defer-to-next-epoch when the
@@ -1993,7 +1993,7 @@ impl DWalletMPCManager {
                         debug!(
                             ?key_id,
                             "overlay DKG output does not match the prior epoch's cert \
-                             (expected once during the V2->V3 canonical migration) — \
+                             (expected once during the V2->V4 canonical migration) — \
                              keeping the adopted value"
                         );
                     }
@@ -4018,14 +4018,14 @@ impl DWalletMPCManager {
                                 let canonical_dkg_output = match key
                                     .reconstructed_full_network_dkg_output()
                                 {
-                                    Some(reconstructed_v3) => match bcs::to_bytes(reconstructed_v3)
+                                    Some(reconstructed_v4) => match bcs::to_bytes(reconstructed_v4)
                                     {
                                         Ok(bytes) => bytes,
                                         Err(e) => {
                                             warn!(
                                                 error = ?e,
                                                 ?key_id,
-                                                "failed to serialize reconstructed V3 network \
+                                                "failed to serialize reconstructed V4 network \
                                                  DKG output for the canonical mirror; falling \
                                                  back to the V2 anchor"
                                             );
