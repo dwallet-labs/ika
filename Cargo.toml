@@ -172,7 +172,6 @@ tikv-jemalloc-ctl = "0.5.4"
 # ika ships (only `musl` is unsupported, and that degrades to a build warning,
 # not an error, because `background_threads_runtime_support` stays enabled).
 tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls", "background_threads"] }
-jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.18.2"
 merlin = { version = "3", default-features = false }
 miette = { version = "7", features = ["fancy"] }

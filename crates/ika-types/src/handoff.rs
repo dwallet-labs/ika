@@ -58,8 +58,10 @@ pub enum HandoffItemKey {
 pub struct HandoffAttestation {
     /// The epoch the outgoing committee is handing off *from*.
     pub epoch: EpochId,
-    /// Blake2b256 digest of the next committee's BLS pubkey set; binds
-    /// the attestation to the specific committee receiving the handoff.
+    /// Blake2b256 digest of the next committee's `AuthorityName` set —
+    /// i.e. the members' Ed25519 *consensus* keys, which is what an
+    /// `AuthorityName` is; no BLS key enters this hash. Binds the
+    /// attestation to the specific committee receiving the handoff.
     pub next_committee_pubkey_set_hash: [u8; 32],
     /// Per-item digests, sorted strictly ascending by `HandoffItemKey`.
     pub items: Vec<(HandoffItemKey, [u8; 32])>,

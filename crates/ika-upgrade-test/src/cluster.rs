@@ -1948,7 +1948,7 @@ impl ClusterOfProcesses {
     /// reported the gauge yet (or is unreachable), so a poller keeps waiting
     /// until the whole committee has migrated. The off-chain handoff carries the
     /// migrated version; the on-chain copy stays V2, so this metric — not a Sui
-    /// read — is how the V2->V3 migration is observed.
+    /// read — is how the V2->V4 migration is observed.
     pub async fn min_canonical_network_dkg_output_version(&self) -> u64 {
         let http = reqwest::Client::new();
         let mut min: Option<u64> = None;

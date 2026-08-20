@@ -315,7 +315,7 @@ pub struct AuthorityPublicKeyBytes(
 /// each other's messages perfectly. Any such change must ride a protocol
 /// version so the whole committee flips together — never a per-binary switch.
 ///
-/// DECODING stays lenient (see `LenientAuthorityKeyBytes`): rows and archives
+/// DECODING stays lenient (see `LenientAuthorityName`): rows and archives
 /// written before the v7 boundary hold the 48-byte form, and a node must keep
 /// reading its own history.
 /// Serializer for [`AuthorityName`]: the raw 32 bytes, always.

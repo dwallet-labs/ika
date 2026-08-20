@@ -4,10 +4,9 @@
 use super::{Element, ExtendedField, PendingValues};
 use crate::crypto::{AuthorityPublicKey, AuthorityPublicKeyBytes, NetworkPublicKey};
 use fastcrypto::traits::ToFromBytes;
-use jsonrpsee::core::Serialize;
 use mysten_network::Multiaddr;
 use once_cell::sync::OnceCell;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sui_types::balance::Balance;
 use sui_types::base_types::ObjectID;
 use sui_types::collection_types::{Bag, Table, TableVec, VecMap};

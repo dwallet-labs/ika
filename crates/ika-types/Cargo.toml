@@ -35,7 +35,6 @@ strum_macros.workspace = true
 roaring.workspace = true
 enum_dispatch.workspace = true
 eyre.workspace = true
-jsonrpsee.workspace = true
 move-core-types.workspace = true
 class_groups.workspace = true
 mpc.workspace = true

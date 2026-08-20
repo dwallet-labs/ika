@@ -998,7 +998,8 @@ where
         // `(epoch, state)` fetch memo below is stale the moment the
         // source flips: an overlay published from a source-less
         // chain-read pass right after a restart carries the chain's
-        // original pre-V3 DKG anchor, and with no re-merge it would sit
+        // original pre-migration (V1/V2) DKG anchor, and with no
+        // re-merge it would sit
         // in the watch channel for the rest of the epoch — where the
         // end-of-epoch hydration pass can cache it over the canonical
         // mirror (the never-instantiated variant of issue #1852). Clear
@@ -1637,7 +1638,7 @@ where
 ///   epoch (every session parks on it). The DKG blob is the one field
 ///   still preferred from the off-chain source: it is the stable per-key
 ///   anchor, and the locally-mirrored copy is the CANONICAL representation
-///   whose digest the prior epoch's handoff cert pins — after the V2→V3
+///   whose digest the prior epoch's handoff cert pins — after the V2→V4
 ///   canonical migration the chain's original anchor no longer matches the
 ///   cert, and adoption would reject the key on the DKG-digest gate.
 ///
