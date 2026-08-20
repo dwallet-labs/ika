@@ -620,16 +620,21 @@ Two things this costs, both of them transient:
   NOT the drain. (Read that from the catch-up log line's own `gap_rounds`, not
   from a gauge sampled after the fact: the drain finishes before an external
   poll can read its starting point, so a sampled "rounds rebuilt" figure
-  under-reports the backlog by however long the sampler took to arrive.)
+  under-reports the backlog by however long the sampler took to arrive. The
+  second run shows the size of that error directly: it reported 18,365 rounds
+  rebuilt against a target of 19,337, having missed the ~1,000 rounds that
+  drained before the first sample landed.)
 
-  **Measured end to end: ~35 seconds from SIGTERM to a re-derived node.** Of
-  that, 25 s is the old binary's process boot to a healthy admin server and
-  ≤10 s is re-deriving a 19,330-round backlog (bounded by the harness's 5 s
-  poll; the fold itself is sub-second). A peer then witnessed MPC output
-  authored by the rolled-back validator for freshly-created sessions with a
-  witness latency of 0 s, and the node's own completion counter — reset to 0 by
-  the restart — was back to 3 within one workload. The recovery is dominated by
-  process startup, not by the re-derivation the design added.
+  **Measured end to end on two runs: ~35 s and ~40 s from SIGTERM to a
+  re-derived node.** The process boot was **25.1 s in both** — the same number
+  twice — and the remainder is the re-derivation of a ~19,330-round backlog,
+  reported as ≤10 s and ≤15 s only because the harness polls every 5 s; the
+  fold itself is sub-second. A peer then witnessed MPC output authored by the
+  rolled-back validator for freshly-created sessions at 0 s latency in both
+  runs, and the node's own completed-session total — reset by the restart —
+  was rising again within one workload. The recovery is dominated by process
+  startup, not by the re-derivation this design added, and the two runs agree
+  on the term that dominates it.
 
   Note what that interval is measured BETWEEN. What matters is sessions going
   active and contributing output again, which is what the scenario's assertion
@@ -658,13 +663,15 @@ Two things this costs, both of them transient:
   - the sessions that were already complete when the rollback happened are
     complete again after reconstruction, so they produce no output to submit.
 
-  **Measured: 144 re-submissions across the rollback window, against 150 for a
-  window of the same composition with no rollback in it — a difference of −6,
-  i.e. zero within noise.** A mid-epoch rollback costs the DAG nothing. The
-  window's composition confirms why: what the peers counted is ordinary
-  traffic (60 checkpoint signatures, 189 global-presign requests, 33 MPC
-  outputs, 24 MPC messages) plus the only two things a restart genuinely does
-  re-announce — 3 capability notifications and 3 idle-status updates.
+  **Measured twice, on two independent runs: 144 against a control of 150
+  (difference −6), and 144 against a control of 144 (difference exactly 0).**
+  A mid-epoch rollback costs the DAG nothing, and "nothing" is now two
+  observations rather than one — with the level itself steady, both rollback
+  windows landing on 144. The composition confirms why: what the peers counted
+  is ordinary traffic (60 checkpoint signatures, ~190-207 global-presign
+  requests, 33-36 MPC outputs, 24 MPC messages) plus the only two things a
+  restart genuinely does re-announce — 3 capability notifications and 3
+  idle-status updates, identical in both runs.
 
 The mechanism above is read off the two binaries' source; the numbers come
 from the `mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the
@@ -696,12 +703,13 @@ So the boundary case is not merely cheaper than the mid-epoch one; on both
 terms it is indistinguishable from not rolling back at all.
 
 **The conditions those numbers were measured under**, because they bound what
-they are worth: ONE green run of `mid_epoch_rollback`
-(actions/runs/32318375717) on a four-validator localnet — so a three-validator
-quorum — with a 30-minute epoch, the rollback taken about 59% of the way
-through it, and a 19,330-round backlog to re-derive. The cluster was lightly
-loaded: a single user DKG → Presign → Sign lifecycle per window, nothing like
-production volume.
+they are worth: two green runs of `mid_epoch_rollback` (actions/runs/32318375717
+and .../32346054927) on a four-validator localnet — so a three-validator quorum
+— with a 30-minute epoch, the rollback taken about 59% of the way through it,
+and a ~19,330-round backlog to re-derive. Both were lightly loaded: a single
+user DKG → Presign → Sign lifecycle per window, nothing like production volume.
+Two runs of the same shape agree with each other; they do not between them
+constitute a range.
 
 That is enough to settle the SHAPE — a rollback is not a spray, and the
 recovery is process startup rather than re-derivation — and it is not enough to
@@ -732,9 +740,9 @@ and with how loaded the validator is, but expect its SHAPE to hold: the wait is
 dominated by the node restarting, not by the epoch being re-derived. The same
 reconstruction is why a rollback is NOT the DAG spray an earlier draft of this
 note predicted: measured against a comparable window with no rollback in it,
-the re-emission was zero within noise (144 against 150), and the only things a
-restart genuinely re-announces are its capability notification and its idle
-status. A rollback taken *at* a boundary costs neither term, measured: no
+the re-emission was zero within noise on two runs (144 against 150, and 144
+against 144), and the only things a restart genuinely re-announces are its
+capability notification and its idle status. A rollback taken *at* a boundary costs neither term, measured: no
 backlog to re-derive (catch-up never engages) and 150 re-submissions against a
 control of 159. This must not be discovered mid-incident: an operator rolling
 back to recover from something else needs to know the recovery costs a
