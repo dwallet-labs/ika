@@ -316,9 +316,11 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // check on the counters; the difference against the control is the
         // measured re-emission figure and is reported, not asserted.
         .expect_skipped_consensus_txns_delta("rollback", &peers, 1, Some("control"))
-        // Still the same epoch: everything above is mid-epoch behavior, not
-        // the boundary reset that would make all three assertions free.
-        .expect_epoch_at_most(2)
+        // FAULT F4: claim the run is still in epoch 1 when it is demonstrably
+        // in epoch 2. The ceiling is what stops the whole scenario silently
+        // degrading into a boundary restart, and every other assertion leans
+        // on it, so it must be shown to fire.
+        .expect_epoch_at_most(1)
         .expect_all_validators_healthy()
         // And the mixed committee still closes the epoch normally afterwards.
         .wait_for_epoch(3)
