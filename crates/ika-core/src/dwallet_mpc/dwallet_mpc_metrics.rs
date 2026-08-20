@@ -731,13 +731,13 @@ impl DWalletMPCMetrics {
             .unwrap(),
             network_encryption_key_canonical_dkg_output_version: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version",
-                "Version (2 or 3 or 4) of the canonical network DKG output mirrored into the off-chain handoff; migrates at the anchor migration (3 pre-aggregation, 4 aggregated)",
+                "Version (2 or 3 or 4) of the canonical network DKG output mirrored into the off-chain handoff; migrates at the anchor migration (3 pre-aggregation, no longer produced since V3 is undecodable; 4 aggregated)",
                 registry
             )
             .unwrap(),
             network_encryption_key_latest_reconfiguration_output_version: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_network_encryption_key_latest_reconfiguration_output_version",
-                "Version of the latest installed network-key reconfiguration output (3 pre-aggregation, 4 aggregated, 0 none yet)",
+                "Version of the latest installed network-key reconfiguration output (3 pre-aggregation, no longer produced since V3 is a hard error; 4 aggregated; 0 none yet)",
                 registry
             )
             .unwrap(),

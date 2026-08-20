@@ -945,7 +945,8 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
         // processed the output locally — unlike the old per-epoch table,
         // which a late output crossing the epoch boundary mis-filed,
         // diverging the attestation. The DKG output migrates at most once
-        // (V2->V3 at the first v4 reshare flips the perpetual digest mirror);
+        // (V2->V4 at the first reshare producing a V4 (aggregated) output,
+        // which flips the perpetual digest mirror);
         // the perpetual-merged getter returns whichever representation the
         // mirror currently holds, identical across validators, so it is
         // correct for it.

@@ -64,9 +64,9 @@ impl DWalletSessionRequest {
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
         );
-        // Bind to the key's reconfiguration- and V2->V3-flip-invariant identity
+        // Bind to the key's reconfiguration- and V2->V4-flip-invariant identity
         // (its NetworkKeyId) rather than the raw network DKG output bytes, which
-        // flip when the canonical output migrates V2->V3 — so the identifier
+        // flip when the canonical output migrates V2->V4 — so the identifier
         // stays stable across that migration.
         transcript.append_message(b"network key identity", network_key_identity);
 

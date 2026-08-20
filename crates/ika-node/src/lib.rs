@@ -4019,7 +4019,8 @@ fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
 /// the cert's item digest. The reconfiguration output is the epoch-varying
 /// sharing material; the DKG output is equally load-bearing — adoption's
 /// cert-digest gate rejects the key when the local DKG mirror doesn't hash to
-/// the cert's digest, and a mirror poisoned with the chain's pre-V3 anchor
+/// the cert's digest, and a mirror poisoned with the chain's pre-migration
+/// (V1/V2) anchor
 /// (the hydration-clobber variant of issue #1852) can ONLY be repaired here,
 /// because the installer runs solely while this predicate reads not-ready.
 /// Do not narrow this back to reconfiguration-only: that made the barrier
@@ -4045,7 +4046,8 @@ fn all_cert_network_key_outputs_held_locally(
             // The DKG output is as load-bearing as the reconfiguration
             // output: adoption's cert-digest gate rejects the key when the
             // locally-mirrored DKG bytes don't hash to the cert's digest,
-            // and a mirror poisoned with the chain's pre-V3 anchor (the
+            // and a mirror poisoned with the chain's pre-migration
+            // (V1/V2) anchor (the
             // hydration-clobber variant of issue #1852) can only be
             // repaired here — the barrier's installer fetches the
             // cert-pinned bytes from peers and re-caches them. Skipping
@@ -4146,7 +4148,8 @@ mod tests {
 
         // A certified DKG output is load-bearing too: a local mirror whose
         // digest contradicts the cert (the hydration-clobber shape of issue
-        // #1852 — e.g. the chain's pre-V3 anchor over the canonical V3) must
+        // #1852 — e.g. the chain's pre-migration (V1/V2) anchor over the
+        // canonical V4) must
         // read NOT ready, so the barrier's installer runs and repairs it.
         let dkg_only = CertifiedHandoffAttestation {
             attestation: HandoffAttestation {

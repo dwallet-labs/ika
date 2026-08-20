@@ -666,8 +666,9 @@ impl Scenario {
     }
 
     /// Assert every running validator installed a network-key reconfiguration
-    /// output of at least `version` (3 = pre-aggregation, 4 = aggregated;
-    /// polled across all running validators' metrics).
+    /// output of at least `version` (3 = pre-aggregation, no longer produced
+    /// since V3 is a hard error; 4 = aggregated; polled across all running
+    /// validators' metrics).
     pub fn expect_reconfiguration_output_version_at_least(mut self, version: u64) -> Self {
         self.steps
             .push(Step::ExpectReconfigurationOutputVersionAtLeast(version));

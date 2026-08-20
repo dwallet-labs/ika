@@ -181,12 +181,13 @@ impl HandoffSignatureSender {
     /// consensus-ordered sources — see the note in the loop body.
     ///
     /// NEVER overwrite an existing digest: the local mirror is written
-    /// canonically by the instantiation path (the reconstructed V3
-    /// output once the V2→V3 canonical migration flips) and by the
+    /// canonically by the instantiation path (the reconstructed V4
+    /// output once the V2→V4 canonical migration flips) and by the
     /// cert-anchored barrier install — both strictly more authoritative
     /// than this watch snapshot, which can carry the chain's original
-    /// pre-V3 anchor whenever the syncer chain-read before the
-    /// off-chain blob source was installed (a post-restart window).
+    /// pre-migration (V1/V2) anchor whenever the syncer chain-read
+    /// before the off-chain blob source was installed (a post-restart
+    /// window).
     /// An unconditional write here clobbered the DURABLE perpetual
     /// canonical mirror with that anchor, permanently failing the
     /// handoff-cert DKG-digest adoption gate every later epoch — the
@@ -274,7 +275,7 @@ impl HandoffSignatureSender {
         // diverge from peers => signatures cross-reject as
         // `AttestationMismatch`. Fill-absence only — the snapshot is
         // NOT authoritative over an existing digest (post-restart it
-        // can carry the chain's pre-V3 anchor; see
+        // can carry the chain's pre-migration (V1/V2) anchor; see
         // `hydrate_network_dkg_digests`).
         self.hydrate_protocol_output_digests_from_chain(&epoch_store);
         let attestation = epoch_store
@@ -359,12 +360,12 @@ impl HandoffSignatureSender {
 /// `AttestationMismatch`.
 ///
 /// NEVER overwrite an existing digest: the local mirror is written
-/// canonically by the instantiation path (the reconstructed V3 output
-/// once the V2→V3 canonical migration flips) and by the cert-anchored
+/// canonically by the instantiation path (the reconstructed V4 output
+/// once the V2→V4 canonical migration flips) and by the cert-anchored
 /// barrier install — both strictly more authoritative than this watch
-/// snapshot, which can carry the chain's original pre-V3 anchor whenever
-/// the syncer chain-read before the off-chain blob source was installed
-/// (a post-restart window). An unconditional write here clobbered the
+/// snapshot, which can carry the chain's original pre-migration (V1/V2)
+/// anchor whenever the syncer chain-read before the off-chain blob
+/// source was installed (a post-restart window). An unconditional write here clobbered the
 /// DURABLE perpetual canonical mirror with that anchor, permanently
 /// failing the handoff-cert DKG-digest adoption gate every later epoch —
 /// the never-instantiated variant of issue #1852.
@@ -415,8 +416,9 @@ fn hydrate_network_dkg_digests(
             // A skip may be correct; a SILENT skip on a contradiction
             // never is: an overlay carrying bytes that hash differently
             // from the recorded canonical digest is the #1852
-            // hydration-clobber signature (e.g. the chain's pre-V3
-            // anchor after a restart) — surface it. Routine
+            // hydration-clobber signature (e.g. the chain's
+            // pre-migration (V1/V2) anchor after a restart) — surface
+            // it. Routine
             // identical-bytes skips stay quiet.
             let snapshot_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
             if *existing != snapshot_digest {
@@ -427,7 +429,7 @@ fn hydrate_network_dkg_digests(
                     "overlay snapshot's DKG bytes contradict the locally-recorded canonical \
                      digest — keeping the canonical value (fill-absence hydration never \
                      overwrites); if this validator was recently restarted this is the \
-                     stale pre-V3-anchor overlay shape"
+                     stale pre-migration-anchor overlay shape"
                 );
             }
             continue;
@@ -476,7 +478,8 @@ mod tests {
     /// The hydration pass is fill-absence only (#1852, never-instantiated
     /// variant): a key with an existing locally-recorded DKG digest must NOT
     /// be overwritten by the overlay snapshot's bytes — the snapshot can
-    /// carry the chain's pre-V3 anchor after a restart, and the durable
+    /// carry the chain's pre-migration (V1/V2) anchor after a restart, and
+    /// the durable
     /// canonical mirror it would clobber is what the handoff-cert DKG-digest
     /// adoption gate verifies. A key with no recorded digest is still filled.
     #[tokio::test]
@@ -514,7 +517,8 @@ mod tests {
             .unwrap();
 
         // Post-restart overlay snapshot: the mirrored key carries the
-        // chain's pre-V3 anchor; the fresh key has no local digest yet.
+        // chain's pre-migration (V1/V2) anchor; the fresh key has no
+        // local digest yet.
         let snapshot = HashMap::from([
             snapshot_entry(mirrored_key, &anchor_bytes),
             snapshot_entry(fresh_key, &fresh_bytes),

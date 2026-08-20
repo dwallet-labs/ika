@@ -4002,10 +4002,13 @@ impl DWalletMPCManager {
                             if !key_data.network_dkg_public_output.is_empty() {
                                 // Mirror the CANONICAL DKG output. Once the
                                 // cert-pinned reconfiguration output's format is
-                                // ahead of the anchor's (V3/V4 over a V1/V2
-                                // anchor; V4 over a V3 anchor), the
-                                // instantiation carries a reconstructed full
-                                // output; mirror that in place of the stale
+                                // ahead of the anchor's — which now means only
+                                // a V4 (aggregated) reconfiguration output over
+                                // a V1/V2 anchor, since a V3 on either side is a
+                                // hard error with the pre-aggregation types gone
+                                // from inkrypto — the instantiation carries a
+                                // reconstructed full output; mirror that in
+                                // place of the stale
                                 // anchor so the handoff digest, the overlay, and
                                 // joiners all migrate together. One-shot per
                                 // flip: after it the overlay resolves the
@@ -4047,7 +4050,8 @@ impl DWalletMPCManager {
                                 // Surface the canonical DKG-output version for
                                 // observability of the anchor migration: it
                                 // reads the reconstructed full output's version
-                                // (3 pre-aggregation, 4 aggregated) once this
+                                // (3 pre-aggregation — no longer produced, V3
+                                // is undecodable; 4 aggregated) once this
                                 // validator mirrors it.
                                 let canonical_version: i64 = key
                                     .reconstructed_full_network_dkg_output()
@@ -4058,8 +4062,10 @@ impl DWalletMPCManager {
                                     .network_encryption_key_canonical_dkg_output_version
                                     .set(canonical_version);
                                 // Same observability for the reconfiguration
-                                // output: 3 = pre-aggregation, 4 = aggregated
-                                // (the protocol-v5 format flip), 0 = none yet.
+                                // output: 3 = pre-aggregation (no longer
+                                // produced; a V3 output is a hard error now),
+                                // 4 = aggregated (the protocol-v5 format flip),
+                                // 0 = none yet.
                                 let reconfiguration_version: i64 =
                                     key.latest_network_reconfiguration_public_output()
                                         .map(|output| output.version())
