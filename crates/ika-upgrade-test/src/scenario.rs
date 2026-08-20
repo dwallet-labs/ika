@@ -34,6 +34,13 @@ use crate::workload::WorkloadDriver;
 
 const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long to wait for a peer to witness an MPC output from a named
+/// validator. Bounded well below an epoch on purpose: this assertion is only
+/// meaningful inside the epoch under test, and a poll that outlives the
+/// boundary reports a timeout for a question that stopped being asked. The
+/// epoch ceiling aborts sooner still.
+const MPC_WITNESS_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -227,10 +234,40 @@ pub enum Step {
     /// for a session that was NOT in the `since` snapshot — a peer witnessing
     /// the subject compute and submit for work created after that snapshot.
     /// Self-reported liveness cannot make this claim.
+    ///
+    /// The series it reads is ephemeral (zeroed when a session leaves the
+    /// active map), so this ACCUMULATES observations across a fast poll rather
+    /// than sampling: a session that begins and ends between two polls would
+    /// otherwise be invisible. It also aborts the moment the epoch passes
+    /// `epoch_ceiling` — a timeout blamed on the subject, reported after the
+    /// boundary already handed it a fresh epoch store, is a misdiagnosis
+    /// generator.
     ExpectNewMpcOutputSession {
         since: String,
         observer_index: usize,
         subject_index: usize,
+        epoch_ceiling: u64,
+    },
+    /// Snapshot, under `label`, one validator's total completed MPC
+    /// computations.
+    RecordMpcCompletions {
+        label: String,
+        index: usize,
+    },
+    /// Assert that validator has completed MORE MPC computations since the
+    /// `since` snapshot.
+    ///
+    /// The race-free half of "participation returned". The peer-witness above
+    /// is the stronger claim but it can be lost legitimately: with four
+    /// validators any three form a quorum, so one validator's output is always
+    /// superfluous, and a session that reaches quorum before this node
+    /// finishes computing produces no observable output from it at all
+    /// (measured on a healthy cluster: 147 of 306 quorums reached without the
+    /// subject's output). This asks the narrower question no race can answer
+    /// falsely — is the node doing MPC work.
+    ExpectMoreMpcCompletions {
+        since: String,
+        index: usize,
     },
 }
 
@@ -370,11 +407,18 @@ impl std::fmt::Display for Step {
                 since,
                 observer_index,
                 subject_index,
+                epoch_ceiling,
             } => write!(
                 f,
                 "expect_new_mpc_output_session(since={since:?}, observer={observer_index}, \
-                 subject={subject_index})"
+                 subject={subject_index}, epoch_ceiling={epoch_ceiling})"
             ),
+            Step::RecordMpcCompletions { label, index } => {
+                write!(f, "record_mpc_completions({label:?}, {index})")
+            }
+            Step::ExpectMoreMpcCompletions { since, index } => {
+                write!(f, "expect_more_mpc_completions(since={since:?}, {index})")
+            }
         }
     }
 }
@@ -886,11 +930,33 @@ impl Scenario {
         since: &str,
         observer_index: usize,
         subject_index: usize,
+        epoch_ceiling: u64,
     ) -> Self {
         self.steps.push(Step::ExpectNewMpcOutputSession {
             since: since.to_string(),
             observer_index,
             subject_index,
+            epoch_ceiling,
+        });
+        self
+    }
+
+    /// Snapshot one validator's completed-MPC-computation total. See
+    /// [`Step::RecordMpcCompletions`].
+    pub fn record_mpc_completions(mut self, label: &str, index: usize) -> Self {
+        self.steps.push(Step::RecordMpcCompletions {
+            label: label.to_string(),
+            index,
+        });
+        self
+    }
+
+    /// Assert that validator has computed since the snapshot. See
+    /// [`Step::ExpectMoreMpcCompletions`].
+    pub fn expect_more_mpc_completions(mut self, since: &str, index: usize) -> Self {
+        self.steps.push(Step::ExpectMoreMpcCompletions {
+            since: since.to_string(),
+            index,
         });
         self
     }
@@ -924,6 +990,8 @@ impl Scenario {
         let mut mpc_output_sessions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         // Open log-occurrence probes, by the label that snapshotted them.
         let mut log_line_probes: BTreeMap<String, LogLineProbe> = BTreeMap::new();
+        // Completed-MPC-computation snapshots: label -> (validator, total).
+        let mut mpc_completions: BTreeMap<String, (usize, u64)> = BTreeMap::new();
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -1562,6 +1630,7 @@ impl Scenario {
                     since,
                     observer_index,
                     subject_index,
+                    epoch_ceiling,
                 } => {
                     let c = cluster
                         .as_ref()
@@ -1569,32 +1638,91 @@ impl Scenario {
                     let baseline = mpc_output_sessions
                         .get(since)
                         .with_context(|| format!("no MPC-output snapshot taken as {since:?}"))?;
-                    let deadline = std::time::Instant::now() + self.epoch_timeout;
+                    let started = std::time::Instant::now();
+                    let deadline = started + MPC_WITNESS_TIMEOUT;
+                    // Accumulated, not sampled: the series is zeroed when a
+                    // session leaves the active map, so a short session is
+                    // only ever visible to the poll that happens to overlap it.
+                    let mut seen: BTreeSet<String> = BTreeSet::new();
                     loop {
-                        let sessions = c
-                            .mpc_output_sessions_from(*observer_index, *subject_index)
-                            .await?;
-                        let fresh: BTreeSet<_> = sessions.difference(baseline).collect();
+                        seen.extend(
+                            c.mpc_output_sessions_from(*observer_index, *subject_index)
+                                .await?,
+                        );
+                        let fresh: BTreeSet<_> = seen.difference(baseline).collect();
                         if !fresh.is_empty() {
                             tracing::info!(
                                 observer = *observer_index,
                                 subject = *subject_index,
                                 sessions = ?fresh,
+                                witness_latency_seconds = started.elapsed().as_secs(),
                                 "a peer witnessed new MPC outputs authored by the subject"
                             );
                             break;
                         }
+                        // Fail on the boundary, not on the clock: past the
+                        // ceiling the subject has a fresh epoch store and this
+                        // assertion is no longer about the rollback at all.
+                        let epoch = c.current_epoch().await?;
+                        ensure!(
+                            epoch <= *epoch_ceiling,
+                            "the network reached epoch {epoch}, past the ceiling of \
+                             {epoch_ceiling}, while waiting for validator {observer_index} to \
+                             witness an MPC output from validator {subject_index}. The boundary \
+                             ended the experiment — this says nothing about the subject"
+                        );
                         ensure!(
                             std::time::Instant::now() < deadline,
                             "validator {observer_index} never witnessed an MPC output authored by \
                              validator {subject_index} for a session outside the {since:?} \
-                             snapshot ({} sessions) within {:?}; the subject is following \
-                             consensus without contributing MPC",
+                             snapshot ({} sessions) within {:?}, while still inside epoch \
+                             {epoch}; the subject is following consensus without contributing MPC",
                             baseline.len(),
-                            self.epoch_timeout,
+                            MPC_WITNESS_TIMEOUT,
                         );
-                        sleep(Duration::from_secs(5)).await;
+                        sleep(Duration::from_secs(1)).await;
                     }
+                }
+                Step::RecordMpcCompletions { label, index } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("RecordMpcCompletions before StartAll")?;
+                    let completions = c.mpc_completions_total(*index).await?;
+                    tracing::info!(
+                        label = label.as_str(),
+                        index = *index,
+                        completions,
+                        "snapshotted a validator's completed MPC computations"
+                    );
+                    mpc_completions.insert(label.clone(), (*index, completions));
+                }
+                Step::ExpectMoreMpcCompletions { since, index } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectMoreMpcCompletions before StartAll")?;
+                    let (snapshot_index, before) = mpc_completions
+                        .get(since)
+                        .copied()
+                        .with_context(|| format!("no completions snapshot taken as {since:?}"))?;
+                    ensure!(
+                        snapshot_index == *index,
+                        "snapshot {since:?} counted validator {snapshot_index} but is being \
+                         closed on validator {index}"
+                    );
+                    let now = c.mpc_completions_total(*index).await?;
+                    ensure!(
+                        now > before,
+                        "validator {index} completed no MPC computation since the {since:?} \
+                         snapshot ({before} then, {now} now) — it is following consensus without \
+                         doing MPC work, which no quorum race can explain away"
+                    );
+                    tracing::info!(
+                        index = *index,
+                        before,
+                        now,
+                        completed = now - before,
+                        "the validator completed MPC computations since the snapshot"
+                    );
                 }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;

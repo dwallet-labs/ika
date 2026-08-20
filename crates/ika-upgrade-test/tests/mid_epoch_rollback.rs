@@ -145,15 +145,35 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
     // SAME epoch the rollback happened in, because the next boundary hands the
     // node a fresh epoch store and ends the experiment. That is a longer
     // budget than the forward scenarios need.
-    let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
+    let epoch_duration_ms: u64 = std::env::var("EPOCH_DURATION_MS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(900_000);
+        .unwrap_or(1_800_000);
+    // Budget, from the timings the first two runs measured rather than from a
+    // round number. The phases before the rollback are scheduled as FRACTIONS
+    // of the epoch, so they scale with it and only the remainder is absolute:
+    //
+    //   ~0.55 E  mid-epoch network-key reconfiguration completes
+    //   ~0.59 E  control workload done, rollback taken
+    //   ~0.635 E epoch-close lock engages (measured 12.7 min into a 20 min
+    //            epoch) — global-presign votes are held from here
+    //
+    // so the usable post-rollback window is about 0.365 E, and it has to cover
+    // the swap (~25 s), the catch-up (~15 s), a workload (~40 s), the peer
+    // witness (bounded at MPC_WITNESS_TIMEOUT = 300 s) and the closing
+    // assertions. That is ~380 s of work plus slack; 0.365 E >= 600 s keeps a
+    // factor of 1.5 in hand and puts the floor at 1_644_000 ms.
+    const POST_ROLLBACK_BUDGET_SECS: u64 = 600;
+    const USABLE_EPOCH_FRACTION_PER_MILLE: u64 = 365;
+    let usable_ms = epoch_duration_ms * USABLE_EPOCH_FRACTION_PER_MILLE / 1000;
     assert!(
-        epoch_duration_ms >= 600_000,
-        "the mid-epoch rollback requires an epoch of at least 600000ms so the re-derivation, \
-         its measurement and the post-rollback workload all complete before the boundary that \
-         would hand the rolled-back validator a fresh epoch store"
+        usable_ms >= POST_ROLLBACK_BUDGET_SECS * 1000,
+        "EPOCH_DURATION_MS={epoch_duration_ms} leaves only {usable_ms}ms after the epoch-close \
+         lock engages at ~63.5% of the epoch, and the post-rollback phase needs at least \
+         {}ms. Raise it to 1800000 (the recommended value) — everything after the rollback has \
+         to finish inside the SAME epoch, because the next boundary hands the validator a fresh \
+         epoch store and ends the experiment",
+        POST_ROLLBACK_BUDGET_SECS * 1000
     );
 
     // Validator 0 is rolled back; 1-3 stay on the candidate and are the only
@@ -194,7 +214,22 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         //    candidate, nothing restarted. Whatever re-submission this window
         //    records is the noise floor the rollback has to beat. ───────────
         .record_skipped_consensus_txns("control", &peers)
+        // CALIBRATION. The same two instruments assertion 3 will use, pointed
+        // at the same subject while it is HEALTHY. If a validator that is
+        // demonstrably fine cannot be witnessed here, the instrument is broken
+        // and the run must say so NOW — naming the instrument — rather than
+        // thirty minutes later, after a rollback, in words that blame the
+        // rollback. Run 2 died exactly that way: an authority-label format
+        // mismatch made the witness structurally incapable of seeing anything,
+        // and the failure it produced accused the subject of not doing MPC.
+        //
+        // It also measures the witness latency on a healthy node, which is the
+        // number the post-rollback budget above is built from.
+        .record_mpc_output_sessions("calibration", WITNESS, SUBJECT)
+        .record_mpc_completions("calibration", SUBJECT)
         .run_workload("pre-rollback-control")
+        .expect_new_mpc_output_session("calibration", WITNESS, SUBJECT, 2)
+        .expect_more_mpc_completions("calibration", SUBJECT)
         .expect_skipped_consensus_txns_delta("control", &peers, 0, None)
         .expect_epoch_at_most(2)
         // ── The event under test: the deployed release goes back on, on the
@@ -247,8 +282,20 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // after catch-up mode has EXITED, so every session the re-derivation
         // reconstructed is already inside it and cannot satisfy the assertion.
         .record_mpc_output_sessions("after-catch-up", WITNESS, SUBJECT)
+        .record_mpc_completions("after-catch-up", SUBJECT)
         .run_workload("post-rollback")
-        .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT)
+        // Two legs, because they fail for different reasons. The peer-witness
+        // is the strong claim — another validator saw this one's output for
+        // new work — but it can be lost legitimately: any three of four
+        // validators form a quorum, so the subject's output is sometimes
+        // superfluous and never observed (measured on a healthy cluster: 147
+        // of 306 quorums reached without it). The completions delta is the
+        // narrower question no race can answer falsely. Calibration above
+        // proves both instruments can see a healthy subject in this cluster,
+        // which is what makes a post-rollback failure of either one readable
+        // as a statement about the rollback.
+        .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT, 2)
+        .expect_more_mpc_completions("after-catch-up", SUBJECT)
         // ASSERTION 2 — closed only NOW, so the rollback window spans the whole
         // recovery AND carries exactly one workload, like the control window.
         // Closing it at the catch-up (as the first version did) compared a

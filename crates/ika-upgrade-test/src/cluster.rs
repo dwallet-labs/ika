@@ -43,6 +43,7 @@ use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_sdk::wallet_context::WalletContext;
+use sui_types::base_types::ConciseableName;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SuiKeyPair;
 
@@ -150,6 +151,29 @@ impl AuthorityNamings {
     /// now genuinely different types with different widths.
     fn both(&self) -> [String; 2] {
         [self.protocol.to_string(), self.consensus.to_string()]
+    }
+
+    /// Every string this validator can appear as in a metric label: both
+    /// namings, each in full and in CONCISE form.
+    ///
+    /// Some metrics label by `name.concise()` — `k#` plus the first four bytes
+    /// plus `..` (`ika_types::crypto::ConciseAuthorityNameRef`) — rather than
+    /// by the full name, and matching only the full form against a
+    /// concise-labelled series silently matches nothing at all. That is not
+    /// hypothetical: it made `mpc_output_sessions_from` return an empty set
+    /// for a perfectly healthy validator, which read as "this validator
+    /// contributed no MPC" for a whole epoch.
+    ///
+    /// Accepting all four is deliberate. Every one is derived from THIS
+    /// validator's own keys, so a match is always about the right validator,
+    /// and the set stays correct if a series changes which rendering it emits.
+    fn all_renderings(&self) -> BTreeSet<String> {
+        BTreeSet::from([
+            self.protocol.to_string(),
+            self.consensus.to_string(),
+            self.protocol.concise().to_string(),
+            self.consensus.concise().to_string(),
+        ])
     }
 }
 
@@ -1512,9 +1536,42 @@ impl ClusterOfProcesses {
     /// output authored by `subject_index`'s authority
     /// (`ika_dwallet_mpc_user_session_output_received_from` = 1).
     ///
-    /// Both naming bases are accepted for the subject, matching every other
-    /// authority-label comparison here: the cluster names its authorities
-    /// under whichever basis its protocol version selects.
+    /// Every rendering of the subject's name is accepted (see
+    /// [`AuthorityNamings::all_renderings`]) — this series labels by the
+    /// CONCISE form, and matching only full names silently returns nothing.
+    ///
+    /// **This series is EPHEMERAL.** The manager zeroes every
+    /// `(session, authority)` entry once the session leaves its active map, so
+    /// a reading only ever describes sessions that are live at that instant.
+    /// A caller looking for "did this validator ever author an output for a
+    /// session created after X" must ACCUMULATE readings across a poll —
+    /// sampling once, or polling slowly, misses short sessions entirely.
+    /// One validator's total completed MPC computations, summed over the
+    /// per-protocol `ika_dwallet_mpc_completions_count` series.
+    ///
+    /// The counterpart to the per-session output series above, and immune to
+    /// both of its problems: it is not zeroed when a session ends, and it does
+    /// not care whether this validator's output won a place in the quorum. It
+    /// answers "is this node doing MPC work" rather than "did the network
+    /// observe this node's contribution to session N", so the two are evidence
+    /// for different halves of the same claim.
+    ///
+    /// Process-scoped: a restart resets it, so only deltas taken within one
+    /// process lifetime mean anything.
+    pub async fn mpc_completions_total(&self, index: usize) -> Result<u64> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let body = validator.metrics().await?;
+        Ok(
+            parse_metric_samples(&body, "ika_dwallet_mpc_completions_count")?
+                .into_iter()
+                .map(|sample| sample.value.max(0.0) as u64)
+                .sum(),
+        )
+    }
+
     /// How many times `needle` appears in one validator's `node.log`.
     ///
     /// Occurrence COUNTS rather than presence, because logs append across
@@ -1540,13 +1597,11 @@ impl ClusterOfProcesses {
             .validators
             .get(observer_index)
             .with_context(|| format!("observer index {observer_index} out of range"))?;
-        let subject: BTreeSet<String> = self
+        let subject = self
             .validator_authorities
             .get(subject_index)
             .with_context(|| format!("subject index {subject_index} out of range"))?
-            .both()
-            .into_iter()
-            .collect();
+            .all_renderings();
         let body = observer.metrics().await?;
         output_sessions_authored_by(&body, &subject)
     }
@@ -2436,18 +2491,43 @@ mod tests {
             .collect()
     }
 
+    /// A subject as the harness knows it: the full rendering plus the CONCISE
+    /// one, exactly as `AuthorityNamings::all_renderings` builds them.
+    ///
+    /// These fixtures reproduce the REAL emission format rather than a
+    /// convenient placeholder, because the placeholder is what hid the bug
+    /// they now exist for: both sides of the comparison used the invented
+    /// string "k#subject", so the tests passed while the harness matched
+    /// full-length names against a series labelled with 4-byte concise ones
+    /// and found nothing — for a whole healthy epoch.
+    const SUBJECT_FULL: &str = "k#df2fe30c267507cc21ef0cabfcbb27eb5215047720c6ad955a9c5b0c16d17cb4";
+    const SUBJECT_CONCISE: &str = "k#df2fe30c..";
+    const PEER_CONCISE: &str = "k#a41b9f02..";
+    /// The same validator under the BLS protocol-key basis: 48 bytes, so 96
+    /// hex characters, and the same "k#" prefix as the consensus basis.
+    const PROTOCOL_FULL: &str = concat!(
+        "k#8f14e45fceea167a5a36dedd4bea2543b9b4f2c1e07d3a1f8c9b0e5d7a6c4b3f",
+        "2e1d0c9b8a7f6e5d4c3b2a1908f7e6d5"
+    );
+    const PROTOCOL_CONCISE: &str = "k#8f14e45f..";
+
+    fn subject_renderings() -> BTreeSet<String> {
+        BTreeSet::from([SUBJECT_FULL.to_string(), SUBJECT_CONCISE.to_string()])
+    }
+
     #[test]
-    fn output_sessions_are_selected_by_author_not_by_session() {
-        // The vacuity this guards: without the authority filter, sessions a
-        // peer authored would count as the subject participating, and a
-        // subject contributing nothing would still look alive.
+    fn output_sessions_match_the_concise_label_the_series_actually_emits() {
+        // The regression: `user_session_output_received_from` labels by
+        // `authority_name.concise()`, so a subject known only by its full name
+        // matches nothing. Carrying both renderings is what makes the reading
+        // work, and this fixture uses the real formats on both sides.
         let body = output_received_from_metrics(&[
-            ("11", "k#subject", 1),
-            ("12", "k#peer", 1),
-            ("13", "k#subject", 1),
+            ("11", SUBJECT_CONCISE, 1),
+            ("12", PEER_CONCISE, 1),
+            ("13", SUBJECT_CONCISE, 1),
         ]);
         let sessions =
-            output_sessions_authored_by(&body, &candidate("k#subject")).expect("well-formed");
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
         assert_eq!(
             sessions,
             BTreeSet::from(["11".to_string(), "13".to_string()])
@@ -2455,24 +2535,57 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_output_gauge_is_not_an_observed_output() {
-        // The gauge is registered per (session, authority) and reads 0 until
-        // an output actually arrives, so presence of the label is not
-        // evidence — only the value is.
-        let body = output_received_from_metrics(&[("11", "k#subject", 0)]);
+    fn a_full_name_alone_cannot_read_a_concise_series() {
+        // Pins the failure mode itself, so a future change that drops the
+        // concise renderings fails here rather than on a cluster hours later
+        // as an empty result indistinguishable from an idle validator.
+        let body = output_received_from_metrics(&[("11", SUBJECT_CONCISE, 1)]);
+        let full_only = BTreeSet::from([SUBJECT_FULL.to_string()]);
+        let sessions = output_sessions_authored_by(&body, &full_only).expect("well-formed");
+        assert!(
+            sessions.is_empty(),
+            "a full-name-only subject silently matches nothing against a concise series, \
+             which is why all_renderings exists"
+        );
+    }
+
+    #[test]
+    fn output_sessions_are_selected_by_author_not_by_session() {
+        // The vacuity this guards: without the authority filter, sessions a
+        // peer authored would count as the subject participating, and a
+        // subject contributing nothing would still look alive.
+        let body = output_received_from_metrics(&[("11", PEER_CONCISE, 1)]);
         let sessions =
-            output_sessions_authored_by(&body, &candidate("k#subject")).expect("well-formed");
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn an_unset_output_gauge_is_not_an_observed_output() {
+        // The gauge reads 0 both before an output arrives and after the
+        // manager zeroes the series on session departure, so the presence of a
+        // label is not evidence — only its value is.
+        let body = output_received_from_metrics(&[("11", SUBJECT_CONCISE, 0)]);
+        let sessions =
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
         assert!(sessions.is_empty());
     }
 
     #[test]
     fn output_sessions_accept_either_authority_naming() {
         // A validator is named by its consensus key from protocol v6 on and by
-        // its BLS protocol key below it; the harness holds both and the label
-        // carries whichever the cluster's version selects.
-        let body = output_received_from_metrics(&[("11", "bls#subject", 1)]);
-        let both = BTreeSet::from(["k#subject".to_string(), "bls#subject".to_string()]);
-        let sessions = output_sessions_authored_by(&body, &both).expect("well-formed");
+        // its BLS protocol key below it. BOTH render with the same "k#" prefix
+        // (there is no "bls#" form — inventing one is the same fixture mistake
+        // this file exists to warn about); they differ only in width, 32 bytes
+        // against 48, and their concise forms differ only in the bytes.
+        let body = output_received_from_metrics(&[("11", PROTOCOL_CONCISE, 1)]);
+        let all = BTreeSet::from([
+            SUBJECT_FULL.to_string(),
+            SUBJECT_CONCISE.to_string(),
+            PROTOCOL_FULL.to_string(),
+            PROTOCOL_CONCISE.to_string(),
+        ]);
+        let sessions = output_sessions_authored_by(&body, &all).expect("well-formed");
         assert_eq!(sessions, BTreeSet::from(["11".to_string()]));
     }
 
