@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 use axum::{Router, extract::Extension, http::StatusCode, routing::get};
 use mysten_metrics::RegistryService;
-use prometheus::TextEncoder;
+use once_cell::sync::Lazy;
+use prometheus::{Registry, TextEncoder};
 use std::net::TcpListener;
 use std::sync::{Arc, RwLock};
 use tower::ServiceBuilder;
@@ -13,12 +14,27 @@ use tracing::Level;
 const METRICS_ROUTE: &str = "/metrics";
 const POD_HEALTH_ROUTE: &str = "/pod_health";
 
+/// The registry ika-proxy registers its OWN metrics in.
+///
+/// It exists so those metrics are registered with an explicit registry rather
+/// than prometheus's process-global default one. That is not a style
+/// preference: `scripts/check-metric-names.sh` extracts metric names from
+/// `register_*_with_registry!` call sites, so a metric registered with the bare
+/// `register_*!` form is invisible to the `ika_` naming ratchet and to the
+/// generated inventory in `dev-docs/conventions/metrics.md` — which is exactly
+/// how the proxy's nine metrics stayed unprefixed while every other crate was
+/// renamed at the 1.2.0 boundary.
+///
+/// The proxy's own metrics are unrelated to the node metrics it relays, which
+/// pass through as payloads and are never registered here.
+pub static PROXY_REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
+
 type HealthCheckMetrics = Arc<RwLock<HealthCheck>>;
 
 /// Do not access struct members without using HealthCheckMetrics to arc+mutex
 #[derive(Debug)]
 struct HealthCheck {
-    // eg; consumer_operations_submitted{...}
+    // eg; ika_proxy_consumer_operations_submitted{...}
     consumer_operations_submitted: f64,
 }
 
@@ -71,12 +87,17 @@ async fn metrics(
     Extension(pod_health): Extension<HealthCheckMetrics>,
 ) -> (StatusCode, String) {
     let mut metric_families = registry_service.gather_all();
+    metric_families.extend(PROXY_REGISTRY.gather());
+    // ika-proxy registers nothing in prometheus's default registry any more,
+    // but the prometheus crate itself installs a process collector there
+    // (`process_cpu_seconds_total`, `process_resident_memory_bytes`, …).
+    // Keep gathering it so that telemetry stays on the endpoint.
     metric_families.extend(prometheus::gather());
 
     if let Some(consumer_operations_submitted) = metric_families
         .iter()
         .filter_map(|v| {
-            if v.name() == "consumer_operations_submitted" {
+            if v.name() == "ika_proxy_consumer_operations_submitted" {
                 // Expecting one metric, so return the first one, as it is the only one
                 v.get_metric().first().map(|m| m.counter.value())
             } else {

@@ -5,7 +5,7 @@ use axum::{Router, extract::Extension, http::StatusCode, routing::get};
 use once_cell::sync::Lazy;
 use prometheus::proto::{Metric, MetricFamily};
 use prometheus::{CounterVec, HistogramVec};
-use prometheus::{register_counter_vec, register_histogram_vec};
+use prometheus::{register_counter_vec_with_registry, register_histogram_vec_with_registry};
 use std::net::TcpListener;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
@@ -17,27 +17,30 @@ use tower_http::LatencyUnit;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, info};
 
+use crate::metrics::PROXY_REGISTRY;
 use crate::var;
 
 const METRICS_ROUTE: &str = "/metrics";
 
 static RELAY_PRESSURE: Lazy<CounterVec> = Lazy::new(|| {
-    register_counter_vec!(
-        "relay_pressure",
+    register_counter_vec_with_registry!(
+        "ika_proxy_relay_pressure",
         "HistogramRelay's number of metric families submitted, exported, overflowed to/from the queue.",
-        &["histogram_relay"]
+        &["histogram_relay"],
+        PROXY_REGISTRY
     )
     .unwrap()
 });
 static RELAY_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
-    register_histogram_vec!(
-        "relay_duration_seconds",
+    register_histogram_vec_with_registry!(
+        "ika_proxy_relay_duration_seconds",
         "HistogramRelay's submit/export fn latencies in seconds.",
         &["histogram_relay"],
         vec![
             0.0008, 0.0016, 0.0032, 0.0064, 0.0128, 0.0256, 0.0512, 0.1024, 0.2048, 0.4096, 0.8192,
             1.0, 1.25, 1.5, 1.75, 2.0, 4.0, 8.0, 10.0, 12.5, 15.0
         ],
+        PROXY_REGISTRY
     )
     .unwrap()
 });

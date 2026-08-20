@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
-# Metric-name ratchet, two halves of one rule: ika owns `ika_*` and nothing
+# Metric-name ratchet, three halves of one rule: ika owns `ika_*` and nothing
 # else owns any of it.
 #   1. every metric registered with a literal name uses the `ika_` prefix (or
 #      appears in scripts/metric-name-allowlist.txt, the frozen legacy set —
 #      never add to it; rename or prefix new metrics instead);
 #   2. no prefixed registry re-exports someone else's metrics under a prefix
-#      starting with `ika`.
+#      starting with `ika`;
+#   3. every metric is registered with an EXPLICIT registry —
+#      `register_*_with_registry!`, never the bare `register_*!` form that
+#      writes to prometheus's process-global default registry.
 # Together those make an ika name and a vendored name unable to occupy the
 # same string, whatever upstream adds (ika #2022).
+#
+# Rule 3 is what makes rule 1 total rather than best-effort. The extractor can
+# only see names passed to `register_*_with_registry!`, so a metric registered
+# on the default registry is exported by the binary and invisible to every
+# check here — unvalidated, uninventoried, and undiscoverable by anyone writing
+# a dashboard. ika-proxy shipped nine such metrics (`consumer_operations`,
+# `relay_pressure`, `http_handler_hits`, …) straight through the 1.2.0
+# `ika_` rename because of exactly that blind spot: they were gathered onto
+# /metrics by `ika-proxy/src/metrics.rs` while no rule could reach them.
+# Rejecting the bare form is preferred over teaching the extractor to read it,
+# because an explicit registry is the workspace convention anyway
+# (dev-docs/conventions/metrics.md) and rejection needs no per-macro upkeep.
 #
 # Names built dynamically (format!) cannot be validated statically and
 # are skipped; keep those few call sites' generated names in the
@@ -29,21 +44,59 @@ MACRO = re.compile(
     re.S,
 )
 
+# Any `register_*!` invocation. The ones ending in `_with_registry` name a
+# registry explicitly; every other one writes to prometheus's default registry.
+# Deliberately not restricted to today's prometheus macro list, so a metric
+# family the crate adds later is covered without anyone editing this file. The
+# cost is that an unrelated `register_*!` macro would be flagged — a loud,
+# one-line-to-diagnose false positive, which is the failure direction to prefer
+# over silently missing a real default-registry registration.
+ANY_MACRO = re.compile(r'\bregister_(?P<kind>[a-z_]+)!')
+
+sources = sorted(pathlib.Path("crates").rglob("*.rs"))
+
 names = set()
 dynamic_sites = 0
-for path in pathlib.Path("crates").rglob("*.rs"):
+default_registry_sites = []
+for path in sources:
     text = path.read_text(errors="replace")
     for m in MACRO.finditer(text):
         if m.group("name"):
             names.add(m.group("name"))
         else:
             dynamic_sites += 1
+    for m in ANY_MACRO.finditer(text):
+        if m.group("kind").endswith("_with_registry"):
+            continue
+        line = text.count("\n", 0, m.start()) + 1
+        default_registry_sites.append((str(path), line, m.group(0).rstrip("!")))
 
 if "--list" in sys.argv:
     for n in sorted(names):
         print(n)
     print(f"# {len(names)} literal names; {dynamic_sites} dynamic (format!-built) sites not listed", file=sys.stderr)
     sys.exit(0)
+
+# Rule 3, checked BEFORE the name rules: a metric on the default registry is
+# one the name rules cannot see at all, so a green prefix check over the rest
+# means nothing while such a site exists.
+if default_registry_sites:
+    print(
+        "ERROR: prometheus metrics must be registered with an EXPLICIT registry.\n"
+        "These call sites use the bare macro, which registers on prometheus's\n"
+        "process-global default registry — invisible to the `ika_` prefix rule\n"
+        "and missing from the generated inventory, while still being exported:",
+        file=sys.stderr,
+    )
+    for f, line, macro in default_registry_sites:
+        print(f"  {f}:{line}: {macro}!", file=sys.stderr)
+    print(
+        "Use the `_with_registry` form and pass the registry the endpoint\n"
+        "gathers (e.g. `register_counter_vec_with_registry!(name, help, labels,\n"
+        "registry)`). Convention: dev-docs/conventions/metrics.md",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 allowlist_path = pathlib.Path("scripts/metric-name-allowlist.txt")
 allowlist = {
@@ -155,6 +208,7 @@ print(
     f"metric names OK ({len(names)} literal, {dynamic_sites} dynamic sites skipped; "
     f"{len(vendored)} prefixed registr{'y' if len(vendored) == 1 else 'ies'} "
     f"({', '.join(sorted(vendored)) or 'none'}), none under `ika`; "
-    f"{test_scoped} test-scoped skipped)"
+    f"{test_scoped} test-scoped skipped); "
+    f"{len(sources)} source files, no default-registry registration"
 )
 EOF
