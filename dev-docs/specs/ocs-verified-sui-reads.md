@@ -1014,7 +1014,7 @@ on the changeset index's version+digest currency signal *plus* the TTL
 bound — two attestations of the same "still current" property. Extending
 the cache-first serve beyond the singleton anchors to *all* slowly-changing
 mirror reads remains future work — see
-[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
+[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/archive/ocs-changeset-stream-mirror-currency.md).
 
 ## Retained state: surviving a restart and a pruning fullnode
 

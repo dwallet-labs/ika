@@ -8,7 +8,7 @@ serve dWallet sessions throughout. This file is the protocol-level
 contract that any change touching versioning, serialization, or the
 epoch boundary must preserve. The out-of-process harness that verifies
 it lives in `crates/ika-upgrade-test/`; the design record and findings
-are in [`../plans/cross-binary-upgrade-testing.md`](../plans/cross-binary-upgrade-testing.md).
+are in [`../plans/cross-binary-upgrade-testing.md`](../plans/archive/cross-binary-upgrade-testing.md).
 
 ## How a version advances
 

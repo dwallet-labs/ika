@@ -11,7 +11,7 @@ all review items (incl. the bag-pump hygiene) are closed.
 **Branch:** feat/ocs-grpc-migration (#1744).
 
 The actionable checklist derived from the pre-merge review
-([`../reviews/ocs-1744-pre-merge-review.md`](../reviews/ocs-1744-pre-merge-review.md)) —
+([`../reviews/ocs-1744-pre-merge-review.md`](../../reviews/archive/ocs-1744-pre-merge-review.md)) —
 that doc *records* the findings and their mechanisms; this one *tracks* the work to
 close them. The lone MUST-FIX (`mpc-consensus-1`) is already done, so merge is
 technically unblocked; the cheap cluster below is worth landing first.

@@ -27,7 +27,7 @@ design). Nothing from the audit remains open.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a
 > source of current truth. Current behavior lives in
-> [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+> [`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
 
 ## Method
 
@@ -106,7 +106,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 8. **[low→done] No spec for the OCS subsystem (CLAUDE.md violation).**
    RESOLUTION: added
-   [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)
+   [`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md)
    (`3aa742be23`, extended `df066184c8`).
 
 9. **[low] Operator/maintainer-facing doc lies.** A nonexistent `PeerMirror`
@@ -136,7 +136,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     (`b9be273a74`) — the direct pusher keeps its authoritative local fold, so
     no untrusted peer state ever enters the served cache. Committee-attested
     cache-first currency for mirrored nodes is specced separately in
-    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
+    [`../plans/ocs-changeset-stream-mirror-currency.md`](../../plans/archive/ocs-changeset-stream-mirror-currency.md)
     (a future feature, gated on a non-inclusion id-binding fix).
 
 11. **[low] Checkpoint pusher fanout is sequential.** One slow/hung peer
@@ -299,7 +299,7 @@ states. Re-verified 2026-07-25.)
 
     RESOLUTION: **resolved for direct nodes** (the all-`SuiStateDirect` topology
     where finding 17 was observed) via the direct-validator self-sufficiency plan
-    [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md),
+    [`../plans/ocs-direct-validator-self-sufficiency.md`](../../plans/archive/ocs-direct-validator-self-sufficiency.md),
     Slices 1/2/4/5 — cluster-validated green. (a) Eager end-of-epoch committee
     capture from the pusher stream, (b) the verified state cache persisted to DB
     with a config-driven retention pruner (restart resumes from DB, not a pruned
@@ -443,15 +443,15 @@ direct nodes**.
    verified-read path hard-failed (ratchet `ProofChainBroken` +
    `verified_system_inner` `NotFound`) once a long-running localnet pruned the
    history it needs. Fixed for the all-`SuiStateDirect` topology by Slices 1/2/4/5
-   of [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md)
+   of [`../plans/ocs-direct-validator-self-sufficiency.md`](../../plans/archive/ocs-direct-validator-self-sufficiency.md)
    (eager EoE committee capture, DB-persisted cache + retention pruner, executor
    backoff/diagnose, mock-transport regression guard) — cluster-validated. Slice 3
    (serve a mirrored peer's ratchet from the retained store, via a
    `RetainedFullnodeTransport` decorator — Option A) is also done.
 2. **Mirrored-node currency redesign** (future feature, not an audit finding) —
-   [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
+   [`../plans/ocs-changeset-stream-mirror-currency.md`](../../plans/archive/ocs-changeset-stream-mirror-currency.md)
    and its bandwidth-bounding successor
-   [`../plans/ocs-subscription-changeset-stream.md`](../plans/ocs-subscription-changeset-stream.md);
+   [`../plans/ocs-subscription-changeset-stream.md`](../../plans/ocs-subscription-changeset-stream.md);
    the real fix for the K8/K9 eclipse/currency residuals, gated on a fastcrypto
    non-inclusion id-binding fix.
 

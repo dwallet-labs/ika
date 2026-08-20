@@ -32,7 +32,7 @@ one refactor from a silent regression.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a source
 > of current truth. Current behavior lives in
-> [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md). The
+> [`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md). The
 > 2026-06-13 audit of an earlier state is
 > [`ocs-grpc-migration-review.md`](ocs-grpc-migration-review.md).
 

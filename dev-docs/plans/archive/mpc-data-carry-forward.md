@@ -12,7 +12,7 @@
 Status: landed (2026-06-13, PR #1741) — shipped with the regression harness
 `test_validator_restart_mid_end_of_publish_grace`, which was red on exactly
 this wedge before the fix. The durable behavior lives in
-[`../specs/validator-mpc-data-announcements.md`](../specs/validator-mpc-data-announcements.md).
+[`../specs/validator-mpc-data-announcements.md`](../../specs/validator-mpc-data-announcements.md).
 
 ## The bug
 

@@ -18,12 +18,12 @@ in `sui_connector/mod.rs` and consumed by `changeset_receiver.rs`,
 "Remaining" below are explicitly refinements, not blockers, and one of them
 (the fold filter) shipped; the redesign that replaces the full-set
 `changeset_page` path is
-[`ocs-subscription-changeset-stream.md`](ocs-subscription-changeset-stream.md),
+[`ocs-subscription-changeset-stream.md`](../ocs-subscription-changeset-stream.md),
 which is deferred at design stage.
 Successor to the push-objects gossip removed in `53c1858abf` (audit review finding 10 in
-[`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
+[`../reviews/ocs-grpc-migration-review.md`](../../reviews/archive/ocs-grpc-migration-review.md)).
 Read alongside
-[`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+[`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
 
 > **✅ Blockers 1–4 are built and unit-tested** in
 > `ika_core::sui_connector::ocs_currency` (the deletion linchpin — does

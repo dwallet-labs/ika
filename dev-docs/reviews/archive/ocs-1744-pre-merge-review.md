@@ -38,7 +38,7 @@ findings now fixed** — the pre-merge cleanup bundle (`ocs-verifier-core-1`,
 `ocs-binding-1` landed (`857ffdd645`..`ade5d7cd55`), and the fast-follow /
 "eventually" set is now done too: `network-mirror-1`, `network-mirror-2`,
 `ocs-cache-committee-1`, and `ocs-ingest-2`+`ocs-wiring-1`. Tracked in
-[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md).
+[`../plans/ocs-1744-pre-merge-cleanup.md`](../../plans/archive/ocs-1744-pre-merge-cleanup.md).
 Nothing left open. (`ocs-binding-1` was itself added 2026-06-26 from the read-path
 binding review.) Landed *since* the original review and
 **not** covered by it (all green): continuous trusted-peer discovery, the
@@ -143,7 +143,7 @@ PR #1744  (feat/ocs-grpc-migration)
 | `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | ✅ fixed | LOW | small | done |
 
 **My recommendation** (tracked as a checklist in
-[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md))**.**
+[`../plans/ocs-1744-pre-merge-cleanup.md`](../../plans/archive/ocs-1744-pre-merge-cleanup.md))**.**
 The MUST-FIX is done, so merge is technically unblocked — but there's a cheap,
 high-value cluster worth landing first:
 
@@ -212,7 +212,7 @@ Overall risk is **moderate-to-high, concentrated in one item**. The verified-rea
 - **Suggested fix:** Update the spec to (1) document the currency gate as a live per-read defense on all mirrored/peer-only nodes, (2) add it to the invariant list, (3) specify the `NotCurrent` rejection semantics and the `not_current` metric label, and (4) correct the "Eclipse residual" / "not active on the per-read path today" claims. Also fix the stale `ocs_currency.rs:16-18` module doc. (Note: the cache-*first* path for mirrors genuinely remains unbuilt — keep that part.)
 
 ### `ocs-binding-1` — `pending_active_set` ExtendedField child is read UNBOUND (listed, not derived or owner-checked)
-- **Severity: LOW (verified real).** Recommended — small fix. _Added 2026-06-26 from the read-path binding review ([`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md), Q4)._
+- **Severity: LOW (verified real).** Recommended — small fix. _Added 2026-06-26 from the read-path binding review (`plans/ocs-read-binding-and-verification.md`, Q4 — since deleted; its conclusions are in [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md))._
 - **File:** `crates/ika-sui-client/src/lib.rs:1093-1121` (JSON-RPC) and `crates/ika-network/.../grpc_backend.rs:223-235` (gRPC); caller `get_pending_active_set_ids` (`lib.rs:583-603`).
 - **Mechanism (plain terms):** `get_extended_field_value_bcs` reads the `pending_active_set` `ExtendedField`'s single dynamic field by **listing** it (`get_dynamic_fields`/`list_dynamic_fields`) and taking `.first().object_id` — with **no** local derivation of the child id from the wrapper and **no** owner-check that the proven child's `Owner` is the wrapper id. Of the object-graph hops from the pinned system/coordinator roots, this is the *only* one that is neither **(a) derived** nor **(b) owner-bound** — it is **(c) unbound**: a relay chooses which proven child id the reader consumes. (Every trust-critical hop — the versioned `*Inner` children, the inline committees, the validator pools, the `session_events` bags — is bound; see the Q4 graph.)
 - **Why LOW (not critical):** `pending_active_set` feeds **discovery only** (`known_peers`, merge-only), never consensus/committee/quorum — those come from the *inline*, bound committees in the proven `SystemInner`. Resolved peers pass `validator_info.verify()` + self-exclusion, so a relay cannot inject an attacker-controlled peer (it can't forge a `StakingPool` signature or a p2p address for a key it doesn't hold). Worst case is availability: a malicious relay omits/staffs the staging set, delaying or denying a peer-only joiner's discovery, or showing a stale joiner list. No trust/quorum break.

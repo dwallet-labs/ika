@@ -17,7 +17,7 @@ decision, accepting the boundary asymmetry documented below — the
 gradual-upgrade cluster suite is the activation gate, and the
 `consensus_key_authority_names` flag definition in ika-protocol-config
 carries the caveat. The durable behavioral contract lives in
-[`../specs/committee-consensus-keys.md`](../specs/committee-consensus-keys.md);
+[`../specs/committee-consensus-keys.md`](../../specs/committee-consensus-keys.md);
 this file is kept for the INTENT and the record of the first, reverted
 flip attempt.
 

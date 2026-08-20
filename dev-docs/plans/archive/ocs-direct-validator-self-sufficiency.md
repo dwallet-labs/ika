@@ -12,7 +12,7 @@ Status: landed — all slices done. The durable behavior of Slices 2 and 3
 (the persisted verified-object cache and its head; `RetainedFullnodeTransport`
 serving a mirrored peer's ratchet from retained end-of-epoch checkpoints) now
 lives in
-[`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)
+[`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md)
 under "Retained state"; this file keeps the slice-by-slice intent and the
 Option A/B trade-off. Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
 (cluster-validated). **Slice 3** (serve a mirrored peer's committee ratchet from
@@ -22,7 +22,7 @@ the direct node's retained store) is now done too, via **Option A** — a
 fullnode, with no new cross-crate trait, anemo RPC, or ratchet change (Option B
 was abandoned because `ika-network` can't depend on `ika-core`). Resolves review
 finding 17
-([`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
+([`../reviews/ocs-grpc-migration-review.md`](../../reviews/archive/ocs-grpc-migration-review.md)).
 
 ## Problem
 
@@ -162,7 +162,7 @@ retention) the degrade differs by read kind:
   verified cache *through* a tripped tripwire (`verified_anchor_object`); the
   backoff above stays the fallback on a genuine cache miss. Durable behavior:
   the OCS spec's *cache fast path*
-  ([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
+  ([`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md)).
 - **Ratchet:** a pruned-and-uncaptured EoE still returns `ProofChainBroken`
   (re-anchor required) — but with Slice 1 the pusher captures committees eagerly,
   so the ratchet rarely reaches back, and a wedge is already observable as the
