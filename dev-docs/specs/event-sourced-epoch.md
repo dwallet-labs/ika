@@ -617,7 +617,10 @@ Two things this costs, both of them transient:
   consensus and produces checkpoints throughout. The drain itself catches up
   fast — measured at 13,196 rounds of backlog entered and drained in **276 ms**,
   because catch-up mode reconstructs rather than recomputes — so the cost is
-  NOT the drain. What an operator waits for is the resumption after catch-up
+  NOT the drain. (Read that from the catch-up log line'''s own `gap_rounds`, not
+  from a gauge sampled after the fact: the drain finishes before an external
+  poll can read its starting point, so a sampled "rounds rebuilt" figure
+  under-reports the backlog by however long the sampler took to arrive.) What an operator waits for is the resumption after catch-up
   exits: sessions going active again and contributing output. That is the
   interval the scenario's assertion 3 measures, and the drain's own catch-up
   time is a misleading proxy for it.
