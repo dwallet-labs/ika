@@ -1601,7 +1601,14 @@ impl ClusterOfProcesses {
             .validator_authorities
             .get(subject_index)
             .with_context(|| format!("subject index {subject_index} out of range"))?
-            .all_renderings();
+            // FAULT F5: match only the FULL-length authority names, the way
+            // this reader did before run 2. The series is labelled by
+            // `authority_name.concise()`, so this set can never match and the
+            // reader returns an empty result for every validator — healthy or
+            // not. The calibration must catch it during the control phase.
+            .both()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
         let body = observer.metrics().await?;
         output_sessions_authored_by(&body, &subject)
     }
