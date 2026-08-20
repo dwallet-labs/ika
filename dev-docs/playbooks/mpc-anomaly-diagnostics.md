@@ -11,6 +11,18 @@ upload them through `ika-proxy` and does not contain a Loki client. Operators
 choose whether to retain those local logs or collect them with their own Loki
 agent.
 
+**The self-malicious case also writes to DISK, and that is the copy to ask
+for.** When this node recognises ITSELF as malicious, the snapshot is
+additionally written to
+`<db_path>/mpc_diagnostics/epoch_{epoch}__{anomaly_kind}__{session}.json`
+(`persist_malicious_diagnostic_file`), and the success path logs at `ERROR`
+asking for that file to be attached to the report. It exists because in the
+#1978 investigation the convicted node's log window had rotated out before
+anyone asked for it. The filename is deterministic, so a re-emission —
+a post-restart replay re-convicting, for instance — overwrites the file
+rather than accumulating copies. It fires only on self-recognition, so its
+absence says nothing about other anomaly kinds.
+
 The snapshot is a metadata-only reconstruction aid implemented by
 `dwallet_mpc/mpc_diagnostics.rs:BoundedSessionDiagnostics`. Each session keeps
 at most 64 recent events. Once the buffer is full, the oldest event is dropped
@@ -218,7 +230,10 @@ The emitted line otherwise has stable top-level fields for filtering:
 `local_party_id`, `tracked_session`,
 `local_output_observed`, `quorum_reached_without_local_output`, `error_code`,
 `error_backtrace_present`, `error_backtrace_truncated`,
-`local_authority_malicious`, and `recent_trace_dropped_events`.
+`local_authority_malicious`, `diagnostic_serialization_succeeded`, and
+`recent_trace_dropped_events`. Two more are shape-conditional, which is why
+the branch on `diagnostic_shape` matters: `local_output_rejected` appears on
+the snapshot shape only, and `local_authority` on the context shape only.
 `diagnostic_json` contains the complete
 versioned, privacy-safe snapshot as one JSON value. This remains one physical
 log line in both text and JSON logging modes.
@@ -413,7 +428,10 @@ filter the stored JSON line instead:
 
 ## Alerting metrics
 
-Four low-cardinality counters accompany the local log:
+Five low-cardinality counters accompany the local log — including
+`ika_dwallet_mpc_anomaly_snapshots_dropped_total{reason}` from the Operator
+rule above, which is the one to alert on: it means snapshots are being
+suppressed, so the silence of the other four stops being evidence.
 
 - `ika_dwallet_mpc_anomaly_snapshots_total{anomaly_kind,session_type,severity}`
   increments once per deduplicated snapshot (`session_type="unknown"` is used
@@ -536,6 +554,36 @@ ambiguous questions directly (for the observed System session at round
 Thus the same external symptom no longer conflates “the validator voted for a
 different result” with “the winning MPC computation reported the validator as
 malicious.” No voting, finalization, cache, or lifecycle decision is changed.
+
+## Triaging a spectator: a node that follows without contributing
+
+A validator can follow consensus, complete sessions, and export every other
+metric while never ACTIVATING a session of its own. No anomaly snapshot
+fires for it, because from the node's own point of view nothing went wrong.
+Two metric readings name it directly, and both are cheap:
+
+- **`ika_dwallet_mpc_session_state_count{state="active"} == 0` while
+  `state="completed"` keeps growing.** The node is completing sessions it
+  reconstructed from consensus rather than computing any. Cross-check
+  `ika_dwallet_mpc_sessions_reconstructed_total` for the reconstruction-only
+  shape; a session marked `session_origin="reconstructed_from_consensus"`
+  with `active=false` is the signature.
+- **`ready_to_advance_result_total` with NO series at all** is a different
+  failure class from the same metric showing `not_ready` samples. No series
+  means zero sessions ever reached the readiness check — nothing was ever
+  attempted. Samples labelled `not_ready` mean sessions were attempted and
+  are stuck. Reading the first as the second sends you to the wrong
+  subsystem, which is exactly what happened in the v1.2.6 mid-epoch-restart
+  incident this rule comes from.
+
+An absent series is not a zero. Confirm the metric is being exported at all
+before concluding the count is zero.
+
+The mechanism behind the restart flavor of this — the internal presign
+pool's ordinal stream, its seed and fast-forward rules, and the two log
+lines that name them — is in
+[`../specs/internal-presign-pool.md`](../specs/internal-presign-pool.md);
+`crates/ika-upgrade-test/tests/restart_spectator.rs` is the gate.
 
 ## Information the MPC library does not expose
 

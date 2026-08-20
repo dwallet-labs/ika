@@ -260,6 +260,18 @@ profile).
   code (real failures, artifacts present) — distinct from runner death.
 - **Cluster parallelism is memory-bound**: 4-way is the validated
   default; 8-way OOM-kills the 96Gi pod and presents as runner death.
+- **A targeted test run is not evidence for a change in a tested module —
+  run the WHOLE module.** Two real cases: an ECDSA signing-message fix
+  passed its own tests while leaving a sibling layout test asserting a
+  contract the change had removed; a presign consensus-order fix passed all
+  three of its targeted tests while orphaning `mark_presign_as_used`, which
+  broke the module's consumption assertions. Both surfaced only on the
+  full-module run. The trap is self-reinforcing: heavy MPC modules flake
+  under parallelism, which is exactly what tempts a narrow filter — so run
+  the module single-threaded rather than running less of it, and see the
+  flake-provenance rule in
+  [`../learnings/pitfalls.md`](../learnings/pitfalls.md) before triaging a
+  module failure as yours.
 - **dwallet-MPC integration tests are CPU-bound — isolate them locally**:
   each `dwallet_mpc::integration_tests` case drives real class-groups MPC
   across an in-process committee, so run alongside the rest of a

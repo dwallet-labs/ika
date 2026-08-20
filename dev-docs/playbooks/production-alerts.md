@@ -200,30 +200,32 @@ from the consensus store on boot (`../specs/event-sourced-epoch.md`), and no
 MPC work is lost that the committee has not already agreed. Capture the MPC
 service's logs first; a drain that stops without dying is not a failure mode
 with a known cause yet, and ika #2064 tracks the end-to-end coverage for it.
-
-**Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
-restarted mid-epoch refolds the epoch from its first commit, so its raw lag
-legitimately exceeds any stall threshold for as long as that runs. The gauge above
-already accounts for the catch-up the MPC service is reporting (#2036); the raw
-lag is a dashboard signal, not a page.
-
-**Operator action**: look for an earlier fatal in the dWallet MPC service on
-that host — the deliberate `break` on self-recognised maliciousness ends the
-service loop for the life of the process (Alert 2 fires for that one) — and
-restart the node if nothing else explains it. Recovery clears the gauge and logs
+Look for an earlier fatal in the dWallet MPC service on that host too — the
+deliberate `break` on self-recognised maliciousness ends the service loop for
+the life of the process, and Alert 2 fires for that one. Recovery logs
 `MPC subsystem has caught back up with consensus`.
+
+## Alert 8: a validator is draining a backlog that stopped shrinking
 
 ```promql
 ika_mpc_catch_up_stuck_condition_active == 1
 # no for-duration: the condition already carries a 15-minute bound
 ```
 
-The complement: this validator IS draining a backlog, and the backlog has
-stopped shrinking. **Operator action**: do not restart — a restart discards the
-drain's progress and refolds the epoch from its first commit. Check `ika_dwallet_mpc_catchup_gap_rounds` on
-the host; while that gap falls the drain is healthy and this gauge reads 0, so a
-`1` means it went flat or started growing, and something other than the backlog
-is holding the service up.
+The complement to Alerts 6 and 7: this validator IS draining a backlog, and
+the backlog has stopped falling. **Operator action**: do NOT restart — a
+restart discards the drain's progress and refolds the epoch from its first
+commit, which is strictly backwards. Check
+`ika_dwallet_mpc_catchup_gap_rounds` on the host; while that gap falls the
+drain is healthy and this gauge reads 0, so a `1` means the gap went flat or
+started growing and something other than the backlog is holding the service
+up.
+
+**Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
+restarted mid-epoch refolds the epoch from its first commit, so its raw lag
+legitimately exceeds any stall threshold for as long as that runs. The
+condition gauges above already account for the catch-up the MPC service is
+reporting; the raw lag is a dashboard signal, not a page.
 
 ## Secondary signals worth dashboarding (no page)
 
@@ -289,7 +291,7 @@ is holding the service up.
     (when the builders are gated and the drain is not). A large value **during
     a boot** is the expected replay peak and drains when the builders are
     released; a large value on a running node is a stuck builder, which
-    `ika_pending_dwallet_checkpoint_queue_depth` and
+    `ika_dwallet_checkpoint_pending_queue_depth` and
     `ika_last_constructed_dwallet_checkpoint` diagnose;
   - `ika_epoch_processed_consensus_messages` grows monotonically with the
     epoch's transaction count and drops at the boundary. It is the epoch's
