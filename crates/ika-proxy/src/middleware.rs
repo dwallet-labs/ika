@@ -1,6 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-use crate::{consumer::ProtobufDecoder, peers::SuiNodeProvider};
+use crate::{consumer::ProtobufDecoder, metrics::PROXY_REGISTRY, peers::SuiNodeProvider};
 use axum::{
     body::Body,
     body::Bytes,
@@ -14,17 +14,18 @@ use axum_extra::typed_header::TypedHeader;
 use bytes::Buf;
 use hyper::header::CONTENT_ENCODING;
 use once_cell::sync::Lazy;
-use prometheus::{CounterVec, proto::MetricFamily, register_counter_vec};
+use prometheus::{CounterVec, proto::MetricFamily, register_counter_vec_with_registry};
 use std::env;
 use std::sync::Arc;
 use sui_tls::TlsConnectionInfo;
 use tracing::{debug, error};
 
 static MIDDLEWARE_OPS: Lazy<CounterVec> = Lazy::new(|| {
-    register_counter_vec!(
-        "middleware_operations",
+    register_counter_vec_with_registry!(
+        "ika_proxy_middleware_operations",
         "Operations counters and status for axum middleware.",
-        &["operation", "status"]
+        &["operation", "status"],
+        PROXY_REGISTRY
     )
     .unwrap()
 });

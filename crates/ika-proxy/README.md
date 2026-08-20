@@ -200,8 +200,8 @@ All incoming requests are validated through middleware:
 
 The proxy exposes comprehensive metrics about its operation:
 
-- **`http_handler_hits`**: Request count by handler and peer
-- **`http_handler_duration_seconds`**: Request latency by handler and peer
+- **`ika_proxy_http_handler_hits`**: Request count by handler and peer
+- **`ika_proxy_http_handler_duration_seconds`**: Request latency by handler and peer
 - **`ika_sui_client_sui_rpc_errors`**: Sui gRPC call errors by method
 - **`ika_proxy_uptime`**: Proxy uptime information
 

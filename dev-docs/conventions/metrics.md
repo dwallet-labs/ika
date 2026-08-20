@@ -44,15 +44,20 @@ parts:
   without anybody remembering to update anything — which was the failure
   mode of every list-based version of this rule.
 
-  **The check has one blind spot, and it is worth knowing before you
-  trust a green run.** Its extractor matches `register_*_with_registry!`
-  only, so a metric registered on prometheus's *default* registry with the
-  bare `register_*!` form is neither validated nor inventoried. `ika-proxy`
-  registers nine that way and they ARE exported — `ika-proxy/src/metrics.rs`
-  gathers the default registry onto its `/metrics` — so ika's binaries do
-  in practice export a handful of unprefixed names. Treat rules 1 and 2 as
-  binding on everything the extractor can see, and register new metrics
-  with an explicit registry so they stay in scope.
+  **Register with an explicit registry, never the bare macro.** The
+  extractor reads `register_*_with_registry!` call sites, so the bare
+  `register_*!` forms — which write to prometheus's process-global default
+  registry — used to be outside every rule above: not prefix-checked, not
+  inventoried, and still exported. That was not hypothetical. `ika-proxy`
+  carried nine such metrics (`consumer_operations`, `relay_pressure`,
+  `http_handler_hits` and friends) straight through the 1.2.0 rename,
+  gathered onto its `/metrics` by `ika-proxy/src/metrics.rs` under
+  unprefixed names that no dashboard author could have found here. They are
+  now `ika_proxy_*` in `metrics::PROXY_REGISTRY`, and the checker **rejects
+  the bare form outright** as its third rule, so the blind spot cannot
+  reopen. A new metric therefore needs a registry the endpoint gathers; if a
+  crate has none, give it one static registry rather than reaching for the
+  default.
 
   Note that `ika_consensus_*` **is** ika's to use — those are ika's own
   consensus-handling metrics (`ika_consensus_handler_processed` and
@@ -346,20 +351,20 @@ ika_consensus_boot_replay_target_commit_index
 ika_consensus_calculated_throughput
 ika_consensus_calculated_throughput_profile
 ika_consensus_commit_silence_seconds
-ika_consensus_fold_blocked_seconds_total
-ika_consensus_fold_blocked_sends_total
 ika_consensus_committed_messages
 ika_consensus_committed_subdags
 ika_consensus_committed_user_transactions
+ika_consensus_fold_blocked_seconds_total
+ika_consensus_fold_blocked_sends_total
 ika_consensus_handler_cancelled_transactions
 ika_consensus_handler_num_low_scoring_authorities
 ika_consensus_handler_processed
-ika_consensus_round_channel_depth
 ika_consensus_handler_scores
 ika_consensus_handler_transaction_sizes
 ika_consensus_last_committed_timestamp_seconds
 ika_consensus_manager_shutdown_latency
 ika_consensus_manager_start_latency
+ika_consensus_round_channel_depth
 ika_current_epoch
 ika_current_protocol_version
 ika_current_voting_right
@@ -564,6 +569,15 @@ ika_off_chain_assembly_wedged
 ika_own_mpc_data_blob_unhealthy
 ika_protocol_upgrade_effective_threshold
 ika_protocol_upgrade_supporting_stake
+ika_proxy_consumer_operations
+ika_proxy_consumer_operations_duration_seconds
+ika_proxy_consumer_operations_submitted
+ika_proxy_http_handler_duration_seconds
+ika_proxy_http_handler_hits
+ika_proxy_middleware_operations
+ika_proxy_protobuf_compression_seconds
+ika_proxy_relay_duration_seconds
+ika_proxy_relay_pressure
 ika_reconfig_phase
 ika_remote_dwallet_checkpoint_forks
 ika_remote_system_checkpoint_forks
@@ -661,6 +675,31 @@ ika_validator_temperature_celsius
 ika_validator_temperature_critical_celsius
 ika_validator_up
 ```
+
+## ika-proxy rename table (legacy → current)
+
+The proxy's own nine metrics — the ones the default-registry blind spot hid
+from the 1.2.0 rename — moved to `ika_proxy_*` and into
+`ika_proxy::metrics::PROXY_REGISTRY`. Types, help strings, buckets and label
+sets are unchanged, so a dashboard or alert needs only the name substituted.
+
+| legacy | current |
+|---|---|
+| `consumer_operations` | `ika_proxy_consumer_operations` |
+| `consumer_operations_duration_seconds` | `ika_proxy_consumer_operations_duration_seconds` |
+| `consumer_operations_submitted` | `ika_proxy_consumer_operations_submitted` |
+| `http_handler_duration_seconds` | `ika_proxy_http_handler_duration_seconds` |
+| `http_handler_hits` | `ika_proxy_http_handler_hits` |
+| `middleware_operations` | `ika_proxy_middleware_operations` |
+| `protobuf_compression_seconds` | `ika_proxy_protobuf_compression_seconds` |
+| `relay_duration_seconds` | `ika_proxy_relay_duration_seconds` |
+| `relay_pressure` | `ika_proxy_relay_pressure` |
+
+The proxy's `/metrics` still gathers prometheus's default registry, but only
+because the prometheus crate installs its own process collector there
+(`process_cpu_seconds_total`, `process_resident_memory_bytes`, …). Those are
+upstream's names in upstream's namespace; ika registers nothing on that
+registry, and CI now rejects any attempt to.
 
 ## 1.2.0 rename table (legacy → current)
 

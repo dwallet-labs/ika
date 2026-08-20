@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::admin::ReqwestClient;
+use crate::metrics::PROXY_REGISTRY;
 use crate::prom_to_mimir::Mimir;
 use crate::remote_write::WriteRequest;
 use anyhow::Result;
@@ -13,42 +14,48 @@ use multiaddr::Multiaddr;
 use once_cell::sync::Lazy;
 use prometheus::proto::{self, MetricFamily};
 use prometheus::{Counter, CounterVec, HistogramVec};
-use prometheus::{register_counter, register_counter_vec, register_histogram_vec};
+use prometheus::{
+    register_counter_vec_with_registry, register_counter_with_registry,
+    register_histogram_vec_with_registry,
+};
 use prost::Message;
 use protobuf::CodedInputStream;
 use std::io::Read;
 use tracing::{debug, error};
 
 static CONSUMER_OPS_SUBMITTED: Lazy<Counter> = Lazy::new(|| {
-    register_counter!(
-        "consumer_operations_submitted",
+    register_counter_with_registry!(
+        "ika_proxy_consumer_operations_submitted",
         "Operations counter for the number of metric family types we submit, excluding histograms, and not the discrete timeseries counts.",
+        PROXY_REGISTRY
     )
     .unwrap()
 });
 static CONSUMER_OPS: Lazy<CounterVec> = Lazy::new(|| {
-    register_counter_vec!(
-        "consumer_operations",
+    register_counter_vec_with_registry!(
+        "ika_proxy_consumer_operations",
         "Operations counters and status from operations performed in the consumer.",
-        &["operation", "status"]
+        &["operation", "status"],
+        PROXY_REGISTRY
     )
     .unwrap()
 });
 static CONSUMER_ENCODE_COMPRESS_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
-    register_histogram_vec!(
-        "protobuf_compression_seconds",
+    register_histogram_vec_with_registry!(
+        "ika_proxy_protobuf_compression_seconds",
         "The time it takes to compress a remote_write payload in seconds.",
         &["operation"],
         vec![
             1e-08, 2e-08, 4e-08, 8e-08, 1.6e-07, 3.2e-07, 6.4e-07, 1.28e-06, 2.56e-06, 5.12e-06,
             1.024e-05, 2.048e-05, 4.096e-05, 8.192e-05
         ],
+        PROXY_REGISTRY
     )
     .unwrap()
 });
 static CONSUMER_OPERATION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
-    register_histogram_vec!(
-        "consumer_operations_duration_seconds",
+    register_histogram_vec_with_registry!(
+        "ika_proxy_consumer_operations_duration_seconds",
         "The time it takes to perform various consumer operations in seconds.",
         &["operation"],
         vec![
@@ -62,6 +69,7 @@ static CONSUMER_OPERATION_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
             22.25, 22.5, 22.75, 23.0, 23.25, 23.5, 23.75, 24.0, 24.25, 24.5, 24.75, 25.0, 26.0,
             27.0, 28.0, 29.0, 30.0
         ],
+        PROXY_REGISTRY
     )
     .unwrap()
 });
