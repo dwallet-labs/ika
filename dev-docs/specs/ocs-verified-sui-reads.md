@@ -1237,16 +1237,48 @@ because the bytes came from a peer's disk rather than its fullnode.
   and withholding — the relay's already-documented privilege — never
   forgery.
 - **The proof chain does not authenticate a struct's SHAPE, only its
-  bytes.** `DWalletCoordinatorInnerV1` and `DWalletNetworkEncryptionKey`
-  are plain `#[derive(Serialize, Deserialize)]` structs with no version
-  tag. A Move field-add WITHIN the same version therefore mis-decodes
-  while passing every gate above — committee BLS, artifacts digest,
-  Merkle inclusion, id-binding, currency — because every one of those
-  proves the bytes are the chain's, and none proves the reader's struct
-  still matches them. Contrast `VersionedMPCData`, a tagged enum that
-  fails closed on an unknown variant. Treat "it verified" as a statement
-  about provenance, never about well-formedness, and give any new leaf
-  type read through this path a version tag.
+  bytes.** `DWalletCoordinatorInnerV1`, `SystemInnerV1`, and
+  `DWalletNetworkEncryptionKey` are plain `#[derive(Serialize,
+  Deserialize)]` structs with no version tag, so no gate above —
+  committee BLS, artifacts digest, Merkle inclusion, id-binding,
+  currency — says anything about whether the reader's struct still
+  describes the bytes: every one of them proves the bytes are the
+  chain's. Contrast `VersionedMPCData`, a tagged enum that fails closed
+  on an unknown variant. Treat "it verified" as a statement about
+  provenance, never about well-formedness, and give any new leaf type
+  read through this path a version tag.
+
+  **Scoped precisely** (the residual is narrower than "a field-add
+  mis-decodes", and the guards are build-time):
+  - Decoding is already maximally strict — every leaf site uses
+    exhausting `bcs::from_bytes`, which runs to `end()` and rejects
+    residue; there is no partial-read decoder in the repo. Each mirror is
+    also the last value in its byte stream and ends in a fixed-width tail
+    (`extra_fields: Bag` is 40 bytes, the fieldless `state` enum one), so
+    a length-changing field-add trips `remaining input` or dies on a
+    strict `bool`/unknown variant. **The silent case is a same-total-length
+    reshuffle** — a removed field replaced by one of equal encoded width,
+    or a same-width retype. That still mis-decodes with no signal.
+  - An in-place field-add cannot reach mainnet/testnet at all: Sui's
+    compatible-policy upgrade checker rejects datatype layout changes.
+    Drift arrives via a `const VERSION` bump plus `migrate()`, or a fresh
+    package publish — which is why the guards live at build time
+    (`scripts/check-chain-mirror-layout.sh`, golden layout tests in
+    `ika-types`, and an attributed decode error naming the Move source).
+  - **Those guards bind this repo's releases, not a running node.** They
+    say nothing about a node pointed at a foreign or hand-patched package,
+    or a redeploy built from a different source tree; and the Move-side
+    check proves only that the Move declaration has not moved since a human
+    last checked it against the Rust mirror, not that the mirror was ever
+    right. Nothing authenticates shape at runtime.
+  - Related, still open: the version dispatch (`match wrapper.version { 1
+    | 2 => .. }`, in `ika-sui-client/src/lib.rs` and
+    `verified_reader.rs`) asserts that chain versions 1 and 2 share one
+    layout. True today, and now pinned by the `const VERSION` value in
+    `scripts/chain-mirror-layout.txt` so the next bump fails the build —
+    but the arm is not split, because the two versions really do share a
+    layout and separate types would fabricate a distinction the bytes do
+    not have. See `dev-docs/conventions/chain-mirror-layout.md`.
 - **`OBJECT_DIGEST_CANCELLED` is bucketed as `Modified -> Current`** in
   the changeset fold. A cancelled transaction's object entry is not a
   real modification, so folding it as one attributes a currency claim to

@@ -1246,3 +1246,88 @@ mod session_identifier_tests {
         assert!(low < high, "digest order must dominate type and preimage");
     }
 }
+
+// === Layout pin for the untagged chain mirror ===
+//
+// `DWalletNetworkEncryptionKey` carries no version tag: its field order IS the
+// wire format of a `key` object a deployed Move package already wrote, and
+// nothing in those bytes identifies which layout produced them
+// (`crate::chain_mirror`). Changing it does not fail closed anywhere — it
+// silently re-interprets live chain state.
+//
+// The struct literal below is half the guard: every field is written out with
+// no `..Default::default()`, so adding or removing a Rust field fails to
+// COMPILE here. The digest covers what compilation cannot see, a reorder or a
+// retype, which is why every field gets a distinct value.
+//
+// This is the Rust half; the Move half is
+// `scripts/check-chain-mirror-layout.sh`, and both must move together.
+// See dev-docs/conventions/chain-mirror-layout.md.
+#[cfg(test)]
+mod chain_mirror_layout_tests {
+    use super::*;
+    use crate::chain_mirror::DWALLET_NETWORK_ENCRYPTION_KEY;
+    use crate::chain_mirror::test_support::assert_pinned_layout;
+
+    /// Fully populated: every field distinct, every collection non-empty, and a
+    /// deliberately NON-zero `state` variant so a reordering of the state enum
+    /// shows up here too.
+    fn populated_network_encryption_key() -> DWalletNetworkEncryptionKey {
+        DWalletNetworkEncryptionKey {
+            id: ObjectID::new([1; 32]),
+            dkg_at_epoch: 2,
+            network_dkg_public_output: TableVec {
+                contents: Table {
+                    id: ObjectID::new([3; 32]),
+                    size: 4,
+                },
+            },
+            reconfiguration_public_outputs: Table {
+                id: ObjectID::new([5; 32]),
+                size: 6,
+            },
+            dkg_params_for_network: vec![7, 8, 9],
+            supported_curves: vec![10, 11],
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        }
+    }
+
+    #[test]
+    fn dwallet_network_encryption_key_layout_is_pinned() {
+        assert_pinned_layout(
+            DWALLET_NETWORK_ENCRYPTION_KEY,
+            &populated_network_encryption_key(),
+            134,
+            "605dd15140b1c6c2e2437a8f8269d733407771d6288d9941ad162c996b765f55",
+        );
+    }
+
+    /// The state enum's variant INDEX is its wire discriminant, so the order of
+    /// the variant list is layout, not documentation. A single populated value
+    /// pins only the variant it happens to use; this pins all four.
+    #[test]
+    fn dwallet_network_encryption_key_state_variant_indices_are_pinned() {
+        for (variant, index) in [
+            (DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG, 0u8),
+            (DWalletNetworkEncryptionKeyState::NetworkDKGCompleted, 1),
+            (
+                DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+                2,
+            ),
+            (
+                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+                3,
+            ),
+        ] {
+            assert_eq!(
+                bcs::to_bytes(&variant).unwrap(),
+                vec![index],
+                "{variant:?} moved to a different BCS discriminant. This enum mirrors Move \
+                 `DWalletNetworkEncryptionKeyState` \
+                 (contracts/ika_dwallet_2pc_mpc/sources/coordinator_inner.move); reordering \
+                 its variants re-interprets the state of every network encryption key already \
+                 on chain. See dev-docs/conventions/chain-mirror-layout.md."
+            );
+        }
+    }
+}

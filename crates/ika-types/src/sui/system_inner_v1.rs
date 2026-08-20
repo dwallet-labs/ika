@@ -400,4 +400,243 @@ mod tests {
         // No sessions at all in a freshly-locked epoch → trivially ready.
         assert!(sessions_manager(true, 0, 0, 0, 0).all_current_epoch_sessions_completed());
     }
+
+    // === Layout pins for the untagged chain mirrors ===
+    //
+    // `DWalletCoordinatorInnerV1` and `SystemInnerV1` carry no version tag: their
+    // field order IS the wire format of bytes a deployed Move package already
+    // wrote, and nothing in those bytes identifies the layout that produced them
+    // (`crate::chain_mirror`). Changing either struct does not fail closed
+    // anywhere — it silently re-interprets live chain state.
+    //
+    // Two things pin them, and the cheaper one is the struct literal itself:
+    // every field is written out, with no `..Default::default()`, so adding or
+    // removing a Rust field fails to COMPILE here. The digest assertion covers
+    // what compilation cannot see — a reorder or a retype — which is why every
+    // field gets a distinct value: with zeroes everywhere, swapping two `u64`s
+    // would encode identically and slip through.
+    //
+    // These are the Rust half of the guard. The Move half is
+    // `scripts/check-chain-mirror-layout.sh`, and the two must be updated in the
+    // same change, because either side moving alone is exactly the drift.
+    // Rationale and the update procedure: dev-docs/conventions/chain-mirror-layout.md.
+
+    use crate::chain_mirror::test_support::assert_pinned_layout;
+    use crate::chain_mirror::{DWALLET_COORDINATOR_INNER_V1, SYSTEM_INNER_V1};
+    use sui_types::balance::Supply;
+    use sui_types::collection_types::Entry;
+    use sui_types::id::UID;
+
+    /// A distinct 32-byte id per seed, so a reordered pair of `ObjectID` fields
+    /// changes the encoding.
+    fn oid(seed: u8) -> ObjectID {
+        ObjectID::new([seed; 32])
+    }
+
+    fn table(seed: u8) -> Table {
+        Table {
+            id: oid(seed),
+            size: u64::from(seed),
+        }
+    }
+
+    fn bag(seed: u8) -> Bag {
+        Bag {
+            id: UID::new(oid(seed)),
+            size: u64::from(seed),
+        }
+    }
+
+    fn element(seed: u8) -> Element {
+        Element {
+            bytes: vec![seed, seed.wrapping_add(1)],
+        }
+    }
+
+    fn bls_committee(seed: u8) -> BlsCommittee {
+        BlsCommittee {
+            members: vec![BlsCommitteeMember {
+                validator_id: oid(seed),
+                protocol_pubkey: element(seed.wrapping_add(1)),
+            }],
+            aggregated_protocol_pubkey: element(seed.wrapping_add(2)),
+            quorum_threshold: u64::from(seed) + 300,
+            validity_threshold: u64::from(seed) + 400,
+        }
+    }
+
+    fn pricing_info(seed: u8) -> PricingInfo {
+        PricingInfo {
+            pricing_map: VecMap {
+                contents: vec![Entry {
+                    key: PricingInfoKey {
+                        curve: u32::from(seed) + 1,
+                        signature_algorithm: Some(u32::from(seed) + 2),
+                        protocol: u32::from(seed) + 3,
+                    },
+                    value: PricingInfoValue {
+                        fee_ika: u64::from(seed) + 4,
+                        gas_fee_reimbursement_sui: u64::from(seed) + 5,
+                        gas_fee_reimbursement_sui_for_system_calls: u64::from(seed) + 6,
+                    },
+                }],
+            },
+        }
+    }
+
+    fn sessions_keeper_populated(seed: u8) -> SessionsKeeper {
+        SessionsKeeper {
+            sessions: table(seed),
+            session_events: bag(seed.wrapping_add(1)),
+            started_sessions_count: u64::from(seed) + 10,
+            completed_sessions_count: u64::from(seed) + 20,
+            next_session_sequence_number: u64::from(seed) + 30,
+        }
+    }
+
+    /// A fully-populated coordinator inner: every field distinct, every
+    /// collection non-empty, every `Option` `Some`. An empty `Vec` or a `None`
+    /// hides the shape of what it contains, and the shape of what it contains is
+    /// what is being pinned.
+    fn populated_coordinator_inner() -> DWalletCoordinatorInnerV1 {
+        DWalletCoordinatorInnerV1 {
+            current_epoch: 1,
+            sessions_manager: SessionsManager {
+                registered_user_session_identifiers: table(2),
+                user_sessions_keeper: sessions_keeper_populated(3),
+                system_sessions_keeper: sessions_keeper_populated(5),
+                last_user_initiated_session_to_complete_in_current_epoch: 7,
+                locked_last_user_initiated_session_to_complete_in_current_epoch: true,
+                max_active_sessions_buffer: 8,
+            },
+            dwallets: table(9),
+            dwallet_network_encryption_keys: table(10),
+            epoch_dwallet_network_encryption_keys_reconfiguration_completed: 11,
+            encryption_keys: table(12),
+            presigns: table(13),
+            partial_centralized_signed_messages: table(14),
+            pricing_and_fee_management: PricingAndFeeManagement {
+                current: pricing_info(15),
+                default: pricing_info(16),
+                validator_votes: table(17),
+                calculation_votes: Some(PricingInfoCalculationVotes {
+                    bls_committee: bls_committee(18),
+                    default_pricing: pricing_info(21),
+                    working_pricing: pricing_info(22),
+                }),
+                gas_fee_reimbursement_sui_system_call_value: 23,
+                gas_fee_reimbursement_sui_system_call_balance: Balance::new(24),
+                fee_charged_ika: Balance::new(25),
+            },
+            active_committee: bls_committee(26),
+            next_epoch_active_committee: Some(bls_committee(29)),
+            total_messages_processed: 32,
+            last_processed_checkpoint_sequence_number: 33,
+            previous_epoch_last_checkpoint_sequence_number: 34,
+            support_config: SupportConfig {
+                supported_curves_to_signature_algorithms_to_hash_schemes: VecMap {
+                    contents: vec![Entry {
+                        key: 35,
+                        value: VecMap {
+                            contents: vec![Entry {
+                                key: 36,
+                                value: vec![37, 38],
+                            }],
+                        },
+                    }],
+                },
+                paused_curves: vec![39],
+                paused_signature_algorithms: vec![40],
+                paused_hash_schemes: vec![41],
+                signature_algorithms_allowed_global_presign: vec![42],
+            },
+            received_end_of_publish: true,
+            extra_fields: bag(43),
+        }
+    }
+
+    /// A fully-populated system inner; same construction rules as
+    /// [`populated_coordinator_inner`].
+    fn populated_system_inner() -> SystemInnerV1 {
+        SystemInnerV1 {
+            epoch: 1,
+            epoch_start_tx_digest: vec![2, 3, 4],
+            system_object_cap: SystemObjectCap { id: oid(5) },
+            protocol_version: 6,
+            next_protocol_version: Some(7),
+            upgrade_caps: vec![UpgradeCap {
+                id: oid(8),
+                package: oid(9),
+                version: 10,
+                policy: 11,
+            }],
+            approved_upgrades: VecMap {
+                contents: vec![Entry {
+                    key: oid(12),
+                    value: vec![13, 14],
+                }],
+            },
+            validator_set: ValidatorSetV1 {
+                total_stake: 15,
+                reward_slashing_rate: 16,
+                validators: table(17),
+                active_committee: bls_committee(18),
+                next_epoch_committee: Some(bls_committee(21)),
+                previous_committee: bls_committee(24),
+                pending_active_set: ExtendedField { id: oid(27) },
+                validator_report_records: VecMap {
+                    contents: vec![Entry {
+                        key: oid(28),
+                        value: VecSet {
+                            contents: vec![oid(29)],
+                        },
+                    }],
+                },
+                extra_fields: bag(30),
+            },
+            epoch_duration_ms: 31,
+            stake_subsidy_start_epoch: 32,
+            protocol_treasury: ProtocolTreasuryV1 {
+                treasury_cap: TreasuryCap {
+                    id: UID::new(oid(33)),
+                    total_supply: Supply { value: 34 },
+                },
+                stake_subsidy_distribution_counter: 35,
+                stake_subsidy_rate: 36,
+                stake_subsidy_amount_per_distribution: 37,
+                stake_subsidy_period_length: 38,
+                total_supply_at_period_start: 39,
+                extra_fields: bag(40),
+            },
+            epoch_start_timestamp_ms: 41,
+            last_processed_checkpoint_sequence_number: 42,
+            previous_epoch_last_checkpoint_sequence_number: 43,
+            total_messages_processed: 44,
+            remaining_rewards: Balance::new(45),
+            authorized_protocol_cap_ids: vec![oid(46)],
+            witness_approving_advance_epoch: vec!["witness".to_string()],
+            received_end_of_publish: true,
+            extra_fields: bag(47),
+        }
+    }
+
+    #[test]
+    fn dwallet_coordinator_inner_v1_layout_is_pinned() {
+        assert_pinned_layout(
+            DWALLET_COORDINATOR_INNER_V1,
+            &populated_coordinator_inner(),
+            968,
+            "ef75b1f13bb56bde94de39667e2b1881a626779169d45bc98aa71512148d6a5b",
+        );
+    }
+
+    #[test]
+    fn system_inner_v1_layout_is_pinned() {
+        assert_pinned_layout(
+            SYSTEM_INNER_V1,
+            &populated_system_inner(),
+            778,
+            "b68ac624de60d0f14c7842af6e2bb205e8b4a7f94ce8d77f03d292b7b20d7382",
+        );
+    }
 }

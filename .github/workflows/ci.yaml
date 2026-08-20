@@ -104,6 +104,13 @@ jobs:
         # Every should-never-happen log must increment the fleet-visible
         # invariant violation counter through the shared macro.
         run: ./scripts/check-invariant-violation-markers.sh
+      - name: Chain-mirror layout
+        # The Move structs that Rust mirrors with UNTAGGED structs may not
+        # change shape without the Rust mirror and the version dispatch moving
+        # in the same PR: BCS is positional, so their field order is the wire
+        # format of bytes already on chain, and no OCS proof gate verifies shape.
+        # See dev-docs/conventions/chain-mirror-layout.md.
+        run: ./scripts/check-chain-mirror-layout.sh
       - name: Sui version consistency
         # The Sui pin lives in several places that don't update together;
         # see dev-docs/conventions/sui-version-bump.md.
