@@ -65,8 +65,8 @@ conclude from pass/fail alone.
    expectation; the log line is the rest.
 
 4. **Build only the binary that carries the fault, and name it.** A
-   reference binary you can't edit (a fixed release like literal
-   `mainnet-v1.1.8`) cannot carry a producer fault — put the fault in the
+   reference binary you can't edit (a fixed release like the literal
+   v1.3.1 build) cannot carry a producer fault — put the fault in the
    **local** build and run it as the minority in an otherwise-honest
    committee. Build to a clearly-named artifact (`…-FAULTED` / `…-FAULTY-*`)
    so it's never mistaken for a real binary.
@@ -90,79 +90,103 @@ conclude from pass/fail alone.
    land. The test harness *may* stay (it references an externally-built
    faulted binary), but the source mutation does not.
 
-## Worked example — hard-fail: cross_binary state continuity
+## Prefer the compiled-in fault to a source edit
 
-Property: the NEW (v4) binary must decode the network-key DKG output bytes
-the OLD (v3) binary produced. Fault (producer side): append one trailing
-`0u8` to the backward-compat (V2) network DKG output in `network_dkg.rs`
-where `VersionedNetworkDkgOutput::V2(public_output_value)` is built.
-
-```rust
-let mut public_output_value = public_output_value;
-public_output_value.push(0u8); // TEST-TESTING FAULT (temporary — DO NOT MERGE)
-let public_output_value = bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?;
-```
-
-Build the OLD binary only (`MAX_PROTOCOL_VERSION=3` patch + this fault) to
-`ika-validator-max3-FAULTED`. Outcome shape: **hard-fail** — strict
-`bcs::from_bytes` rejects the trailing byte; the key can't be instantiated;
-the epoch wedges. Confirm in logs within minutes, then kill:
+The reconfiguration-message fault this repo uses most is no longer a source
+mutation you add and revert. It lives permanently in the tree behind the
+`test-testing` cargo feature, in the main reconfiguration advance path
+(`crytographic_computation/mpc_computations.rs`, the
+`GuaranteedOutputDeliveryRoundResult::Advance` arm), and appends one trailing
+byte to this validator's outgoing round message. It is compiled out of every
+normal build, so the only way to produce a faulty binary is an explicit
+`--features test-testing`:
 
 ```bash
-grep -rh "RemainingInput\|could not instantiate network key" \
-  $UPGRADE_TEST_DIR/validator-*/node.log
-# observed: mpc_manager: could not instantiate network key ... error=BcsError(RemainingInput)
+cargo build --release -p ika-node --bin ika-validator --features test-testing
+cp target/release/ika-validator /tmp/ika-validator-FAULTY-RECONFIG
 ```
 
-A *green* cross_binary here would mean the harness doesn't actually exercise
-state continuity — investigate before trusting it.
+That is strictly better than editing source: it cannot be forgotten in a
+working tree, it cannot merge by accident, and the faulty binary is a named
+artifact rather than a build you have to remember is dirty. **When a fault
+you need already exists as a feature gate, use it.** Reach for a source
+mutation only for a one-off boundary no gate covers, and then follow the
+revert discipline in step 7.
 
 ## Worked example — recoverable: cross-binary malicious-party detection
 
-Property: in a mixed-binary committee, honest validators identify and
-exclude a validator that broadcasts a malformed contribution. Fault (one
-party's outgoing message): corrupt the `Advance { message }` arm (NOT the
-`Finalize` output) of the backward-compat reconfiguration in
-`reconfiguration.rs`:
+Property: in a mixed-binary committee, honest validators identify a
+validator that broadcasts a malformed contribution and reconfigure without
+it.
 
-```rust
-GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-    let mut message = message;
-    message.push(0u8); // TEST-TESTING FAULT (temporary — DO NOT MERGE)
-    Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-}
-```
-
-Harness: `crates/ika-upgrade-test/tests/malicious_cross_binary.rs` — boot a
-4-validator committee on the HONEST binary (literal `mainnet-v1.1.8`), let
-genesis DKG finish, then `stop_and_swap(&[3], faulty_local)` ONE validator
-to the fault-built local binary (a mixed committee, staying at v3). Outcome
-shape: **recoverable** — the honest validators reject validator 3, reshare
-without it, and the network reaches epoch 3, so **the test PASSES**. The
-proof is the log:
+Harness: `crates/ika-upgrade-test/tests/malicious_v131.rs`. It boots a
+4-validator committee on the HONEST literal v1.3.1 release, lets the genesis
+network DKG finish, then swaps ONE validator to the `--features test-testing`
+build so it corrupts its outgoing reconfiguration message at the next epoch
+boundary.
 
 ```bash
-grep -rh "malicious actors identified & recorded\|malicious parties detected" \
-  $UPGRADE_TEST_DIR/validator-*/node.log
-# observed: dwallet_mpc_service: malicious parties detected ... malicious_parties=[1]
-#           mpc_manager: malicious actors identified & recorded ... {k#…}
+gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v131
 ```
 
-Specificity check (step 6): only `malicious_parties=[1]` (the one faulty
-validator) is flagged while the committee still reaches quorum. That
-*specificity* is the control — it proves the fault was caught, not that the
-binaries are blanket-incompatible (a wire-incompat would have failed every
-cross-binary message and never reached quorum). Had a *clean* swapped
-validator also been flagged, you'd be measuring incompat, not detection.
+Outcome shape: **recoverable** — the honest validators exclude the faulty
+one, reshare without it (committee dips to 3), and the network still reaches
+epoch 3, so **the test PASSES**. The exit code therefore proves nothing on
+its own, which is exactly the trap this playbook exists for. Here the
+assertion is programmatic rather than a log grep: the scenario scrapes
+`ika_dwallet_mpc_malicious_actors_count` via
+`expect_malicious_actors_at_least(&[3], 1)`. The network could reach epoch 3
+without flagging anyone, and that is the vacuous pass the gauge assertion
+catches.
+
+Specificity check (step 6): only the faulty validator is flagged, while the
+committee still reaches quorum. That specificity is the control — it proves
+the fault was caught, not that the two binaries are blanket-incompatible. A
+wire incompatibility would have failed every cross-binary message and never
+reached quorum; had a *clean* swapped validator also been flagged, you would
+be measuring incompatibility, not detection.
+
+What a green `malicious_v131` buys you is the right to trust a different
+run: it shows `v131_rollout`'s zero-malicious gate would actually fire on a
+real divergence, rather than reading zero because nothing ever checks.
+
+## Worked example — hard-fail: running the fault through the gate itself
+
+The same fault, pointed at the compatibility gate rather than at the
+detection test, inverts the outcome shape:
+
+```bash
+gh workflow run upgrade-test.yaml --ref <branch> \
+  -f test=v131_rollout -f test_testing_fault=true
+```
+
+`v131_rollout` requires mixed reshares to converge byte-identically with
+ZERO malicious reports, so a faulty validator must break it. **This run is
+expected to FAIL**, and its logs must show the specific zero-malicious or
+output-convergence assertion firing. A green run here is the red flag: it
+would mean the gate's own assertions are vacuous.
+
+This is the general shape worth internalizing — one fault, two harnesses,
+opposite expected exit codes. Neither exit code is the assertion by itself;
+what you check is that the predicted evidence appeared in the predicted
+place.
+
+## Artifacts and logs
+
+Node logs land at `$UPGRADE_TEST_DIR/validator-*/node.log` locally. From a
+CI dispatch, pull `upgrade-test-node-logs-<test>-<attempt>` (see
+[`ci-suites.md`](ci-suites.md)) — and note that a runner-pod death drops
+every artifact, so a run with no logs is a run with no evidence, not a run
+with no findings.
 
 ## Pitfalls (learned the hard way)
 
 - **Wrong injection side.** "Local can't read 1.1.8's output" needs a
-  *producer* corruption on 1.1.8's side (impossible — it's a fixed binary)
-  or a *consumer* corruption that simulates it; "1.1.8 rejects a bad local
-  validator" needs the *local broadcast message* corrupted. Decide which
-  direction you're testing before editing (see step 2). These are not
-  interchangeable.
+  *producer* corruption on the release's side (impossible — it's a fixed
+  binary) or a *consumer* corruption that simulates it; "the release
+  rejects a bad local validator" needs the *local broadcast message*
+  corrupted. Decide which direction you're testing before editing (see
+  step 2). These are not interchangeable.
 - **Immutable reference binaries.** You cannot add a byte to a released
   binary's output. Put producer faults in the build you control and run it
   as a minority among honest reference nodes.

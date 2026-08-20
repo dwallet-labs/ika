@@ -1,12 +1,23 @@
 # Plan: consensus keys reachable by name (toward consensus-key-signed certs)
 
+> ARCHIVED PLAN — the identity flip shipped, was reverted, and shipped again;
+> `AuthorityName` is now the raw Ed25519 consensus key at every supported
+> version. Current behavior is
+> [`../../specs/committee-consensus-keys.md`](../../specs/committee-consensus-keys.md).
+> **The body's "Redesign" section is false at HEAD** — it says
+> `new_with_protocol_keys` is gone and `AuthorityName` stays BLS-derived; both
+> are the reverted first attempt, and only this file's own status header records
+> the reinstatement. Kept for the design rationale nothing else carries: the
+> rejected `Vec<u8>` and enum encodings, and the producer/consumer basis-mismatch
+> wedge. Not maintained.
+
 Status: landed (2026-07-01, PR #1762 — `c875d88795`); identity flip
 REINSTATED version-gated at protocol v6 (2026-07-26, PR #1911) by
 decision, accepting the boundary asymmetry documented below — the
 gradual-upgrade cluster suite is the activation gate, and the
 `consensus_key_authority_names` flag definition in ika-protocol-config
 carries the caveat. The durable behavioral contract lives in
-[`../specs/committee-consensus-keys.md`](../specs/committee-consensus-keys.md);
+[`../specs/committee-consensus-keys.md`](../../specs/committee-consensus-keys.md);
 this file is kept for the INTENT and the record of the first, reverted
 flip attempt.
 

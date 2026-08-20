@@ -8,7 +8,7 @@ serve dWallet sessions throughout. This file is the protocol-level
 contract that any change touching versioning, serialization, or the
 epoch boundary must preserve. The out-of-process harness that verifies
 it lives in `crates/ika-upgrade-test/`; the design record and findings
-are in [`../plans/cross-binary-upgrade-testing.md`](../plans/cross-binary-upgrade-testing.md).
+are in [`../plans/cross-binary-upgrade-testing.md`](../plans/archive/cross-binary-upgrade-testing.md).
 
 ## How a version advances
 
@@ -237,6 +237,19 @@ drives them across epochs. The surviving scenarios (current build only):
   workflow's `test_testing_fault` input runs the same fault through
   `v131_rollout` itself (that run must fail closed); `malicious_v131` is
   also directly dispatchable (the workflow builds the faulty binary).
+- `tests/mid_epoch_rollback.rs` — the only BACKWARD direction in the
+  matrix: the candidate runs the network, then the v1.3.1 release is put
+  back on one validator MID-EPOCH, on stores the candidate has been
+  writing. It asserts that the old binary re-derives the epoch against
+  empty fold-side tables, counts the already-settled work it re-sends at
+  the peers against a control window of ordinary traffic, and requires a
+  peer to witness it authoring MPC output again before the boundary. The
+  whole experiment must fit inside one epoch, because a boundary hands the
+  node a fresh epoch store and ends the experiment. What it measured is in
+  [`event-sourced-epoch.md`](event-sourced-epoch.md) ("Rolling back").
+- `tests/restart_spectator.rs` — a validator restarted mid-epoch must
+  resume contributing rather than following consensus as a spectator,
+  asserted on the internal presign pool's ordinal-stream log lines.
 How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the

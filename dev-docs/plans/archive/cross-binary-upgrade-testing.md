@@ -1,5 +1,16 @@
 # Cross-Binary Upgrade Testing
 
+> ARCHIVED PLAN — built by #1727, then superseded. **The two tests its results
+> table names, `tests/cross_binary.rs` and `tests/v118_upgrade.rs`, were deleted
+> in #1895** (`0f2679799f`); the current scenarios are `v131_rollout`,
+> `v131_churn`, `malicious_v131`, `mid_epoch_rollback`, `restart_spectator`,
+> `smoke` and `workload`. The contract is
+> [`../../specs/cross-binary-upgrade.md`](../../specs/cross-binary-upgrade.md)
+> and the running procedure is
+> [`../../playbooks/ci-suites.md`](../../playbooks/ci-suites.md). Kept for the
+> out-of-process harness rationale, the workload-driver lessons and the port
+> collision rule. Not maintained.
+
 Status: landed (2026-06, PR #1727) — implemented in `crates/ika-upgrade-test/` (the `cross_binary` churn test and the `v118_upgrade` literal mainnet-v1.1.8 rehearsal). This file consolidates the original research/proposal and the implementation results for the effort.
 
 ---

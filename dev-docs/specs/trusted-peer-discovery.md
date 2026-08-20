@@ -58,11 +58,19 @@ parallel reader and no special-casing per topology.
   `discovery/mod.rs:266`); the loop is purely additive and coexists with the
   startup and reconfiguration pushes. Departed peers age out via anemo's own window,
   not this loop.
-- **Self-excluded.** A node never dials itself: filter by
-  `(&verified.protocol_pubkey).into() == self_authority`.
-- **Degrade, don't abort.** A `pending_active_set` read failure logs a (throttled)
-  warn and proceeds with the committee peers only — it must not drop the whole set.
-  Likewise a single unresolvable/withdrawn validator is skipped, not fatal.
+- **Self-excluded, on the CONSENSUS key.** A node never dials itself:
+  filter by `AuthorityName::from_consensus_key(&verified.consensus_pubkey)
+  == self_authority`. Comparing the BLS `protocol_pubkey` instead is a real
+  historical bug, not a stylistic choice — the node then never recognised
+  itself and added itself as a trusted peer. It compiled only while
+  `AuthorityName` was an alias for the BLS container; now that a name IS
+  the Ed25519 consensus key, the wrong form does not even type-check.
+- **Degrade, don't abort.** A `pending_active_set` read failure logs a warn
+  every tick (3s) and proceeds with the committee peers only — it must not drop
+  the whole set. Only the whole-refresh failure warn is throttled.
+  Likewise a single unresolvable/withdrawn validator is skipped, not fatal —
+  including one whose `p2p_address` does not convert to an anemo address,
+  which is dropped silently during the mapping step.
 - **Keep the last good set.** A transient read error leaves `last_sent` untouched; the
   watch channel still holds the last value, so `known_peers` is unaffected.
 

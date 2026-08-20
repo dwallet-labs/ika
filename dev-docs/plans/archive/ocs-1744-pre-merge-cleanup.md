@@ -1,12 +1,17 @@
 # OCS #1744 pre-merge cleanup (plan)
 
+> ARCHIVED PLAN — a pre-merge checklist for #1744, every item shipped and
+> verified in the tree. Retained only so the inbound links from
+> [`../../reviews/archive/ocs-1744-pre-merge-review.md`](../../reviews/archive/ocs-1744-pre-merge-review.md)
+> still resolve; it carries nothing durable of its own. Not maintained.
+
 **Status:** landed — pre-merge cleanup (items 1–5) + `ocs-binding-1` landed
 2026-06-26 (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
 all review items (incl. the bag-pump hygiene) are closed.
 **Branch:** feat/ocs-grpc-migration (#1744).
 
 The actionable checklist derived from the pre-merge review
-([`../reviews/ocs-1744-pre-merge-review.md`](../reviews/ocs-1744-pre-merge-review.md)) —
+([`../reviews/ocs-1744-pre-merge-review.md`](../../reviews/archive/ocs-1744-pre-merge-review.md)) —
 that doc *records* the findings and their mechanisms; this one *tracks* the work to
 close them. The lone MUST-FIX (`mpc-consensus-1`) is already done, so merge is
 technically unblocked; the cheap cluster below is worth landing first.

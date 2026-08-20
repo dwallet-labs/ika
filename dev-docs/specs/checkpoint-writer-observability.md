@@ -41,7 +41,9 @@ telemetry a fully-stalled writer looked identical to an idle one.
 Signal (in `ika-network` state sync, both checkpoint streams): if same-chain
 peers advertise checkpoints ahead of our VERIFIED watermark and that
 watermark makes no progress for 120s, the node errors (rate-limited to 1/min,
-"checkpoint sync is STALLED") and exports
+"dwallet-checkpoint sync is STALLED" / "system-checkpoint sync is
+STALLED" — the stream name is part of the string, so grep for the
+`-checkpoint sync is STALLED` suffix to catch both) and exports
 `ika_dwallet_checkpoint_sync_stall_seconds` /
 `ika_system_checkpoint_sync_stall_seconds` (0 = healthy). The
 `highest_known_*` gauges are refreshed every 5s from peer heights (not only

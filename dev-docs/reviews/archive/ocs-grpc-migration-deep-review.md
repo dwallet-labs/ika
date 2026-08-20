@@ -1,5 +1,12 @@
 # OCS verified-Sui-reads — deep review (2026-06-19)
 
+> ARCHIVED RECORD — deep review of `feat/ocs-grpc-migration` at `b68e413c06`,
+> 2026-06-19. Its three still-live findings — the untagged-leaf-struct decode
+> hazard, the children-index parent mismatch, and the retention floor's lack of
+> coupling to a lagging peer — were promoted to the Residuals section of
+> [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Kept as history; not maintained.
+
 **Reviewed:** the full `feat/ocs-grpc-migration` PR — OCS verified Sui reads:
 gRPC transport, `SuiStateMirror` relay + peer-only validators, the push/cache
 fast path + DB persistence, the committee ratchet + follower, the
@@ -25,7 +32,7 @@ one refactor from a silent regression.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a source
 > of current truth. Current behavior lives in
-> [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md). The
+> [`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md). The
 > 2026-06-13 audit of an earlier state is
 > [`ocs-grpc-migration-review.md`](ocs-grpc-migration-review.md).
 

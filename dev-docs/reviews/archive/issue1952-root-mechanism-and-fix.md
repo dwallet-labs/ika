@@ -1,5 +1,13 @@
 # #1952 — root mechanism of the mid-epoch-restart MPC spectator, and the fix
 
+> ARCHIVED RECORD — forensic review of the v1.2.6 mid-epoch-restart MPC
+> spectator (ika #1952), written 2026-07-29; the issue closed 2026-07-28 and the
+> fix landed in full. Its section 5 triage rules were promoted to
+> [`../../playbooks/mpc-anomaly-diagnostics.md`](../../playbooks/mpc-anomaly-diagnostics.md),
+> and the mechanism is specified in
+> [`../../specs/internal-presign-pool.md`](../../specs/internal-presign-pool.md).
+> Kept as history; not maintained.
+
 Forensic synthesis grounded in the live wedged fleet (6/6 dWallet Labs
 validators, epoch 363 mainnet / 366 testnet, `v1.2.6 74a44ed06deb`) and the
 source at that commit. This CORRECTS the issue's root-cause dossier: the

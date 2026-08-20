@@ -34,15 +34,15 @@ rules, invariants, failure modes. **Read the relevant spec before
 changing a subsystem it covers.** When spec and code disagree, one of
 them has a bug — determine which before changing either.
 
-- [`specs/validator-mpc-data-announcements.md`](specs/validator-mpc-data-announcements.md)
-  — off-chain mpc_data pipeline: announcements, P2P, ready signals,
-  the freeze decision, next-committee assembly.
 - [`specs/event-sourced-epoch.md`](specs/event-sourced-epoch.md) — the
   consensus store as the only truth for epoch-scoped state: derived state
   held in memory, the bounded-batch replay that rebuilds it, why there is no
   watermark, the determinism contract, what the fold accumulates and what
-  bounds it, the settled-state rule for replay-silent emission, and the
-  rollback story.
+  bounds it, the settled-state rule for replay-silent emission, and what a
+  mid-epoch rollback measurably costs.
+- [`specs/validator-mpc-data-announcements.md`](specs/validator-mpc-data-announcements.md)
+  — off-chain mpc_data pipeline: announcements, P2P, ready signals,
+  the freeze decision, next-committee assembly.
 - [`specs/handoff.md`](specs/handoff.md) — cross-epoch handoff:
   attestation, EndOfPublish V2, certificate, joiner bootstrap, the
   prepare-then-start barrier, network-key adoption guards.
@@ -76,10 +76,11 @@ them has a bug — determine which before changing either.
   `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
   still-gated external path.
 - [`specs/committee-consensus-keys.md`](specs/committee-consensus-keys.md)
-  — a validator's BLS identity vs its Ed25519 consensus key: why the
-  mapping is `Committee` data and not derivable, the same-snapshot rule
-  binding a signer's key to its stake, and the mainnet-v1.1.8 on-disk
-  migration for the mid-struct field.
+  — a validator's identity IS its Ed25519 consensus key; the BLS key is a
+  separate, non-derivable fact `Committee` must carry. The same-snapshot
+  rule binding a signer's key to its stake, what consensus-key rotation
+  still costs, and the mainnet-v1.1.8 on-disk migration for the mid-struct
+  field.
 - [`specs/ocs-verified-sui-reads.md`](specs/ocs-verified-sui-reads.md) —
   object-checkpoint-state: reading Sui without trusting the relay
   (genesis-rooted committee trust root, the epoch ratchet,
@@ -124,7 +125,14 @@ them has a bug — determine which before changing either.
   (enforced by `scripts/check-sui-version-consistency.sh` in CI).
 - [`conventions/sui-client-dependencies.md`](conventions/sui-client-dependencies.md)
   — which Sui client layer to use: standalone `sui-rust-sdk` for network
-  RPC, and the narrow wallet/consensus cases that still require Sui main.
+  RPC, the narrow wallet/consensus cases that still require Sui main, why
+  gRPC is the only Sui transport (JSON-RPC is gone), and the node-wide
+  shared rate-limit gate every call passes.
+- [`conventions/naming.md`](conventions/naming.md) — naming things that
+  outlive their context: always the full word "reconfiguration", and no
+  internal labels (plan/phase names, ticket shorthands, invented test IDs)
+  in anything durable — with the line that makes the rule usable, since an
+  issue or PR number is fine.
 - [`conventions/simtest.md`](conventions/simtest.md) — what simtest is,
   why it is slow by design, when to use it vs `#[tokio::test]`, and the
   msim gotcha catalogue.
@@ -146,10 +154,10 @@ them has a bug — determine which before changing either.
   per-commit data.
 - [`conventions/epoch-table-write-discipline.md`](conventions/epoch-table-write-discipline.md)
   — every `AuthorityEpochTables` field declares whether it is written
-  through the consensus commit batch or directly (and, if directly, the
+  through the commit boundary or directly (and, if directly, the
   reason its consumers survive that); the reader-side rule that #1917 was
-  actually born on, and the two currently-unproven tables. CI-enforced via
-  `scripts/check-epoch-table-write-discipline.sh`.
+  actually born on, and the one table whose argument does not close.
+  CI-enforced via `scripts/check-epoch-table-write-discipline.sh`.
 - [`conventions/logging.md`](conventions/logging.md) — the `tracing`
   log-level discipline: hot MPC paths are `debug!`, once-per-epoch
   lifecycle events are `info!`; why an `info!` on the per-computation
@@ -170,15 +178,23 @@ them has a bug — determine which before changing either.
   Sui's `consensus/core`).
 
 ### plans/ — implementation plans worth keeping in the repo
-Multi-PR / multi-session efforts with an explicit status lifecycle
-(`active → landed/superseded/abandoned`). Intent and sequencing live
-here; once landed, durable behavior moves to `specs/`. See
-[`plans/README.md`](plans/README.md).
+Multi-PR / multi-session efforts with an explicit status lifecycle. Intent
+and sequencing live here; once landed, durable behavior moves to `specs/`
+and the plan moves to `plans/archive/`. Two plans are currently live, both
+deferred: the handoff-barrier escape and the OCS subscription changeset
+stream. See [`plans/README.md`](plans/README.md).
 
 ### reviews/ — written reviews worth keeping in the repo
 Long-form PR reviews, design reviews, and audits — point-in-time
 RECORDS with per-finding resolutions, not maintained truth (that's
-`specs/`). See [`reviews/README.md`](reviews/README.md).
+`specs/`). All of them are closed and live under `reviews/archive/`. See
+[`reviews/README.md`](reviews/README.md).
+
+**Nothing under `plans/archive/` or `reviews/archive/` is current truth.**
+Each archived file opens with a note saying what it was, when, and where the
+behavior it describes is specified now. Read the note before the file — some
+archived documents are deliberately preserved records of designs that were
+later reversed.
 
 ## Writing style for this folder
 

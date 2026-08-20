@@ -30,12 +30,18 @@ Skew delays *when* a validator acts on a session, never *whether*.
 
 ## The close predicate is a strict equality
 
-`all_current_epoch_sessions_completed` requires
-`completed_sessions_count == frozen target` (plus system sessions
-started == completed, every network key reconfigured, and the lock
-flag set). The Rust EndOfPublish gate (`sui_syncer`) mirrors the same
-equality from chain state, so no per-validator divergence on the
-predicate is possible — it is chain-global.
+`all_current_epoch_sessions_completed` is three conjuncts: the lock flag
+is set, user `completed_sessions_count == frozen target`, and system
+sessions `completed == started`. Nothing about network keys enters here.
+
+The Rust EndOfPublish gate (`sui_syncer`) is a strict SUPERSET, not a
+mirror: it requires those three AND `all_immediate_sessions_completed`,
+`next_epoch_committee_exists`,
+`all_network_encryption_keys_reconfiguration_completed`,
+`all_noa_checkpoints_finalized` and no outstanding pricing-calculation
+votes. The network-key term lives there, not in the Move predicate. Every
+input on both sides is read from chain state, so no per-validator
+divergence on either predicate is possible — both are chain-global.
 
 The equality cuts both ways:
 

@@ -69,6 +69,14 @@ the locations below and runs in CI; it fails the build on drift.
   protocol config the way upstream does — version-gated, never an ad-hoc constant.
   If upstream starts gating a field that ika hardcodes, add the matching
   version-gated getter to `ika-protocol-config` and wire it through.
+- **Boot against an EXISTING pre-bump data directory before calling it
+  done.** A Sui bump is exactly the class of change that can shift a BCS
+  layout under the OCS perpetual cache or the committee store, and both are
+  read at boot. `cargo check` cannot see it — a layout change compiles
+  perfectly and fails as a decode error on a node that has history. The
+  only honest gate is a cluster or localnet boot against a perpetual store
+  written by the PRE-bump binary. Treat it as required, not optional; a
+  green suite on a fresh data directory is not evidence.
 - Check for new `#[cfg(msim)]` rot in Sui-fork code paths
   (`unresolved import` under `--cfg msim` — see
   [`simtest.md`](simtest.md)).

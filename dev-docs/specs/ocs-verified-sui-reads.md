@@ -84,7 +84,7 @@ ika_dwallet_coordinator_object_id}`) by a chain of *bound* hops. Each hop is one
         │     StakingPools ✓
         │
         └─ pending_active_set: ExtendedField
-                 │ (b) owner-bound  (child Owner == wrapper UID; ocs-binding-1)
+                 │ (b) owner-bound  (child Owner == wrapper UID)
                  ▼
               PendingActiveSet ✓
 ```
@@ -94,7 +94,7 @@ active/next/previous committees and the quorum are **inline** in the proven `Sys
 bytes; and the validator `StakingPool`s, the `session_events` entries, AND the
 `pending_active_set` `ExtendedField` value are **owner-bound**. The last was the one gap
 (`get_extended_field_value_bcs` listed the wrapper's single field and read `.first()`
-without an owner-check) — closed by `ocs-binding-1` via the shared
+without an owner-check) — closed via the shared
 `transport::dynamic_field_child_owned_by` (the same primitive `verified_dynamic_fields_page` uses):
 the proof-bound child `Owner` must equal the wrapper id.
 
@@ -202,8 +202,17 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
   source for the cluster.
 - **Mirrored validator (with fallback)** — `SuiStateMirrored { fallback_grpc_url: Some(url) }`:
   verified reads relayed over p2p; the fallback gRPC is used only for
-  the reads it does not relay (`get_transaction`, `get_committee`,
-  `list_owned_gas_coins`) and as the bootstrap uplink.
+  the two reads it does not relay (`get_transaction`, `get_committee`)
+  and as the bootstrap uplink. `list_owned_gas_coins` is not among them —
+  it lives on `SuiWriter`, not `SuiTransport`, and a mirrored node has no
+  writer.
+  Every gRPC call on the direct and fallback paths passes a **node-wide
+  shared rate-limit gate** (`SuiGrpcClient::with_gate`, wired in
+  `sui_connector/setup.rs`). When Sui rate-limits the node, the whole node
+  backs off together rather than each caller discovering the limit
+  independently. Nothing about the verification story changes — but a
+  backoff is a shared stall, so a read that looks slow may be waiting on
+  the gate rather than on the endpoint.
 - **Peer-only validator** — `SuiStateMirrored { fallback_grpc_url: None }`:
   no Sui uplink at all; every read, including committee/epoch bootstrap,
   flows over the verified relay. This is the *sole* identifier of the
@@ -517,9 +526,10 @@ dropping entries are layered:
 
 - **Omission detector** (warn-only, count-only): compares the listed
   count against the authenticated `Bag.size` read from the OCS-verified
-  parent state. It fires `bag_omission_suspected_total` on `listed < expected`
-  but never halts — `Bag.size` legitimately drifts mid-walk, so only
-  *persistent* suspicion is actionable. It is count-only (cannot tell
+  parent state. It fires `ika_ocs_bag_omission_suspected_total` on
+  `listed < expected` but never halts — `Bag.size` legitimately drifts
+  mid-walk, so only *persistent* suspicion is actionable (a sustained
+  streak does escalate the log from warn to error). It is count-only (cannot tell
   *which* entries are missing) and is disabled on direct nodes (where the
   bag is trusted-local but `Bag.size` lags cache-first).
 - **Pruned-defining-checkpoint resolution**: the
@@ -1004,7 +1014,7 @@ on the changeset index's version+digest currency signal *plus* the TTL
 bound — two attestations of the same "still current" property. Extending
 the cache-first serve beyond the singleton anchors to *all* slowly-changing
 mirror reads remains future work — see
-[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
+[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/archive/ocs-changeset-stream-mirror-currency.md).
 
 ## Retained state: surviving a restart and a pruning fullnode
 
@@ -1137,10 +1147,11 @@ because the bytes came from a peer's disk rather than its fullnode.
     | dwallet | 79 | **7** |
     | ika_system | 36 | **0** |
 
-    The seven dwallet upgrade-defined types include five **events**
+    The seven dwallet upgrade-defined types include four **events**
     (`DWalletDKGRequestEvent`, `CompletedDWalletDKGEvent`,
-    `RejectedDWalletDKGEvent`, `SignDuringDKGRequestEvent`,
-    `UserSecretKeyShareEventType`). That is why
+    `RejectedDWalletDKGEvent`, `SignDuringDKGRequestEvent`).
+    `UserSecretKeyShareEventType` is not a fifth: despite the name it is an
+    enum used as a FIELD of `DWalletDKGRequestEvent`, never emitted. That is why
     `ika_dwallet_2pc_mpc_package_id_v2` exists and why event filtering accepts
     both addresses — it is **load-bearing**, not defensive: without it those DKG
     events are dropped.
@@ -1166,7 +1177,7 @@ because the bytes came from a peer's disk rather than its fullnode.
       wrong answer. An unused `_v2` constant would just be one more value that
       can drift, which is the #1908 hazard itself.
     - **The dwallet filter is where the constant hazard actually recurs.** It
-      enumerates `{ika_dwallet_2pc_mpc_package_id, …_v2}`, and five of the
+      enumerates `{ika_dwallet_2pc_mpc_package_id, …_v2}`, and four of the
       seven v2-defined types are events — so the next dwallet upgrade that
       defines a new event type silently loses those sessions until someone
       remembers to add a `_v3`. This filter is live in `bag_event_pump`. The durable fix is to
@@ -1225,6 +1236,39 @@ because the bytes came from a peer's disk rather than its fullnode.
   the staller failed; all bytes remain committee-verified, so this is delay
   and withholding — the relay's already-documented privilege — never
   forgery.
+- **The proof chain does not authenticate a struct's SHAPE, only its
+  bytes.** `DWalletCoordinatorInnerV1` and `DWalletNetworkEncryptionKey`
+  are plain `#[derive(Serialize, Deserialize)]` structs with no version
+  tag. A Move field-add WITHIN the same version therefore mis-decodes
+  while passing every gate above — committee BLS, artifacts digest,
+  Merkle inclusion, id-binding, currency — because every one of those
+  proves the bytes are the chain's, and none proves the reader's struct
+  still matches them. Contrast `VersionedMPCData`, a tagged enum that
+  fails closed on an unknown variant. Treat "it verified" as a statement
+  about provenance, never about well-formedness, and give any new leaf
+  type read through this path a version tag.
+- **`OBJECT_DIGEST_CANCELLED` is bucketed as `Modified -> Current`** in
+  the changeset fold. A cancelled transaction's object entry is not a
+  real modification, so folding it as one attributes a currency claim to
+  a state the chain never adopted. This is an open soundness question
+  against live code, not a known exploit — it is recorded here because
+  the analysis that found it lives in a plan that may not survive, and
+  nothing in the code names the case.
+- **The children index and the binding check disagree on who a child's
+  parent is.** The persisted-cache rebuild keys the index off
+  `Owner::ObjectOwner(addr)` unconditionally, while the binding check
+  accepts either the collection UID or the derived `Field<Wrapper<K>,ID>`
+  id. For an `ObjectBag`/`ObjectTable` child the two resolve differently.
+  Harmless only because `children_of` has no production caller today —
+  every reference is inside `mod tests`. Whoever wires the first real
+  caller has to reconcile them first.
+- **The end-of-publish retention floor is not coupled to a lagging
+  peer.** `eop_retention_floor()` clamps to the direct node's OWN oldest
+  persisted committee summary; nothing couples it to any peer's ratchet
+  position. A checkpoint-archive fallback narrows the consequence on
+  mainnet and testnet, but `resolve_sui_checkpoint_archive` returns
+  `None` for `Devnet | Custom`, so on a localnet a far-behind peer-only
+  node can still wedge.
 
 ## Operational signals
 
@@ -1251,7 +1295,9 @@ anchor digest gate, stack wiring), `bag_event_pump.rs` (event pump +
 omission detector), `push_worker.rs` / `verified_state_cache.rs`
 (direct-side checkpoint folder + cache fast path);
 `crates/ika-network/src/sui_state_mirror/` (relay client/server) and
-`proof_provider.rs` (serving side); `crates/ika-node/src/lib.rs`
+its sibling `crates/ika-network/src/proof_provider.rs` (shared by the
+relay server and the sui-state-direct local consumer);
+`crates/ika-node/src/lib.rs`
 (role/transport gate, peer-only boot); `crates/ika-config/src/node.rs`
 (`SuiConnectorConfig`, `SuiDataSource`, anchor fields); proof primitives
 in the pinned `sui-light-client` (`proof/base.rs`, `proof/ocs.rs`).

@@ -1,9 +1,16 @@
 # OCS: replace the trusted anchor with a genesis-rooted committee chain (plan)
 
+> ARCHIVED PLAN — shipped; the escape hatches it removes (`sui_trusted_anchor`,
+> `compiled_in_trusted_anchor`, `allow_unverified_committee_fallback`,
+> `sui_unsafe_genesis_committee`) have zero occurrences in `crates/` after #1898
+> (`eb7749edaa`). Current behavior, including the checkpoint-archive format, is
+> in [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> Not maintained.
+
 **Status:** landed — implemented, including the full removal list; the
 final config escape hatches were removed by #1898 (`eb7749edaa`).
 **Depends on:** the OCS verified-Sui-reads subsystem
-([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
+([`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md)).
 
 ## Implementation outcome
 
@@ -263,7 +270,7 @@ http), `sui-storage`, `prost`, `zstd`; `ika-archival` already uses
 - **Adversarial unit (test-testing)**: inject a forged `next_epoch_committee` and
   a skipped EOP into the archive fixture; assert the BLS / epoch-monotonicity
   checks **reject** (evidence in logs), then revert. This is the real proof the
-  re-rooting is sound — see [`../playbooks/test-testing.md`](../playbooks/test-testing.md).
+  re-rooting is sound — see [`../playbooks/test-testing.md`](../../playbooks/test-testing.md).
 - **Localnet integration**: boot a peer-only validator with **no anchor**, only
   `sui_genesis` + a local EOP source; cross several epochs; assert it ratchets
   `committee[0] → committee[N]` from genesis. Adapt the existing

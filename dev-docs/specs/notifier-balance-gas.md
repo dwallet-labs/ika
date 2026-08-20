@@ -21,6 +21,13 @@ epoch boundary valid through submission. It is the maximum window accepted by
 The chain identifier is resolved once at boot and failure to resolve it is a
 fatal configuration/startup error.
 
+That window is generous, not unbounded, and the node-wide shared Sui
+rate-limit gate sits under BOTH the epoch read that anchors `ValidDuring`
+and the submission itself. A long enough backoff between the two can
+therefore open a gap wider than one epoch, and the transaction is rejected
+as expired. That costs a rebuild and a retry; it is not a correctness
+failure, and the alternative — anchoring on a stale epoch read — would be.
+
 Checkpoint fee reimbursement cannot merge into `Argument::GasCoin`, because
 address-balance transactions have no gas coin. Reimbursement is transferred to
 the writer as an owned coin and swept into its address balance on a later boot.

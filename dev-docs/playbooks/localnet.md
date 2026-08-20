@@ -51,9 +51,16 @@ until grep -q "run_epoch epoch=2" /tmp/ika.log; do sleep 10; done
   run's publish output in the ika log (`Package \`ika_dwallet_2pc_mpc\`
   published: ...`).
 - **Cumulative load degrades a single localnet session**: many heavy test
-  files against ONE localnet slow signs progressively (tens of seconds →
-  minutes → timeout) without any code bug (`sign_failures` stays 0).
-  Validate each heavy file on a fresh localnet before believing a timeout.
+  files against ONE localnet slow signs progressively without any code bug.
+  Measured across one session: 43 s, then 374 s, then timeout — while
+  `sign_failures` stayed 0 throughout. That last detail is the tell. A
+  failing sign increments the counter; a sign that is merely starved does
+  not, so a timeout with a flat `sign_failures` is a host resource limit,
+  not a correctness regression.
+  **Validate each heavy file on a FRESH localnet before believing a
+  timeout.** A timeout at the end of a long multi-file session is evidence
+  about accumulated load, not about the change under test — and reading it
+  the other way costs a debugging session aimed at innocent code.
 - **Test suites**: run via
   `sdk/typescript/scripts/run-integration-tests-sequential.sh
   [--timeout <s>] [--filter <stem>]`. Per-case default is 20 min; the

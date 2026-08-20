@@ -1,5 +1,14 @@
 # OCS changeset-stream currency for mirrored validators
 
+> ARCHIVED PLAN — shipped as #1744 (`f300e2ec7d`, `05d66e6024`). Current
+> behavior is
+> [`../../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
+> One correction: this plan derives the changeset-receiver seed from
+> `oldest_sui_committee_summary()`; production uses
+> `newest_sui_committee_summary()`, because an oldest-anchored bootstrap wedges
+> the fold forever. The code is right and carries the rebuttal in a comment.
+> Not maintained.
+
 **Status:** landed — all four blockers and the transport are built, tested
 and wired: `ika_core::sui_connector::ocs_currency` (`ChangesetIndex`,
 `absorb_verified`, `highest_contiguous_seq`, `with_fold_filter`) is declared
@@ -9,12 +18,12 @@ in `sui_connector/mod.rs` and consumed by `changeset_receiver.rs`,
 "Remaining" below are explicitly refinements, not blockers, and one of them
 (the fold filter) shipped; the redesign that replaces the full-set
 `changeset_page` path is
-[`ocs-subscription-changeset-stream.md`](ocs-subscription-changeset-stream.md),
+[`ocs-subscription-changeset-stream.md`](../ocs-subscription-changeset-stream.md),
 which is deferred at design stage.
 Successor to the push-objects gossip removed in `53c1858abf` (audit review finding 10 in
-[`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
+[`../reviews/ocs-grpc-migration-review.md`](../../reviews/archive/ocs-grpc-migration-review.md)).
 Read alongside
-[`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+[`../specs/ocs-verified-sui-reads.md`](../../specs/ocs-verified-sui-reads.md).
 
 > **✅ Blockers 1–4 are built and unit-tested** in
 > `ika_core::sui_connector::ocs_currency` (the deletion linchpin — does

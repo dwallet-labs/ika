@@ -1,8 +1,9 @@
 # Cross-epoch handoff (attestation, certificate, barrier)
 
-Status: active — unconditional since `MIN_PROTOCOL_VERSION = 5`. The
-feature flag that used to gate it is gone from the code; the pre-v4
-chain-sourced mode no longer exists in the binary.
+Status: active and unconditional. `MIN_PROTOCOL_VERSION` and
+`MAX_PROTOCOL_VERSION` are both 7, so there is no version below which
+the handoff is off; the feature flag that used to gate it and the
+pre-v4 chain-sourced mode are both gone from the binary.
 The handoff replaces the removed consensus vote on network-key outputs:
 it is the cross-epoch agreement on exactly which off-chain artifacts the
 next epoch inherits.
@@ -12,10 +13,13 @@ next epoch inherits.
 `HandoffAttestation { epoch, next_committee_pubkey_set_hash, items }`:
 
 - `epoch` — the epoch the outgoing committee hands off FROM.
-- `next_committee_pubkey_set_hash` — Blake2b256 of the next committee's
-  BLS pubkey set; binds the attestation to the specific committee
-  receiving the handoff (an attestation cannot be replayed against a
-  different successor committee).
+- `next_committee_pubkey_set_hash` — Blake2b256 over the BCS encoding of
+  the next committee's `AuthorityName` set, deduplicated and sorted
+  ascending (`hash_next_committee_pubkey_set`). An `AuthorityName` is the
+  raw Ed25519 consensus key, so despite the field's name no BLS key takes
+  part. It binds the attestation to the specific committee receiving the
+  handoff: an attestation cannot be replayed against a different successor
+  committee.
 - `items` — `(HandoffItemKey, digest)` pairs, sorted strictly ascending
   by key:
   - `NetworkDkgOutput { key_id }` — the canonical network DKG output.
@@ -23,14 +27,17 @@ next epoch inherits.
     consensus-deterministic transition over the key's lifetime: a
     mainnet-v1.1.8-origin key's on-chain DKG anchor is V1 (the raw
     `class_groups::dkg::PublicOutput`) and its reconfiguration outputs are
-    V2; the canonical DKG output migrates ONCE to the full V3
-    `decentralized_party::dkg::PublicOutput` at the first v4 reshare
-    (when the cert-pinned reconfiguration output first becomes V3, every
-    validator reconstructs the full V3 output and flips its perpetual
-    digest mirror — see `dev-docs/plans/network-dkg-anchor-v2-to-v3-migration.md`).
-    The flip is epoch-uniform because it is driven by the cert-pinned
-    reconfiguration output, identical committee-wide. A natively-v4 key
-    is V3 from the start and never migrates.
+    V2; the canonical DKG output migrates ONCE to the aggregated V4
+    `decentralized_party::dkg::PublicOutput`, driven by the cert-pinned
+    reconfiguration output becoming V4. Every validator then reconstructs
+    the full V4 output (`reconstruct_full_network_dkg_output`) and flips
+    its perpetual digest mirror. The flip is epoch-uniform because the
+    cert-pinned reconfiguration output is identical committee-wide.
+    Pre-aggregation V3 is NOT a migration target and is not a
+    representation this binary can read: a V3 anchor and a V3
+    reconfiguration output are each a hard error, because the inkrypto
+    types behind them were removed. A key whose live state was still V3
+    must have migrated to V4 before running this binary.
   - `NetworkReconfigurationOutput { key_id }` — this epoch's
     reconfiguration output. Its digest MUST come from the epoch-keyed
     perpetual slice (`network_reconfiguration_output_digest_by_epoch_and_key`,
@@ -90,10 +97,10 @@ next epoch inherits.
   alone is NOT the recovery mechanism — it sees only signatures that
   arrive after the restart.
 
-  WHERE THE ROWS COME FROM CHANGED (#2058): the handoff signatures are
-  in-memory epoch state, so a restart starts them empty and the rebuild is
-  the boot replay re-folding the epoch's `EndOfPublishV2` bundles, not a
-  read of surviving rows. The bundles buffer until this validator's expected
+  WHERE THE ROWS COME FROM: the handoff signatures are in-memory epoch
+  state, so a restart starts them empty and the rebuild is the boot replay
+  re-folding the epoch's `EndOfPublishV2` bundles, not a read of surviving
+  rows. The bundles buffer until this validator's expected
   attestation installs and are staged when it does, so the rows exist
   again — but under whichever commit the replay had reached at install
   time, which is not necessarily the commit the crashed run recorded
@@ -103,7 +110,8 @@ next epoch inherits.
   validator whose rebuilt attestation DIVERGES from the rows re-verifies
   none of them and mints nothing — its recovery is the barrier
   peer-fetch of the quorum's certificate, never local replay.
-- **`handoff_signatures` table invariant.** The table holds ONLY rows
+- **`handoff_signatures` row invariant.** `handoff_signatures` is a field
+  of the in-memory `FoldedEpochState`, not a table. It holds ONLY rows
   that verify against the currently-installed expected attestation. A
   re-install that changes the attestation (e.g. a fresh hydration
   changed the items) drops the superseded rows from BOTH the aggregator
@@ -111,11 +119,10 @@ next epoch inherits.
   (`handoff_signatures_meet_quorum`) sums the ROWS, not the aggregator.
   They therefore play two roles: the within-boot source for aggregator
   rebuild, and the close-gate quorum input; the second role is what makes
-  stale-row hygiene load-bearing. (They are not a restart-durable source
-  any more — #2058 holds them in memory and the replay re-derives them;
-  the hygiene rule is unaffected, because a re-install can change the
-  attestation within a single boot just as it could across one.) (If the close gate
-  migrates to a sequence-pure tally, that second role is retired.)
+  stale-row hygiene load-bearing. The hygiene rule is about re-installs
+  within one boot — a re-install can change the attestation mid-boot just
+  as it once could across one. (If the close gate migrates to a
+  sequence-pure tally, that second role is retired.)
   TRADEOFF (deliberate): the delete is destructive under
   divergence — a validator that adopted the quorum's attestation via
   buffered signatures and then installed a divergent local build deletes
@@ -127,40 +134,40 @@ next epoch inherits.
   rows) is heavier schema surgery on a gate the planned sequence-pure
   close-gate rework retires — see
   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`.
-- **`handoff_signatures` write discipline: commit-batched.** No writer
-  touches the table directly. The consensus arm, the buffered drain and
-  the stale-row cleanup all stage their row mutations on the epoch
-  store, and the next consensus commit folds them into its
-  `ConsensusCommitOutput`. So a row is durable exactly when the commit
-  it was staged under is, and the close gate — which reads the
-  committed table OVERLAID with the rows the evaluating commit itself
-  staged, so a signature sequenced by this commit still counts at this
-  commit — is decided against state attributable to a commit rather
-  than to whatever had reached storage by the instant it looked. What
-  this does NOT establish: which commit a drained row lands under still
-  follows the local install, so two validators can still cross the
-  quorum at different commits. Only the sequence-pure tally retires
-  that. What it costs: rows staged into a commit whose batch is lost to
-  a crash are gone (consensus does not redeliver an already-processed
-  bundle), where a direct write would have kept them. The WINDOW is one
-  commit; the PAYLOAD is not bounded by one row — a late install drains
-  its whole buffered backlog into a single commit, so a crash there
-  loses every row that drain staged. Recovery is the same barrier
-  peer-fetch that already covers a divergent validator. The
-  certificate itself is NOT batched:
-  it goes to perpetual storage the moment it is minted, so a quorum
-  that formed before such a crash survives it.
+- **Rows move at the commit boundary, in memory.** No writer mutates the
+  rows outside a commit. The consensus arm, the buffered drain and the
+  stale-row cleanup all stage their mutations on the epoch store, and the
+  next consensus commit folds them in through `ConsensusCommitOutput`.
+  The close gate reads the folded rows OVERLAID with the rows the
+  evaluating commit itself staged, so a signature sequenced by this commit
+  still counts at this commit, and the gate is decided against state
+  attributable to a commit rather than to whatever a concurrent writer had
+  reached by the instant it looked.
+
+  What this does NOT establish: which commit a drained row lands under
+  still follows the local install, so two validators can still cross the
+  quorum at different commits. Only the sequence-pure tally retires that.
+
+  What it no longer costs is a crash window. When the rows were a durable
+  table, a batch lost to a crash lost every row that drain had staged —
+  consensus does not redeliver an already-processed bundle. Now nothing
+  survives a crash to be torn: the boot replay re-folds the epoch's
+  bundles from the consensus store and re-stages them. Atomicity at the
+  commit boundary is purely about what a concurrent reader can observe.
+  The certificate is the one piece that IS durable: it goes to perpetual
+  storage the moment it is minted, so a quorum that formed before a crash
+  survives it without waiting for the replay to re-derive it.
 - **Deferred close**: after the EndOfPublish stake quorum is
   reached, the epoch close is deferred `end_of_publish_grace_rounds`
-  (protocol config, default 50) consensus leader rounds past the
-  persisted quorum anchor (`end_of_publish_quorum_round`) so more
-  EndOfPublish votes and handoff signatures can land before the final
-  checkpoint. (Historically v4-gated — under v3 the close stayed inline
-  at the quorum-crossing message; that inline branch is dead code since
-  `MIN_PROTOCOL_VERSION = 5`.)
+  (protocol config, default 50) consensus leader rounds past the quorum
+  anchor (`end_of_publish_quorum_round`, an in-memory folded field
+  re-derived by the replay) so more EndOfPublish votes and handoff
+  signatures can land before the final checkpoint. The v3-era inline
+  close, which fired at the quorum-crossing message, no longer exists in
+  the binary.
 
-  The close is NO LONGER restart-idempotent via a persisted marker.
-  The close marker is in-memory epoch state (#2058), so a restart starts
+  The close is NOT restart-idempotent via a persisted marker.
+  The close marker is in-memory epoch state, so a restart starts
   it unset and re-decides the close from the replayed commits rather
   than short-circuiting on the crashed run's answer. Because the
   handoff-cert half of the gate depends on when this validator's
@@ -279,9 +286,9 @@ next epoch inherits.
    their digests match the prior epoch's certificate
    (`adopt_cert_verified_keys`): a reconfigured key must match BOTH its
    DKG digest and its epoch-specific reconfiguration digest. The DKG
-   digest migrates once (V1|V2 -> V3, above): at that single boundary an
+   digest migrates once (V1|V2 -> V4, above): at that single boundary an
    ALREADY-ADOPTED key whose overlay DKG digest has moved past the prior
-   epoch's (pre-V3) certificate is the expected defer — it keeps its adopted
+   epoch's (pre-migration) certificate is the expected defer — it keeps its adopted
    value rather than being dropped, exactly as a moved reconfiguration
    output is tolerated; only an UNADOPTED key contradicting the
    certificate is the security-relevant anomaly (the output-quorum
@@ -348,7 +355,7 @@ next epoch inherits.
      output (never overlaid by the off-chain copy) so adoption and
      instantiation proceed; a confirmed instantiation un-flags the key.
      The DKG blob still prefers the canonical off-chain mirror — the
-     digest the certificate pins — because the chain's pre-V3 anchor
+     digest the certificate pins — because the chain's V1/V2 anchor
      would fail the DKG-digest gate and, via the handoff hydration
      path, file a divergent DKG digest for this epoch's attestation.
      The set is empty in every healthy flow — non-validators never run
@@ -357,11 +364,11 @@ next epoch inherits.
      `off_chain_metadata_v4_does_not_read_blobs_from_chain` cluster
      test), and both paths install the identical canonical output for
      the epoch (no fork surface). KNOWN RESIDUAL: a mid-epoch
-     restart during the single V2→V3 canonical-migration epoch is NOT
-     recovered — the prior cert pins the V2 DKG digest while the
-     restarted validator's mirror already flipped to V3 (the V2 bytes
-     no longer exist locally), so adoption warns and skips until the
-     next epoch's cert pins V3. Fail-closed, bounded to that one
+     restart during the single canonical-migration epoch is NOT
+     recovered — the prior cert pins the V1/V2 DKG digest while the
+     restarted validator's mirror already flipped to V4 (the pre-migration
+     bytes no longer exist locally), so adoption warns and skips until the
+     next epoch's cert pins V4. Fail-closed, bounded to that one
      epoch, identical to pre-recovery behavior; epoch close is
      unaffected (the validator still votes EndOfPublish).
    - Current-epoch validator MPC keys (mid-epoch restart, issue #1879).
@@ -398,7 +405,7 @@ next epoch inherits.
    - The hydration-clobber variant (issue #1852, never-instantiated
      shape) and its three defenses. Post-restart, until the per-epoch
      blob source installs, the sync task's full chain read publishes an
-     overlay whose DKG blob is the chain's ORIGINAL pre-V3 anchor; with
+     overlay whose DKG blob is the chain's ORIGINAL V1/V2 anchor; with
      no later refetch trigger that overlay used to sit in the watch
      channel all epoch, and the end-of-epoch hydration pass cached it —
      overwriting the DURABLE perpetual canonical mirror. Every later

@@ -1,5 +1,12 @@
 # PR #1744 Definitive Review — OCS verified Sui reads over untrusted relay + peer-only validators
 
+> ARCHIVED RECORD — review of #1744 stacked with two other branches as if
+> merged, 2026-06-28. Both substantive findings landed. Kept mainly for its
+> adversarial refutations (`Owner::Party` additivity, the cross-rev `sui-types`
+> BCS diff, `StakeAggregator` soundness). Note one claim the code settled the
+> other way: it calls the #1736 `catch_unwind` fix inert dead code, and the
+> guard is now documented in place as a deliberate boundary. Not maintained.
+
 **Stacked with:** `#1736` catch_unwind slot-release fix (`fix/1736-compute-panic-slot-leak`, tip `27b71f891e`) and the Sui mainnet-v1.72.3→1.73.2 bump (`feat/sui-bump-1.73.2`, tip `bad8a49062`).
 
 **Base:** `origin/dev` (`aa4e81242c`). **#1744 tip:** `feat/ocs-grpc-migration` (`90fa29419b`), +21428/−1052 across 67 files.

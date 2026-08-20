@@ -138,6 +138,33 @@ rule, not the instance.
   new failure pattern as evidence about the code until the code is
   eliminated, not the other way round. A plausible known-artifact
   explanation is the easiest way to discard a real regression.
+- **A sentinel default that is also a legal value poisons every
+  comparison against it.** A dedup guard read a missing record as
+  `unwrap_or(0)` and then compared `>=`, so the sentinel compared equal-
+  or-greater against a genuine zero and the guard rejected the real
+  record forever — one validator wedged permanently, with no error
+  anywhere, because every layer considered the value legal. → Rule: a
+  default that lands inside the value domain is not a default, it is a
+  wrong answer that type-checks. Use `Option` and force the caller to
+  decide, or pick a sentinel provably outside the domain; never
+  `unwrap_or` into a comparison that treats the sentinel as data.
+- **Self-reported list membership inflates stake unless you deduplicate
+  by AUTHOR first.** A tally counted entries from lists the members
+  themselves supplied, so one participant appearing in several lists was
+  counted several times and crossed a stake threshold it had no right
+  to. → Rule: when a quorum is computed over self-reported sets, collapse
+  by author before the tally, never after. The safe shape is
+  author → contribution, built as a map so a second contribution from
+  the same author replaces rather than adds.
+- **Hash verification is not validation.** Content-addressing proves the
+  bytes are the bytes that were promised. It proves nothing about whether
+  they decode, whether the structure is well-formed, or whether the
+  values are in range — and a blob that verifies is exactly the one a
+  relay is most likely to forward without looking. → Rule: decode before
+  you relay, and treat "the digest matched" as a statement about
+  provenance only. The same rule states the boundary for the OCS proof
+  chain (`../specs/ocs-verified-sui-reads.md`): every gate there proves
+  the chain's bytes, none proves the reader's struct still matches them.
 - **Migrating a fan-out from rows to messages changes arity, silently.**
   The same harness distributed each round by appending every submitter's
   messages into one per-round ROW; rewritten naively over a channel it sent
@@ -183,6 +210,25 @@ rule, not the instance.
   died with its RUN layer. → Rule: runtime env goes in `ENV` directives
   (or better, compile the dependency in); verify what a container
   actually runs, not what the Dockerfile appears to say.
+- **jemalloc reads `MALLOC_CONF` here, NOT `_RJEM_MALLOC_CONF` — and the
+  reason is a feature you did not ask for.** The prefixed name is the
+  one every tikv-jemallocator doc gives, so it is the one people try
+  first, and it silently does nothing. `librocksdb-sys` depends on
+  `tikv-jemalloc-sys` with `unprefixed_malloc_on_supported_platforms`,
+  and cargo feature unification spreads that to the whole build — verify
+  with `cargo tree -p ika-node -i tikv-jemalloc-sys -f "{p} {f}"`, which
+  shows the feature on `tikv-jemalloc-sys` even though
+  `tikv-jemallocator`'s own feature list does not request it. So on Linux
+  the runtime knob is `MALLOC_CONF`, and `prof:true,prof_active:true`
+  works under that name (`profiling` is compiled in). Note that
+  `background_thread:true` is NOT env-driven at all: the
+  `background_threads` cargo feature bakes it into the compiled-in
+  `malloc_conf`, and it is what bounds RSS by returning freed pages —
+  the transient class-groups MPC working set otherwise plateaus at the
+  high-water mark. → Rule: when a library's runtime env var appears
+  inert, check whether a TRANSITIVE dependency changed its symbol
+  prefix before concluding the setting is unsupported; feature
+  unification can rename an interface you never configured.
 
 ## Testing & infrastructure
 
@@ -370,6 +416,19 @@ rule, not the instance.
   releases the lock); it's purely an in-process-swarm hazard. → Rule:
   acquire handles on demand (inside each poll tick / scoped to one
   statement); never bind one across a `stop()`/`start()` of its node.
+- **A targeted test run is not evidence for a change in a tested
+  subsystem — the sibling tests are where it breaks.** Twice: an ECDSA
+  signing-message fix passed its own tests while a sibling layout test in
+  the same module went on asserting a contract the change had removed;
+  and a presign consensus-order fix passed all three of its targeted
+  tests while orphaning `mark_presign_as_used`, breaking the module's
+  consumption assertions. Neither was visible from the tests the author
+  chose to run, because the author chose them by what the change was
+  ABOUT, and the breakage was in what the change was NEAR. → Rule: run
+  the whole module, not the filter you wrote the change against. The trap
+  is self-reinforcing — heavy MPC modules flake under parallelism, which
+  is exactly what tempts a narrow filter — so the answer is to run the
+  module single-threaded, never to run less of it.
 - **Settle flake provenance by measurement, not inference: same module,
   same parallelism, base commit.** A branch that adds heavy tests to a
   module and then sees OTHER tests in it fail looks like a regression and
@@ -552,6 +611,20 @@ rule, not the instance.
   backstop, not the contract — run `cargo fmt --all` before committing
   regardless (CLAUDE.md: Git Workflow), and never cite a green guard as
   evidence the gated property held.
+- **The push guard scans the WHOLE command string, so a protected-branch
+  token anywhere blocks a push to anywhere.** The check is two
+  independent greps over the same reduced view: one for `git … push`, one
+  for a whitespace- or colon-delimited `dev`/`main`/`master`. It cannot
+  associate a branch token with the command that owns it, so
+  `git push origin my-branch && gh pr edit 42 --base main` is blocked —
+  the push is to a feature branch, and the offending token belongs to a
+  different program entirely. This is deliberate simplicity, not a bug to
+  work around: a regex that tried to parse which token belongs to which
+  chained command would fail open in more interesting ways. → Rule: run
+  `git push` as its own command, never chained with anything that carries
+  a bare `main`/`dev`/`master` token. Branch names that merely CONTAIN
+  the words (`chore/dev-docs`) are fine — the guard matches them as
+  delimited words.
 - **git-guard reports ANY `cargo fmt` failure as "rustfmt is dirty",
   including cargo failing to launch.** The fmt gate runs
   `cargo fmt --all --check >/dev/null 2>&1`, discarding output and exit

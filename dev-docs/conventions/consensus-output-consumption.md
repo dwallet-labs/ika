@@ -6,8 +6,10 @@ follows these, and reviewers hold new consumers to them.
 
 ## 1. The consensus store is the only durable truth for epoch-scoped state
 
-Everything derived from it is deleted at boot and rebuilt by replaying the
-epoch's commits. Nothing records how far the node got.
+Everything derived from it is held in memory and rebuilt by replaying the
+epoch's commits. There is no deletion step, because there is nothing to
+delete: the state a boot used to wipe is never written. Nothing records how
+far the node got.
 
 *Why:* one logical fact in two databases with no shared fsync discipline is a
 brick waiting for a storage incident — a validator was down for most of an
@@ -31,8 +33,12 @@ cursor — consensus-core holds the store as a RocksDB primary, and some of what
 a consumer needs (checkpoint message sets) is fold *output*, not a projection
 of the commit.
 
-A new consumer is a new channel receiver. Its derived state joins the registry
-as `Derived`, and the classification test will fail until it does.
+A new consumer is a new channel receiver, and its derived state is an
+in-memory field on `AuthorityPerEpochStore`. There is no registry to join and
+no classification to declare: a `DBMap` field survives every restart by
+definition and an in-memory field is rebuilt by definition (rule 8). The
+registry macro, the boot wipe, and the three tests that enforced the
+classification were deleted along with the second truth they policed.
 
 ## 3. Channel caps are named constants with the dial documented
 

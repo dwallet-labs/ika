@@ -1,7 +1,8 @@
 # Validator MPC-data announcements (off-chain validator metadata)
 
-Status: active — unconditional since `MIN_PROTOCOL_VERSION = 6`. The
-legacy chain field remains for candidate registration, but operational
+Status: active and unconditional — `MIN_PROTOCOL_VERSION` and
+`MAX_PROTOCOL_VERSION` are both 7, so no supported version turns this off.
+The legacy chain field remains for candidate registration, but operational
 MPC-data updates do not write it; the consensus + P2P pipeline described
 here is the only update and read path.
 
@@ -117,9 +118,9 @@ which bytes* deterministic in consensus order.
 - **Emit-gate clock**: every time term of the gate is denominated in
   the epoch's CONSENSUS clock — "now" is the running max of processed
   `commit_timestamp_ms`, the backstop is anchored at the epoch's FIRST
-  processed commit's timestamp (persisted with that commit's batch —
-  replay resumes from the last processed commit, so "first" is
-  otherwise unrecoverable), and the publication observation is stamped
+  processed commit's timestamp (`epoch_first_commit_timestamp_ms`, held
+  in memory and re-derived by the boot replay, which folds the epoch from
+  its first commit), and the publication observation is stamped
   with the consensus "now" at the tick that first sees it. Machine
   wall-clock is never consulted. This fate-shares the deadline with
   the machinery it times: before the first commit (or during a
@@ -154,8 +155,8 @@ which bytes* deterministic in consensus order.
   reach the frozen set without a stake-quorum of signers, and the
   assembly/reconfiguration consumers read the frozen/excluded sets by
   committee-member key only — but they are NOT fully inert: a garbage
-  name lands durably in `epoch_excluded_validators` and inflates the
-  `dwallet_mpc_data_excluded_validators` gauge (operators alerting on it
+  name lands in `epoch_excluded_validators` for the epoch and inflates the
+  `ika_dwallet_mpc_data_excluded_validators` gauge (operators alerting on it
   should know), and each kept-but-never-quorum name holds the
   full-coverage fast path open, so the freeze fires via the grace path
   instead — one byzantine signer can force every epoch onto the grace
@@ -178,25 +179,34 @@ which bytes* deterministic in consensus order.
      (full coverage) or `mpc_data_freeze_grace_rounds` (protocol
      config, default 50) consensus LEADER rounds have elapsed since the
      quorum anchor round. Leader rounds advance non-monotonically, so
-     the grace is a round DELTA from the persisted anchor
+     the grace is a round DELTA from the anchor
      (`mpc_data_ready_quorum_round`), not a count of observed commits.
 - **Frozen set semantics**: `frozen: validator -> blob_hash` is written
   once per epoch (`freeze_mpc_data_if_first`) and is immutable for the
   epoch. Validators not in the frozen set are the epoch's **excluded**
-  set: the reconfiguration proceeds without them. The frozen + excluded
-  rows are persisted through the freeze commit's `ConsensusCommitOutput`
-  batch — atomically with that commit's processed-markers — never as
-  per-row inserts: a crash mid-write would otherwise latch a strict
-  subset as frozen forever (the idempotence guard is table
-  non-emptiness, and the commit replays dedup-skipped), leaving this
-  validator on a divergent shrunken set (issue #1829). A crash before
-  the batch lands replays the whole commit and the freeze re-fires
-  identically. The same batch also records the freeze commit's leader
-  round (`mpc_data_freeze_round`, single-key table) — observability
-  only, nothing in the protocol reads it back; it restores the
-  `ika_dwallet_mpc_data_freeze_round` gauge after a restart. Freeze
-  progress is scrapable end to end: `ika_dwallet_mpc_data_ready_quorum_round`
-  (the persisted quorum anchor, `-1` pre-quorum),
+  set: the reconfiguration proceeds without them. The frozen and excluded
+  sets, and the freeze commit's leader round (`mpc_data_freeze_round`),
+  are all in-memory fields of the folded epoch state, applied together
+  under one lock with the rest of what the freeze commit derives. The
+  grouping is what a concurrent reader depends on: no reader sees the
+  freeze partition without the freeze round.
+
+  Nothing here survives a restart, and that is what closes issue #1829.
+  The hazard then was a partial write latching a strict subset as frozen
+  FOREVER, because the rows were durable and the idempotence guard was
+  table non-emptiness, so the replayed commit dedup-skipped and left the
+  validator on a divergent shrunken set. A restart now starts with no
+  frozen set at all and the boot replay re-folds the epoch from its first
+  commit, so the freeze re-fires from the same sequenced ready signals
+  and reaches the same partition. The failure mode is structurally
+  unbuildable rather than defended against.
+
+  `mpc_data_freeze_round` remains observability only — nothing in the
+  protocol reads it back; it republishes the
+  `ika_dwallet_mpc_data_freeze_round` gauge as the re-fold passes the
+  freeze commit. Freeze progress is scrapable end to end:
+  `ika_dwallet_mpc_data_ready_quorum_round` (the quorum anchor, `-1`
+  pre-quorum),
   `ika_dwallet_mpc_data_freeze_grace_rounds` (the protocol-config grace),
   `ika_last_committed_leader_consensus_round` (the commit-boundary leader round
   the grace delta is measured against — NOT
@@ -369,10 +379,11 @@ validator latched for the whole epoch. Sourcing rules
    left empty for a non-excluded member. This binds every builder of
    the map, not only the off-chain assembly. The chain-view builders —
    `get_epoch_start_system` in `ika-sui-client` (feeding
-   `EpochStartSystem::get_ika_committee`, the epoch store's committee
-   and, pre-v4, the MPC manager's validator-key seed) and the
-   sui_syncer legacy chain fallback (`new_committee`, feeding the
-   reconfiguration MPC under pre-v4 protocol versions) — enforce it at
+   `EpochStartSystem::get_ika_committee`, the epoch store's committee)
+   and the sui_syncer's bootstrap chain read inside `new_committee`
+   (which serves only the window before the off-chain source is
+   installed — there is NO chain fallback for validator mpc_data once it
+   is, and chain is write-only from then on) — enforce it at
    the read boundary: an active member whose on-chain `mpc_data`
    record is missing or undecodable fails the WHOLE read (retried by
    `must_get_epoch_start_system` / the next sync tick), never a silent
