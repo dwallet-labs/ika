@@ -227,6 +227,28 @@ rule, not the instance.
   worsens for a node that just restarted, which is the slow one.
   → Rule: pair a quorum-observable assertion with one that a race cannot
   answer falsely (a local completion counter), and read the pair.
+- **A fault-injection bundle is COUPLED to the assertion semantics it
+  was written against; weakening a verdict can silently disarm a fault.**
+  A scenario's re-emission assertion was demoted from "this window must
+  exceed a control window" to "the counters must be alive" — correct, the
+  original encoded a prediction the measurement falsified. But one of the
+  bundle's faults (point the measurement at an observer that cannot see
+  what it is measuring) had relied on the control comparison to fail. With
+  only a liveness floor left, the fault run went GREEN and printed a
+  corrupted number as a result. → Rule: when an assertion's verdict is
+  weakened, re-audit every fault whose detection depended on the removed
+  half BEFORE re-dispatching; a fault that passes is worse than no fault,
+  because it certifies the assertion it failed to break.
+- **Process-scoped counters need a structural guard, not care.** The same
+  escape had a second cause: the observer's counter was process-scoped and
+  the observer restarted mid-window, so `now - at_open` was a fresh
+  process's absolute count subtracted from a dead one's, with
+  `saturating_sub` hiding the sign. → Rule: when a measurement window
+  spans a period in which processes can be replaced, record a restart
+  generation alongside each snapshot and refuse to close a window whose
+  own observers were replaced. Structural checks like this hold for
+  scenarios nobody has written yet; "remember not to measure on the node
+  you restart" does not.
 - **A counter read immediately after the event that should move it is a
   race, and "this cannot be a race" is not a thing to assert in an error
   message.** A scenario read a validator's completed-session total right

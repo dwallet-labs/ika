@@ -450,6 +450,11 @@ struct LogLineProbe {
 struct ResubmissionWindow {
     observers: Vec<usize>,
     skipped: Vec<u64>,
+    /// How many times each observer had been restarted when the window
+    /// opened, aligned with `observers`. A counter is process-scoped, so an
+    /// observer that restarts mid-window silently turns the closing
+    /// subtraction into nonsense; comparing these catches it.
+    observer_restarts: Vec<u64>,
     processed_by_kind: BTreeMap<String, u64>,
 }
 
@@ -1010,6 +1015,10 @@ impl Scenario {
         let mut log_line_probes: BTreeMap<String, LogLineProbe> = BTreeMap::new();
         // Completed-MPC-computation snapshots: label -> (validator, total).
         let mut mpc_completions: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+        // How many times each validator's PROCESS has been replaced. Every
+        // process-scoped measurement is only comparable within one generation
+        // of it, so the steps that take one record this alongside the value.
+        let mut restart_counts: BTreeMap<usize, u64> = BTreeMap::new();
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -1062,6 +1071,9 @@ impl Scenario {
                     c.expect_all_validators_healthy().await?;
                 }
                 Step::StopAndSwap { validators, to } => {
+                    for index in validators {
+                        *restart_counts.entry(*index).or_default() += 1;
+                    }
                     let new_binary = resolve(&resolver, to).await?;
                     let split_configured = !self.direct_validators.is_empty();
                     // With a direct/mirror split configured, every swapped
@@ -1273,6 +1285,7 @@ impl Scenario {
                     removed_indices.insert(*index);
                 }
                 Step::StopValidator { index } => {
+                    *restart_counts.entry(*index).or_default() += 1;
                     let c = cluster.as_mut().context("StopValidator before StartAll")?;
                     c.stop_validator(*index).await?;
                 }
@@ -1451,11 +1464,16 @@ impl Scenario {
                         skipped = ?skipped,
                         "opened a consensus re-submission measurement window"
                     );
+                    let observer_restarts = observer_indices
+                        .iter()
+                        .map(|index| restart_counts.get(index).copied().unwrap_or(0))
+                        .collect();
                     resubmission_windows.insert(
                         label.clone(),
                         ResubmissionWindow {
                             observers: observer_indices.clone(),
                             skipped,
+                            observer_restarts,
                             processed_by_kind,
                         },
                     );
@@ -1478,6 +1496,18 @@ impl Scenario {
                          {observer_indices:?}; the counters would not be comparable",
                         window.observers,
                     );
+                    // Before any number is computed, let alone reported: a
+                    // window whose observers restarted has nothing to say.
+                    let restarts_now: Vec<u64> = observer_indices
+                        .iter()
+                        .map(|index| restart_counts.get(index).copied().unwrap_or(0))
+                        .collect();
+                    require_observers_not_restarted(
+                        observer_indices,
+                        &window.observer_restarts,
+                        &restarts_now,
+                    )
+                    .with_context(|| format!("re-submission window {since:?}"))?;
                     let now = c.skipped_consensus_txns(observer_indices).await?;
                     let per_observer: Vec<u64> = now
                         .iter()
@@ -1826,6 +1856,46 @@ impl Scenario {
     }
 }
 
+/// Reject a window whose own observers were restarted while it was open.
+///
+/// `ika_skipped_consensus_txns` is process-scoped: a restart resets it to
+/// zero, so the closing `now - at_open` is no longer a delta over the window —
+/// it is the restarted process's absolute count, subtracted from a number that
+/// belonged to a process that no longer exists. `saturating_sub` then hides
+/// the negative, and what comes out looks like an ordinary measurement.
+///
+/// This exists because a fault dispatch escaped. F2a pointed both windows at
+/// the validator being rolled back, precisely the observer that cannot see its
+/// own re-emissions, and the run went GREEN: the window opened at 51, the
+/// subject restarted, and it closed at 54 — a "delta" of 54 that was really a
+/// fresh process's first minute of ordinary traffic. The liveness floor cannot
+/// catch that, because 54 ≥ 1.
+///
+/// The check is on the STRUCTURE of the measurement rather than on its value,
+/// so it holds for any window and any scenario, without knowing which
+/// validator is under test.
+fn require_observers_not_restarted(
+    observers: &[usize],
+    at_open: &[u64],
+    at_close: &[u64],
+) -> Result<()> {
+    let restarted: Vec<usize> = observers
+        .iter()
+        .zip(at_open)
+        .zip(at_close)
+        .filter(|((_, open), close)| open != close)
+        .map(|((index, _), _)| *index)
+        .collect();
+    ensure!(
+        restarted.is_empty(),
+        "validator(s) {restarted:?} restarted while this measurement window was open. Their \
+         `ika_skipped_consensus_txns` counters reset with their processes, so the window's \
+         subtraction is not a delta and the number it produces is meaningless — measure on \
+         observers that stay up for the whole window"
+    );
+    Ok(())
+}
+
 /// Liveness check on a closed re-submission measurement window.
 ///
 /// This asserts on the INSTRUMENT, not on the phenomenon. A window that
@@ -1926,6 +1996,35 @@ mod tests {
                 .map(|(authority, reason)| (authority.to_string(), reason.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_window_whose_observer_restarted_cannot_be_closed() {
+        // The F2a escape, pinned: observer 0 restarted mid-window, so its
+        // counter reset and the closing subtraction is not a delta.
+        let error = require_observers_not_restarted(&[0], &[0], &[1])
+            .expect_err("a restarted observer's counter cannot measure its own window");
+        let error = error.to_string();
+        assert!(
+            error.contains("[0]"),
+            "names the restarted observer: {error}"
+        );
+        assert!(error.contains("is not a delta"), "says why: {error}");
+    }
+
+    #[test]
+    fn restarting_a_non_observer_leaves_the_window_measurable() {
+        // The rollback window is opened over peers and the SUBJECT restarts
+        // inside it — which is the whole scenario. The guard must not fire.
+        require_observers_not_restarted(&[1, 2, 3], &[0, 0, 0], &[0, 0, 0])
+            .expect("a window is unaffected by restarts of validators it does not observe");
+    }
+
+    #[test]
+    fn one_restarted_observer_among_many_still_fails() {
+        let error = require_observers_not_restarted(&[1, 2, 3], &[0, 0, 0], &[0, 2, 0])
+            .expect_err("one corrupted counter corrupts the sum they are added into");
+        assert!(error.to_string().contains("[2]"));
     }
 
     #[test]
