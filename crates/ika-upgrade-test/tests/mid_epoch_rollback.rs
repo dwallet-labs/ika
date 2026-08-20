@@ -281,9 +281,13 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // ASSERTION 3 — full participation returns. The snapshot is taken
         // after catch-up mode has EXITED, so every session the re-derivation
         // reconstructed is already inside it and cannot satisfy the assertion.
+        // FAULT F3: snapshot BOTH instruments after the workload, so no
+        // session and no completion can fall outside them. Assertion 3 must
+        // fail on both legs rather than be satisfied by state the observer
+        // already carried.
+        .run_workload("post-rollback")
         .record_mpc_output_sessions("after-catch-up", WITNESS, SUBJECT)
         .record_mpc_completions("after-catch-up", SUBJECT)
-        .run_workload("post-rollback")
         // Two legs, because they fail for different reasons. The peer-witness
         // is the strong claim — another validator saw this one's output for
         // new work — but it can be lost legitimately: any three of four
