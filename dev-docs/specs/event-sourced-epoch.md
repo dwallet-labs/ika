@@ -678,6 +678,23 @@ rolled-back validator for a session created after the catch-up. The whole run
 is bracketed by an epoch ceiling, because a boundary would hand the node a
 fresh epoch store and make all three free.
 
+**A rollback taken AT a boundary is free, and that is measured too**, by the
+same scenario run one epoch later (the `x1-boundary-rollback` variant). Two
+independent readings:
+
+- **Nothing to re-derive.** The node came up against a backlog of ~300 rounds
+  (`target=306, reached=422`; ~280/406 on the first attempt), three orders of
+  magnitude below the mid-epoch 19,330 and far under #2023's 5,000-round
+  `enter_threshold`, so catch-up never engages at all. The first attempt of
+  this variant FAILED on a probe waiting for catch-up to engage — which is the
+  finding, not a defect: at a boundary there is nothing to catch up on.
+- **Nothing re-emitted.** 150 re-submissions against a control of 159, a
+  difference of −9 — the same "zero within noise" as the mid-epoch case, from
+  a run where the re-derivation never happened.
+
+So the boundary case is not merely cheaper than the mid-epoch one; on both
+terms it is indistinguishable from not rolling back at all.
+
 **The conditions those numbers were measured under**, because they bound what
 they are worth: ONE green run of `mid_epoch_rollback`
 (actions/runs/32318375717) on a four-validator localnet — so a three-validator
@@ -717,8 +734,9 @@ reconstruction is why a rollback is NOT the DAG spray an earlier draft of this
 note predicted: measured against a comparable window with no rollback in it,
 the re-emission was zero within noise (144 against 150), and the only things a
 restart genuinely re-announces are its capability notification and its idle
-status. A rollback taken *at* a boundary is unaffected and
-costs neither. This must not be discovered mid-incident: an operator rolling
+status. A rollback taken *at* a boundary costs neither term, measured: no
+backlog to re-derive (catch-up never engages) and 150 re-submissions against a
+control of 159. This must not be discovered mid-incident: an operator rolling
 back to recover from something else needs to know the recovery costs a
 re-derivation, and that the cost is paid once rather than until the next
 boundary.
