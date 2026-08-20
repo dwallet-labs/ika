@@ -617,13 +617,24 @@ Two things this costs, both of them transient:
   consensus and produces checkpoints throughout. The drain itself catches up
   fast — measured at 13,196 rounds of backlog entered and drained in **276 ms**,
   because catch-up mode reconstructs rather than recomputes — so the cost is
-  NOT the drain. (Read that from the catch-up log line'''s own `gap_rounds`, not
+  NOT the drain. (Read that from the catch-up log line's own `gap_rounds`, not
   from a gauge sampled after the fact: the drain finishes before an external
   poll can read its starting point, so a sampled "rounds rebuilt" figure
-  under-reports the backlog by however long the sampler took to arrive.) What an operator waits for is the resumption after catch-up
-  exits: sessions going active again and contributing output. That is the
-  interval the scenario's assertion 3 measures, and the drain's own catch-up
-  time is a misleading proxy for it.
+  under-reports the backlog by however long the sampler took to arrive.)
+
+  **Measured end to end: ~35 seconds from SIGTERM to a re-derived node.** Of
+  that, 25 s is the old binary's process boot to a healthy admin server and
+  ≤10 s is re-deriving a 19,330-round backlog (bounded by the harness's 5 s
+  poll; the fold itself is sub-second). A peer then witnessed MPC output
+  authored by the rolled-back validator for freshly-created sessions with a
+  witness latency of 0 s, and the node's own completion counter — reset to 0 by
+  the restart — was back to 3 within one workload. The recovery is dominated by
+  process startup, not by the re-derivation the design added.
+
+  Note what that interval is measured BETWEEN. What matters is sessions going
+  active and contributing output again, which is what the scenario's assertion
+  3 waits for. The drain's own catch-up time is a misleading proxy: it
+  completes while the node is still reconstructing rather than computing.
 - **re-emission into the DAG — far less than this section used to claim.** The
   re-fold does run against an empty `consensus_message_processed` table, so
   nothing stops the old binary re-submitting on its own account. What stops it
@@ -647,16 +658,18 @@ Two things this costs, both of them transient:
   - the sessions that were already complete when the rollback happened are
     complete again after reconstruction, so they produce no output to submit.
 
-  The first measured run recorded **0** re-submissions at the peers across the
-  catch-up, against 171 for a comparable window of ordinary traffic. Do not
-  read that as the final figure — it was measured over a window with no
-  workload in it, which the scenario has since corrected — but the direction is
-  settled: a mid-epoch rollback is not a spray.
+  **Measured: 144 re-submissions across the rollback window, against 150 for a
+  window of the same composition with no rollback in it — a difference of −6,
+  i.e. zero within noise.** A mid-epoch rollback costs the DAG nothing. The
+  window's composition confirms why: what the peers counted is ordinary
+  traffic (60 checkpoint signatures, 189 global-presign requests, 33 MPC
+  outputs, 24 MPC messages) plus the only two things a restart genuinely does
+  re-announce — 3 capability notifications and 3 idle-status updates.
 
-Everything above is read off the two binaries' source; what MEASURES it is the
-`mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the candidate
-first and puts the v1.3.1 release back on one validator mid-epoch, on the same
-stores. It asserts the re-derivation reaches the peers' consumed round (the
+The mechanism above is read off the two binaries' source; the numbers come
+from the `mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the
+candidate first and puts the v1.3.1 release back on one validator mid-epoch, on
+the same stores. It asserts the re-derivation reaches the peers' consumed round (the
 witness is `ika_last_process_mpc_consensus_round` on the rolled-back node,
 which v1.3.1 sets from the tables its own fold writes), counts the re-emission
 at the peers on `ika_skipped_consensus_txns` against a control window of
@@ -665,13 +678,27 @@ rolled-back validator for a session created after the catch-up. The whole run
 is bracketed by an epoch ceiling, because a boundary would hand the node a
 fresh epoch store and make all three free.
 
-Two numbers this section still owes, both of which that scenario produces on
-its first GREEN run and neither of which should be guessed in the meantime:
-how many already-settled consensus transactions a rollback re-sends over a
-window that actually carries a workload, and how long the node's MPC stays
-degraded — measured as resumption after catch-up exits, not as drain time.
-The first run failed on an assertion that encoded the spray prediction rather
-than measuring it, which is how the suppression layers above were found.
+**The conditions those numbers were measured under**, because they bound what
+they are worth: ONE green run of `mid_epoch_rollback`
+(actions/runs/32318375717) on a four-validator localnet — so a three-validator
+quorum — with a 30-minute epoch, the rollback taken about 59% of the way
+through it, and a 19,330-round backlog to re-derive. The cluster was lightly
+loaded: a single user DKG → Presign → Sign lifecycle per window, nothing like
+production volume.
+
+That is enough to settle the SHAPE — a rollback is not a spray, and the
+recovery is process startup rather than re-derivation — and it is not enough to
+predict a loaded validator's numbers. Both terms scale with traffic the run did
+not generate: the backlog to re-derive grows with the epoch's round count, and
+the re-emission window's composition is dominated by ordinary traffic whose
+volume is the load. **The loaded-cluster measurement is a separate obligation**
+— release condition 1 in ika #2064 — and nothing here discharges it.
+
+It took three runs. The first two failed on the test rather than the system:
+one asserted the spray it was supposed to measure, and one matched validators
+by a name format the metric does not emit, then blamed the subject for the
+silence. Both failures are recorded in `../learnings/pitfalls.md`; the
+suppression layers above were found because of them.
 
 **Release note, for lifting verbatim into operator notes:** rolling this binary
 back mid-epoch puts that node through a full re-derivation of the epoch before
@@ -680,12 +707,17 @@ checkpoints immediately. Its MPC drain has no round history until its own fold
 rewrites it from the epoch's first commit, and while that backlog drains the
 node reconstructs the epoch's sessions instead of computing them — so expect
 that node to contribute no new MPC work until the backlog clears and its
-sessions resume. The backlog itself drains quickly (a 13k-round epoch in well
-under a second, because reconstruction is not computation); what to watch is
-the resumption after it. The same reconstruction is why a rollback is NOT the
-DAG spray an earlier draft of this note predicted: the node has little
-already-settled work left to re-submit, and what it does re-submit peers
-discard as already-folded. A rollback taken *at* a boundary is unaffected and
+sessions resume. The backlog itself drains quickly — a 19,330-round
+epoch in under ten seconds, because reconstruction is not computation — so on
+a test cluster the whole recovery measured about 35 seconds end to end, most of
+it ordinary process startup. Expect that to grow with the epoch's round count
+and with how loaded the validator is, but expect its SHAPE to hold: the wait is
+dominated by the node restarting, not by the epoch being re-derived. The same
+reconstruction is why a rollback is NOT the DAG spray an earlier draft of this
+note predicted: measured against a comparable window with no rollback in it,
+the re-emission was zero within noise (144 against 150), and the only things a
+restart genuinely re-announces are its capability notification and its idle
+status. A rollback taken *at* a boundary is unaffected and
 costs neither. This must not be discovered mid-incident: an operator rolling
 back to recover from something else needs to know the recovery costs a
 re-derivation, and that the cost is paid once rather than until the next
