@@ -213,7 +213,7 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // ── Control window: a full user lifecycle, all four validators on the
         //    candidate, nothing restarted. Whatever re-submission this window
         //    records is the noise floor the rollback has to beat. ───────────
-        .record_skipped_consensus_txns("control", &peers)
+        .record_skipped_consensus_txns("control", &[SUBJECT])
         // CALIBRATION. The same two instruments assertion 3 will use, pointed
         // at the same subject while it is HEALTHY. If a validator that is
         // demonstrably fine cannot be witnessed here, the instrument is broken
@@ -230,11 +230,11 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .run_workload("pre-rollback-control")
         .expect_new_mpc_output_session("calibration", WITNESS, SUBJECT, 2)
         .expect_more_mpc_completions("calibration", SUBJECT, 2)
-        .expect_skipped_consensus_txns_delta("control", &peers, 0, None)
+        .expect_skipped_consensus_txns_delta("control", &[SUBJECT], 0, None)
         .expect_epoch_at_most(2)
         // ── The event under test: the deployed release goes back on, on the
         //    same stores, mid-epoch, far from any boundary. ────────────────
-        .record_skipped_consensus_txns("rollback", &peers)
+        .record_skipped_consensus_txns("rollback", &[SUBJECT])
         // Probe the #2023 catch-up transitions BEFORE the swap. Both binaries
         // emit these lines verbatim and node.log appends across restarts, so
         // presence proves nothing — only a FRESH occurrence is about v1.3.1.
@@ -315,7 +315,7 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // idle 15 seconds, which is not a comparison. The floor is a liveness
         // check on the counters; the difference against the control is the
         // measured re-emission figure and is reported, not asserted.
-        .expect_skipped_consensus_txns_delta("rollback", &peers, 1, Some("control"))
+        .expect_skipped_consensus_txns_delta("rollback", &[SUBJECT], 1, Some("control"))
         // Still the same epoch: everything above is mid-epoch behavior, not
         // the boundary reset that would make all three assertions free.
         .expect_epoch_at_most(2)
