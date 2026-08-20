@@ -234,23 +234,18 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .expect_epoch_at_most(2)
         // ── The event under test: the deployed release goes back on, on the
         //    same stores, mid-epoch, far from any boundary. ────────────────
+        // EXPERIMENT X1 (not a fault): take the rollback AT a boundary
+        // instead of mid-epoch, to test the spec's claim that a boundary
+        // rollback costs nothing. Read the reported numbers, not pass/fail.
+        .wait_for_epoch(3)
+        .wait_for_all_validators_local_epoch(3)
         .record_skipped_consensus_txns("rollback", &peers)
         // Probe the #2023 catch-up transitions BEFORE the swap. Both binaries
         // emit these lines verbatim and node.log appends across restarts, so
         // presence proves nothing — only a FRESH occurrence is about v1.3.1.
-        .record_log_line_count_on_validator(
-            "catch-up-entered",
-            SUBJECT,
-            "MPC service entered catch-up mode",
-        )
-        .record_log_line_count_on_validator(
-            "catch-up-exited",
-            SUBJECT,
-            "MPC service exited catch-up mode",
-        )
         .stop_and_swap(&[SUBJECT], old)
         .expect_all_validators_healthy()
-        .wait_for_all_validators_local_epoch(2)
+        .wait_for_all_validators_local_epoch(3)
         // ASSERTION 1 — it re-derives the epoch through its own table-writing
         // fold, against empty fold-side tables, and its rebuilt per-round
         // tables reach the round its peers have consumed.
@@ -268,8 +263,6 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // scenario exists to exercise. The first measured run had 13,196
         // rounds of backlog, so the margin is wide — but it is a margin, not a
         // guarantee, and it shrinks if the epoch or the pre-rollback phase does.
-        .wait_for_new_log_line_on_validator("catch-up-entered", SUBJECT)
-        .wait_for_new_log_line_on_validator("catch-up-exited", SUBJECT)
         // The #2057 signature: the pinned consensus store has no tolerant path
         // when the watermark and the store disagree, and it aborts rather than
         // clamping. An absent watermark reads as 0, which the assert accepts —
@@ -277,7 +270,7 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // run proves the shape never appeared instead of arguing it cannot.
         .expect_log_line_absent("assertion failed: last_commit_index > replay_after_commit_index")
         .expect_log_line_absent("Should be able to read last consensus index")
-        .expect_epoch_at_most(2)
+        .expect_epoch_at_most(3)
         // ASSERTION 3 — full participation returns. The snapshot is taken
         // after catch-up mode has EXITED, so every session the re-derivation
         // reconstructed is already inside it and cannot satisfy the assertion.
@@ -306,8 +299,8 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         // Calibration above proves both instruments can see a healthy subject
         // in this cluster, which is what makes a post-rollback failure of
         // either one readable as a statement about the rollback.
-        .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT, 2)
-        .expect_more_mpc_completions("after-catch-up", SUBJECT, 2)
+        .expect_new_mpc_output_session("after-catch-up", WITNESS, SUBJECT, 3)
+        .expect_more_mpc_completions("after-catch-up", SUBJECT, 3)
         // ASSERTION 2 — closed only NOW, so the rollback window spans the whole
         // recovery AND carries exactly one workload, like the control window.
         // Closing it at the catch-up (as the first version did) compared a
@@ -318,11 +311,11 @@ async fn a_mid_epoch_rollback_to_v131_re_derives_the_epoch_and_rejoins_mpc() {
         .expect_skipped_consensus_txns_delta("rollback", &peers, 1, Some("control"))
         // Still the same epoch: everything above is mid-epoch behavior, not
         // the boundary reset that would make all three assertions free.
-        .expect_epoch_at_most(2)
+        .expect_epoch_at_most(3)
         .expect_all_validators_healthy()
         // And the mixed committee still closes the epoch normally afterwards.
-        .wait_for_epoch(3)
-        .wait_for_all_validators_local_epoch(3)
+        .wait_for_epoch(4)
+        .wait_for_all_validators_local_epoch(4)
         .expect_all_validators_healthy()
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("recognized_self_as_malicious")
