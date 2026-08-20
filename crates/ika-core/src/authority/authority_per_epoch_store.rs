@@ -1248,6 +1248,21 @@ pub struct AuthorityPerEpochStore {
     /// The `own_mpc_data_blob_unhealthy` gauge carries the ongoing state.
     self_blob_unhealthy_warned: AtomicBool,
 
+    /// Memoized decode verdicts for announced mpc_data blobs, keyed by
+    /// the content digest they are stored under. The emit gate re-runs
+    /// `compute_locally_validated_peers` on every ~2s tick and each run
+    /// used to BCS-decode every announced ~72KB class-groups bundle
+    /// again for an answer that cannot change (issue #2080). Per-epoch
+    /// lifetime, so it is bounded by the epoch's distinct announced
+    /// digests and drops at the boundary.
+    mpc_data_decode_cache: crate::validator_metadata::MpcDataDecodeCache,
+
+    /// `(announcer, digest)` pairs already warned about for a locally-held
+    /// but undecodable mpc_data blob. Dedupes what would otherwise be the
+    /// same warn on every emit-gate tick; bounded by the epoch's distinct
+    /// announced digests, like the cache above.
+    invalid_peer_blob_warned: parking_lot::Mutex<HashSet<(AuthorityName, [u8; 32])>>,
+
     /// Running max of `commit_timestamp_ms` over every consensus commit
     /// this validator has processed this epoch — the epoch's consensus
     /// clock. In-memory only: it starts at 0 on (re)open and restores
@@ -2322,6 +2337,8 @@ impl AuthorityPerEpochStore {
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
             self_blob_unhealthy_warned: AtomicBool::new(false),
+            mpc_data_decode_cache: crate::validator_metadata::MpcDataDecodeCache::new(),
+            invalid_peer_blob_warned: parking_lot::Mutex::new(HashSet::new()),
             max_processed_commit_timestamp_ms: AtomicU64::new(0),
             round_transport: ArcSwapOption::empty(),
             observed_consensus_head_round: AtomicU64::new(0),
@@ -4041,14 +4058,41 @@ impl AuthorityPerEpochStore {
             self.name,
             announcements,
             |digest| {
-                perpetual
-                    .get_mpc_artifact_blob(digest)
-                    .ok()
-                    .flatten()
-                    .map(|bytes| crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes))
-                    .unwrap_or(false)
+                self.mpc_data_decode_cache.verdict(digest, || {
+                    perpetual.get_mpc_artifact_blob(digest).ok().flatten()
+                })
             },
         );
+        // A blob that IS held locally but doesn't decode is a fault with
+        // no in-epoch self-heal (the digest names exactly one byte string),
+        // and it silently costs the announcer its place in this validator's
+        // attestation. Before #2080 it was dropped without a word, which is
+        // what made a stalled off-chain plane unreadable from the logs.
+        // Once per (announcer, digest) — the emit gate re-evaluates every
+        // ~2s tick. Self has its own warn plus a gauge just below, so it is
+        // not repeated here.
+        for (authority, digest) in &decision.invalid_blobs {
+            if *authority == self.name {
+                continue;
+            }
+            // Take and drop the dedupe lock before logging — never hold a
+            // mutex across a `tracing` call.
+            let first_sighting = self
+                .invalid_peer_blob_warned
+                .lock()
+                .insert((*authority, *digest));
+            if first_sighting {
+                warn!(
+                    validator = ?authority,
+                    blob_digest = ?digest,
+                    epoch = self.epoch(),
+                    "announced mpc_data blob is held locally but fails the decode gate; \
+                     excluding this validator from our locally-validated set until it \
+                     announces a different blob (its bytes cannot become valid — the \
+                     blob store is content-addressed)"
+                );
+            }
+        }
         if decision.self_blob_unhealthy {
             // Own announcement is in the table but the corresponding
             // perpetual blob is missing or fails decode. Attesting
