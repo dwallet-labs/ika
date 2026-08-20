@@ -251,7 +251,7 @@ impl RoundTransportSender {
     /// (a parked fold is not an isolated node), so a drain that stops
     /// consuming entirely holds the watchdog indefinitely and correctly —
     /// isolation is not what has gone wrong. This climbing while
-    /// `ika_dwallet_mpc_consumed_round` is flat is that failure, and it is
+    /// `ika_last_process_mpc_consensus_round` is flat is that failure, and it is
     /// the only place it shows.
     ///
     /// Which is exactly why the park in progress has to count. Accruing only

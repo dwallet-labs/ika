@@ -177,7 +177,7 @@ increase(ika_consensus_fold_blocked_seconds_total[10m]) > 300
 # still. Capacity is `DEFAULT_ROUND_CHANNEL_CAPACITY` (1024) unless a node
 # overrides it.
 ika_consensus_round_channel_depth >= 1024
-  and increase(ika_dwallet_mpc_consumed_round[10m]) == 0
+  and increase(ika_last_process_mpc_consensus_round[10m]) == 0
 # for: 10m
 ```
 

@@ -635,7 +635,7 @@ impl DWalletMPCMetrics {
             fold_blocked_seconds_total: register_int_counter_with_registry!(
                 "ika_consensus_fold_blocked_seconds_total",
                 "Cumulative seconds the consensus fold spent waiting for room in the MPC \
-                 round channel. Climbing while ika_dwallet_mpc_consumed_round is flat is a \
+                 round channel. Climbing while ika_last_process_mpc_consensus_round is flat is a \
                  wedged drain — the commit-liveness watchdog deliberately does NOT catch \
                  that, because a waiting fold is not an isolated node",
                 registry
