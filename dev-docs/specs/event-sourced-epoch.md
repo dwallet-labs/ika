@@ -599,36 +599,155 @@ finds an epoch store holding NOTHING it recognises as progress: the per-round
 column families are absent, and so now are every fold-side table and any
 record of how far the handler got.
 
-Two consequences, and the second is new:
+The consequence is one thing, not two, because the two run in sequence: the
+old binary's fold starts from the epoch's first commit against empty tables and
+re-derives the whole epoch through its own table-WRITING path — and the tables
+it writes on the way are the same per-round tables its MPC drain reads. The
+argument that used to cover the re-fold ("`last_consensus_stats` holds the tally
+of a full replay, which is what the old binary would have written itself") is
+dead: there is no tally to inherit. What replaces it is that the old binary's
+own code rebuilds what it needs, so the drain is starved only for as long as the
+re-derivation takes, not for the rest of the epoch.
 
-- its MPC drain has no round history to read, so it processes nothing until
-  the epoch boundary hands it a fresh epoch store and a live stream —
-  degraded MPC for the remainder of the epoch, with checkpoints and the epoch
-  close still produced by its fold;
-- its fold starts from the epoch's first commit against empty tables and
-  re-derives the whole epoch through its own table-WRITING path. The
-  argument that used to cover this ("`last_consensus_stats` holds the tally of
-  a full replay, which is what the old binary would have written itself") is
-  dead: there is no tally to inherit. Whether an old binary's re-fold-from-zero
-  onto empty tables behaves is untested — it re-emits an epoch of checkpoint
-  signatures with none of the settled-state suppression this binary added,
-  which is a volume problem rather than a correctness one, but "rather than"
-  is an argument and not a measurement.
+Two things this costs, both of them transient:
 
-The upgrade matrix is where this gets tested rather than argued; it is the
-required evidence, and until it exists treat a mid-epoch rollback as costing
-that node's MPC participation for the rest of the epoch AND putting it through
-a full re-derivation on the old binary.
+- **restart-to-live, on the old binary too.** Its `replay_after` is
+  `last_processed_subdag_index()`, read from the absent watermark, so it is 0
+  and consensus re-sends the epoch from its first commit. The node follows
+  consensus and produces checkpoints throughout. The drain itself catches up
+  fast — measured at 13,196 rounds of backlog entered and drained in **276 ms**,
+  because catch-up mode reconstructs rather than recomputes — so the cost is
+  NOT the drain. (Read that from the catch-up log line's own `gap_rounds`, not
+  from a gauge sampled after the fact: the drain finishes before an external
+  poll can read its starting point, so a sampled "rounds rebuilt" figure
+  under-reports the backlog by however long the sampler took to arrive. The
+  second run shows the size of that error directly: it reported 18,365 rounds
+  rebuilt against a target of 19,337, having missed the ~1,000 rounds that
+  drained before the first sample landed.)
+
+  **Measured end to end on two runs: ~35 s and ~40 s from SIGTERM to a
+  re-derived node.** The process boot was **25.1 s in both** — the same number
+  twice — and the remainder is the re-derivation of a ~19,330-round backlog,
+  reported as ≤10 s and ≤15 s only because the harness polls every 5 s; the
+  fold itself is sub-second. A peer then witnessed MPC output authored by the
+  rolled-back validator for freshly-created sessions at 0 s latency in both
+  runs, and the node's own completed-session total — reset by the restart —
+  was rising again within one workload. The recovery is dominated by process
+  startup, not by the re-derivation this design added, and the two runs agree
+  on the term that dominates it.
+
+  Note what that interval is measured BETWEEN. What matters is sessions going
+  active and contributing output again, which is what the scenario's assertion
+  3 waits for. The drain's own catch-up time is a misleading proxy: it
+  completes while the node is still reconstructing rather than computing.
+- **re-emission into the DAG — far less than this section used to claim.** The
+  re-fold does run against an empty `consensus_message_processed` table, so
+  nothing stops the old binary re-submitting on its own account. What stops it
+  is that it has little to re-submit, through THREE independent suppressions,
+  and earlier drafts of this section accounted for none of them:
+  - v1.3.1's checkpoint-signature gate
+    (`get_highest_verified_dwallet_checkpoint`) reads the perpetual checkpoint
+    store, which a rollback does not touch, so it re-signs only the band
+    between the verified watermark and what had been certified — the band this
+    binary's broader `get_highest_settled_dwallet_checkpoint_seq` closed. The
+    claim that the old binary has "none of the settled-state suppression this
+    binary added" was wrong; it has the narrower one.
+  - **#2023 catch-up mode, which is the big one.** A rolled-back node comes up
+    with the whole epoch as backlog, far past `enter_threshold`, so its MPC
+    service enters catch-up: every session the replayed stream carries is
+    reconstructed (`session_origin="reconstructed_from_consensus"`,
+    `active=false`) and no new computation runs until the backlog drains. The
+    MPC messages and outputs that would have dominated a re-emission are never
+    recomputed, so they are never re-sent. This is also why the drain reaches
+    the head so fast — it is not computing.
+  - the sessions that were already complete when the rollback happened are
+    complete again after reconstruction, so they produce no output to submit.
+
+  **Measured twice, on two independent runs: 144 against a control of 150
+  (difference −6), and 144 against a control of 144 (difference exactly 0).**
+  A mid-epoch rollback costs the DAG nothing, and "nothing" is now two
+  observations rather than one — with the level itself steady, both rollback
+  windows landing on 144. The composition confirms why: what the peers counted
+  is ordinary traffic (60 checkpoint signatures, ~190-207 global-presign
+  requests, 33-36 MPC outputs, 24 MPC messages) plus the only two things a
+  restart genuinely does re-announce — 3 capability notifications and 3
+  idle-status updates, identical in both runs.
+
+The mechanism above is read off the two binaries' source; the numbers come
+from the `mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the
+candidate first and puts the v1.3.1 release back on one validator mid-epoch, on
+the same stores. It asserts the re-derivation reaches the peers' consumed round (the
+witness is `ika_last_process_mpc_consensus_round` on the rolled-back node,
+which v1.3.1 sets from the tables its own fold writes), counts the re-emission
+at the peers on `ika_skipped_consensus_txns` against a control window of
+ordinary traffic, and requires a peer to witness an MPC output authored by the
+rolled-back validator for a session created after the catch-up. The whole run
+is bracketed by an epoch ceiling, because a boundary would hand the node a
+fresh epoch store and make all three free.
+
+**A rollback taken AT a boundary is free, and that is measured too**, by the
+same scenario run one epoch later (the `x1-boundary-rollback` variant). Two
+independent readings:
+
+- **Nothing to re-derive.** The node came up against a backlog of ~300 rounds
+  (`target=306, reached=422`; ~280/406 on the first attempt), three orders of
+  magnitude below the mid-epoch 19,330 and far under #2023's 5,000-round
+  `enter_threshold`, so catch-up never engages at all. The first attempt of
+  this variant FAILED on a probe waiting for catch-up to engage — which is the
+  finding, not a defect: at a boundary there is nothing to catch up on.
+- **Nothing re-emitted.** 150 re-submissions against a control of 159, a
+  difference of −9 — the same "zero within noise" as the mid-epoch case, from
+  a run where the re-derivation never happened.
+
+So the boundary case is not merely cheaper than the mid-epoch one; on both
+terms it is indistinguishable from not rolling back at all.
+
+**The conditions those numbers were measured under**, because they bound what
+they are worth: two green runs of `mid_epoch_rollback` (actions/runs/32318375717
+and .../32346054927) on a four-validator localnet — so a three-validator quorum
+— with a 30-minute epoch, the rollback taken about 59% of the way through it,
+and a ~19,330-round backlog to re-derive. Both were lightly loaded: a single
+user DKG → Presign → Sign lifecycle per window, nothing like production volume.
+Two runs of the same shape agree with each other; they do not between them
+constitute a range.
+
+That is enough to settle the SHAPE — a rollback is not a spray, and the
+recovery is process startup rather than re-derivation — and it is not enough to
+predict a loaded validator's numbers. Both terms scale with traffic the run did
+not generate: the backlog to re-derive grows with the epoch's round count, and
+the re-emission window's composition is dominated by ordinary traffic whose
+volume is the load. **The loaded-cluster measurement is a separate obligation**
+— release condition 1 in ika #2064 — and nothing here discharges it.
+
+It took three runs. The first two failed on the test rather than the system:
+one asserted the spray it was supposed to measure, and one matched validators
+by a name format the metric does not emit, then blamed the subject for the
+silence. Both failures are recorded in `../learnings/pitfalls.md`; the
+suppression layers above were found because of them.
 
 **Release note, for lifting verbatim into operator notes:** rolling this binary
-back mid-epoch does not restore the node's MPC participation until the next
-epoch boundary. The node starts, follows consensus, and keeps producing
-checkpoints, but its MPC drain has no round history to read and will sit out
-until the boundary hands it a fresh epoch store, while its consensus handler
-re-derives the epoch from its first commit. A rollback taken *at* a boundary is
-unaffected. This must not be discovered mid-incident: an operator rolling back
-to recover from something else needs to know the recovery costs MPC for up to
-one epoch.
+back mid-epoch puts that node through a full re-derivation of the epoch before
+it is fully live again. It starts, follows consensus and keeps producing
+checkpoints immediately. Its MPC drain has no round history until its own fold
+rewrites it from the epoch's first commit, and while that backlog drains the
+node reconstructs the epoch's sessions instead of computing them — so expect
+that node to contribute no new MPC work until the backlog clears and its
+sessions resume. The backlog itself drains quickly — a 19,330-round
+epoch in under ten seconds, because reconstruction is not computation — so on
+a test cluster the whole recovery measured about 35 seconds end to end, most of
+it ordinary process startup. Expect that to grow with the epoch's round count
+and with how loaded the validator is, but expect its SHAPE to hold: the wait is
+dominated by the node restarting, not by the epoch being re-derived. The same
+reconstruction is why a rollback is NOT the DAG spray an earlier draft of this
+note predicted: measured against a comparable window with no rollback in it,
+the re-emission was zero within noise on two runs (144 against 150, and 144
+against 144), and the only things a restart genuinely re-announces are its
+capability notification and its idle status. A rollback taken *at* a boundary costs neither term, measured: no
+backlog to re-derive (catch-up never engages) and 150 re-submissions against a
+control of 159. This must not be discovered mid-incident: an operator rolling
+back to recover from something else needs to know the recovery costs a
+re-derivation, and that the cost is paid once rather than until the next
+boundary.
 
 ## What this is tested by, and what it is not
 
@@ -695,11 +814,13 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   advances. This is the scenario the close-round re-roll above makes newly
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
-- **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`), which is
-  where the rollback section above gets tested rather than argued. It is now
-  an argument with two teeth: a rolled-back node loses MPC for the rest of the
-  epoch, and it re-derives the whole epoch through its own table-writing fold
-  onto empty tables, which nothing has exercised.
+- **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`). The
+  forward direction is covered by `v131_rollout` / `v131_churn`; the BACKWARD
+  direction — the rollback section above — is `mid_epoch_rollback`, which puts
+  the v1.3.1 release back on one validator mid-epoch and asserts the
+  re-derivation reaches the peers' consumed round, counts the already-settled
+  work it re-sends, and requires a peer to witness it authoring MPC output
+  again inside the same epoch.
 - **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
   on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
   the commit-channel backlog. This closes both directions the local harness

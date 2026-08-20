@@ -43,6 +43,7 @@ use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_sdk::wallet_context::WalletContext;
+use sui_types::base_types::ConciseableName;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SuiKeyPair;
 
@@ -150,6 +151,29 @@ impl AuthorityNamings {
     /// now genuinely different types with different widths.
     fn both(&self) -> [String; 2] {
         [self.protocol.to_string(), self.consensus.to_string()]
+    }
+
+    /// Every string this validator can appear as in a metric label: both
+    /// namings, each in full and in CONCISE form.
+    ///
+    /// Some metrics label by `name.concise()` — `k#` plus the first four bytes
+    /// plus `..` (`ika_types::crypto::ConciseAuthorityNameRef`) — rather than
+    /// by the full name, and matching only the full form against a
+    /// concise-labelled series silently matches nothing at all. That is not
+    /// hypothetical: it made `mpc_output_sessions_from` return an empty set
+    /// for a perfectly healthy validator, which read as "this validator
+    /// contributed no MPC" for a whole epoch.
+    ///
+    /// Accepting all four is deliberate. Every one is derived from THIS
+    /// validator's own keys, so a match is always about the right validator,
+    /// and the set stays correct if a series changes which rendering it emits.
+    fn all_renderings(&self) -> BTreeSet<String> {
+        BTreeSet::from([
+            self.protocol.to_string(),
+            self.consensus.to_string(),
+            self.protocol.concise().to_string(),
+            self.consensus.concise().to_string(),
+        ])
     }
 }
 
@@ -690,6 +714,28 @@ fn required_labeled_metric(
         validator.metrics_endpoint()
     );
     Ok(value as u64)
+}
+
+/// The `session_seq` labels in one validator's scrape for which it recorded an
+/// MPC output authored by one of `subject`'s names
+/// (`ika_dwallet_mpc_user_session_output_received_from` = 1).
+///
+/// The authority filter is what makes the reading evidence about ONE
+/// validator: without it every session the observer saw any output for would
+/// match, and a subject contributing nothing would still look alive.
+fn output_sessions_authored_by(body: &str, subject: &BTreeSet<String>) -> Result<BTreeSet<String>> {
+    let samples = parse_metric_samples(body, "ika_dwallet_mpc_user_session_output_received_from")?;
+    Ok(samples
+        .into_iter()
+        .filter(|sample| sample.value >= 1.0)
+        .filter(|sample| {
+            sample
+                .labels
+                .get("authority")
+                .is_some_and(|authority| subject.contains(authority))
+        })
+        .filter_map(|sample| sample.labels.get("session_seq").cloned())
+        .collect())
 }
 
 fn metric_samples_for_protocol(
@@ -1371,6 +1417,198 @@ impl ClusterOfProcesses {
             "malicious-metric observers {observer_indices:?} reported maximum {maximum}; expected at least {minimum}"
         );
         Ok(())
+    }
+
+    /// Cumulative `ika_skipped_consensus_txns` on each observer, in the order
+    /// of `observer_indices`.
+    ///
+    /// The counter increments once per consensus transaction whose digest is
+    /// already in the folding node's processed set — once per re-submission of
+    /// work that node has already folded. It is read on the PEERS of a node
+    /// under test, never on the node itself: a validator cannot count its own
+    /// re-emissions, because the dedup set that would recognise them is
+    /// exactly the state its restart discarded.
+    pub async fn skipped_consensus_txns(&self, observer_indices: &[usize]) -> Result<Vec<u64>> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no skipped-consensus-txn observers supplied"
+        );
+        let mut totals = Vec::with_capacity(observer_indices.len());
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            totals.push(required_unlabeled_metric(
+                &body,
+                &["ika_skipped_consensus_txns"],
+                validator,
+            )?);
+        }
+        Ok(totals)
+    }
+
+    /// Per-kind committed-consensus-transaction counts
+    /// (`ika_consensus_handler_processed`), summed over the observers. The
+    /// handler counts a transaction here BEFORE the dedup check, so a
+    /// re-emission lands in its own kind — which is what turns a bare
+    /// re-submission total into a breakdown of what was re-emitted.
+    pub async fn consensus_handler_processed_by_kind(
+        &self,
+        observer_indices: &[usize],
+    ) -> Result<BTreeMap<String, u64>> {
+        ensure!(
+            !observer_indices.is_empty(),
+            "no consensus-handler observers supplied"
+        );
+        let mut by_kind: BTreeMap<String, u64> = BTreeMap::new();
+        for index in observer_indices {
+            let validator = self
+                .validators
+                .get(*index)
+                .with_context(|| format!("validator index {index} out of range"))?;
+            let body = validator.metrics().await?;
+            for sample in parse_metric_samples(&body, "ika_consensus_handler_processed")? {
+                // The label is "class", not "kind" — the counter is registered
+                // `&["class"]` while the value it carries comes from
+                // `classify()`. Reading the wrong label silently yields an
+                // empty breakdown rather than an error.
+                let Some(class) = sample.labels.get("class") else {
+                    continue;
+                };
+                *by_kind.entry(class.clone()).or_default() += sample.value as u64;
+            }
+        }
+        Ok(by_kind)
+    }
+
+    /// One validator's `ika_last_process_mpc_consensus_round` — the consensus
+    /// round its MPC service has consumed. Every binary the harness runs
+    /// exports it under this name, which is what makes the reading comparable
+    /// across a mixed-binary committee.
+    pub async fn mpc_consensus_round(&self, index: usize) -> Result<u64> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let body = validator.metrics().await?;
+        required_unlabeled_metric(&body, &["ika_last_process_mpc_consensus_round"], validator)
+    }
+
+    /// The lowest consumed MPC round across `indices` — the round every one of
+    /// them has reached, i.e. the head a lagging validator has to catch up to.
+    pub async fn min_mpc_consensus_round(&self, indices: &[usize]) -> Result<u64> {
+        ensure!(!indices.is_empty(), "no MPC-round observers supplied");
+        let mut minimum = u64::MAX;
+        for index in indices {
+            minimum = minimum.min(self.mpc_consensus_round(*index).await?);
+        }
+        Ok(minimum)
+    }
+
+    /// Poll `index` until its consumed MPC round reaches `target`, returning
+    /// the round it reached. Fails closed on the timeout, naming the distance
+    /// still to go.
+    pub async fn wait_for_mpc_consensus_round(
+        &self,
+        index: usize,
+        target: u64,
+        timeout: Duration,
+    ) -> Result<u64> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let round = self.mpc_consensus_round(index).await?;
+            if round >= target {
+                return Ok(round);
+            }
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "validator {index} consumed MPC round {round} after {timeout:?}; it never reached \
+                 the round {target} its peers had already consumed (short by {})",
+                target - round
+            );
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    /// The `session_seq` labels for which `observer_index` has recorded an MPC
+    /// output authored by `subject_index`'s authority
+    /// (`ika_dwallet_mpc_user_session_output_received_from` = 1).
+    ///
+    /// Every rendering of the subject's name is accepted (see
+    /// [`AuthorityNamings::all_renderings`]) — this series labels by the
+    /// CONCISE form, and matching only full names silently returns nothing.
+    ///
+    /// **This series is EPHEMERAL.** The manager zeroes every
+    /// `(session, authority)` entry once the session leaves its active map, so
+    /// a reading only ever describes sessions that are live at that instant.
+    /// A caller looking for "did this validator ever author an output for a
+    /// session created after X" must ACCUMULATE readings across a poll —
+    /// sampling once, or polling slowly, misses short sessions entirely.
+    /// One validator's total completed SESSIONS, summed over the per-protocol
+    /// `ika_dwallet_mpc_completions_count` series.
+    ///
+    /// Read the name carefully — it counts what
+    /// `mpc_manager.rs::complete_mpc_session` records, which fires when this
+    /// node processes a session reaching QUORUM while holding that session's
+    /// request metadata. It is not a count of cryptographic work this node
+    /// performed, and an earlier version of this harness claimed it was.
+    /// A pure spectator carrying no session state never increments it, which
+    /// is what makes it useful; "this validator computed" is the
+    /// peer-witness's claim, not this one's.
+    ///
+    /// Two properties to respect. It is process-scoped, so a restart resets it
+    /// and only deltas within one process lifetime mean anything. And it moves
+    /// LATER than a peer can observe this node's output — the peer sees the
+    /// output in consensus, this node counts it when its own drain reaches
+    /// that quorum — so a caller must poll rather than read once.
+    pub async fn mpc_completions_total(&self, index: usize) -> Result<u64> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let body = validator.metrics().await?;
+        Ok(
+            parse_metric_samples(&body, "ika_dwallet_mpc_completions_count")?
+                .into_iter()
+                .map(|sample| sample.value.max(0.0) as u64)
+                .sum(),
+        )
+    }
+
+    /// How many times `needle` appears in one validator's `node.log`.
+    ///
+    /// Occurrence COUNTS rather than presence, because logs append across
+    /// restarts: for a line both binaries emit, "it appeared" is satisfied by
+    /// the pre-swap binary's output, and only "it appeared again" is evidence
+    /// about the binary under test.
+    pub fn log_line_count(&self, index: usize, needle: &str) -> Result<usize> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let log = std::fs::read_to_string(validator.log_path())
+            .with_context(|| format!("read validator log {}", validator.log_path().display()))?;
+        Ok(log.matches(needle).count())
+    }
+
+    pub async fn mpc_output_sessions_from(
+        &self,
+        observer_index: usize,
+        subject_index: usize,
+    ) -> Result<BTreeSet<String>> {
+        let observer = self
+            .validators
+            .get(observer_index)
+            .with_context(|| format!("observer index {observer_index} out of range"))?;
+        let subject = self
+            .validator_authorities
+            .get(subject_index)
+            .with_context(|| format!("subject index {subject_index} out of range"))?
+            .all_renderings();
+        let body = observer.metrics().await?;
+        output_sessions_authored_by(&body, &subject)
     }
 
     /// Assert every authority that submitted a network-key reconfiguration
@@ -2245,6 +2483,115 @@ mod tests {
         assert_eq!(samples[0].labels["authority"], "k#01");
         assert_eq!(samples[0].labels["output_digest"], "deadbeef");
         assert_eq!(samples[0].value, 1.0);
+    }
+
+    /// One observer's view of who authored outputs for which sessions.
+    fn output_received_from_metrics(rows: &[(&str, &str, u64)]) -> String {
+        rows.iter()
+            .map(|(session_seq, authority, value)| {
+                format!(
+                    "ika_dwallet_mpc_user_session_output_received_from{{session_seq=\"{session_seq}\",authority=\"{authority}\"}} {value}\n"
+                )
+            })
+            .collect()
+    }
+
+    /// A subject as the harness knows it: the full rendering plus the CONCISE
+    /// one, exactly as `AuthorityNamings::all_renderings` builds them.
+    ///
+    /// These fixtures reproduce the REAL emission format rather than a
+    /// convenient placeholder, because the placeholder is what hid the bug
+    /// they now exist for: both sides of the comparison used the invented
+    /// string "k#subject", so the tests passed while the harness matched
+    /// full-length names against a series labelled with 4-byte concise ones
+    /// and found nothing — for a whole healthy epoch.
+    const SUBJECT_FULL: &str = "k#df2fe30c267507cc21ef0cabfcbb27eb5215047720c6ad955a9c5b0c16d17cb4";
+    const SUBJECT_CONCISE: &str = "k#df2fe30c..";
+    const PEER_CONCISE: &str = "k#a41b9f02..";
+    /// The same validator under the BLS protocol-key basis: 48 bytes, so 96
+    /// hex characters, and the same "k#" prefix as the consensus basis.
+    const PROTOCOL_FULL: &str = concat!(
+        "k#8f14e45fceea167a5a36dedd4bea2543b9b4f2c1e07d3a1f8c9b0e5d7a6c4b3f",
+        "2e1d0c9b8a7f6e5d4c3b2a1908f7e6d5"
+    );
+    const PROTOCOL_CONCISE: &str = "k#8f14e45f..";
+
+    fn subject_renderings() -> BTreeSet<String> {
+        BTreeSet::from([SUBJECT_FULL.to_string(), SUBJECT_CONCISE.to_string()])
+    }
+
+    #[test]
+    fn output_sessions_match_the_concise_label_the_series_actually_emits() {
+        // The regression: `user_session_output_received_from` labels by
+        // `authority_name.concise()`, so a subject known only by its full name
+        // matches nothing. Carrying both renderings is what makes the reading
+        // work, and this fixture uses the real formats on both sides.
+        let body = output_received_from_metrics(&[
+            ("11", SUBJECT_CONCISE, 1),
+            ("12", PEER_CONCISE, 1),
+            ("13", SUBJECT_CONCISE, 1),
+        ]);
+        let sessions =
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
+        assert_eq!(
+            sessions,
+            BTreeSet::from(["11".to_string(), "13".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_full_name_alone_cannot_read_a_concise_series() {
+        // Pins the failure mode itself, so a future change that drops the
+        // concise renderings fails here rather than on a cluster hours later
+        // as an empty result indistinguishable from an idle validator.
+        let body = output_received_from_metrics(&[("11", SUBJECT_CONCISE, 1)]);
+        let full_only = BTreeSet::from([SUBJECT_FULL.to_string()]);
+        let sessions = output_sessions_authored_by(&body, &full_only).expect("well-formed");
+        assert!(
+            sessions.is_empty(),
+            "a full-name-only subject silently matches nothing against a concise series, \
+             which is why all_renderings exists"
+        );
+    }
+
+    #[test]
+    fn output_sessions_are_selected_by_author_not_by_session() {
+        // The vacuity this guards: without the authority filter, sessions a
+        // peer authored would count as the subject participating, and a
+        // subject contributing nothing would still look alive.
+        let body = output_received_from_metrics(&[("11", PEER_CONCISE, 1)]);
+        let sessions =
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn an_unset_output_gauge_is_not_an_observed_output() {
+        // The gauge reads 0 both before an output arrives and after the
+        // manager zeroes the series on session departure, so the presence of a
+        // label is not evidence — only its value is.
+        let body = output_received_from_metrics(&[("11", SUBJECT_CONCISE, 0)]);
+        let sessions =
+            output_sessions_authored_by(&body, &subject_renderings()).expect("well-formed");
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn output_sessions_accept_either_authority_naming() {
+        // A validator is named by its consensus key from protocol v6 on and by
+        // its BLS protocol key below it. BOTH render with the same "k#" prefix
+        // (there is no "bls#" form — inventing one is the same fixture mistake
+        // this file exists to warn about); they differ only in width, 32 bytes
+        // against 48, and their concise forms differ only in the bytes.
+        let body = output_received_from_metrics(&[("11", PROTOCOL_CONCISE, 1)]);
+        let all = BTreeSet::from([
+            SUBJECT_FULL.to_string(),
+            SUBJECT_CONCISE.to_string(),
+            PROTOCOL_FULL.to_string(),
+            PROTOCOL_CONCISE.to_string(),
+        ]);
+        let sessions = output_sessions_authored_by(&body, &all).expect("well-formed");
+        assert_eq!(sessions, BTreeSet::from(["11".to_string()]));
     }
 
     #[test]

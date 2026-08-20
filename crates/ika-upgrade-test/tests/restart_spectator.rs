@@ -125,10 +125,21 @@ async fn restarted_validator_resumes_internal_presign_top_up_mid_epoch() {
         .stop_and_swap(&[0], current)
         .expect_all_validators_healthy()
         .wait_for_all_validators_local_epoch(2)
-        // THE GATE (both lines are post-restart by construction: node.log is
-        // truncated on restart): the ordinal stream must be seeded from the
-        // persisted pool-slot high-water, and the top-up loop must land a
-        // LIVE mint — the spectator state produces neither, ever.
+        // THE GATE: the ordinal stream must be seeded from the persisted
+        // pool-slot high-water, and the top-up loop must land a LIVE mint —
+        // the spectator state produces neither, ever.
+        //
+        // Both lines are post-restart by construction, but NOT because the log
+        // is fresh: `ValidatorProcess::start` appends rather than truncates, so
+        // a positive log assertion can match an occurrence from before a
+        // restart. What confines these two to the post-restart window is their
+        // emit guard — each fires only for a pool whose ordinal stream was
+        // seeded MID-STREAM, which needs a store that already holds this
+        // epoch's fills. The pre-restart boot of this epoch starts from empty
+        // per-epoch pools and seeds at 1 silently. (The same guard also covers
+        // a late key install with no restart, so a pre-restart match is
+        // conceivable in an epoch where validator 0 adopts a key late; this
+        // scenario's epoch-2 ordering makes that unreachable.)
         .wait_for_log_line_on_validator(
             0,
             "seeded internal-presign ordinal stream from the persisted pool-slot high-water",

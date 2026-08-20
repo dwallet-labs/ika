@@ -186,6 +186,99 @@ rule, not the instance.
 
 ## Testing & infrastructure
 
+- **A metric-label fixture invented by the test author validates the
+  test against itself.** A cluster assertion matched validators by their
+  full `AuthorityName` (`k#` + 64 hex), but
+  `ika_dwallet_mpc_user_session_output_received_from` labels by
+  `authority_name.concise()` (`k#` + 8 hex + `..`). The matcher could
+  never match anything. Its unit tests passed because the fixtures used
+  the same invented string — `"k#subject"` — on BOTH sides of the
+  comparison, so the format was consistent with itself and wrong about
+  reality. The cost: a scenario that polled for 30 minutes and then
+  reported that a perfectly healthy validator "is following consensus
+  without contributing MPC" — a false accusation aimed at the feature
+  under test rather than at the instrument.
+  → Rule: a fixture for a metric, log line, or any other emitted format
+  must reproduce the REAL emission, copied from the SET SITE (grep the
+  `with_label_values` call, not the registration) — never a placeholder
+  that only has to satisfy the code being tested. Where a series can be
+  labelled by more than one rendering of the same identity, accept every
+  rendering and keep a test that pins what happens when one is missing.
+- **An assertion that cannot see a healthy subject is indistinguishable
+  from a broken subject.** The same bug would have been caught in
+  minutes by pointing the instrument at the subject while it was known
+  healthy, before the phase under test. → Rule: a long scenario whose
+  verdict depends on a per-node observation should CALIBRATE in-run —
+  run the identical instrument against a healthy subject first and fail
+  there, naming the instrument, if it sees nothing. It also measures the
+  observation latency the later phase has to budget for.
+- **Per-session metric series are ephemeral; the poll that misses them
+  is not evidence of absence.** `user_session_*` gauges are zeroed when
+  a session leaves the manager's active map, so a 5-second poll simply
+  misses short sessions. → Rule: for "did X ever happen", ACCUMULATE
+  observations across a fast poll instead of sampling; a single read
+  answers only "is X happening right now".
+- **In a 4-validator committee one honest output is always
+  superfluous.** Any 3 of 4 form a quorum, so a session can complete
+  before the fourth finishes computing, and that validator's output is
+  never observed by anyone — measured at 147 of 306 quorums on a healthy
+  cluster. An assertion of the form "a peer must witness THIS
+  validator's output" is therefore a coin flip per session, and it
+  worsens for a node that just restarted, which is the slow one.
+  → Rule: pair a quorum-observable assertion with one that a race cannot
+  answer falsely (a local completion counter), and read the pair.
+- **A fault-injection bundle is COUPLED to the assertion semantics it
+  was written against; weakening a verdict can silently disarm a fault.**
+  A scenario's re-emission assertion was demoted from "this window must
+  exceed a control window" to "the counters must be alive" — correct, the
+  original encoded a prediction the measurement falsified. But one of the
+  bundle's faults (point the measurement at an observer that cannot see
+  what it is measuring) had relied on the control comparison to fail. With
+  only a liveness floor left, the fault run went GREEN and printed a
+  corrupted number as a result. → Rule: when an assertion's verdict is
+  weakened, re-audit every fault whose detection depended on the removed
+  half BEFORE re-dispatching; a fault that passes is worse than no fault,
+  because it certifies the assertion it failed to break.
+- **Process-scoped counters need a structural guard, not care.** The same
+  escape had a second cause: the observer's counter was process-scoped and
+  the observer restarted mid-window, so `now - at_open` was a fresh
+  process's absolute count subtracted from a dead one's, with
+  `saturating_sub` hiding the sign. → Rule: when a measurement window
+  spans a period in which processes can be replaced, record a restart
+  generation alongside each snapshot and refuse to close a window whose
+  own observers were replaced. Structural checks like this hold for
+  scenarios nobody has written yet; "remember not to measure on the node
+  you restart" does not.
+- **A counter read immediately after the event that should move it is a
+  race, and "this cannot be a race" is not a thing to assert in an error
+  message.** A scenario read a validator's completed-session total right
+  after a workload and failed two dispatches with the text "which no
+  quorum race can explain away" — while a peer had witnessed that same
+  validator contributing output 5 ms earlier. The counter increments when
+  the node's OWN drain reaches the session's quorum, strictly after a
+  peer can observe the output in consensus. → Rule: poll cumulative
+  counters to a bounded deadline rather than sampling them at the moment
+  of the triggering event, and never put an impossibility claim in an
+  assertion message unless the impossibility is established — the message
+  is what the next person debugs from, and a false one sends them to the
+  wrong system.
+- **Read what a metric's SET SITE records, not what its name suggests.**
+  The same counter was documented as "MPC computations this node
+  performed". `complete_mpc_session` fires it on observing a session
+  reach quorum while holding that session's request metadata — bookkeeping
+  progress, not cryptographic work. The name (`completions_count`) and the
+  metric help text (`"Number of completions"`) both invite the stronger
+  reading. → Rule: before an assertion rests on a metric, read the line
+  that increments it and write down what that line actually witnesses;
+  where the honest meaning is narrower than the claim, either narrow the
+  claim or find another series.
+- **A poll that outlives the window it is about produces a confident
+  wrong diagnosis.** An assertion bounded only by a generous timeout ran
+  30 minutes past an epoch boundary and blamed the subject for a
+  question that had stopped being asked once the boundary handed it a
+  fresh epoch store. → Rule: bound such a poll on the CONDITION that
+  ends its validity (here the epoch ceiling), not only on elapsed time,
+  and say in the failure which one fired.
 - **Probe-then-bind port allocation races across processes.** Two test
   processes probing for free ports then binding later collide
   ("Address already in use"). A cross-process *boot lock* is NOT enough:
