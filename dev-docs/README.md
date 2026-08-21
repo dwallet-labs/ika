@@ -158,6 +158,12 @@ them has a bug — determine which before changing either.
   reason its consumers survive that); the reader-side rule that #1917 was
   actually born on, and the one table whose argument does not close.
   CI-enforced via `scripts/check-epoch-table-write-discipline.sh`.
+- [`conventions/chain-mirror-layout.md`](conventions/chain-mirror-layout.md)
+  — the three Rust structs that are UNTAGGED mirrors of deployed Move
+  structs, why a verified read proves provenance but never shape, and the
+  six things that move together when one of them changes. CI-enforced via
+  `scripts/check-chain-mirror-layout.sh` plus golden layout tests in
+  `ika-types`.
 - [`conventions/logging.md`](conventions/logging.md) — the `tracing`
   log-level discipline: hot MPC paths are `debug!`, once-per-epoch
   lifecycle events are `info!`; why an `info!` on the per-computation

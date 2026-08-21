@@ -9,6 +9,7 @@
 
 #[macro_use]
 pub mod error;
+pub mod chain_mirror;
 pub mod committee;
 pub mod crypto;
 pub mod digests;

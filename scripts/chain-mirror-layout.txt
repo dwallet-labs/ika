@@ -1,0 +1,85 @@
+# Frozen layout of the Move structs that Rust mirrors with untagged
+# `#[derive(Deserialize)]` types.
+#
+# Each block pins one Move struct's field list, in declaration order, and names
+# the Rust field each Move field decodes into. BCS is positional, so this order
+# IS the wire format of bytes that deployed packages have already written. The
+# names on the two sides genuinely differ in places (`presign_sessions` ->
+# `presigns`, `witnesses_approving_advance_epoch` ->
+# `witness_approving_advance_epoch`), which is exactly why the mapping is
+# written out instead of assumed.
+#
+# `scripts/check-chain-mirror-layout.sh` re-extracts both sides from source and
+# fails if either has moved. Regenerate with `--write` after a DELIBERATE change,
+# never to make a red build green.
+#
+# Full rationale and update procedure: dev-docs/conventions/chain-mirror-layout.md
+
+[mirror]
+move-source = contracts/ika_dwallet_2pc_mpc/sources/coordinator_inner.move
+move-struct = DWalletCoordinatorInner
+rust-source = crates/ika-types/src/sui/system_inner_v1.rs
+rust-struct = DWalletCoordinatorInnerV1
+version-source = contracts/ika_dwallet_2pc_mpc/sources/coordinator.move
+version-value = 2
+fields =
+  current_epoch: u64 -> current_epoch
+  sessions_manager: SessionsManager -> sessions_manager
+  dwallets: ObjectTable<ID, DWallet> -> dwallets
+  dwallet_network_encryption_keys: ObjectTable<ID, DWalletNetworkEncryptionKey> -> dwallet_network_encryption_keys
+  epoch_dwallet_network_encryption_keys_reconfiguration_completed: u64 -> epoch_dwallet_network_encryption_keys_reconfiguration_completed
+  encryption_keys: ObjectTable<address, EncryptionKey> -> encryption_keys
+  presign_sessions: ObjectTable<ID, PresignSession> -> presigns
+  partial_centralized_signed_messages: ObjectTable<ID, PartialUserSignature> -> partial_centralized_signed_messages
+  pricing_and_fee_manager: PricingAndFeeManager -> pricing_and_fee_management
+  active_committee: BlsCommittee -> active_committee
+  next_epoch_active_committee: Option<BlsCommittee> -> next_epoch_active_committee
+  total_messages_processed: u64 -> total_messages_processed
+  last_processed_checkpoint_sequence_number: u64 -> last_processed_checkpoint_sequence_number
+  previous_epoch_last_checkpoint_sequence_number: u64 -> previous_epoch_last_checkpoint_sequence_number
+  support_config: SupportConfig -> support_config
+  received_end_of_publish: bool -> received_end_of_publish
+  extra_fields: Bag -> extra_fields
+
+[mirror]
+move-source = contracts/ika_dwallet_2pc_mpc/sources/coordinator_inner.move
+move-struct = DWalletNetworkEncryptionKey
+rust-source = crates/ika-types/src/messages_dwallet_mpc.rs
+rust-struct = DWalletNetworkEncryptionKey
+fields =
+  id: UID -> id
+  dkg_at_epoch: u64 -> dkg_at_epoch
+  network_dkg_public_output: TableVec<vector<u8>> -> network_dkg_public_output
+  reconfiguration_public_outputs: Table<u64, TableVec<vector<u8>>> -> reconfiguration_public_outputs
+  dkg_params_for_network: vector<u8> -> dkg_params_for_network
+  supported_curves: vector<u32> -> supported_curves
+  state: DWalletNetworkEncryptionKeyState -> state
+
+[mirror]
+move-source = contracts/ika_system/sources/system/system_inner.move
+move-struct = SystemInner
+rust-source = crates/ika-types/src/sui/system_inner_v1.rs
+rust-struct = SystemInnerV1
+version-source = contracts/ika_system/sources/system.move
+version-value = 2
+fields =
+  epoch: u64 -> epoch
+  epoch_start_tx_digest: vector<u8> -> epoch_start_tx_digest
+  system_object_cap: SystemObjectCap -> system_object_cap
+  protocol_version: u64 -> protocol_version
+  next_protocol_version: Option<u64> -> next_protocol_version
+  upgrade_caps: vector<UpgradeCap> -> upgrade_caps
+  approved_upgrades: VecMap<ID, vector<u8>> -> approved_upgrades
+  validator_set: ValidatorSet -> validator_set
+  epoch_duration_ms: u64 -> epoch_duration_ms
+  stake_subsidy_start_epoch: u64 -> stake_subsidy_start_epoch
+  protocol_treasury: ProtocolTreasury -> protocol_treasury
+  epoch_start_timestamp_ms: u64 -> epoch_start_timestamp_ms
+  last_processed_checkpoint_sequence_number: u64 -> last_processed_checkpoint_sequence_number
+  previous_epoch_last_checkpoint_sequence_number: u64 -> previous_epoch_last_checkpoint_sequence_number
+  total_messages_processed: u64 -> total_messages_processed
+  remaining_rewards: Balance<IKA> -> remaining_rewards
+  authorized_protocol_cap_ids: vector<ID> -> authorized_protocol_cap_ids
+  witnesses_approving_advance_epoch: vector<String> -> witness_approving_advance_epoch
+  received_end_of_publish: bool -> received_end_of_publish
+  extra_fields: Bag -> extra_fields

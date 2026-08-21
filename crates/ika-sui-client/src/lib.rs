@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use core::panic;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_config::node::SuiGrpcHeaders;
+use ika_types::chain_mirror::{DWALLET_COORDINATOR_INNER_V1, SYSTEM_INNER_V1, decode_chain_mirror};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -262,14 +263,9 @@ where
                             "Can't get DWalletCoordinatorInner v1: {e}"
                         ))
                     })?;
-                let dynamic_field_inner = bcs::from_bytes::<Field<u64, DWalletCoordinatorInnerV1>>(
-                    &result,
-                )
-                .map_err(|e| {
-                    IkaError::SuiClientSerializationError(format!(
-                        "Can't serialize DWalletCoordinatorInner v1: {e}"
-                    ))
-                })?;
+                let dynamic_field_inner: Field<u64, DWalletCoordinatorInnerV1> =
+                    decode_chain_mirror(&result, DWALLET_COORDINATOR_INNER_V1)
+                        .map_err(IkaError::SuiClientSerializationError)?;
                 let ika_system_state_inner = dynamic_field_inner.value;
 
                 Ok((wrapper, DWalletCoordinatorInner::V1(ika_system_state_inner)))
@@ -303,12 +299,9 @@ where
                     .map_err(|e| {
                         IkaError::SuiClientInternalError(format!("Can't get SystemInner v1: {e}"))
                     })?;
-                let dynamic_field_inner = bcs::from_bytes::<Field<u64, SystemInnerV1>>(&result)
-                    .map_err(|e| {
-                        IkaError::SuiClientSerializationError(format!(
-                            "Can't serialize SystemInner v1: {e}"
-                        ))
-                    })?;
+                let dynamic_field_inner: Field<u64, SystemInnerV1> =
+                    decode_chain_mirror(&result, SYSTEM_INNER_V1)
+                        .map_err(IkaError::SuiClientSerializationError)?;
                 let ika_system_state_inner = dynamic_field_inner.value;
 
                 Ok((wrapper, SystemInner::V1(ika_system_state_inner)))

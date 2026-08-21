@@ -41,6 +41,7 @@ use ika_network::proof_provider::{
     ProofProvider, VerifiedDynamicFieldsPageRequest, VerifiedObjectResponse,
 };
 
+use ika_types::chain_mirror::{DWALLET_COORDINATOR_INNER_V1, SYSTEM_INNER_V1, decode_chain_mirror};
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
 use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner};
 
@@ -1095,10 +1096,9 @@ impl OcsVerifiedReader {
                 let child_id = derive_versioned_child_id(coordinator_id, outer.version)?;
                 let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
-                let field: Field<u64, DWalletCoordinatorInnerV1> = bcs::from_bytes(child_bcs)
-                    .map_err(|e| {
-                        ReaderError::Decode(format!("Field<u64, DWalletCoordinatorInnerV1>: {e}"))
-                    })?;
+                let field: Field<u64, DWalletCoordinatorInnerV1> =
+                    decode_chain_mirror(child_bcs, DWALLET_COORDINATOR_INNER_V1)
+                        .map_err(ReaderError::Decode)?;
                 Ok((outer, DWalletCoordinatorInner::V1(field.value)))
             }
             v => Err(ReaderError::UnsupportedVersion {
@@ -1131,8 +1131,8 @@ impl OcsVerifiedReader {
                 let child_id = derive_versioned_child_id(system_id, outer.version)?;
                 let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
-                let field: Field<u64, SystemInnerV1> = bcs::from_bytes(child_bcs)
-                    .map_err(|e| ReaderError::Decode(format!("Field<u64, SystemInnerV1>: {e}")))?;
+                let field: Field<u64, SystemInnerV1> =
+                    decode_chain_mirror(child_bcs, SYSTEM_INNER_V1).map_err(ReaderError::Decode)?;
                 Ok((outer, SystemInner::V1(field.value)))
             }
             v => Err(ReaderError::UnsupportedVersion {

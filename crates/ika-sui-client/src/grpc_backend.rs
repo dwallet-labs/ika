@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_config::node::SuiGrpcHeaders;
+use ika_types::chain_mirror::{DWALLET_NETWORK_ENCRYPTION_KEY, decode_chain_mirror};
 use ika_types::error::IkaError;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -347,8 +348,9 @@ impl SuiClientInner for GrpcSuiClient {
         self.for_each_dynamic_child(
             dwallet_coordinator_inner.dwallet_network_encryption_keys.id,
             |object_id, contents| {
-                let value = bcs::from_bytes::<DWalletNetworkEncryptionKey>(&contents)
-                    .map_err(GrpcSuiClientError::decode)?;
+                let value: DWalletNetworkEncryptionKey =
+                    decode_chain_mirror(&contents, DWALLET_NETWORK_ENCRYPTION_KEY)
+                        .map_err(GrpcSuiClientError::Decode)?;
                 network_encryption_keys.insert(object_id, value);
                 Ok(())
             },

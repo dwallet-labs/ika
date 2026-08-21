@@ -474,6 +474,25 @@ rule, not the instance.
   reports "unexpected end of input", suspect a too-short *header* (off-by-a-name)
   before re-checking the value struct.
 
+- **A bcs error on an UNTAGGED chain mirror is a layout-drift suspect, not
+  just a corrupt read.** `DWalletCoordinatorInnerV1`, `SystemInnerV1`, and
+  `DWalletNetworkEncryptionKey` mirror deployed Move structs with no version
+  tag, so their field order IS the wire format and a verified read proves
+  nothing about it — every OCS gate authenticates the bytes' provenance, none
+  their shape. `bcs::from_bytes` is exhausting, so a length-changing drift does
+  surface, but it surfaces as a bare `remaining input` / `unexpected end of
+  input` raised wherever the mis-parse happened to run out — which is the same
+  wrong-place symptom as the entry above, one level up. The decode sites now go
+  through `ika_types::chain_mirror::decode_chain_mirror`, which names the Move
+  source and the drift hypothesis in the error; drift itself is caught earlier
+  by `scripts/check-chain-mirror-layout.sh` and the `ika-types` layout pins.
+  → Rule: on a decode failure in one of these types, diff the Move declaration
+  against the Rust struct field by field BEFORE debugging the field the decode
+  died in. Note what stays uncovered: a same-total-length reshuffle (a field
+  swapped for one of equal encoded width) decodes silently, and the guards are
+  build-time — they bind this repo's releases, not a node run against a foreign
+  package. See `dev-docs/conventions/chain-mirror-layout.md`.
+
 ## Sui reads & submission
 
 - **Re-reading mutable state from a lagging fullnode between serial
