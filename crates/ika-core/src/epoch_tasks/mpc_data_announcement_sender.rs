@@ -54,13 +54,51 @@ use std::time::Duration;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, info, warn};
 
+/// Why the emit gate is still waiting, carried on
+/// [`ReadyToFinalize::NotYet`] so the caller can say so out loud.
+///
+/// Before #2080 the gate returned a bare "not yet" and the caller
+/// logged one `debug!` line, so the single longest wait in the
+/// protocol — a fresh network sitting until mid-epoch reconfiguration
+/// publishes `V_{e+1}`, which is HALF THE EPOCH after genesis — was
+/// invisible at the default log level. That silence is what made a
+/// correctly-waiting 4-validator network read as a hang for three
+/// hours.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadySignalWait {
+    /// Whether `V_{e+1}` has been published on chain yet. `false` is
+    /// the mid-epoch-reconfiguration wait: nothing this validator
+    /// does can shorten it, and on a fresh network with a long
+    /// genesis epoch it dominates everything else.
+    pub next_committee_published: bool,
+    /// Next-epoch members that are neither locally validated nor
+    /// carried forward by the freeze. Empty while
+    /// `next_committee_published` is false (the member list is not
+    /// known yet).
+    pub uncovered: Vec<AuthorityName>,
+    /// The epoch's consensus clock at evaluation time, and the
+    /// consensus-clock deadline after which the gate emits anyway.
+    /// `deadline_ms == u64::MAX` means no deadline is armed yet (no
+    /// consensus commit processed this epoch).
+    pub now_ms: u64,
+    pub deadline_ms: u64,
+}
+
+impl ReadySignalWait {
+    /// Seconds of consensus clock left before the liveness backstop
+    /// forces an emit; `None` when no deadline is armed.
+    pub fn seconds_until_deadline(&self) -> Option<u64> {
+        (self.deadline_ms != u64::MAX).then(|| self.deadline_ms.saturating_sub(self.now_ms) / 1000)
+    }
+}
+
 /// Outcome of the ready-signal emit gate ([`decide_ready_to_finalize`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadyToFinalize {
     /// Don't emit yet — keep waiting (V_{e+1} unpublished, or some of
     /// its members neither validated nor carry-forward-covered, and
-    /// the deadline hasn't passed).
-    NotYet,
+    /// the deadline hasn't passed). Carries why, for the operator log.
+    NotYet(ReadySignalWait),
     /// Emit: the next-epoch committee is published and every member is
     /// covered — its blob locally validated, or carried forward by the
     /// freeze (in the prior epoch's handoff cert AND in the current
@@ -134,7 +172,12 @@ fn decide_ready_to_finalize(
     if now_ms >= deadline_ms {
         return ReadyToFinalize::ReadyViaDeadlineMissing(missing);
     }
-    ReadyToFinalize::NotYet
+    ReadyToFinalize::NotYet(ReadySignalWait {
+        next_committee_published: next_published,
+        uncovered: missing,
+        now_ms,
+        deadline_ms,
+    })
 }
 
 /// Post-publication grace bounds for [`ready_signal_deadline_ms`]:
@@ -146,6 +189,16 @@ fn decide_ready_to_finalize(
 /// runway loss.
 const POST_PUBLICATION_GRACE_MIN_MS: u64 = 30_000;
 const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
+
+/// Log the ready-signal emit gate's reason for waiting on the first
+/// deferral and every Nth thereafter. The poll interval is pinned at
+/// 2s ([`crate::validator_metadata::epoch_scaled_poll_interval`]
+/// clamps to it), so this is one line per five minutes per validator:
+/// dense enough that any five-minute window of log answers "why has
+/// MPC not started?", sparse enough that the wait this exists to
+/// document — half an epoch, twelve hours under a 24h mainnet epoch —
+/// costs ~150 lines rather than ~4,000.
+const READY_SIGNAL_DEFERRAL_LOG_EVERY: u64 = 150;
 
 /// The deadline after which the emit gate stops waiting for uncovered
 /// next-epoch members, denominated in the epoch's CONSENSUS clock (max
@@ -260,6 +313,11 @@ pub struct MpcDataAnnouncementSender {
     /// thereafter, so a sequencing stall still surfaces) logs at
     /// info, re-submissions in between at debug.
     announcement_submit_attempts: AtomicU64,
+    /// Number of ticks that fell through the ready-signal emit gate
+    /// without emitting. Bounds the operator-facing "still waiting,
+    /// and here is what for" log to the first such tick and every
+    /// [`READY_SIGNAL_DEFERRAL_LOG_EVERY`]th afterwards.
+    ready_signal_deferrals: AtomicU64,
     /// Consensus-clock ms (the epoch store's max processed commit
     /// timestamp) at which this validator FIRST observed the
     /// next-epoch committee published on the watch channel, or `0`
@@ -333,6 +391,7 @@ impl MpcDataAnnouncementSender {
             ),
             next_sequence_number: std::sync::atomic::AtomicU64::new(next_sequence_number),
             announcement_submit_attempts: AtomicU64::new(0),
+            ready_signal_deferrals: AtomicU64::new(0),
             next_committee_first_seen_ms: AtomicU64::new(0),
         }
     }
@@ -438,6 +497,23 @@ impl MpcDataAnnouncementSender {
         Ok(recorded
             .map(|r| r.timestamp_ms == cached.timestamp_ms && r.blob_hash == cached.blob_hash)
             .unwrap_or(false))
+    }
+
+    /// Runs `log` on the first emit-gate deferral of the epoch and
+    /// every [`READY_SIGNAL_DEFERRAL_LOG_EVERY`]th one after it.
+    ///
+    /// The gate legitimately defers for hours on a fresh network —
+    /// until mid-epoch reconfiguration publishes `V_{e+1}` — and
+    /// before #2080 said so only at `debug!`, so at the default level
+    /// a correctly-waiting validator and a wedged one produced the
+    /// same output: none. Rate-limiting rather than latching keeps
+    /// the state visible from anywhere in the log, not just from
+    /// whoever happened to catch the first line.
+    fn log_ready_signal_deferral(&self, log: impl FnOnce()) {
+        let deferrals = self.ready_signal_deferrals.fetch_add(1, Ordering::Relaxed);
+        if deferrals.is_multiple_of(READY_SIGNAL_DEFERRAL_LOG_EVERY) {
+            log();
+        }
     }
 
     fn epoch_store(&self) -> DwalletMPCResult<Arc<AuthorityPerEpochStore>> {
@@ -760,11 +836,17 @@ impl MpcDataAnnouncementSender {
             .local_blob_coverage_meets_quorum()
             .map_err(DwalletMPCError::IkaError)?
         {
-            debug!(
-                epoch = self.epoch_id,
-                "deferring EpochMpcDataReadySignal: \
-                 local blob coverage below stake-quorum"
-            );
+            self.log_ready_signal_deferral(|| {
+                info!(
+                    epoch = self.epoch_id,
+                    reason = "local_blob_coverage_below_quorum",
+                    "not emitting EpochMpcDataReadySignal yet: fewer than a stake \
+                     quorum of peer mpc_data blobs are locally held and decode-valid. \
+                     Waiting for P2P propagation; the mpc_data freeze (and with it \
+                     network DKG / reconfiguration) cannot start until a quorum of \
+                     validators emit this signal"
+                );
+            });
             return Ok(());
         }
         // Carry the blob hash we validated for each peer, so the
@@ -791,12 +873,40 @@ impl MpcDataAnnouncementSender {
         // validator emits; the freeze snapshot itself is still computed
         // deterministically at the consensus-ordered quorum point.
         let deadline_missing = match self.ready_to_finalize(&epoch_store, &validated_names) {
-            ReadyToFinalize::NotYet => {
-                debug!(
-                    epoch = self.epoch_id,
-                    "deferring EpochMpcDataReadySignal: \
-                     next-epoch committee not yet fully validated"
-                );
+            ReadyToFinalize::NotYet(wait) => {
+                self.log_ready_signal_deferral(|| {
+                    if wait.next_committee_published {
+                        info!(
+                            epoch = self.epoch_id,
+                            reason = "next_epoch_members_uncovered",
+                            uncovered_count = wait.uncovered.len(),
+                            uncovered = ?wait.uncovered,
+                            seconds_until_deadline = ?wait.seconds_until_deadline(),
+                            "not emitting EpochMpcDataReadySignal yet: the next-epoch \
+                             committee is published but some of its members are neither \
+                             locally validated nor carried forward by the freeze. \
+                             Emitting anyway once the announcement deadline elapses"
+                        );
+                    } else {
+                        // The long pole, and the one that reads as a hang:
+                        // `V_{e+1}` is published by mid-epoch reconfiguration,
+                        // which the chain refuses before
+                        // `epoch_start + epoch_duration / 2`. On a fresh network
+                        // with a long genesis epoch that is hours of correct,
+                        // silent waiting (issue #2080).
+                        info!(
+                            epoch = self.epoch_id,
+                            reason = "next_epoch_committee_unpublished",
+                            seconds_until_deadline = ?wait.seconds_until_deadline(),
+                            "not emitting EpochMpcDataReadySignal yet: the next-epoch \
+                             committee (V_e+1) has not been published on chain — \
+                             mid-epoch reconfiguration has not run, and it cannot run \
+                             before half the epoch duration has elapsed. The mpc_data \
+                             freeze, and with it network DKG / reconfiguration, waits \
+                             for this; nothing is stuck"
+                        );
+                    }
+                });
                 return Ok(());
             }
             ReadyToFinalize::Ready => Vec::new(),
@@ -926,6 +1036,133 @@ mod tests {
         AuthorityName([n; 32])
     }
 
+    /// Expected `NotYet` with its wait reason spelled out. The reason
+    /// is what the operator log prints (#2080), so the gate tests pin
+    /// it rather than accepting any old "not yet".
+    fn not_yet(
+        next_committee_published: bool,
+        uncovered: Vec<AuthorityName>,
+        now_ms: u64,
+        deadline_ms: u64,
+    ) -> ReadyToFinalize {
+        ReadyToFinalize::NotYet(ReadySignalWait {
+            next_committee_published,
+            uncovered,
+            now_ms,
+            deadline_ms,
+        })
+    }
+
+    /// The emit gate's "still waiting, here is why" line must be
+    /// rate-limited, NOT latched to the first occurrence: the wait can
+    /// last hours (issue #2080), and an operator who attaches to the
+    /// log mid-wait — or greps a window of it — has to be able to find
+    /// out why MPC has not started without hunting for one line emitted
+    /// at process start.
+    // `test_sender` opens perpetual tables, whose typed-store metrics
+    // need a Tokio reactor — hence async, like the other sender tests.
+    #[tokio::test]
+    async fn ready_signal_deferral_logging_repeats_on_a_bounded_cadence() {
+        let sender = test_sender();
+        let mut logged = 0usize;
+        let ticks = READY_SIGNAL_DEFERRAL_LOG_EVERY * 3;
+        for _ in 0..ticks {
+            sender.log_ready_signal_deferral(|| logged += 1);
+        }
+        assert_eq!(
+            logged, 3,
+            "expected one line on the first deferral and every {READY_SIGNAL_DEFERRAL_LOG_EVERY}th after"
+        );
+        assert!(
+            logged > 1,
+            "a latched one-shot would leave a multi-hour wait undocumented"
+        );
+    }
+
+    /// Regression for issue #2080. A fresh network spends the first
+    /// half of its genesis epoch waiting for mid-epoch reconfiguration
+    /// to publish `V_{e+1}` — the chain refuses the call before
+    /// `epoch_start + epoch_duration / 2` — and only then can the
+    /// mpc_data freeze fire and network DKG start. With a 6-hour
+    /// genesis epoch that is a three-hour wait during which the gate
+    /// said nothing, and a correctly-waiting validator was
+    /// indistinguishable from a wedged one.
+    ///
+    /// The gate must therefore report WHICH wait it is in, and how
+    /// long the liveness backstop still has to run, so the caller can
+    /// print it. Distinguishing the two waits is the whole point: one
+    /// is "the chain has not reached mid-epoch yet, nothing you can
+    /// do", the other is "these named members still owe us a blob".
+    #[test]
+    fn ready_to_finalize_names_the_wait_it_is_in() {
+        let a = name(1);
+        let b = name(2);
+        let joiner = name(3);
+        let no_prior_cert = HashSet::new();
+        let current: HashSet<AuthorityName> = [a, b].into_iter().collect();
+
+        // Genesis-epoch wait: V_{e+1} unpublished (chain shows epoch 5,
+        // we want 6). Everything local is validated; the gate is
+        // blocked purely on mid-epoch reconfiguration.
+        let waiting_for_chain = decide_ready_to_finalize(
+            1_000_000,
+            11_800_000,
+            5,
+            6,
+            &[a, b],
+            &[a, b],
+            &no_prior_cert,
+            &current,
+        );
+        let ReadyToFinalize::NotYet(wait) = waiting_for_chain else {
+            panic!("expected NotYet while V_e+1 is unpublished");
+        };
+        assert!(
+            !wait.next_committee_published,
+            "the mid-epoch-reconfiguration wait must be identified as such"
+        );
+        assert!(
+            wait.uncovered.is_empty(),
+            "no member list is known before publication, so none can be blamed"
+        );
+        assert_eq!(wait.seconds_until_deadline(), Some(10_800));
+
+        // Post-publication wait: the joiner owes us a blob. Same
+        // `NotYet`, different — and nameable — cause.
+        let waiting_for_peer = decide_ready_to_finalize(
+            1_000_000,
+            11_800_000,
+            6,
+            6,
+            &[a, b, joiner],
+            &[a, b],
+            &no_prior_cert,
+            &current,
+        );
+        let ReadyToFinalize::NotYet(wait) = waiting_for_peer else {
+            panic!("expected NotYet while the joiner is uncovered");
+        };
+        assert!(wait.next_committee_published);
+        assert_eq!(wait.uncovered, vec![joiner]);
+
+        // No consensus commit processed yet: the deadline is inert and
+        // must be reported as absent rather than as a bogus countdown.
+        let no_clock = decide_ready_to_finalize(
+            0,
+            u64::MAX,
+            5,
+            6,
+            &[a, b],
+            &[a, b],
+            &no_prior_cert,
+            &current,
+        );
+        let ReadyToFinalize::NotYet(wait) = no_clock else {
+            panic!("expected NotYet with no consensus clock");
+        };
+        assert_eq!(wait.seconds_until_deadline(), None);
+    }
+
     #[test]
     fn ready_to_finalize_waits_for_next_committee_then_emits() {
         let a = name(1);
@@ -937,7 +1174,7 @@ mod tests {
         // not 6): not ready, even with everything validated.
         assert_eq!(
             decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b], &no_prior_cert, &current),
-            ReadyToFinalize::NotYet
+            not_yet(false, vec![], 100, 1000)
         );
         // V_{e+1} published (epoch 6) but the joiner isn't validated
         // yet: not ready.
@@ -952,7 +1189,7 @@ mod tests {
                 &no_prior_cert,
                 &current
             ),
-            ReadyToFinalize::NotYet
+            not_yet(true, vec![joiner], 100, 1000)
         );
         // V_{e+1} published AND all its members validated: ready.
         assert_eq!(
@@ -1052,7 +1289,7 @@ mod tests {
                 &prior_cert,
                 &current
             ),
-            ReadyToFinalize::NotYet
+            not_yet(false, vec![], 100, 1000)
         );
     }
 
@@ -1091,7 +1328,7 @@ mod tests {
                 &prior_cert,
                 &current
             ),
-            ReadyToFinalize::NotYet
+            not_yet(true, vec![rejoiner], 100, 1000)
         );
         // Once it validates, the gate opens immediately.
         assert_eq!(
@@ -1147,7 +1384,7 @@ mod tests {
                 &prior_cert,
                 &current
             ),
-            ReadyToFinalize::NotYet
+            not_yet(true, vec![never_alive], 100, 1000)
         );
         // At the deadline, only the uncovered member is reported.
         assert_eq!(

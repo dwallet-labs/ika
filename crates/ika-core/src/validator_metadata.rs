@@ -1224,6 +1224,34 @@ where
     AssemblyInputDecision::Pairs(pairs)
 }
 
+/// What a local lookup of an announced blob found. Distinguishing
+/// "not here yet" from "here but garbage" is what lets the caller
+/// warn about the second without drowning in the first: an absent
+/// blob is the ordinary pre-propagation state on every epoch start,
+/// while a present-but-undecodable blob is a real fault that has no
+/// in-epoch self-heal and used to be indistinguishable from it
+/// (issue #2080 — three hours of silence while the operator could
+/// not tell a wait from a fault).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalBlobVerdict {
+    /// Bytes are held locally and decode into valid mpc_data.
+    Valid,
+    /// Bytes are held locally but fail
+    /// [`blob_decodes_to_valid_mpc_data`]. Content-addressed
+    /// storage makes this a stable property of the digest, so it
+    /// will not fix itself by re-reading.
+    Invalid,
+    /// No bytes held locally for this digest yet. Benign and
+    /// expected until P2P propagation delivers them.
+    Absent,
+}
+
+impl LocalBlobVerdict {
+    fn is_valid(self) -> bool {
+        matches!(self, LocalBlobVerdict::Valid)
+    }
+}
+
 /// Decision returned by [`decide_locally_validated_peers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedPeersDecision {
@@ -1238,6 +1266,15 @@ pub struct ValidatedPeersDecision {
     /// caller is expected to emit a `warn!` when this is true so
     /// operators notice the persist failure.
     pub self_blob_unhealthy: bool,
+    /// Announcers (self included) whose blob IS held locally but
+    /// fails the decode gate, paired with the digest they announced.
+    /// Held-but-invalid is a fault, not a wait: the bytes under a
+    /// digest can never change (the perpetual table rejects an
+    /// insert whose digest doesn't match `Blake2b256(bytes)`), so
+    /// re-reading will never turn this into `Valid`. The caller
+    /// warns once per pair so the validator and digest are named
+    /// in the log instead of being dropped silently.
+    pub invalid_blobs: Vec<(AuthorityName, [u8; 32])>,
 }
 
 /// Builds the locally-validated-peers set from a stream of
@@ -1253,21 +1290,26 @@ pub struct ValidatedPeersDecision {
 pub fn decide_locally_validated_peers<F>(
     self_authority: AuthorityName,
     announcements: impl IntoIterator<Item = (AuthorityName, [u8; 32])>,
-    blob_valid_for_digest: F,
+    blob_verdict_for_digest: F,
 ) -> ValidatedPeersDecision
 where
-    F: Fn(&[u8; 32]) -> bool,
+    F: Fn(&[u8; 32]) -> LocalBlobVerdict,
 {
     let mut validated: std::collections::BTreeSet<AuthorityName> =
         std::collections::BTreeSet::new();
     let mut self_announcement_seen = false;
     let mut self_blob_unhealthy = false;
+    let mut invalid_blobs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
     for (authority, digest) in announcements {
         let is_self = authority == self_authority;
         if is_self {
             self_announcement_seen = true;
         }
-        if blob_valid_for_digest(&digest) {
+        let verdict = blob_verdict_for_digest(&digest);
+        if verdict == LocalBlobVerdict::Invalid {
+            invalid_blobs.push((authority, digest));
+        }
+        if verdict.is_valid() {
             validated.insert(authority);
         } else if is_self {
             self_blob_unhealthy = true;
@@ -1283,6 +1325,77 @@ where
     ValidatedPeersDecision {
         validated,
         self_blob_unhealthy,
+        invalid_blobs,
+    }
+}
+
+/// Memoizes [`blob_decodes_to_valid_mpc_data`] by blob digest.
+///
+/// The decode gate runs on every emit-gate poll — one to two times
+/// per ~2s tick, over every announced digest — and each call BCS-
+/// decodes a ~72KB class-groups bundle that has already been decoded
+/// on every previous tick with the identical answer. Nothing about
+/// that answer can change: `AuthorityPerpetualTables::
+/// insert_mpc_artifact_blob` refuses any insert whose digest is not
+/// `Blake2b256(bytes)`, so a digest names exactly one byte string
+/// for the life of the store, and the decode of that byte string is
+/// a pure function. Caching the verdict is therefore observationally
+/// equivalent to recomputing it, and turns a per-tick O(committee ×
+/// blob size) decode into one decode per distinct digest per epoch
+/// (issue #2080).
+///
+/// An `Absent` lookup is deliberately NOT cached: the blob has not
+/// arrived yet and the very next tick may find it, which is the
+/// whole point of the poll.
+///
+/// Lifetime is the per-epoch store's, so the map is bounded by the
+/// number of distinct digests announced in one epoch (committee
+/// scale) and is dropped at the epoch boundary.
+#[derive(Default)]
+pub struct MpcDataDecodeCache {
+    verdicts: parking_lot::RwLock<HashMap<[u8; 32], bool>>,
+}
+
+impl MpcDataDecodeCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The verdict for `digest`, decoding at most once per digest.
+    /// `load_bytes` is called only on a miss and may return `None`
+    /// to mean "not held locally", which stays uncached.
+    pub fn verdict<F>(&self, digest: &[u8; 32], load_bytes: F) -> LocalBlobVerdict
+    where
+        F: FnOnce() -> Option<Vec<u8>>,
+    {
+        if let Some(valid) = self.verdicts.read().get(digest).copied() {
+            return if valid {
+                LocalBlobVerdict::Valid
+            } else {
+                LocalBlobVerdict::Invalid
+            };
+        }
+        let Some(bytes) = load_bytes() else {
+            return LocalBlobVerdict::Absent;
+        };
+        let valid = blob_decodes_to_valid_mpc_data(&bytes);
+        // A concurrent decoder may have raced us to the same answer;
+        // both wrote the same value, so last-writer-wins is fine.
+        self.verdicts.write().insert(*digest, valid);
+        if valid {
+            LocalBlobVerdict::Valid
+        } else {
+            LocalBlobVerdict::Invalid
+        }
+    }
+
+    /// Number of memoized verdicts. Test-facing.
+    pub fn len(&self) -> usize {
+        self.verdicts.read().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -2704,7 +2817,9 @@ mod tests {
         let b = auth(0xBB);
         // Input only has B; self's announcement hasn't landed yet.
         let decision =
-            decide_locally_validated_peers(self_authority, vec![(b, [0xBB; 32])], |_| true);
+            decide_locally_validated_peers(self_authority, vec![(b, [0xBB; 32])], |_| {
+                LocalBlobVerdict::Valid
+            });
         assert!(decision.validated.contains(&self_authority));
         assert!(decision.validated.contains(&b));
         assert!(!decision.self_blob_unhealthy);
@@ -2720,7 +2835,7 @@ mod tests {
         let decision = decide_locally_validated_peers(
             self_authority,
             vec![(self_authority, [0xAA; 32]), (b, [0xBB; 32])],
-            |_| true,
+            |_| LocalBlobVerdict::Valid,
         );
         assert!(decision.validated.contains(&self_authority));
         assert!(decision.validated.contains(&b));
@@ -2741,7 +2856,14 @@ mod tests {
         let decision = decide_locally_validated_peers(
             self_authority,
             vec![(self_authority, self_digest), (b, [0xBB; 32])],
-            |digest| *digest != self_digest, // self's blob fails, B's passes
+            // Self's blob is held but garbage; B's is fine.
+            |digest| {
+                if *digest == self_digest {
+                    LocalBlobVerdict::Invalid
+                } else {
+                    LocalBlobVerdict::Valid
+                }
+            },
         );
         assert!(
             !decision.validated.contains(&self_authority),
@@ -2762,7 +2884,13 @@ mod tests {
         let decision = decide_locally_validated_peers(
             self_authority,
             vec![(b, bad_digest), (c, [0xCC; 32])],
-            |digest| *digest != bad_digest,
+            |digest| {
+                if *digest == bad_digest {
+                    LocalBlobVerdict::Invalid
+                } else {
+                    LocalBlobVerdict::Valid
+                }
+            },
         );
         // Self is inserted optimistically (no self announcement in input).
         assert!(decision.validated.contains(&self_authority));
@@ -2777,7 +2905,9 @@ mod tests {
     #[test]
     fn decide_locally_validated_peers_empty_input_inserts_self() {
         let self_authority = auth(0xAA);
-        let decision = decide_locally_validated_peers(self_authority, std::iter::empty(), |_| true);
+        let decision = decide_locally_validated_peers(self_authority, std::iter::empty(), |_| {
+            LocalBlobVerdict::Valid
+        });
         assert_eq!(decision.validated.len(), 1);
         assert!(decision.validated.contains(&self_authority));
         assert!(!decision.self_blob_unhealthy);
@@ -3309,6 +3439,121 @@ mod tests {
         let seed = RootSeed::new([7u8; 32]);
         let blob = derive_mpc_data_blob(&seed).expect("derive");
         assert!(blob_decodes_to_valid_mpc_data(&blob));
+    }
+
+    /// The emit gate re-runs on every ~2s poll tick for as long as the
+    /// freeze is pending — hours, on a fresh network waiting for
+    /// mid-epoch reconfiguration (issue #2080). The cache must decode
+    /// each real ~72KB class-groups blob exactly once no matter how
+    /// many ticks ask, and must return the same verdict every time.
+    #[test]
+    fn decode_cache_decodes_a_real_blob_once_across_many_polls() {
+        let blob = derive_mpc_data_blob(&RootSeed::new([7u8; 32])).expect("derive");
+        let digest = ika_network::mpc_artifacts::mpc_data_blob_hash(&blob);
+        let cache = MpcDataDecodeCache::new();
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..50 {
+            let verdict = cache.verdict(&digest, || {
+                loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Some(blob.clone())
+            });
+            assert_eq!(verdict, LocalBlobVerdict::Valid);
+        }
+        assert_eq!(
+            loads.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the blob must be read + decoded once, not once per poll tick"
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    /// A held-but-undecodable blob is cached too: the perpetual table
+    /// refuses any insert whose digest isn't `Blake2b256(bytes)`, so
+    /// the bytes under a digest — and therefore the verdict — can
+    /// never change. Re-decoding it every tick would be the same
+    /// wasted work as the valid case, on the path that matters most
+    /// (a validator excluded from every attestation).
+    #[test]
+    fn decode_cache_memoizes_the_invalid_verdict_too() {
+        let garbage: Vec<u8> = (0u32..512).map(|i| (i % 251) as u8).collect();
+        let digest = ika_network::mpc_artifacts::mpc_data_blob_hash(&garbage);
+        let cache = MpcDataDecodeCache::new();
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..5 {
+            let verdict = cache.verdict(&digest, || {
+                loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Some(garbage.clone())
+            });
+            assert_eq!(verdict, LocalBlobVerdict::Invalid);
+        }
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    /// An absent blob must NOT be cached: it is the ordinary state
+    /// until P2P propagation delivers the bytes, and caching it would
+    /// pin the announcer out of the validated set for the whole epoch.
+    /// The loader is re-consulted every tick until it produces bytes,
+    /// and the tick that does flips the verdict.
+    #[test]
+    fn decode_cache_never_caches_absence_and_flips_when_the_blob_lands() {
+        let blob = derive_mpc_data_blob(&RootSeed::new([11u8; 32])).expect("derive");
+        let digest = ika_network::mpc_artifacts::mpc_data_blob_hash(&blob);
+        let cache = MpcDataDecodeCache::new();
+        for _ in 0..3 {
+            assert_eq!(
+                cache.verdict(&digest, || None),
+                LocalBlobVerdict::Absent,
+                "absence must stay re-checkable"
+            );
+        }
+        assert!(cache.is_empty(), "absence must not be memoized");
+        // The blob lands.
+        assert_eq!(
+            cache.verdict(&digest, || Some(blob.clone())),
+            LocalBlobVerdict::Valid
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    /// A locally-held but undecodable blob must be reported to the
+    /// caller with the announcer and the digest, so it can be named in
+    /// a `warn!` instead of being dropped silently — three hours of
+    /// exactly that silence is what made #2080 expensive to diagnose.
+    /// An ABSENT blob must not be reported: that is the ordinary
+    /// pre-propagation state and would be pure noise.
+    #[test]
+    fn decide_locally_validated_peers_reports_held_but_undecodable_blobs() {
+        let self_authority = auth(0xAA);
+        let corrupt = auth(0xBB);
+        let not_yet_fetched = auth(0xCC);
+        let healthy = auth(0xDD);
+        let corrupt_digest = [0xBB; 32];
+        let absent_digest = [0xCC; 32];
+        let decision = decide_locally_validated_peers(
+            self_authority,
+            vec![
+                (corrupt, corrupt_digest),
+                (not_yet_fetched, absent_digest),
+                (healthy, [0xDD; 32]),
+            ],
+            |digest| {
+                if *digest == corrupt_digest {
+                    LocalBlobVerdict::Invalid
+                } else if *digest == absent_digest {
+                    LocalBlobVerdict::Absent
+                } else {
+                    LocalBlobVerdict::Valid
+                }
+            },
+        );
+        assert_eq!(
+            decision.invalid_blobs,
+            vec![(corrupt, corrupt_digest)],
+            "only the held-but-undecodable blob is reported, with its digest"
+        );
+        assert!(!decision.validated.contains(&corrupt));
+        assert!(!decision.validated.contains(&not_yet_fetched));
+        assert!(decision.validated.contains(&healthy));
     }
 
     // -------- compute_freeze_partition byzantine scenarios --------
