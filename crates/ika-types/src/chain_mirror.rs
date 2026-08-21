@@ -150,7 +150,8 @@ pub(crate) mod test_support {
              format of bytes a deployed package already wrote, and nothing in those bytes \
              identifies which layout produced them, so a change here re-interprets live chain \
              state instead of failing closed.\n\n\
-             A pure rename is safe — BCS is positional — and only the pin needs updating. An \
+             A pure rename is safe — BCS is positional, so the pinned bytes don't change; \
+             update the field name in this test's struct literal (and the layout manifest). An \
              add, remove, reorder, or retype is not: the Move struct has to have changed to \
              match, and it cannot change in place, because Sui's compatible-policy upgrade \
              checker rejects datatype layout changes. Such a change reaches chain only through \

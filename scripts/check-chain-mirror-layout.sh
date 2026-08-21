@@ -85,7 +85,7 @@ def move_fields(path, struct):
     fields = []
     for raw in struct_body(lines, f"struct {struct} ", path):
         line = strip_comment(raw)
-        if not line.strip() or line.strip().startswith("///"):
+        if not line.strip():
             continue
         match = MOVE_FIELD.match(line)
         if match:
@@ -101,7 +101,7 @@ def rust_fields(path, struct):
     names = []
     for raw in struct_body(lines, f"pub struct {struct} ", path):
         line = strip_comment(raw)
-        if not line.strip() or line.strip().startswith(("///", "#[")):
+        if not line.strip() or line.strip().startswith("#["):
             continue
         match = RUST_FIELD.match(line)
         if match:

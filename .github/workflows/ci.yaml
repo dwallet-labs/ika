@@ -111,6 +111,15 @@ jobs:
         # format of bytes already on chain, and no OCS proof gate verifies shape.
         # See dev-docs/conventions/chain-mirror-layout.md.
         run: ./scripts/check-chain-mirror-layout.sh
+      - name: Chain-mirror layout (Rust half)
+        # The golden BCS pins beside each mirror are the Rust half of the
+        # check above: the script reads Move declarations and Rust field
+        # NAMES, so a Rust-side retype (u64 -> u32) passes it and only the
+        # pinned length/digest catches it. Nothing else on PR CI executes
+        # ika-types' tests (Cargo Test Check is compile-only), so the pins
+        # must run here or a retype merges green. ika-types has no MPC
+        # crypto, so the debug profile is fine.
+        run: cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned
       - name: Sui version consistency
         # The Sui pin lives in several places that don't update together;
         # see dev-docs/conventions/sui-version-bump.md.
