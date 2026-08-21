@@ -255,15 +255,24 @@ impl ConsensusManager {
 
         let mut consensus_handler = consensus_handler_initializer.new_consensus_handler();
 
+        let chain = epoch_store.get_chain_identifier().chain();
+        // Built once, here, and handed to BOTH the replay and consensus: the
+        // replay's target depends on `transaction_voting_enabled` (see
+        // `boot_replay::replay_epoch_commits`), so the two reading it from
+        // different values is exactly the class of disagreement this pipeline
+        // exists to make unbuildable.
+        let consensus_protocol_config = to_consensus_protocol_config(ika_protocol_config, chain);
+
         // Rebuild this epoch's derived state before consensus starts. The
         // per-epoch store was opened with its derived tables deleted, so the
-        // handler begins from nothing and folds every finalized commit the
-        // consensus store holds. `replay_after` is then the store's own last
-        // finalized commit — not a watermark kept beside it — which is what
-        // makes `CommitObserver::recover_and_send_commits` unable to find the
-        // two out of order (ika #2057).
+        // handler begins from nothing and folds every commit the consensus
+        // store holds up to the replay target. `replay_after` is then read from
+        // the consensus store itself — not from a watermark kept beside it —
+        // which is what makes `CommitObserver::recover_and_send_commits` unable
+        // to find the two out of order (ika #2057).
         let replayed_through = boot_replay::replay_epoch_commits(
             &parameters.db_path,
+            &consensus_protocol_config,
             &mut consensus_handler,
             &self.metrics,
         )
@@ -313,8 +322,6 @@ impl ConsensusManager {
             );
         }
 
-        let chain = epoch_store.get_chain_identifier().chain();
-
         let authority = ConsensusAuthority::start(
             NetworkType::Tonic,
             epoch_store.epoch_start_config().epoch_start_timestamp_ms(),
@@ -324,7 +331,7 @@ impl ConsensusManager {
             // (observer nodes pass `None`); validators pass `Some`.
             committee.clone(),
             parameters.clone(),
-            to_consensus_protocol_config(ika_protocol_config, chain),
+            consensus_protocol_config,
             Some(self.protocol_keypair.clone()),
             self.network_keypair.clone(),
             Arc::new(Clock::default()),
@@ -565,8 +572,9 @@ impl Clone for ReplayWaiter {
 pub struct ConsensusManagerMetrics {
     start_latency: IntGauge,
     shutdown_latency: IntGauge,
-    /// The commit index the boot replay set out to reach — the consensus
-    /// store's last finalized commit for this epoch.
+    /// The commit index the boot replay set out to reach for this epoch: the
+    /// consensus store's last commit, or its last FINALIZED commit where
+    /// transaction voting is on (`boot_replay::replay_epoch_commits`).
     pub(crate) boot_replay_target_commit_index: IntGauge,
     /// How far the boot replay has folded. Equal to the target once the node
     /// is live; the distance between the two is the remaining boot work, which
@@ -594,7 +602,7 @@ impl ConsensusManagerMetrics {
             .unwrap(),
             boot_replay_target_commit_index: register_int_gauge_with_registry!(
                 "ika_consensus_boot_replay_target_commit_index",
-                "Last finalized consensus commit index this boot's derived-state replay must reach",
+                "Consensus commit index this boot's derived-state replay must reach",
                 registry,
             )
             .unwrap(),

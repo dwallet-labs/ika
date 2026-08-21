@@ -7,11 +7,12 @@
 //! and no copy of what it derived: that state is in memory, so a start has
 //! nothing to delete and nothing to resume from. This module folds the epoch's
 //! commits back through the same handler that processes live commits, in
-//! bounded batches, until it reaches the store's last finalized commit. Only
-//! then does consensus start, and it starts from exactly that index — so the
-//! index consensus is asked to replay after is READ FROM the consensus store
-//! rather than remembered beside it, and the two can no longer disagree
-//! (ika #2057).
+//! bounded batches, until it reaches the store's replay target — the last
+//! commit, or, where transaction voting is on, the last FINALIZED commit
+//! (`replay_epoch_commits` states the rule). Only then does consensus start,
+//! and it starts from exactly that index — so the index consensus is asked to
+//! replay after is READ FROM the consensus store rather than remembered
+//! beside it, and the two can no longer disagree (ika #2057).
 //!
 //! Batching is what keeps the COMMITS flat on an old epoch: one batch of
 //! commits and their blocks is resident at a time, folded, then dropped. The
@@ -22,9 +23,11 @@
 //! The full model — what "derived" means, why the fold is deterministic, and
 //! what replay must not re-emit — is `dev-docs/specs/event-sourced-epoch.md`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
+use consensus_config::ConsensusProtocolConfig;
 use consensus_core::storage::Store;
 use consensus_core::storage::rocksdb_store::RocksDBStore;
 use consensus_core::{CommitAPI, CommitIndex, CommittedSubDag, TrustedCommit};
@@ -41,50 +44,105 @@ use crate::dwallet_checkpoints::DWalletCheckpointService;
 /// of commits to reach the second iteration of the loop.
 const REPLAY_BATCH_COMMITS: CommitIndex = if cfg!(test) { 3 } else { 250 };
 
-/// Folds every finalized commit of the epoch through `handler` and returns the
-/// commit index the fold reached.
+/// Folds the epoch's stored commits through `handler` and returns the commit
+/// index the fold reached.
 ///
 /// The returned index is what consensus must be started with as both
 /// `replay_after_commit_index` and `consumer_last_processed_commit_index`: it
-/// is the store's own last finalized commit, so
-/// `CommitObserver::recover_and_send_commits` can only ever see
+/// is read from the consensus store itself rather than from a watermark kept
+/// beside it, so `CommitObserver::recover_and_send_commits` can only ever see
 /// `last_commit_index >= replay_after` — the comparison that bricked a
 /// validator for a full epoch when the two came from different databases.
 ///
-/// Stops at the last FINALIZED commit rather than the last commit. An
-/// unfinalized commit has no stored set of rejected transaction indices, so
-/// folding it here would let this validator treat as accepted a transaction its
-/// peers reject. Those commits are consensus-core's to deliver, through the
-/// commit finalizer, once it starts — and there are only ever a few of them.
+/// # How far the fold goes
+///
+/// The target follows `transaction_voting_enabled` in the consensus protocol
+/// config, because that one flag decides both whether a commit can carry
+/// rejected transactions at all and whether the store records them:
+///
+/// - **Voting ON** — stop at the last FINALIZED commit
+///   (`Store::read_last_finalized_commit`). An unfinalized commit has no stored
+///   set of rejected transaction indices, so folding it here would let this
+///   validator treat as accepted a transaction its peers reject. Those commits
+///   are consensus-core's to deliver, through the commit finalizer, once it
+///   starts — and there are only ever a few of them.
+/// - **Voting OFF** — ika's setting at every protocol version (see the long
+///   comment in `to_consensus_protocol_config`) — every commit is final on
+///   arrival, so the target is the LAST commit. Nothing is ever rejected, which
+///   makes an "unfinalized" commit's rejected set empty by construction rather
+///   than unknown, and folding it exactly as sound as folding a finalized one.
+///
+/// # Why the gate is the flag and not `read_last_finalized_commit() == None`
+///
+/// The two readings of `None` are incompatible, so no test against it can be
+/// right in both worlds. Under voting OFF the finalized-commits column family
+/// is never written at all: consensus-core's `CommitFinalizer` takes its
+/// `already_finalized` branch for every commit and so never reaches
+/// `add_finalized_commit` (`consensus/core/src/commit_finalizer.rs`). `None`
+/// there means "this store never records finalization", and reading it as
+/// "nothing to replay" is what made this whole module dead code on every ika
+/// node — the fold never ran, the three `ika_consensus_boot_replay_*` gauges
+/// read 0 forever, and the epoch was rebuilt by
+/// `CommitObserver::recover_and_send_commits` instead (ika #2085). Under voting
+/// ON the same `None` means something else entirely: commits exist and none has
+/// finalized yet, and folding them would be the divergence above.
+///
+/// The flag is read from the same [`ConsensusProtocolConfig`] value consensus
+/// is then started with. The consensus store is per-epoch and the protocol
+/// config is fixed for the epoch, so the flag under which every commit in this
+/// store was written is exactly the flag being read here.
 pub(crate) async fn replay_epoch_commits(
     consensus_db_path: &Path,
+    consensus_protocol_config: &ConsensusProtocolConfig,
     handler: &mut ConsensusHandler<DWalletCheckpointService>,
     metrics: &ConsensusManagerMetrics,
 ) -> CommitIndex {
     let started_at = Instant::now();
     let store = RocksDBStore::new(&consensus_db_path.to_string_lossy());
 
-    let last_commit = store
+    let last_commit_index = store
         .read_last_commit()
-        .expect("reading the consensus store's last commit must not fail");
-    let replay_through = store
+        .expect("reading the consensus store's last commit must not fail")
+        .map_or(0, |commit| commit.index());
+    let last_finalized_commit_index = store
         .read_last_finalized_commit()
         .expect("reading the consensus store's last finalized commit must not fail")
         .map_or(0, |commit_ref| commit_ref.index);
 
-    let unfinalized_tail = last_commit
-        .as_ref()
-        .map_or(0, |commit| commit.index().saturating_sub(replay_through));
+    let transaction_voting_enabled = consensus_protocol_config.transaction_voting_enabled();
+    let replay_through = if transaction_voting_enabled {
+        last_finalized_commit_index
+    } else {
+        last_commit_index
+    };
+    // What the fold deliberately leaves for consensus to deliver. Zero in the
+    // voting-off case by construction — the target IS the last commit — so a
+    // non-zero value on an ika node now means the flag has been flipped on,
+    // not that the fold quietly stopped short.
+    let unfinalized_tail = last_commit_index.saturating_sub(replay_through);
     metrics
         .boot_replay_target_commit_index
         .set(replay_through as i64);
 
     if replay_through == 0 {
-        info!(
-            unfinalized_tail,
-            "no finalized commits in the consensus store for this epoch — starting the epoch's \
-             derived state from empty",
-        );
+        if last_commit_index == 0 {
+            info!(
+                transaction_voting_enabled,
+                "the consensus store holds no commits for this epoch — starting the epoch's \
+                 derived state from empty",
+            );
+        } else {
+            // Reachable only with voting ON: commits exist, and the finalizer
+            // has not reached any of them. With voting off `replay_through` is
+            // the last commit index, so a store holding commits can no longer
+            // land here — which is the whole of ika #2085, where every ika node
+            // took this branch on every boot with the entire epoch unfolded.
+            info!(
+                unfinalized_tail,
+                "no finalized commits in the consensus store for this epoch — starting the \
+                 epoch's derived state from empty; consensus delivers the tail once it starts",
+            );
+        }
         metrics.boot_replay_folded_commit_index.set(0);
         metrics.boot_replay_latency_seconds.set(0);
         return 0;
@@ -105,6 +163,7 @@ pub(crate) async fn replay_epoch_commits(
     info!(
         replay_through,
         unfinalized_tail,
+        transaction_voting_enabled,
         batch = REPLAY_BATCH_COMMITS,
         "replaying the epoch's consensus commits to rebuild derived state",
     );
@@ -140,7 +199,7 @@ pub(crate) async fn replay_epoch_commits(
                 folded_through + 1,
                 "consensus commit indices must be contiguous during replay",
             );
-            let subdag = load_committed_subdag(&store, commit);
+            let subdag = load_committed_subdag(&store, commit, transaction_voting_enabled);
             // Arrival, before the fold — same rule as the live loop. This is
             // also what arms the commit-liveness watchdog on a node whose
             // whole boot is replay (#2054's boot-into-isolation gap).
@@ -171,9 +230,13 @@ pub(crate) async fn replay_epoch_commits(
     info!(
         folded_through,
         unfinalized_tail,
+        transaction_voting_enabled,
         elapsed_secs = elapsed.as_secs_f64(),
         "rebuilt the epoch's derived state from the consensus store",
     );
+    // Voting-on only: with voting off the target is the last commit, so the
+    // tail is 0 and this cannot fire. A tail here is the fold deliberately
+    // stopping short, not a shortfall.
     if unfinalized_tail > 0 {
         warn!(
             unfinalized_tail,
@@ -190,16 +253,34 @@ pub(crate) async fn replay_epoch_commits(
 /// cannot be called from here): the commit's blocks plus the stored per-block
 /// set of rejected transaction indices.
 ///
-/// The rejected set is REQUIRED, not defaulted. `CommittedSubDag::new` leaves
-/// `rejected_transactions_by_block` empty, and ika's `ConsensusCommitAPI`
-/// reads exactly that map to decide which transactions to skip — so a commit
-/// folded without its rejected set accepts transactions the rest of the
-/// committee rejected, silently, with no crash and no log. Every commit the
-/// replay reaches is at or below the store's last FINALIZED commit and so must
-/// have one; that this holds today rests on consensus-core finalizing in
-/// order, which is an internal property of the commit finalizer with no API
-/// contract behind it. Hence the assertion rather than an `unwrap_or_default`.
-fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedSubDag {
+/// With transaction voting ON the rejected set is REQUIRED, not defaulted.
+/// `CommittedSubDag::new` leaves `rejected_transactions_by_block` empty, and
+/// ika's `ConsensusCommitAPI` reads exactly that map to decide which
+/// transactions to skip — so a commit folded without its rejected set accepts
+/// transactions the rest of the committee rejected, silently, with no crash and
+/// no log. Every commit the replay reaches is then at or below the store's last
+/// FINALIZED commit and so must have one; that this holds rests on
+/// consensus-core finalizing in order, which is an internal property of the
+/// commit finalizer with no API contract behind it. Hence the assertion rather
+/// than an `unwrap_or_default`.
+///
+/// With voting OFF there is no set to require: no transaction is ever rejected,
+/// so the empty map is the commit's true rejected set rather than a default
+/// standing in for an unknown one, and the store holds no
+/// finalized-commits rows at all (see `replay_epoch_commits`). Defaulting there
+/// is what lets the fold cover the whole epoch instead of nothing (ika #2085).
+///
+/// `decided_with_local_blocks` and `recovered_rejected_transactions` mirror
+/// consensus-core's own `load_committed_subdag_from_store`
+/// (`consensus/core/src/commit.rs`): true exactly when a stored row was found.
+/// Nothing in ika reads either field — the sub-dag built here goes to ika's
+/// handler and never back into consensus-core — but mirroring keeps the two
+/// loaders comparable rather than subtly divergent.
+fn load_committed_subdag(
+    store: &dyn Store,
+    commit: TrustedCommit,
+    transaction_voting_enabled: bool,
+) -> CommittedSubDag {
     let blocks = store
         .read_blocks(commit.blocks())
         .expect("reading the blocks a stored commit references must not fail")
@@ -220,26 +301,30 @@ fn load_committed_subdag(store: &dyn Store, commit: TrustedCommit) -> CommittedS
 
     let mut subdag =
         CommittedSubDag::new(leader, blocks, commit.timestamp_ms(), commit.reference());
-    let rejected = store
+    let stored_rejected = store
         .read_rejected_transactions(subdag.commit_ref)
-        .expect("reading a finalized commit's rejected transactions must not fail")
-        .unwrap_or_else(|| {
-            panic!(
-                "commit {:?} is at or below the consensus store's last finalized commit but has \
-                 no stored set of rejected transactions; folding it would accept transactions \
-                 the committee rejected",
-                subdag.commit_ref,
-            )
-        });
-    subdag.decided_with_local_blocks = true;
-    subdag.recovered_rejected_transactions = true;
+        .expect("reading a commit's rejected transactions must not fail");
+    let rejected = match stored_rejected {
+        Some(rejected) => {
+            subdag.decided_with_local_blocks = true;
+            subdag.recovered_rejected_transactions = true;
+            rejected
+        }
+        None if !transaction_voting_enabled => BTreeMap::new(),
+        None => panic!(
+            "commit {:?} is at or below the consensus store's last finalized commit but has no \
+             stored set of rejected transactions; folding it would accept transactions the \
+             committee rejected",
+            subdag.commit_ref,
+        ),
+    };
     subdag.rejected_transactions_by_block = rejected;
     subdag
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -266,8 +351,38 @@ mod tests {
 
     const CONSENSUS_COMMITTEE_SIZE: usize = 4;
 
+    /// The consensus protocol config the replay reads, for each of the two
+    /// rules in `replay_epoch_commits`.
+    ///
+    /// Upstream's own constructors already carry the two settings —
+    /// `for_testing()` turns transaction voting ON, `default()` leaves it OFF,
+    /// which is ika's production setting at every protocol version — so no test
+    /// here has to spell out consensus-core's twelve-argument constructor and
+    /// keep it current across Sui bumps. Asserted rather than assumed: a bump
+    /// that flips either default would otherwise silently retarget every test
+    /// below to the branch it is not written for.
+    fn protocol_config(transaction_voting_enabled: bool) -> ConsensusProtocolConfig {
+        let config = if transaction_voting_enabled {
+            ConsensusProtocolConfig::for_testing()
+        } else {
+            ConsensusProtocolConfig::default()
+        };
+        assert_eq!(
+            config.transaction_voting_enabled(),
+            transaction_voting_enabled,
+            "consensus-core's config constructors no longer carry the voting setting this test \
+             asked for; the tests below would exercise the wrong replay rule",
+        );
+        config
+    }
+
     /// A consensus store on disk holding `commits` commits, of which the first
     /// `finalized` are finalized (have a stored rejected-transaction set).
+    ///
+    /// `finalized = 0` is the shape production actually writes: with
+    /// transaction voting off consensus-core's `CommitFinalizer` never writes a
+    /// finalized-commits row for any commit, so the column family is empty for
+    /// the whole epoch (ika #2085).
     ///
     /// The blocks carry no transactions: this exercises the replay pipeline —
     /// how far it folds and what index it hands consensus — not the
@@ -393,6 +508,33 @@ mod tests {
         );
     }
 
+    /// The stronger handoff the voting-off rule buys: consensus has NOTHING to
+    /// re-deliver.
+    ///
+    /// `CommitObserver::recover_and_send_commits`
+    /// (`consensus/core/src/commit_observer.rs`) returns early, logging
+    /// "Nothing to recover for commit observer - replay is requested
+    /// immediately after last commit index", exactly when
+    /// `last_commit_index == replay_after_commit_index`. Landing on that
+    /// equality is what makes the fold and consensus disjoint: no commit is
+    /// folded twice, and the first commit consensus delivers live is
+    /// `replay_after + 1`, so there is no gap either.
+    fn assert_consensus_has_nothing_to_recover(consensus_dir: &Path, replay_after: CommitIndex) {
+        let store = RocksDBStore::new(&consensus_dir.to_string_lossy());
+        let last_commit_index = store
+            .read_last_commit()
+            .unwrap()
+            .expect("the fixture wrote commits")
+            .index();
+        assert_eq!(
+            last_commit_index, replay_after,
+            "the fold stopped at {replay_after} while the store holds {last_commit_index}; \
+             consensus would re-deliver the difference and the fold would be run twice over it",
+        );
+    }
+
+    /// The voting-ON branch: a store whose commits all carry a stored
+    /// rejected-transaction set, folded to its head.
     #[tokio::test]
     async fn replay_folds_every_finalized_commit_and_reaches_the_store_head() {
         let (consensus_dir, context) = consensus_store_with(6, 6);
@@ -401,8 +543,13 @@ mod tests {
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        let replayed_through =
-            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         assert_eq!(replayed_through, 6);
         assert_eq!(
@@ -413,6 +560,150 @@ mod tests {
                 .sub_dag_index,
             6,
             "the fold did not advance through every replayed commit",
+        );
+        assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
+    }
+
+    /// The store PRODUCTION hands the replay: commits written, and nothing at
+    /// all in the finalized-commits column family.
+    ///
+    /// This is ika #2085, and it is the only test here built the way an ika
+    /// node's disk actually looks. ika runs `transaction_voting_enabled =
+    /// false` at every protocol version, so consensus-core's `CommitFinalizer`
+    /// takes its `already_finalized` branch for every commit and never writes a
+    /// finalized-commits row (`consensus/core/src/commit_finalizer.rs`). The
+    /// old code took its target from `read_last_finalized_commit`, read `None`,
+    /// and early-returned 0 — on every boot of every ika node, with the whole
+    /// epoch unfolded (measured: 72,592 commits, twice). Every other test in
+    /// this module writes finalized rows, which is exactly why CI stayed green
+    /// through all of it.
+    ///
+    /// So this asserts the fold actually RAN: the index it returns, the two
+    /// gauges an operator watches, and that the handler saw every commit
+    /// exactly once and in order.
+    #[tokio::test]
+    async fn replay_folds_every_commit_when_transaction_voting_is_off() {
+        // Enough to cross a batch boundary, since the voting-off target is the
+        // one the batch arithmetic now runs all the way to.
+        let commits = REPLAY_BATCH_COMMITS + REPLAY_BATCH_COMMITS / 2;
+        let (consensus_dir, context) = consensus_store_with(commits, 0);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path());
+        let sink = Arc::new(CountingCommitSink::default());
+        let mut handler = test_handler_with_sink(
+            epoch_store.clone(),
+            &context,
+            Some(sink.clone() as Arc<dyn ConsensusCommitSink>),
+        );
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        // The fixture must really hold the production shape, or this test
+        // passes for the wrong reason.
+        {
+            let store = RocksDBStore::new(&consensus_dir.path().to_string_lossy());
+            assert!(
+                store.read_last_finalized_commit().unwrap().is_none(),
+                "the fixture wrote a finalized commit; this test only means anything against a \
+                 store with an empty finalized-commits column family",
+            );
+        }
+
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(false),
+            &mut handler,
+            &metrics,
+        )
+        .await;
+
+        assert_eq!(
+            replayed_through, commits,
+            "the replay stopped at {replayed_through} of {commits} commits; with voting off the \
+             target is the store's last commit",
+        );
+        assert_eq!(
+            metrics.boot_replay_folded_commit_index.get(),
+            i64::from(commits),
+            "the folded-index gauge did not reach the store head; this is the gauge the \
+             slow-start log tells operators to watch",
+        );
+        assert_eq!(
+            metrics.boot_replay_target_commit_index.get(),
+            i64::from(commits),
+            "the target gauge did not describe the work the replay actually had to do",
+        );
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            u64::from(commits),
+            "derived state was not rebuilt through every commit in the store",
+        );
+
+        // Every commit exactly once, in order, none skipped: compared against
+        // the store's own leader rounds rather than a count, so a double fold
+        // and a dropped commit are both visible.
+        let expected_rounds = {
+            let store = RocksDBStore::new(&consensus_dir.path().to_string_lossy());
+            store
+                .scan_commits((1..=commits).into())
+                .unwrap()
+                .iter()
+                .map(|commit| commit.leader().round as u64)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            *sink.rounds.lock().unwrap(),
+            expected_rounds,
+            "the handler did not see the store's commits exactly once, in order",
+        );
+
+        // And the handoff: consensus starts on the equality case and
+        // re-delivers nothing.
+        assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
+        assert_consensus_has_nothing_to_recover(consensus_dir.path(), replayed_through);
+    }
+
+    /// The other reading of the same `None`, and why the gate is the protocol
+    /// flag rather than `read_last_finalized_commit().is_none()`.
+    ///
+    /// With voting ON, a store holding commits none of which has finalized is a
+    /// real state — the finalizer had not caught up when the process died — and
+    /// those commits have no stored rejected-transaction set to fold with.
+    /// Folding them would let this validator accept transactions its peers
+    /// reject. So the same condition that must fold everything under voting off
+    /// must fold nothing here.
+    #[tokio::test]
+    async fn replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized() {
+        let (consensus_dir, context) = consensus_store_with(6, 0);
+        let epoch_dir = TempDir::new().unwrap();
+        let epoch_store = test_epoch_store(epoch_dir.path());
+        let mut handler = test_handler(epoch_store.clone(), &context);
+        let metrics = ConsensusManagerMetrics::new(&Registry::new());
+
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
+
+        assert_eq!(
+            replayed_through, 0,
+            "with voting on, an unfinalized commit has an UNKNOWN rejected set, not an empty \
+             one; consensus must deliver these through the commit finalizer",
+        );
+        assert_eq!(
+            epoch_store
+                .get_last_consensus_stats()
+                .unwrap()
+                .index
+                .sub_dag_index,
+            0,
+            "nothing may have been folded",
         );
         assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
     }
@@ -440,7 +731,13 @@ mod tests {
         );
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         let reported = sink.rounds.lock().unwrap().clone();
         assert_eq!(
@@ -477,8 +774,13 @@ mod tests {
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        let replayed_through =
-            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         assert_eq!(replayed_through, commits);
         assert_eq!(
@@ -535,7 +837,13 @@ mod tests {
         let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
         epoch_store.install_round_transport(sender);
         let mut handler = test_handler(epoch_store.clone(), &context);
-        let folded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let folded = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
         assert_eq!(folded, 7);
 
         // The channel IS the fold's derived output now, so determinism means
@@ -583,7 +891,13 @@ mod tests {
         let (sender, mut receiver) = round_transport(1024, Arc::new(AtomicBool::new(false)));
         epoch_store.install_round_transport(sender);
         let mut handler = test_handler(epoch_store.clone(), &context);
-        let refolded = replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let refolded = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
         assert_eq!(refolded, folded);
 
         let mut second_rounds = Vec::new();
@@ -644,7 +958,13 @@ mod tests {
 
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
-        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         let head = epoch_store.observed_consensus_head_round();
         assert!(
@@ -780,7 +1100,13 @@ mod tests {
         let mut handler = test_handler(epoch_store, &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
     }
 
     /// Unfinalized commits carry no stored rejected-transaction set, so folding
@@ -794,8 +1120,13 @@ mod tests {
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        let replayed_through =
-            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         assert_eq!(replayed_through, 4);
         assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
@@ -805,6 +1136,10 @@ mod tests {
     /// recovery story. Consensus asserts that a consumer of an empty store
     /// replays after 0, so the replay must return exactly 0 and the node must
     /// come up on an epoch it rebuilds from nothing.
+    ///
+    /// Run under ika's production setting (voting off), where the empty store
+    /// is now the ONLY thing that can reach the zero return: with voting off
+    /// the target is the last commit, so a store holding commits always folds.
     #[tokio::test]
     async fn replay_of_an_empty_consensus_store_starts_the_epoch_from_nothing() {
         let (context, _keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
@@ -814,8 +1149,13 @@ mod tests {
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
 
-        let replayed_through =
-            replay_epoch_commits(consensus_dir.path(), &mut handler, &metrics).await;
+        let replayed_through = replay_epoch_commits(
+            consensus_dir.path(),
+            &protocol_config(false),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         assert_eq!(replayed_through, 0);
         assert_consensus_cannot_assert_on_start(consensus_dir.path(), replayed_through);
@@ -849,8 +1189,13 @@ mod tests {
             let epoch_store = test_epoch_store(epoch_dir.path());
             let mut handler = test_handler(epoch_store.clone(), &context);
             let metrics = ConsensusManagerMetrics::new(&Registry::new());
-            let replayed_through =
-                replay_epoch_commits(intact_dir.path(), &mut handler, &metrics).await;
+            let replayed_through = replay_epoch_commits(
+                intact_dir.path(),
+                &protocol_config(true),
+                &mut handler,
+                &metrics,
+            )
+            .await;
             assert_eq!(replayed_through, 8);
             let reached = epoch_store
                 .get_last_consensus_stats()
@@ -891,8 +1236,13 @@ mod tests {
         );
         let mut handler = test_handler(epoch_store.clone(), &context);
         let metrics = ConsensusManagerMetrics::new(&Registry::new());
-        let replayed_through =
-            replay_epoch_commits(truncated_dir.path(), &mut handler, &metrics).await;
+        let replayed_through = replay_epoch_commits(
+            truncated_dir.path(),
+            &protocol_config(true),
+            &mut handler,
+            &metrics,
+        )
+        .await;
 
         assert_eq!(
             replayed_through, truncated_head,

@@ -489,10 +489,15 @@ impl MysticetiConsensusHandler {
     /// Starts the task that folds commits as consensus delivers them.
     ///
     /// There is no already-processed skip here any more, and no watermark to
-    /// drive one. The boot replay has already folded every finalized commit the
-    /// consensus store holds, and consensus is started with that same index as
-    /// its `replay_after_commit_index`, so nothing consensus delivers has been
-    /// folded before. The watermark that used to gate this loop was a second
+    /// drive one. The boot replay has already folded the consensus store up to
+    /// its replay target — the store's last commit, or its last finalized
+    /// commit where transaction voting is on
+    /// (`consensus_manager::boot_replay::replay_epoch_commits`) — and consensus
+    /// is started with that same index as its `replay_after_commit_index`, so
+    /// nothing consensus delivers has been folded before. On ika, where voting
+    /// is off at every protocol version, that target is the store head and
+    /// consensus re-delivers nothing at all. The watermark that used to gate
+    /// this loop was a second
     /// record of the same fact as the consensus store's head, kept in a
     /// different database — and when the two disagreed the node could not start
     /// at all (ika #2057).
