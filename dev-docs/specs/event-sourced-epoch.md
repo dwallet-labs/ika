@@ -84,18 +84,56 @@ numbers move.)
 
 ## What the fold covers, and where it stops
 
-The replay stops at the store's **last finalized** commit
-(`Store::read_last_finalized_commit`), not its last commit.
+**The replay target follows `transaction_voting_enabled`, and on ika that
+means the store's last commit.**
 
-An unfinalized commit has no stored set of rejected transaction indices. A
-validator that folded one would treat as accepted a transaction its peers
-reject, and its derived state would diverge from theirs on a technicality of
-when it happened to restart. Those commits belong to consensus-core, which
-delivers them through the commit finalizer once it starts. The tail
-consensus itself has to recover is therefore bounded by how much
-finalization was in flight when the process died, not by the epoch's age —
-which is also what keeps that recovery clear of the unbounded-channel
-problem above.
+- **Voting OFF — ika at every protocol version.** Every commit is final on
+  arrival, so the target is `Store::read_last_commit`. No transaction is ever
+  rejected, which makes an unfinalized commit's rejected set empty *by
+  construction* rather than unknown; folding it is exactly as sound as
+  folding a finalized one. The fold therefore covers the whole epoch and
+  consensus re-delivers nothing.
+- **Voting ON.** The replay stops at the store's last **finalized** commit
+  (`Store::read_last_finalized_commit`), not its last commit. An unfinalized
+  commit has no stored set of rejected transaction indices; a validator that
+  folded one would treat as accepted a transaction its peers reject, and its
+  derived state would diverge from theirs on a technicality of when it
+  happened to restart. Those commits belong to consensus-core, which delivers
+  them through the commit finalizer once it starts. The tail consensus itself
+  has to recover is then bounded by how much finalization was in flight when
+  the process died, not by the epoch's age — which is also what keeps that
+  recovery clear of the unbounded-channel problem above.
+
+The gate is the protocol flag and **not** `read_last_finalized_commit() ==
+None`, because that `None` means two incompatible things. Under voting off
+consensus-core's `CommitFinalizer` takes its `already_finalized` branch for
+every commit and never reaches `add_finalized_commit`
+(`consensus/core/src/commit_finalizer.rs`), so the finalized-commits column
+family is never written at all and `None` means "this store does not record
+finalization". Under voting on the same `None` means "commits exist, none has
+finalized yet" — the case that must fold nothing.
+
+Reading that `None` as "nothing to replay" is what made this whole fold dead
+code in production: on every ika node, at every protocol version, the replay
+early-returned 0, the three `ika_consensus_boot_replay_*` gauges read 0
+forever, and the epoch was rebuilt by consensus-core's
+`CommitObserver::recover_and_send_commits` instead. That path is correct and
+memory-bounded — it scans in the same 250-commit batches and yields between
+commits — but it is not the path this spec describes and not the path the
+observability watches. Measured on a 4-validator net with real class-groups
+traffic: 72,592 and 74,388 commits, both restarts, deterministic (ika #2085,
+found during the #2064 gate-1 measurement). Every unit test built its fixture
+with finalized commits, which is why CI stayed green through all of it; the
+regression test is now built the way production writes the store —
+`replay_folds_every_commit_when_transaction_voting_is_off`, with
+`replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized` pinning
+the other reading.
+
+The handoff under voting off is the equality case in
+`CommitObserver::recover_and_send_commits`: `last_commit_index ==
+replay_after_commit_index`, which returns early logging "Nothing to recover".
+The fold and consensus are disjoint — no commit is folded twice, and the
+first commit consensus delivers live is `replay_after + 1`.
 
 ## Why the old watermark could brick a validator
 
@@ -109,10 +147,11 @@ its record left the two out of order, and every boot aborted on that
 assertion — a validator down for up to a full epoch (ika #2057).
 
 Reading the index from the consensus store closes it structurally, not
-tolerantly. **This one line is the fix**: `replay_after` now comes from
-`Store::read_last_finalized_commit` on the same database consensus is about
-to open, so both of the upstream assertions become unreachable rather than
-merely unlikely — the store-behind one
+tolerantly. **This one line is the fix**: `replay_after` now comes from the
+same database consensus is about to open (`Store::read_last_commit`, or
+`read_last_finalized_commit` under voting on — see the target rule above), so
+both of the upstream assertions become unreachable rather than merely
+unlikely — the store-behind one
 (`consensus/core/src/commit_observer.rs:162`,
 `assert!(last_commit_index > replay_after_commit_index)`) because the two
 numbers are the same number, and the store-empty one (:147, `assert_eq!(
@@ -262,7 +301,7 @@ Two changes make that window safe:
   bounded channel and block when it is full; the replay signal is published
   only after `replay_epoch_commits` returns; so a drain that waited for the
   signal would let the channel fill and park the replay forever. Any store
-  holding more than the channel capacity of finalized commits — about a
+  holding more than the channel capacity of replayable commits — about a
   minute of mainnet — would hang on every boot, and hang silently, because a
   parked fold holds the commit-liveness watchdog. `DWalletMPCService::spawn`
   therefore runs `drain_while_replaying` first, which consumes rounds and
@@ -774,7 +813,9 @@ In-process, in `ika-core`:
 | a folded transaction is marked processed before its waiter wakes | `a_folded_transaction_is_marked_processed_before_its_waiter_wakes` |
 | the `all_voted` count is the quorum-crossing membership, and a restart re-derives it | `the_pinned_all_voted_count_is_the_quorum_crossing_membership`, `a_restart_re_derives_the_same_pinned_count_and_grace_anchor` |
 | a restart resets the freeze gauges, and the re-fold re-publishes them | `freeze_metrics_reset_on_restart_and_republished_by_the_refold` |
-| the replay reaches the store head, stops below the unfinalized tail, crosses batch boundaries, and survives a lost tail | `consensus_manager::boot_replay::tests` |
+| the replay reaches the store head, stops below the unfinalized tail under voting on, crosses batch boundaries, and survives a lost tail | `consensus_manager::boot_replay::tests` |
+| the fold covers the epoch against the store production writes — commits, no finalized-commits rows | `replay_folds_every_commit_when_transaction_voting_is_off` |
+| the same empty finalized-commits column family folds NOTHING under voting on | `replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized` |
 | a finalization hole below the head stops the node | `a_finalization_hole_below_the_head_stops_the_replay` |
 | replayed commits arm the commit-liveness watchdog | `replayed_commits_feed_the_commit_liveness_sink` |
 | a settled checkpoint is not re-signed | `a_rebuilt_checkpoint_is_not_re_signed_once_a_quorum_has_certified_it` |
