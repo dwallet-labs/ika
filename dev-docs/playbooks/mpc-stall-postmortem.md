@@ -237,11 +237,14 @@ construction; divergence = determinism bug).
   thing eventually happened after the budget expired.
 - **A validator that trails consensus is draining or dead, and the
   difference is whether the gap falls.** A restart refolds the epoch from
-  its first commit and feeds every round to the drain again, so a huge
-  `ika_mpc_consensus_round_lag` right after one is expected, not a stall — the MPC service says so itself
-  (`MPC service entered catch-up mode`), and
-  `ika_dwallet_mpc_catchup_gap_rounds` falls fast while it drains
-  (~40x the tip rate, with computation suppressed). What to act on is
+  its first commit and feeds every round to the drain again, and the gauge
+  that shows it is `ika_dwallet_mpc_catchup_gap_rounds`, never
+  `ika_mpc_consensus_round_lag`: the fold blocks on the bounded round
+  channel, so the raw lag stays within a channel's worth (1,024) of the
+  drain even mid-replay — an unremarkable reading there is not evidence the
+  backlog is small. The MPC service announces the drain itself (`MPC
+  service entered catch-up mode`), and the catch-up gap falls fast while
+  it runs (~40x the tip rate, with computation suppressed). What to act on is
   `ika_mpc_stopped_contributing_condition_active == 1` (nothing is
   draining and MPC has stopped: `MPC subsystem has stopped keeping up
   with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`

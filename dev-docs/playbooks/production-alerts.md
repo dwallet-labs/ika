@@ -221,11 +221,19 @@ drain is healthy and this gauge reads 0, so a `1` means the gap went flat or
 started growing and something other than the backlog is holding the service
 up.
 
-**Do not alert on `ika_mpc_consensus_round_lag` directly.** A validator
-restarted mid-epoch refolds the epoch from its first commit, so its raw lag
-legitimately exceeds any stall threshold for as long as that runs. The
-condition gauges above already account for the catch-up the MPC service is
-reporting; the raw lag is a dashboard signal, not a page.
+**Do not alert on `ika_mpc_consensus_round_lag` directly.** It can carry
+neither alert. The fold hands each round to the drain over a bounded blocking
+channel (capacity 1,024) and the drain consumes during the boot replay, so the
+raw lag stays within a channel's worth of the drain's cursor whatever the node
+is doing — a validator refolding a whole epoch after a mid-epoch restart moves
+it no further than a busy one does. Nor is it a wedge detector: a fold parked
+on a full channel and a drain that has stopped consuming both hold it flat near
+capacity, which is why Alert 6 leans on the fold-blocked pair instead. The
+epoch-scale "how far behind" on a restart is
+`ika_dwallet_mpc_catchup_gap_rounds`, measured against the published
+consensus-store head. The condition gauges above already account for the
+catch-up the MPC service is reporting; the raw lag is a dashboard signal, not
+a page.
 
 ## Secondary signals worth dashboarding (no page)
 

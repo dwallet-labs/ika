@@ -174,7 +174,11 @@ counter. The network-key registry sites are guarded structurally by
 commit path, sampled on every commit. Small and roughly constant in normal
 operation; unbounded growth means MPC has stopped while consensus keeps
 running — the node follows consensus, serves requests, exports every other
-metric, and contributes nothing.
+metric, and contributes nothing. Since #2074 that growth has exactly one live
+cause, because the fold no longer outruns the drain: it blocks on the bounded
+round channel, so the gap opens only once the drain has *exited* and the fold
+detaches from it (`authority::round_transport`), which is the self-stop this
+was built for.
 
 The rule it encodes: **a subsystem cannot report its own stall.** Every path
 that stops the MPC service also stops any check placed inside it — most
@@ -197,10 +201,10 @@ round, since round 0 is a legitimate value.
 **The raw lag is not the alert target** — `ika_mpc_stopped_contributing_condition_active`
 is. Consensus rounds restart at zero each epoch and a restarted node builds a
 fresh epoch store whose cursor starts there too, so a mid-epoch restart's replay
-gap is simply "rounds elapsed this epoch": past the first three quarters of an
-hour of a 24h epoch it exceeds any stall threshold while the node is recovering
-perfectly normally, and the alarm fired on every restart of every production
-validator (#2036).
+gap was simply "rounds elapsed this epoch": past the first three quarters of an
+hour of a 24h epoch it exceeded any stall threshold while the node was
+recovering perfectly normally, and the alarm fired on every restart of every
+production validator (#2036).
 
 Which forces the general rule: **a detector that lives outside a subsystem
 because the subsystem cannot report its own stall must still be told what the
@@ -222,6 +226,18 @@ Suppressing an alarm creates a hole, so it comes with the alarm that covers it:
 stopped reaching new lows, over a bound generous against the observed drain
 rate. Between them, "not contributing" and "not recovering" are both loud, and
 the recovering-normally case is silent.
+
+The suppression outlived the spike it was built for, and that is worth knowing
+before reading the gauge: under the bounded round channel a replay cannot move
+the raw lag at all. The fold parks rather than run more than a channel's worth
+(1,024) ahead, and the drain consumes *during* the boot replay
+([`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md)), so the
+epoch-scale distance behind lives on `ika_dwallet_mpc_catchup_gap_rounds`,
+measured against the published consensus-store head for exactly this reason.
+Nor does the raw lag detect a wedge: a parked fold and a drain that has stopped
+consuming both hold it flat near capacity, and the pair that separates those is
+`ika_consensus_fold_blocked_{seconds,sends}_total` with
+`ika_consensus_round_channel_depth`.
 
 ### Process-wide wire settings need a gauge, not just a log
 
