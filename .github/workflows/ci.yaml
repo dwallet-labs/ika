@@ -124,6 +124,11 @@ jobs:
         # The Sui pin lives in several places that don't update together;
         # see dev-docs/conventions/sui-version-bump.md.
         run: ./scripts/check-sui-version-consistency.sh
+      - name: Rust toolchain consistency
+        # rust-toolchain.toml and the Docker builders' `FROM rust:` image are
+        # separate pins, and only release tags build the Dockerfiles — the
+        # v1.4.0 release build failed on exactly this drift.
+        run: ./scripts/check-rust-toolchain-consistency.sh
 
       - name: Workspace version consistency (standalone lockfiles)
         # Standalone lockfiles (sdk/ika-wasm) pin root-workspace crates and
