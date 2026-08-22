@@ -33,10 +33,10 @@ use ika_proxy::{
     },
     config::load,
     histogram_relay, metrics,
+    sui_chain::check_sui_chain_identifier,
 };
 use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::metrics::SuiClientMetrics;
-use ika_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
 use mysten_metrics::RegistryService;
 use prometheus::Registry;
 use std::env;
@@ -158,17 +158,7 @@ async fn validate_sui_chain(
     expected_chain: SuiChainIdentifier,
 ) -> Result<()> {
     let actual_chain = sui_client.get_chain_identifier().await?;
-    let expected_identifier = match expected_chain {
-        SuiChainIdentifier::Mainnet => Some(get_mainnet_chain_identifier().to_string()),
-        SuiChainIdentifier::Testnet => Some(get_testnet_chain_identifier().to_string()),
-        SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => None,
-    };
-    if expected_identifier
-        .as_ref()
-        .is_some_and(|identifier| identifier != &actual_chain)
-    {
-        anyhow::bail!("expected Sui chain {expected_chain}, but connected to {actual_chain}");
-    }
+    check_sui_chain_identifier(expected_chain, &actual_chain)?;
     info!(%expected_chain, %actual_chain, "connected to Sui gRPC endpoint");
     Ok(())
 }

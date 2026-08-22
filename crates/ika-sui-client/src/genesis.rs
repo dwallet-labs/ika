@@ -369,12 +369,12 @@ mod tests {
         );
         assert_ne!(
             mainnet,
-            ika_types::digests::get_mainnet_chain_identifier(),
+            ika_types::digests::get_ika_mainnet_chain_identifier(),
             "the ika mainnet chain identifier (system object ID) is NOT a Sui genesis digest"
         );
         assert_ne!(
             testnet,
-            ika_types::digests::get_testnet_chain_identifier(),
+            ika_types::digests::get_ika_testnet_chain_identifier(),
             "the ika testnet chain identifier (system object ID) is NOT a Sui genesis digest"
         );
         assert!(matches!(
