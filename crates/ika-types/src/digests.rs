@@ -155,11 +155,25 @@ impl Default for ChainIdentifier {
     }
 }
 
-pub const MAINNET_CHAIN_IDENTIFIER_BASE58: &str = "3FFWaJu1SeurUdyLuWbhc7xE7ThvVqfHkjopBge3vLVu";
-pub const TESTNET_CHAIN_IDENTIFIER_BASE58: &str = "3FZxkWnWSKp64iY6h6GrBuW3CKxxpBDcnfEVyTZ8EZnV";
+/// **ika**'s own chain identifier for its mainnet deployment — NOT Sui's.
+///
+/// `sui_types::digests` exports a `MAINNET_CHAIN_IDENTIFIER_BASE58` too, and it
+/// is a completely different value (the Sui genesis checkpoint digest, short id
+/// `35834a8a`). The `IKA_` prefix here exists so the two can never be confused
+/// at a `use` site: comparing a *Sui* chain identifier against this constant
+/// can never match, which is exactly the bug that crash-looped `ika-proxy`
+/// v1.4.0 (#2091) and, before it, the gRPC genesis verifier.
+pub const IKA_MAINNET_CHAIN_IDENTIFIER_BASE58: &str =
+    "3FFWaJu1SeurUdyLuWbhc7xE7ThvVqfHkjopBge3vLVu";
+/// **ika**'s own chain identifier for its testnet deployment — NOT Sui's.
+///
+/// See [`IKA_MAINNET_CHAIN_IDENTIFIER_BASE58`] for why this carries an `IKA_`
+/// prefix. Sui testnet's identifier has the short id `4c78adac`.
+pub const IKA_TESTNET_CHAIN_IDENTIFIER_BASE58: &str =
+    "3FZxkWnWSKp64iY6h6GrBuW3CKxxpBDcnfEVyTZ8EZnV";
 
-pub static MAINNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
-pub static TESTNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
+pub static IKA_MAINNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
+pub static IKA_TESTNET_CHAIN_IDENTIFIER: OnceCell<ChainIdentifier> = OnceCell::new();
 
 /// For testing purposes or bootstrapping chain reconfiguration, you can set
 /// this environment variable to force protocol config to use a specific Chain.
@@ -183,24 +197,24 @@ impl ChainIdentifier {
     /// take a short 4 byte identifier and convert it into a ChainIdentifier
     /// short ids come from the JSON RPC getChainIdentifier and are encoded in hex
     pub fn from_chain_short_id(short_id: &String) -> Option<Self> {
-        if Hex::from_bytes(&Base58::decode(MAINNET_CHAIN_IDENTIFIER_BASE58).ok()?)
+        if Hex::from_bytes(&Base58::decode(IKA_MAINNET_CHAIN_IDENTIFIER_BASE58).ok()?)
             .encoded_with_format()
             .starts_with(&format!("0x{short_id}"))
         {
-            Some(get_mainnet_chain_identifier())
-        } else if Hex::from_bytes(&Base58::decode(TESTNET_CHAIN_IDENTIFIER_BASE58).ok()?)
+            Some(get_ika_mainnet_chain_identifier())
+        } else if Hex::from_bytes(&Base58::decode(IKA_TESTNET_CHAIN_IDENTIFIER_BASE58).ok()?)
             .encoded_with_format()
             .starts_with(&format!("0x{short_id}"))
         {
-            Some(get_testnet_chain_identifier())
+            Some(get_ika_testnet_chain_identifier())
         } else {
             None
         }
     }
 
     pub fn chain(&self) -> Chain {
-        let mainnet_id = get_mainnet_chain_identifier();
-        let testnet_id = get_testnet_chain_identifier();
+        let mainnet_id = get_ika_mainnet_chain_identifier();
+        let testnet_id = get_ika_testnet_chain_identifier();
 
         let chain = match self {
             id if *id == mainnet_id => Chain::Mainnet,
@@ -222,26 +236,30 @@ impl ChainIdentifier {
     }
 }
 
-pub fn get_mainnet_chain_identifier() -> ChainIdentifier {
-    let object_id = MAINNET_CHAIN_IDENTIFIER.get_or_init(|| {
+/// ika's mainnet chain identifier. To validate a connection to *Sui* mainnet,
+/// use [`sui_types::digests::get_mainnet_chain_identifier`] instead.
+pub fn get_ika_mainnet_chain_identifier() -> ChainIdentifier {
+    let object_id = IKA_MAINNET_CHAIN_IDENTIFIER.get_or_init(|| {
         let object_id = ObjectID::new(
-            Base58::decode(MAINNET_CHAIN_IDENTIFIER_BASE58)
-                .expect("mainnet genesis checkpoint digest literal is invalid")
+            Base58::decode(IKA_MAINNET_CHAIN_IDENTIFIER_BASE58)
+                .expect("ika mainnet chain identifier literal is invalid")
                 .try_into()
-                .expect("Mainnet genesis checkpoint digest literal has incorrect length"),
+                .expect("ika mainnet chain identifier literal has incorrect length"),
         );
         ChainIdentifier::from(object_id)
     });
     *object_id
 }
 
-pub fn get_testnet_chain_identifier() -> ChainIdentifier {
-    let object_id = TESTNET_CHAIN_IDENTIFIER.get_or_init(|| {
+/// ika's testnet chain identifier. To validate a connection to *Sui* testnet,
+/// use [`sui_types::digests::get_testnet_chain_identifier`] instead.
+pub fn get_ika_testnet_chain_identifier() -> ChainIdentifier {
+    let object_id = IKA_TESTNET_CHAIN_IDENTIFIER.get_or_init(|| {
         let object_id = ObjectID::new(
-            Base58::decode(TESTNET_CHAIN_IDENTIFIER_BASE58)
-                .expect("testnet genesis checkpoint digest literal is invalid")
+            Base58::decode(IKA_TESTNET_CHAIN_IDENTIFIER_BASE58)
+                .expect("ika testnet chain identifier literal is invalid")
                 .try_into()
-                .expect("Testnet genesis checkpoint digest literal has incorrect length"),
+                .expect("ika testnet chain identifier literal has incorrect length"),
         );
         ChainIdentifier::from(object_id)
     });
