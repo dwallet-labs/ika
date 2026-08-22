@@ -142,6 +142,16 @@ pub struct EpochMetrics {
     /// to perform. Locally computable on purpose: it needs no peer data and no
     /// fleet context, so it works for anyone running a validator.
     ///
+    /// Bounded in normal operation, and bounded by construction: since #2074
+    /// the fold hands each round to the drain over a blocking channel of
+    /// `DEFAULT_ROUND_CHANNEL_CAPACITY` (`authority::round_transport`), so it
+    /// parks rather than run further than a channel's worth ahead of the
+    /// drain's cursor. Growth past that has one live cause — a drain that has
+    /// EXITED, after which the fold detaches and runs on without it, which is
+    /// exactly the self-stop above. A drain that is merely wedged holds this
+    /// flat near capacity and is `ika_consensus_fold_blocked_seconds_total`'s
+    /// to report.
+    ///
     /// `-1` before the MPC service reports its first round, since round 0 is
     /// a legitimate value.
     pub mpc_consensus_round_lag: IntGauge,
@@ -151,10 +161,14 @@ pub struct EpochMetrics {
     /// transition and so cannot be alerted on continuously.
     ///
     /// This, not a threshold on `mpc_consensus_round_lag`, is the alert
-    /// target: a validator restarted mid-epoch replays every round of the
-    /// epoch so far, and that raw lag legitimately exceeds any stall threshold
-    /// while the node is recovering normally (ika #2036). The gauge already
-    /// accounts for the catch-up the MPC service reports.
+    /// target. A threshold there fired on every restart of every production
+    /// validator while a mid-epoch replay ran (ika #2036); since #2074 it has
+    /// the opposite defect, because the bounded round channel keeps the raw
+    /// lag within a channel's worth of the drain — the drain consumes during
+    /// the boot replay, so no replay ever moves it. The epoch-scale "how far
+    /// behind" is `ika_dwallet_mpc_catchup_gap_rounds`, measured against the
+    /// published consensus-store head. This gauge already accounts for the
+    /// catch-up the MPC service reports.
     pub mpc_stopped_contributing_condition_active: IntGauge,
 
     /// `1` while the MPC service is reporting a catch-up whose consensus-round
@@ -416,7 +430,7 @@ impl EpochMetrics {
             .unwrap(),
             mpc_stopped_contributing_condition_active: register_int_gauge_with_registry!(
                 "ika_mpc_stopped_contributing_condition_active",
-                "1 while this node judges its MPC subsystem to have stopped contributing; alert on this rather than on a threshold over ika_mpc_consensus_round_lag, which a healthy mid-epoch restart legitimately exceeds while it replays",
+                "1 while this node judges its MPC subsystem to have stopped contributing; alert on this rather than on a threshold over ika_mpc_consensus_round_lag, which the bounded round channel holds within a channel's worth of the drain and so cannot show a mid-epoch restart's replay (that is ika_dwallet_mpc_catchup_gap_rounds)",
                 registry,
             )
             .unwrap(),
