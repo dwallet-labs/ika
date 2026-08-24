@@ -187,12 +187,25 @@ of those rollouts completed on the deployed networks.
 
 Beyond the MIN-driven retirements, the mixed-committee family is retargeted
 whenever the DEPLOYED release moves — the scenario names carry the old
-binary's release (`v125_*` → `v127_*` → `v128_*` → `v131_*`), so the
-maintenance is visible rather than silent. The current deployed-release gate
-is `tests/v131_rollout.rs`: the one-upgraded-validator mixed topology against
-the literal **v1.3.1** release at protocol v7. Both sides support v7 and only
-v7, so the boundary under test is a pure binary swap. It is the PR-gating
-scenario and the one a release manager dispatches against every release tag.
+binary's release (`v125_*` → `v127_*` → `v128_*` → `v131_*` → `v140_*`), so
+the maintenance is visible rather than silent. The current deployed-release
+gate is `tests/v140_rollout.rs`: the one-upgraded-validator mixed topology
+against the literal **v1.4.0** release at protocol v7. Both sides support v7
+and only v7, so the boundary under test is a pure binary swap. It is the
+PR-gating scenario and the one a release manager dispatches against every
+release tag.
+
+`tests/mid_epoch_rollback.rs` is deliberately NOT part of that sweep. It is
+pinned to **v1.3.1**, the last release from before the epoch was
+event-sourced (#2074), because its subject is precisely an old binary
+reopening an epoch store whose fold-side tables it expects and does not
+find. Every other member of the family follows the deployed release; this
+one follows a capability, and moving it to v1.4.0 would leave it asserting
+nothing. Note what that costs the forward gate: the v1.3.1-based
+`v131_rollout` straddled the storage-model change by accident of timing,
+while `v140_rollout` has both sides post-#2074 and stands behind wire and
+MPC-output agreement only. Nothing in it was weakened to get there — the
+ingredient simply moved to the scenario that is pinned for it.
 
 ## How this is verified
 
@@ -204,8 +217,8 @@ drives them across epochs. The surviving scenarios (current build only):
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a full user
   DKG → Presign → Sign completing on-chain at genesis protocol v7.
-- `tests/v131_rollout.rs` — the current deployed-release compatibility gate:
-  boot the literal v1.3.1 release at genesis protocol v7, upgrade exactly one
+- `tests/v140_rollout.rs` — the current deployed-release compatibility gate:
+  boot the literal v1.4.0 release at genesis protocol v7, upgrade exactly one
   of four validators to the candidate, require two mixed
   network-key reshares to converge byte-identically with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
@@ -222,23 +235,25 @@ drives them across epochs. The surviving scenarios (current build only):
   it independently the way a fleet does, while the in-process cluster test
   shares one such global across all four simulated validators and can only
   gate the vote arithmetic and the cross-epoch handoff path.
-- `tests/v131_churn.rs` — the churn counterpart: full sequential swap over
-  the literal v1.3.1 committee (on-disk RocksDB continuity), then a
-  peer-only-mirrored joiner folds into the reshared v1.3.1-origin key
+- `tests/v140_churn.rs` — the churn counterpart: full sequential swap over
+  the literal v1.4.0 committee (on-disk RocksDB continuity), then a
+  peer-only-mirrored joiner folds into the reshared v1.4.0-origin key
   (4→5, the OCS joiner trust-anchor path) and a shrink reshare removes an
   original validator (5→4).
-- `tests/malicious_v131.rs` — the test-testing counterpart: an honest
-  literal-v1.3.1 committee plus ONE current-build validator carrying the
+- `tests/malicious_v140.rs` — the test-testing counterpart: an honest
+  literal-v1.4.0 committee plus ONE current-build validator carrying the
   `test-testing`-gated reconfiguration-message fault (the hook lives in
   the main reconfiguration advance path in
   `crytographic_computation/mpc_computations.rs`); honest validators must
   convict it and reshare without it, asserted via the malicious-actors
   gauge. Green = the compatibility gates above are not vacuous. The
   workflow's `test_testing_fault` input runs the same fault through
-  `v131_rollout` itself (that run must fail closed); `malicious_v131` is
+  `v140_rollout` itself (that run must fail closed); `malicious_v140` is
   also directly dispatchable (the workflow builds the faulty binary).
 - `tests/mid_epoch_rollback.rs` — the only BACKWARD direction in the
-  matrix: the candidate runs the network, then the v1.3.1 release is put
+  matrix, and the only scenario whose OLD side is pinned to a capability
+  rather than to the deployed release: the candidate runs the network, then
+  the **v1.3.1** release — the last one from before #2074 — is put
   back on one validator MID-EPOCH, on stores the candidate has been
   writing. It asserts that the old binary re-derives the epoch against
   empty fold-side tables, counts the already-settled work it re-sends at

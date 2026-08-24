@@ -66,7 +66,7 @@ conclude from pass/fail alone.
 
 4. **Build only the binary that carries the fault, and name it.** A
    reference binary you can't edit (a fixed release like the literal
-   v1.3.1 build) cannot carry a producer fault — put the fault in the
+   v1.4.0 build) cannot carry a producer fault — put the fault in the
    **local** build and run it as the minority in an otherwise-honest
    committee. Build to a clearly-named artifact (`…-FAULTED` / `…-FAULTY-*`)
    so it's never mistaken for a real binary.
@@ -119,14 +119,14 @@ Property: in a mixed-binary committee, honest validators identify a
 validator that broadcasts a malformed contribution and reconfigure without
 it.
 
-Harness: `crates/ika-upgrade-test/tests/malicious_v131.rs`. It boots a
-4-validator committee on the HONEST literal v1.3.1 release, lets the genesis
+Harness: `crates/ika-upgrade-test/tests/malicious_v140.rs`. It boots a
+4-validator committee on the HONEST literal v1.4.0 release, lets the genesis
 network DKG finish, then swaps ONE validator to the `--features test-testing`
 build so it corrupts its outgoing reconfiguration message at the next epoch
 boundary.
 
 ```bash
-gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v131
+gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v140
 ```
 
 Outcome shape: **recoverable** — the honest validators exclude the faulty
@@ -146,8 +146,8 @@ wire incompatibility would have failed every cross-binary message and never
 reached quorum; had a *clean* swapped validator also been flagged, you would
 be measuring incompatibility, not detection.
 
-What a green `malicious_v131` buys you is the right to trust a different
-run: it shows `v131_rollout`'s zero-malicious gate would actually fire on a
+What a green `malicious_v140` buys you is the right to trust a different
+run: it shows `v140_rollout`'s zero-malicious gate would actually fire on a
 real divergence, rather than reading zero because nothing ever checks.
 
 ## Worked example — hard-fail: running the fault through the gate itself
@@ -157,10 +157,10 @@ detection test, inverts the outcome shape:
 
 ```bash
 gh workflow run upgrade-test.yaml --ref <branch> \
-  -f test=v131_rollout -f test_testing_fault=true
+  -f test=v140_rollout -f test_testing_fault=true
 ```
 
-`v131_rollout` requires mixed reshares to converge byte-identically with
+`v140_rollout` requires mixed reshares to converge byte-identically with
 ZERO malicious reports, so a faulty validator must break it. **This run is
 expected to FAIL**, and its logs must show the specific zero-malicious or
 output-convergence assertion firing. A green run here is the red flag: it

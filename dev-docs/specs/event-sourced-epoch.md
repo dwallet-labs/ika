@@ -856,12 +856,24 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
 - **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`). The
-  forward direction is covered by `v131_rollout` / `v131_churn`; the BACKWARD
-  direction — the rollback section above — is `mid_epoch_rollback`, which puts
-  the v1.3.1 release back on one validator mid-epoch and asserts the
-  re-derivation reaches the peers' consumed round, counts the already-settled
-  work it re-sends, and requires a peer to witness it authoring MPC output
-  again inside the same epoch.
+  BACKWARD direction — the rollback section above — is `mid_epoch_rollback`,
+  which puts the v1.3.1 release back on one validator mid-epoch and asserts
+  the re-derivation reaches the peers' consumed round, counts the
+  already-settled work it re-sends, and requires a peer to witness it
+  authoring MPC output again inside the same epoch. It is pinned to v1.3.1
+  and does NOT move with the deployed release: v1.3.1 is the last binary that
+  expects its own fold's tables to be in the epoch store, and that expectation
+  is the whole experiment.
+
+  The FORWARD direction across this change was covered by `v131_rollout` /
+  `v131_churn` while v1.3.1 was the deployed release. Their successors
+  `v140_rollout` / `v140_churn` boot v1.4.0, which is itself post-#2074, so
+  they no longer put two storage models in one committee — they gate wire and
+  MPC-output agreement between two event-sourced binaries. **Nothing now
+  exercises a pre-#2074 binary sharing an epoch with a current one in the
+  forward direction**, and nothing will again: the fleet is past it. If that
+  coverage is wanted as a regression record rather than as a live gate, it has
+  to be a separately-pinned scenario, the way the backward one is.
 - **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
   on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
   the commit-channel backlog. This closes both directions the local harness
