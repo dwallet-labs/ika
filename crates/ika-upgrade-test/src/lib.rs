@@ -4,7 +4,7 @@
 //! Out-of-process cross-binary upgrade test harness.
 //!
 //! Runs an Ika cluster on one machine with validators executing *real,
-//! separately-compiled* `ika-validator` binaries (e.g. `release/mainnet-v1.3.1` vs
+//! separately-compiled* `ika-validator` binaries (e.g. `release/mainnet-v1.4.0` vs
 //! `dev`), drives them across epoch boundaries, swaps binaries on individual
 //! validators mid-run, and asserts the upgrade invariants (protocol-version
 //! vote, reconfiguration MPC, session lifecycle, wire compat, on-disk compat).

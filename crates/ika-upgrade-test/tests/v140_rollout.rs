@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! Deployed-release rolling-upgrade rehearsal at protocol v7: the literal
-//! v1.3.1 release against the candidate build.
+//! v1.4.0 release against the candidate build.
 //!
-//! - **OLD** = the v1.3.1 `ika-validator` (built from the
-//!   `release/mainnet-v1.3.1` tag, deployed on mainnet AND testnet).
+//! - **OLD** = the v1.4.0 `ika-validator` (built from the
+//!   `release/mainnet-v1.4.0` tag, deployed on mainnet AND testnet).
 //! - **NEW** = the candidate build.
 //!
 //! `MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 7`, so both binaries support
@@ -18,17 +18,32 @@
 //! Sign lifecycle across two reshares and a full binary swap. That is the
 //! wire-no-op every candidate must be against the release the fleet is running.
 //!
-//! Opt-in (real binaries + long-running), via `RUN_V131_ROLLOUT=1`:
+//! **What the storage model does to this gate's reach.** Against v1.3.1 the
+//! mixed phase also straddled the event-sourcing change (#2074): the OLD
+//! validators wrote per-round MPC tables and a `last_consensus_stats`
+//! watermark, the NEW ones kept that state in memory, and a green run said
+//! something about two committee members disagreeing about what is durable.
+//! v1.4.0 is post-#2074, so both sides of this scenario now share one storage
+//! model and that ingredient is GONE from here — the assertions below are
+//! unchanged and still gate wire and MPC-output agreement, but they no longer
+//! stand behind any claim about mixed storage models. The one scenario that
+//! still crosses the boundary is `mid_epoch_rollback`, which is deliberately
+//! NOT retargeted with this family: it stays pinned to `release/mainnet-v1.3.1`
+//! because v1.3.1 is the last release that reopens an epoch store expecting its
+//! own fold's tables to be there, and retargeting it to v1.4.0 would leave it
+//! asserting nothing.
+//!
+//! Opt-in (real binaries + long-running), via `RUN_V140_ROLLOUT=1`:
 //!
 //! ```bash
-//! # OLD_BIN: the v1.3.1 ika-validator; NEW_BIN: the candidate
-//! RUN_V131_ROLLOUT=1 \
-//!   OLD_BIN=/path/to/ika-validator-v1.3.1 \
+//! # OLD_BIN: the v1.4.0 ika-validator; NEW_BIN: the candidate
+//! RUN_V140_ROLLOUT=1 \
+//!   OLD_BIN=/path/to/ika-validator-v1.4.0 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v131_rollout -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v140_rollout -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -45,10 +60,10 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v131_rollout_converges_across_binary_swap_at_v7() {
-    if std::env::var("RUN_V131_ROLLOUT").is_err() {
+async fn v140_rollout_converges_across_binary_swap_at_v7() {
+    if std::env::var("RUN_V140_ROLLOUT").is_err() {
         eprintln!(
-            "skipping: set RUN_V131_ROLLOUT=1 \
+            "skipping: set RUN_V140_ROLLOUT=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
@@ -60,7 +75,7 @@ async fn v131_rollout_converges_across_binary_swap_at_v7() {
 
     let old = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/mnt/nvme0n1p1/v131-bins/ika-validator",
+        "/mnt/nvme0n1p1/v140-bins/ika-validator",
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
@@ -74,7 +89,7 @@ async fn v131_rollout_converges_across_binary_swap_at_v7() {
         .to_path_buf();
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
-            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v131-rollout".to_string()),
+            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v140-rollout".to_string()),
     );
     let _ = std::fs::remove_dir_all(&base);
     let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
@@ -83,7 +98,7 @@ async fn v131_rollout_converges_across_binary_swap_at_v7() {
         .unwrap_or(600_000);
     assert!(
         epoch_duration_ms >= 480_000,
-        "the v1.3.1 rollout requires an epoch of at least 480000ms so the bounded sequential \
+        "the v1.4.0 rollout requires an epoch of at least 480000ms so the bounded sequential \
          restarts complete before the mid-epoch reconfiguration"
     );
 
@@ -185,12 +200,12 @@ async fn v131_rollout_converges_across_binary_swap_at_v7() {
         .run()
         .await
         .expect(
-            "v1.3.1/candidate committee must converge across the mixed phase and the full binary \
+            "v1.4.0/candidate committee must converge across the mixed phase and the full binary \
              swap at protocol v7",
         );
 
     tracing::info!(
-        "v1.3.1 rollout PASSED: the mixed v1.3.1/candidate committee converged across two \
+        "v1.4.0 rollout PASSED: the mixed v1.4.0/candidate committee converged across two \
          reshares at v7, and the fully-upgraded committee converged and kept serving a full \
          user lifecycle at each stage"
     );

@@ -2123,7 +2123,7 @@ impl ClusterOfProcesses {
         .context("faucet-fund joiner")?;
 
         // The publisher signs `stake_ika` below, and by this point in a long
-        // scenario its bootstrap grants can be burned down to dust (v131_churn
+        // scenario its bootstrap grants can be burned down to dust (v140_churn
         // reached this step with 0.199 SUI total against the 5 SUI budget).
         // Top it up and wait for the grant to land before signing.
         ensure_sui_balance_from_faucet(
