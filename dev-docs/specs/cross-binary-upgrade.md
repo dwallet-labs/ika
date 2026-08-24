@@ -195,17 +195,24 @@ and only v7, so the boundary under test is a pure binary swap. It is the
 PR-gating scenario and the one a release manager dispatches against every
 release tag.
 
-`tests/mid_epoch_rollback.rs` is deliberately NOT part of that sweep. It is
-pinned to **v1.3.1**, the last release from before the epoch was
-event-sourced (#2074), because its subject is precisely an old binary
-reopening an epoch store whose fold-side tables it expects and does not
-find. Every other member of the family follows the deployed release; this
-one follows a capability, and moving it to v1.4.0 would leave it asserting
-nothing. Note what that costs the forward gate: the v1.3.1-based
-`v131_rollout` straddled the storage-model change by accident of timing,
-while `v140_rollout` has both sides post-#2074 and stands behind wire and
-MPC-output agreement only. Nothing in it was weakened to get there — the
-ingredient simply moved to the scenario that is pinned for it.
+**No scenario crosses the storage-model change any more.**
+`tests/mid_epoch_rollback.rs` was the one that did: it was deliberately kept
+out of that sweep and pinned to **v1.3.1**, the last release from before the
+epoch was event-sourced (#2074), because its subject was precisely an old
+binary reopening an epoch store whose fold-side tables it expects and does
+not find. Every other member of the family followed the deployed release;
+that one followed a capability. It was deleted once v1.4.0 shipped and was
+validated in production (#2077, #2064), as a deliberate retirement of the
+rollback safety net.
+
+Note what that leaves the forward gate standing on. The v1.3.1-based
+`v131_rollout` straddled the storage-model change by accident of timing;
+`v140_rollout` has both sides post-#2074 and stands behind wire and
+MPC-output agreement only. Nothing in it was weakened to get there, and that
+ingredient used to survive in the scenario pinned for it — but with that
+scenario retired it now lives nowhere in the matrix. Any future change that
+reintroduces a storage-model boundary needs a scenario built for it; there is
+none to inherit.
 
 ## How this is verified
 
@@ -250,18 +257,17 @@ drives them across epochs. The surviving scenarios (current build only):
   workflow's `test_testing_fault` input runs the same fault through
   `v140_rollout` itself (that run must fail closed); `malicious_v140` is
   also directly dispatchable (the workflow builds the faulty binary).
-- `tests/mid_epoch_rollback.rs` — the only BACKWARD direction in the
-  matrix, and the only scenario whose OLD side is pinned to a capability
-  rather than to the deployed release: the candidate runs the network, then
-  the **v1.3.1** release — the last one from before #2074 — is put
-  back on one validator MID-EPOCH, on stores the candidate has been
-  writing. It asserts that the old binary re-derives the epoch against
-  empty fold-side tables, counts the already-settled work it re-sends at
-  the peers against a control window of ordinary traffic, and requires a
-  peer to witness it authoring MPC output again before the boundary. The
-  whole experiment must fit inside one epoch, because a boundary hands the
-  node a fresh epoch store and ends the experiment. What it measured is in
-  [`event-sourced-epoch.md`](event-sourced-epoch.md) ("Rolling back").
+- **There is no BACKWARD direction in the matrix, and no scenario whose OLD
+  side is pinned to a capability rather than to the deployed release.**
+  `tests/mid_epoch_rollback.rs` used to be both — the candidate ran the
+  network, then the **v1.3.1** release (the last one from before #2074) was
+  put back on one validator MID-EPOCH, on stores the candidate had been
+  writing. It proved that rollback safe for the **v1.4.0 release commit**
+  (#2077, plus the production validation in #2064) and was deleted once v1.4.0
+  shipped and was validated in production, as a deliberate retirement of the
+  rollback safety net. What it measured is kept, marked historical, in
+  [`event-sourced-epoch.md`](event-sourced-epoch.md) ("Rolling back"). A
+  mid-epoch rollback to v1.3.1 from a commit later than v1.4.0 is untested.
 - `tests/restart_spectator.rs` — a validator restarted mid-epoch must
   resume contributing rather than following consensus as a spectator,
   asserted on the internal presign pool's ordinal-stream log lines.

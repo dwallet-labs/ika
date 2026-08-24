@@ -30,8 +30,11 @@ name: Upgrade Test
 #                  pure binary swap, no protocol transition. Defaults to
 #                  old_ref=release/mainnet-v1.4.0, old_bin_name=ika-validator.
 #                  v1.4.0 is post-#2074, so unlike the v1.3.1-based gate this
-#                  mixed committee shares ONE storage model; crossing the
-#                  event-sourcing change is mid_epoch_rollback's job.
+#                  mixed committee shares ONE storage model. Crossing the
+#                  event-sourcing change is no longer covered by anything:
+#                  mid_epoch_rollback was the only scenario that did it and
+#                  was retired once v1.4.0 shipped (see
+#                  dev-docs/specs/event-sourced-epoch.md, "Rolling back").
 #   v140_churn   — v140_rollout's churn counterpart: full sequential swap
 #                  over the literal v1.4.0 committee, then a mirrored OCS
 #                  joiner folds into the reshared v1.4.0-origin key (4→5)
@@ -51,21 +54,6 @@ name: Upgrade Test
 #                  not merely stay consensus-healthy while peers absorb the
 #                  sessions. Current build only; production presign-pool
 #                  sizing (the sustained-volume ingredient).
-#   mid_epoch_rollback — the only BACKWARD direction in the matrix: the
-#                  candidate runs the network, then the literal v1.3.1 release
-#                  is put back on one validator mid-epoch, on the same stores.
-#                  Asserts the old binary re-derives the epoch through its own
-#                  table-writing fold against empty fold-side tables, COUNTS
-#                  the already-settled work it re-sends (measured at the peers,
-#                  against a control window of ordinary traffic), and that a
-#                  peer witnesses it contributing MPC output again before the
-#                  boundary. Deliberately NOT retargeted with the rest of the
-#                  family: it stays on old_ref=release/mainnet-v1.3.1, the last
-#                  release that reopens an epoch store expecting its own fold's
-#                  tables to be there. Against v1.4.0 (post-#2074) there would
-#                  be no empty fold-side tables to re-derive against and the
-#                  scenario would assert nothing. Needs a long epoch so the
-#                  whole experiment fits inside one.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -255,7 +243,7 @@ jobs:
           TEST: ${{ inputs.test || 'v140_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v140_rollout v140_churn malicious_v140 restart_spectator mid_epoch_rollback"
+          ALL="smoke workload v140_rollout v140_churn malicious_v140 restart_spectator"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -371,7 +359,6 @@ jobs:
             v140_churn)   RUN_FLAG=RUN_V140_CHURN ;;
             malicious_v140) RUN_FLAG=RUN_MALICIOUS_V140 ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
-            mid_epoch_rollback) RUN_FLAG=RUN_MID_EPOCH_ROLLBACK ;;
             v140_rollout)   RUN_FLAG=RUN_V140_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
@@ -382,17 +369,6 @@ jobs:
           case "$TEST" in
             v140_churn | malicious_v140)
               : "${OLD_REF:=release/mainnet-v1.4.0}"
-              : "${OLD_BIN_NAME:=ika-validator}"
-              ;;
-            mid_epoch_rollback)
-              # NOT the deployed release, and deliberately left behind when the
-              # rest of the family retargeted to v1.4.0. This scenario's whole
-              # subject is an old binary reopening an epoch store that an
-              # event-sourcing binary has been writing — it needs the last
-              # release from BEFORE #2074, which is v1.3.1. v1.4.0 is
-              # post-#2074 and would find its own fold's tables exactly where
-              # it expects them, leaving nothing to re-derive.
-              : "${OLD_REF:=release/mainnet-v1.3.1}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
             v140_rollout)
@@ -435,7 +411,7 @@ jobs:
           # exists again — it is the run standing behind a version flip on a
           # live network, which is where mocked agreement is most misleading.
           case "$TEST_NAME" in
-            v140_rollout|v140_churn|malicious_v140|mid_epoch_rollback)
+            v140_rollout|v140_churn|malicious_v140)
               if [ "$USE_MOCKS" = "true" ]; then
                 echo "$TEST_NAME is a cross-binary gate and must use real cryptography" >&2
                 exit 1
@@ -486,7 +462,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v140_rollout' || matrix.test == 'v140_churn' || matrix.test == 'malicious_v140' || matrix.test == 'mid_epoch_rollback' }}
+        if: ${{ matrix.test == 'v140_rollout' || matrix.test == 'v140_churn' || matrix.test == 'malicious_v140' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"

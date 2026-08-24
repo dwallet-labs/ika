@@ -16,7 +16,7 @@
 //!     .run().await?;
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -33,13 +33,6 @@ use crate::mpc_timings::{self, TimingSnapshot};
 use crate::workload::WorkloadDriver;
 
 const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// How long to wait for a peer to witness an MPC output from a named
-/// validator. Bounded well below an epoch on purpose: this assertion is only
-/// meaningful inside the epoch under test, and a poll that outlives the
-/// boundary reports a timeout for a question that stopped being asked. The
-/// epoch ceiling aborts sooner still.
-const MPC_WITNESS_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
@@ -65,12 +58,6 @@ pub enum Step {
     /// and the workload degrades into an ordinary post-upgrade test while the
     /// run stays green.
     ExpectProtocolVersionAtMost(u64),
-    /// Instantaneous ceiling on the on-chain epoch: fails if the network has
-    /// already advanced past `epoch`. Brackets any experiment whose subject is
-    /// MID-epoch state — an epoch boundary hands every validator a fresh epoch
-    /// store, so a scenario that drifts across one stops testing what it
-    /// claims to and still passes.
-    ExpectEpochAtMost(u64),
     ExpectAllValidatorsProtocolVersionAtMost(u64),
     ExpectNetworkKeyReconfigurationNotStarted(u64),
     WaitForNetworkKeyReconfigurationStarted(u64),
@@ -168,113 +155,6 @@ pub enum Step {
         index: usize,
         needle: String,
     },
-    /// Snapshot every observer's cumulative `ika_skipped_consensus_txns`
-    /// under `label`, opening a measurement window that
-    /// [`Step::ExpectSkippedConsensusTxnsDelta`] closes.
-    RecordSkippedConsensusTxns {
-        label: String,
-        observer_indices: Vec<usize>,
-    },
-    /// Close the window opened by `since` and report how many already-folded
-    /// consensus transactions the observers were re-sent inside it.
-    ///
-    /// `min_delta` is a liveness floor on the COUNTERS, not a claim about
-    /// re-emission: a window containing a workload that records zero skips
-    /// means the observation point is dead, which is the one way this
-    /// measurement can be silently worthless.
-    ///
-    /// `compare_to` names an earlier window of equivalent composition. Its
-    /// total is REPORTED alongside this one and the difference is the measured
-    /// re-emission figure — it is deliberately not asserted on. An earlier
-    /// version required this window to exceed the control; that was a
-    /// prediction dressed as an assertion, and measuring it falsified the
-    /// prediction. What the difference is worth saying about is whatever it
-    /// turns out to be, including nothing.
-    ExpectSkippedConsensusTxnsDelta {
-        since: String,
-        observer_indices: Vec<usize>,
-        min_delta: u64,
-        compare_to: Option<String>,
-    },
-    /// Snapshot, under `label`, how many times `needle` appears in one
-    /// validator's log. Opens a probe that [`Step::WaitForNewLogLineOnValidator`]
-    /// closes.
-    RecordLogLineCountOnValidator {
-        label: String,
-        index: usize,
-        needle: String,
-    },
-    /// Poll until `needle` has appeared on that validator MORE times than the
-    /// `since` snapshot counted.
-    ///
-    /// This is the probe for a line BOTH binaries can emit. Logs append across
-    /// restarts, so [`Step::WaitForLogLineOnValidator`] would be satisfied by
-    /// an occurrence from before a swap; only a fresh occurrence is evidence
-    /// about the binary that was swapped in.
-    WaitForNewLogLineOnValidator {
-        since: String,
-        index: usize,
-    },
-    /// Wait until `index`'s consumed MPC round reaches the round its `peers`
-    /// had already consumed when the step began. The target is snapshotted
-    /// once, so this is "catch up to where the network was", not a moving
-    /// finish line the step could chase forever.
-    WaitForMpcRoundToReachPeers {
-        index: usize,
-        peer_indices: Vec<usize>,
-    },
-    /// Snapshot, under `label`, the sessions for which `observer` has already
-    /// seen an MPC output authored by `subject`.
-    RecordMpcOutputSessions {
-        label: String,
-        observer_index: usize,
-        subject_index: usize,
-    },
-    /// Assert `observer` has since seen an MPC output authored by `subject`
-    /// for a session that was NOT in the `since` snapshot — a peer witnessing
-    /// the subject compute and submit for work created after that snapshot.
-    /// Self-reported liveness cannot make this claim.
-    ///
-    /// The series it reads is ephemeral (zeroed when a session leaves the
-    /// active map), so this ACCUMULATES observations across a fast poll rather
-    /// than sampling: a session that begins and ends between two polls would
-    /// otherwise be invisible. It also aborts the moment the epoch passes
-    /// `epoch_ceiling` — a timeout blamed on the subject, reported after the
-    /// boundary already handed it a fresh epoch store, is a misdiagnosis
-    /// generator.
-    ExpectNewMpcOutputSession {
-        since: String,
-        observer_index: usize,
-        subject_index: usize,
-        epoch_ceiling: u64,
-    },
-    /// Snapshot, under `label`, one validator's total completed MPC
-    /// computations.
-    RecordMpcCompletions {
-        label: String,
-        index: usize,
-    },
-    /// Poll until that validator's completed-session total has risen above the
-    /// `since` snapshot.
-    ///
-    /// What this actually proves, stated narrowly because an earlier version
-    /// of it overclaimed: `add_completion` fires when the node processes a
-    /// session reaching quorum AND holds that session's request metadata
-    /// (`mpc_manager.rs::complete_mpc_session`). It is evidence the node is
-    /// tracking sessions through to completion — a pure spectator with no
-    /// session state never increments it — NOT evidence that it performed
-    /// cryptography. The peer-witness above is what evidences contribution.
-    ///
-    /// It POLLS. The counter moves when the subject processes the quorum on a
-    /// later consensus round, which is after a peer can already observe the
-    /// subject's output: reading it once, immediately after a workload, raced
-    /// and failed twice on healthy validators that a peer had witnessed
-    /// contributing 5 ms earlier.
-    ExpectMoreMpcCompletions {
-        since: String,
-        index: usize,
-        epoch_ceiling: u64,
-    },
 }
 
 impl std::fmt::Display for Step {
@@ -295,9 +175,6 @@ impl std::fmt::Display for Step {
             }
             Step::ExpectProtocolVersionAtMost(v) => {
                 write!(f, "expect_protocol_version_at_most({v})")
-            }
-            Step::ExpectEpochAtMost(epoch) => {
-                write!(f, "expect_epoch_at_most({epoch})")
             }
             Step::ExpectAllValidatorsProtocolVersionAtMost(v) => {
                 write!(f, "expect_all_validators_protocol_version_at_most({v})")
@@ -365,97 +242,8 @@ impl std::fmt::Display for Step {
             Step::WaitForLogLineOnValidator { index, needle } => {
                 write!(f, "wait_for_log_line_on_validator({index}, {needle:?})")
             }
-            Step::RecordSkippedConsensusTxns {
-                label,
-                observer_indices,
-            } => write!(
-                f,
-                "record_skipped_consensus_txns({label:?}, {observer_indices:?})"
-            ),
-            Step::ExpectSkippedConsensusTxnsDelta {
-                since,
-                observer_indices,
-                min_delta,
-                compare_to,
-            } => write!(
-                f,
-                "expect_skipped_consensus_txns_delta(since={since:?}, {observer_indices:?}, \
-                 min_delta={min_delta}, compare_to={compare_to:?})"
-            ),
-            Step::RecordLogLineCountOnValidator {
-                label,
-                index,
-                needle,
-            } => write!(
-                f,
-                "record_log_line_count_on_validator({label:?}, {index}, {needle:?})"
-            ),
-            Step::WaitForNewLogLineOnValidator { since, index } => {
-                write!(f, "wait_for_new_log_line_on_validator({since:?}, {index})")
-            }
-            Step::WaitForMpcRoundToReachPeers {
-                index,
-                peer_indices,
-            } => write!(
-                f,
-                "wait_for_mpc_round_to_reach_peers({index}, {peer_indices:?})"
-            ),
-            Step::RecordMpcOutputSessions {
-                label,
-                observer_index,
-                subject_index,
-            } => write!(
-                f,
-                "record_mpc_output_sessions({label:?}, observer={observer_index}, \
-                 subject={subject_index})"
-            ),
-            Step::ExpectNewMpcOutputSession {
-                since,
-                observer_index,
-                subject_index,
-                epoch_ceiling,
-            } => write!(
-                f,
-                "expect_new_mpc_output_session(since={since:?}, observer={observer_index}, \
-                 subject={subject_index}, epoch_ceiling={epoch_ceiling})"
-            ),
-            Step::RecordMpcCompletions { label, index } => {
-                write!(f, "record_mpc_completions({label:?}, {index})")
-            }
-            Step::ExpectMoreMpcCompletions {
-                since,
-                index,
-                epoch_ceiling,
-            } => write!(
-                f,
-                "expect_more_mpc_completions(since={since:?}, {index}, \
-                 epoch_ceiling={epoch_ceiling})"
-            ),
         }
     }
-}
-
-/// One opened log-occurrence probe: which validator and needle it counted, and
-/// how many occurrences the log already held at that moment.
-struct LogLineProbe {
-    index: usize,
-    needle: String,
-    count: usize,
-}
-
-/// One opened consensus re-submission measurement window: the observers it
-/// was opened over, their cumulative skip counters at that moment, and the
-/// per-kind committed-transaction counts to difference the composition
-/// against.
-struct ResubmissionWindow {
-    observers: Vec<usize>,
-    skipped: Vec<u64>,
-    /// How many times each observer had been restarted when the window
-    /// opened, aligned with `observers`. A counter is process-scoped, so an
-    /// observer that restarts mid-window silently turns the closing
-    /// subtraction into nonsense; comparing these catches it.
-    observer_restarts: Vec<u64>,
-    processed_by_kind: BTreeMap<String, u64>,
 }
 
 /// What a scenario run produced beyond pass/fail: the labeled MPC timing
@@ -464,11 +252,6 @@ struct ResubmissionWindow {
 /// numbers here.
 pub struct ScenarioReport {
     pub timing_snapshots: Vec<TimingSnapshot>,
-    /// How many already-folded consensus transactions each closed
-    /// re-submission window measured, by the label that opened it. Carried out
-    /// of the run so a scenario whose POINT is the number can state it in its
-    /// own closing line rather than leaving it buried in the step log.
-    pub resubmission_totals: BTreeMap<String, u64>,
 }
 
 /// A scenario: a validator count, the binaries it can resolve, and an ordered
@@ -623,13 +406,6 @@ impl Scenario {
     /// early fails loudly instead of silently voiding the workload's purpose.
     pub fn expect_protocol_version_at_most(mut self, version: u64) -> Self {
         self.steps.push(Step::ExpectProtocolVersionAtMost(version));
-        self
-    }
-
-    /// Assert the network is still in `epoch` or earlier. Place around any
-    /// experiment on mid-epoch state. See [`Step::ExpectEpochAtMost`].
-    pub fn expect_epoch_at_most(mut self, epoch: u64) -> Self {
-        self.steps.push(Step::ExpectEpochAtMost(epoch));
         self
     }
 
@@ -853,138 +629,6 @@ impl Scenario {
         self
     }
 
-    /// Open a re-submission measurement window. See
-    /// [`Step::RecordSkippedConsensusTxns`].
-    pub fn record_skipped_consensus_txns(
-        mut self,
-        label: &str,
-        observer_indices: &[usize],
-    ) -> Self {
-        self.steps.push(Step::RecordSkippedConsensusTxns {
-            label: label.to_string(),
-            observer_indices: observer_indices.to_vec(),
-        });
-        self
-    }
-
-    /// Close a re-submission window and assert what it re-sent. See
-    /// [`Step::ExpectSkippedConsensusTxnsDelta`].
-    pub fn expect_skipped_consensus_txns_delta(
-        mut self,
-        since: &str,
-        observer_indices: &[usize],
-        min_delta: u64,
-        compare_to: Option<&str>,
-    ) -> Self {
-        self.steps.push(Step::ExpectSkippedConsensusTxnsDelta {
-            since: since.to_string(),
-            observer_indices: observer_indices.to_vec(),
-            min_delta,
-            compare_to: compare_to.map(str::to_string),
-        });
-        self
-    }
-
-    /// Open a log-occurrence probe. See
-    /// [`Step::RecordLogLineCountOnValidator`].
-    pub fn record_log_line_count_on_validator(
-        mut self,
-        label: &str,
-        index: usize,
-        needle: &str,
-    ) -> Self {
-        self.steps.push(Step::RecordLogLineCountOnValidator {
-            label: label.to_string(),
-            index,
-            needle: needle.to_string(),
-        });
-        self
-    }
-
-    /// Wait for a FRESH occurrence of a probed log line. See
-    /// [`Step::WaitForNewLogLineOnValidator`].
-    pub fn wait_for_new_log_line_on_validator(mut self, since: &str, index: usize) -> Self {
-        self.steps.push(Step::WaitForNewLogLineOnValidator {
-            since: since.to_string(),
-            index,
-        });
-        self
-    }
-
-    /// Wait for one validator's MPC round processing to catch up to its
-    /// peers'. See [`Step::WaitForMpcRoundToReachPeers`].
-    pub fn wait_for_mpc_round_to_reach_peers(
-        mut self,
-        index: usize,
-        peer_indices: &[usize],
-    ) -> Self {
-        self.steps.push(Step::WaitForMpcRoundToReachPeers {
-            index,
-            peer_indices: peer_indices.to_vec(),
-        });
-        self
-    }
-
-    /// Snapshot which of `subject`'s MPC outputs `observer` has already seen.
-    /// See [`Step::RecordMpcOutputSessions`].
-    pub fn record_mpc_output_sessions(
-        mut self,
-        label: &str,
-        observer_index: usize,
-        subject_index: usize,
-    ) -> Self {
-        self.steps.push(Step::RecordMpcOutputSessions {
-            label: label.to_string(),
-            observer_index,
-            subject_index,
-        });
-        self
-    }
-
-    /// Assert a peer has since witnessed a NEW MPC output from `subject`. See
-    /// [`Step::ExpectNewMpcOutputSession`].
-    pub fn expect_new_mpc_output_session(
-        mut self,
-        since: &str,
-        observer_index: usize,
-        subject_index: usize,
-        epoch_ceiling: u64,
-    ) -> Self {
-        self.steps.push(Step::ExpectNewMpcOutputSession {
-            since: since.to_string(),
-            observer_index,
-            subject_index,
-            epoch_ceiling,
-        });
-        self
-    }
-
-    /// Snapshot one validator's completed-MPC-computation total. See
-    /// [`Step::RecordMpcCompletions`].
-    pub fn record_mpc_completions(mut self, label: &str, index: usize) -> Self {
-        self.steps.push(Step::RecordMpcCompletions {
-            label: label.to_string(),
-            index,
-        });
-        self
-    }
-
-    /// Assert that validator has computed since the snapshot. See
-    /// [`Step::ExpectMoreMpcCompletions`].
-    pub fn expect_more_mpc_completions(
-        mut self,
-        since: &str,
-        index: usize,
-        epoch_ceiling: u64,
-    ) -> Self {
-        self.steps.push(Step::ExpectMoreMpcCompletions {
-            since: since.to_string(),
-            index,
-            epoch_ceiling,
-        });
-        self
-    }
-
     /// Resolve binaries, bring up the cluster, and execute the steps in order.
     /// Binary resolution (a `cargo build` for git refs) runs on a blocking
     /// thread so it doesn't stall the async runtime.
@@ -1004,22 +648,6 @@ impl Scenario {
         // between EVERY validator under test and a finalizing quorum on at
         // least one boundary each, enforced after the step loop.
         let mut network_key_evidence: Vec<NetworkKeyBoundaryEvidence> = Vec::new();
-        // Open re-submission measurement windows, by the label that opened
-        // them, and the totals the closed ones measured (so a later window can
-        // be asserted against an earlier one).
-        let mut resubmission_windows: BTreeMap<String, ResubmissionWindow> = BTreeMap::new();
-        let mut resubmission_totals: BTreeMap<String, u64> = BTreeMap::new();
-        // Sessions an observer had already seen an output from a subject for,
-        // by the label that snapshotted them.
-        let mut mpc_output_sessions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        // Open log-occurrence probes, by the label that snapshotted them.
-        let mut log_line_probes: BTreeMap<String, LogLineProbe> = BTreeMap::new();
-        // Completed-MPC-computation snapshots: label -> (validator, total).
-        let mut mpc_completions: BTreeMap<String, (usize, u64)> = BTreeMap::new();
-        // How many times each validator's PROCESS has been replaced. Every
-        // process-scoped measurement is only comparable within one generation
-        // of it, so the steps that take one record this alongside the value.
-        let mut restart_counts: BTreeMap<usize, u64> = BTreeMap::new();
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -1072,9 +700,6 @@ impl Scenario {
                     c.expect_all_validators_healthy().await?;
                 }
                 Step::StopAndSwap { validators, to } => {
-                    for index in validators {
-                        *restart_counts.entry(*index).or_default() += 1;
-                    }
                     let new_binary = resolve(&resolver, to).await?;
                     let split_configured = !self.direct_validators.is_empty();
                     // With a direct/mirror split configured, every swapped
@@ -1160,24 +785,6 @@ impl Scenario {
                         got,
                         expected_at_most = *version,
                         "protocol version ceiling assertion passed"
-                    );
-                }
-                Step::ExpectEpochAtMost(epoch) => {
-                    let c = cluster
-                        .as_ref()
-                        .context("ExpectEpochAtMost before StartAll")?;
-                    let got = c.current_epoch().await?;
-                    ensure!(
-                        got <= *epoch,
-                        "the network is in epoch {got}, past the expected ceiling of {epoch} — \
-                         the boundary handed every validator a fresh epoch store, so anything \
-                         this scenario asserts about mid-epoch state after that point is about \
-                         a different epoch than the one under test"
-                    );
-                    tracing::info!(
-                        got,
-                        expected_at_most = *epoch,
-                        "epoch ceiling assertion passed"
                     );
                 }
                 Step::ExpectAllValidatorsProtocolVersionAtMost(version) => {
@@ -1286,7 +893,6 @@ impl Scenario {
                     removed_indices.insert(*index);
                 }
                 Step::StopValidator { index } => {
-                    *restart_counts.entry(*index).or_default() += 1;
                     let c = cluster.as_mut().context("StopValidator before StartAll")?;
                     c.stop_validator(*index).await?;
                 }
@@ -1448,356 +1054,6 @@ impl Scenario {
                         sleep(Duration::from_secs(2)).await;
                     }
                 }
-                Step::RecordSkippedConsensusTxns {
-                    label,
-                    observer_indices,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("RecordSkippedConsensusTxns before StartAll")?;
-                    let skipped = c.skipped_consensus_txns(observer_indices).await?;
-                    let processed_by_kind = c
-                        .consensus_handler_processed_by_kind(observer_indices)
-                        .await?;
-                    tracing::info!(
-                        label = label.as_str(),
-                        observers = ?observer_indices,
-                        skipped = ?skipped,
-                        "opened a consensus re-submission measurement window"
-                    );
-                    let observer_restarts = observer_indices
-                        .iter()
-                        .map(|index| restart_counts.get(index).copied().unwrap_or(0))
-                        .collect();
-                    resubmission_windows.insert(
-                        label.clone(),
-                        ResubmissionWindow {
-                            observers: observer_indices.clone(),
-                            skipped,
-                            observer_restarts,
-                            processed_by_kind,
-                        },
-                    );
-                }
-                Step::ExpectSkippedConsensusTxnsDelta {
-                    since,
-                    observer_indices,
-                    min_delta,
-                    compare_to,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("ExpectSkippedConsensusTxnsDelta before StartAll")?;
-                    let window = resubmission_windows
-                        .get(since)
-                        .with_context(|| format!("no re-submission window opened as {since:?}"))?;
-                    ensure!(
-                        &window.observers == observer_indices,
-                        "window {since:?} was opened over observers {:?} but is being closed over \
-                         {observer_indices:?}; the counters would not be comparable",
-                        window.observers,
-                    );
-                    // Before any number is computed, let alone reported: a
-                    // window whose observers restarted has nothing to say.
-                    let restarts_now: Vec<u64> = observer_indices
-                        .iter()
-                        .map(|index| restart_counts.get(index).copied().unwrap_or(0))
-                        .collect();
-                    require_observers_not_restarted(
-                        observer_indices,
-                        &window.observer_restarts,
-                        &restarts_now,
-                    )
-                    .with_context(|| format!("re-submission window {since:?}"))?;
-                    let now = c.skipped_consensus_txns(observer_indices).await?;
-                    let per_observer: Vec<u64> = now
-                        .iter()
-                        .zip(&window.skipped)
-                        .map(|(now, opened)| now.saturating_sub(*opened))
-                        .collect();
-                    let measured: u64 = per_observer.iter().sum();
-                    // Composition of what the window carried, so the headline
-                    // number says WHAT was re-sent and not only how much.
-                    let committed_by_kind = c
-                        .consensus_handler_processed_by_kind(observer_indices)
-                        .await?;
-                    let by_kind: BTreeMap<&String, u64> = committed_by_kind
-                        .iter()
-                        .map(|(kind, count)| {
-                            let opened = window.processed_by_kind.get(kind).copied().unwrap_or(0);
-                            (kind, count.saturating_sub(opened))
-                        })
-                        .filter(|(_, delta)| *delta > 0)
-                        .collect();
-                    tracing::info!(
-                        window = since.as_str(),
-                        re_submitted_consensus_transactions = measured,
-                        per_observer = ?per_observer,
-                        observers = ?observer_indices,
-                        committed_by_kind = ?by_kind,
-                        "MEASURED: consensus transactions re-sent for already-folded work"
-                    );
-                    require_resubmission_counters_alive(measured, *min_delta)
-                        .with_context(|| format!("re-submission window {since:?}"))?;
-                    // The figure this scenario exists to produce: how much more
-                    // the window carried than a window of equivalent
-                    // composition without a rollback in it. Reported, never
-                    // asserted on — its value is whatever it turns out to be.
-                    if let Some(control) = compare_to {
-                        let control_total =
-                            resubmission_totals.get(control).copied().with_context(|| {
-                                format!("comparison window {control:?} has not been measured yet")
-                            })?;
-                        tracing::info!(
-                            window = since.as_str(),
-                            rollback_delta = measured,
-                            comparison_window = control.as_str(),
-                            control_delta = control_total,
-                            difference = measured as i64 - control_total as i64,
-                            "MEASURED: re-emission attributable to the rollback"
-                        );
-                    }
-                    resubmission_totals.insert(since.clone(), measured);
-                }
-                Step::RecordLogLineCountOnValidator {
-                    label,
-                    index,
-                    needle,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("RecordLogLineCountOnValidator before StartAll")?;
-                    let count = c.log_line_count(*index, needle)?;
-                    tracing::info!(
-                        label = label.as_str(),
-                        index = *index,
-                        needle = needle.as_str(),
-                        count,
-                        "snapshotted a log-line occurrence count"
-                    );
-                    log_line_probes.insert(
-                        label.clone(),
-                        LogLineProbe {
-                            index: *index,
-                            needle: needle.clone(),
-                            count,
-                        },
-                    );
-                }
-                Step::WaitForNewLogLineOnValidator { since, index } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("WaitForNewLogLineOnValidator before StartAll")?;
-                    let probe = log_line_probes
-                        .get(since)
-                        .with_context(|| format!("no log-line probe opened as {since:?}"))?;
-                    ensure!(
-                        probe.index == *index,
-                        "probe {since:?} counted validator {} but is being closed on validator \
-                         {index}",
-                        probe.index
-                    );
-                    let deadline = std::time::Instant::now() + self.epoch_timeout;
-                    loop {
-                        let count = c.log_line_count(*index, &probe.needle)?;
-                        if count > probe.count {
-                            tracing::info!(
-                                index = *index,
-                                needle = probe.needle.as_str(),
-                                was = probe.count,
-                                now = count,
-                                "a fresh occurrence of the probed log line appeared"
-                            );
-                            break;
-                        }
-                        ensure!(
-                            std::time::Instant::now() < deadline,
-                            "validator {index} never emitted {:?} again within {:?} — the log \
-                             still holds the {} occurrence(s) the {since:?} probe counted, all of \
-                             them predating this phase",
-                            probe.needle,
-                            self.epoch_timeout,
-                            probe.count,
-                        );
-                        sleep(Duration::from_secs(2)).await;
-                    }
-                }
-                Step::WaitForMpcRoundToReachPeers {
-                    index,
-                    peer_indices,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("WaitForMpcRoundToReachPeers before StartAll")?;
-                    let target = c.min_mpc_consensus_round(peer_indices).await?;
-                    ensure!(
-                        target > 0,
-                        "peers {peer_indices:?} have consumed no MPC rounds, so there is nothing \
-                         for validator {index} to catch up to and the wait would pass without \
-                         witnessing a re-derivation"
-                    );
-                    let start = c.mpc_consensus_round(*index).await?;
-                    tracing::info!(
-                        index = *index,
-                        peers = ?peer_indices,
-                        target,
-                        start,
-                        "waiting for MPC round processing to reach the round its peers had reached"
-                    );
-                    let reached = c
-                        .wait_for_mpc_consensus_round(*index, target, self.epoch_timeout)
-                        .await?;
-                    tracing::info!(
-                        index = *index,
-                        target,
-                        reached,
-                        rounds_rebuilt = reached.saturating_sub(start),
-                        "MPC round processing caught up with the peers' head"
-                    );
-                }
-                Step::RecordMpcOutputSessions {
-                    label,
-                    observer_index,
-                    subject_index,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("RecordMpcOutputSessions before StartAll")?;
-                    let sessions = c
-                        .mpc_output_sessions_from(*observer_index, *subject_index)
-                        .await?;
-                    tracing::info!(
-                        label = label.as_str(),
-                        observer = *observer_index,
-                        subject = *subject_index,
-                        sessions = sessions.len(),
-                        "snapshotted the sessions this observer has seen outputs from the subject for"
-                    );
-                    mpc_output_sessions.insert(label.clone(), sessions);
-                }
-                Step::ExpectNewMpcOutputSession {
-                    since,
-                    observer_index,
-                    subject_index,
-                    epoch_ceiling,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("ExpectNewMpcOutputSession before StartAll")?;
-                    let baseline = mpc_output_sessions
-                        .get(since)
-                        .with_context(|| format!("no MPC-output snapshot taken as {since:?}"))?;
-                    let started = std::time::Instant::now();
-                    let deadline = started + MPC_WITNESS_TIMEOUT;
-                    // Accumulated, not sampled: the series is zeroed when a
-                    // session leaves the active map, so a short session is
-                    // only ever visible to the poll that happens to overlap it.
-                    let mut seen: BTreeSet<String> = BTreeSet::new();
-                    loop {
-                        seen.extend(
-                            c.mpc_output_sessions_from(*observer_index, *subject_index)
-                                .await?,
-                        );
-                        let fresh: BTreeSet<_> = seen.difference(baseline).collect();
-                        if !fresh.is_empty() {
-                            tracing::info!(
-                                observer = *observer_index,
-                                subject = *subject_index,
-                                sessions = ?fresh,
-                                witness_latency_seconds = started.elapsed().as_secs(),
-                                "a peer witnessed new MPC outputs authored by the subject"
-                            );
-                            break;
-                        }
-                        // Fail on the boundary, not on the clock: past the
-                        // ceiling the subject has a fresh epoch store and this
-                        // assertion is no longer about the rollback at all.
-                        let epoch = c.current_epoch().await?;
-                        ensure!(
-                            epoch <= *epoch_ceiling,
-                            "the network reached epoch {epoch}, past the ceiling of \
-                             {epoch_ceiling}, while waiting for validator {observer_index} to \
-                             witness an MPC output from validator {subject_index}. The boundary \
-                             ended the experiment — this says nothing about the subject"
-                        );
-                        ensure!(
-                            std::time::Instant::now() < deadline,
-                            "validator {observer_index} never witnessed an MPC output authored by \
-                             validator {subject_index} for a session outside the {since:?} \
-                             snapshot ({} sessions) within {:?}, while still inside epoch \
-                             {epoch}; the subject is following consensus without contributing MPC",
-                            baseline.len(),
-                            MPC_WITNESS_TIMEOUT,
-                        );
-                        sleep(Duration::from_secs(1)).await;
-                    }
-                }
-                Step::RecordMpcCompletions { label, index } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("RecordMpcCompletions before StartAll")?;
-                    let completions = c.mpc_completions_total(*index).await?;
-                    tracing::info!(
-                        label = label.as_str(),
-                        index = *index,
-                        completions,
-                        "snapshotted a validator's completed MPC computations"
-                    );
-                    mpc_completions.insert(label.clone(), (*index, completions));
-                }
-                Step::ExpectMoreMpcCompletions {
-                    since,
-                    index,
-                    epoch_ceiling,
-                } => {
-                    let c = cluster
-                        .as_ref()
-                        .context("ExpectMoreMpcCompletions before StartAll")?;
-                    let (snapshot_index, before) = mpc_completions
-                        .get(since)
-                        .copied()
-                        .with_context(|| format!("no completions snapshot taken as {since:?}"))?;
-                    ensure!(
-                        snapshot_index == *index,
-                        "snapshot {since:?} counted validator {snapshot_index} but is being \
-                         closed on validator {index}"
-                    );
-                    let started = std::time::Instant::now();
-                    let deadline = started + MPC_WITNESS_TIMEOUT;
-                    loop {
-                        let now = c.mpc_completions_total(*index).await?;
-                        if now > before {
-                            tracing::info!(
-                                index = *index,
-                                before,
-                                now,
-                                completed = now - before,
-                                latency_seconds = started.elapsed().as_secs(),
-                                "the validator's completed-session total rose"
-                            );
-                            break;
-                        }
-                        let epoch = c.current_epoch().await?;
-                        ensure!(
-                            epoch <= *epoch_ceiling,
-                            "the network reached epoch {epoch}, past the ceiling of \
-                             {epoch_ceiling}, while waiting for validator {index}'s \
-                             completed-session total to rise above {before}. The boundary ended \
-                             the experiment — this says nothing about the subject"
-                        );
-                        ensure!(
-                            std::time::Instant::now() < deadline,
-                            "validator {index}'s completed-session total stayed at {before} for \
-                             {:?} after the {since:?} snapshot, inside epoch {epoch}. It is \
-                             following consensus without carrying any session through to \
-                             completion — note this is about session BOOKKEEPING reaching \
-                             quorum, not about local cryptography, so read it next to the \
-                             peer-witness assertion rather than instead of it",
-                            MPC_WITNESS_TIMEOUT,
-                        );
-                        sleep(Duration::from_secs(1)).await;
-                    }
-                }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;
                     let ika_cli = self
@@ -1850,74 +1106,8 @@ impl Scenario {
         if timing_snapshots.len() >= 2 {
             println!("{}", mpc_timings::render_comparison(&timing_snapshots));
         }
-        Ok(ScenarioReport {
-            timing_snapshots,
-            resubmission_totals,
-        })
+        Ok(ScenarioReport { timing_snapshots })
     }
-}
-
-/// Reject a window whose own observers were restarted while it was open.
-///
-/// `ika_skipped_consensus_txns` is process-scoped: a restart resets it to
-/// zero, so the closing `now - at_open` is no longer a delta over the window —
-/// it is the restarted process's absolute count, subtracted from a number that
-/// belonged to a process that no longer exists. `saturating_sub` then hides
-/// the negative, and what comes out looks like an ordinary measurement.
-///
-/// This exists because a fault dispatch escaped. F2a pointed both windows at
-/// the validator being rolled back, precisely the observer that cannot see its
-/// own re-emissions, and the run went GREEN: the window opened at 51, the
-/// subject restarted, and it closed at 54 — a "delta" of 54 that was really a
-/// fresh process's first minute of ordinary traffic. The liveness floor cannot
-/// catch that, because 54 ≥ 1.
-///
-/// The check is on the STRUCTURE of the measurement rather than on its value,
-/// so it holds for any window and any scenario, without knowing which
-/// validator is under test.
-fn require_observers_not_restarted(
-    observers: &[usize],
-    at_open: &[u64],
-    at_close: &[u64],
-) -> Result<()> {
-    let restarted: Vec<usize> = observers
-        .iter()
-        .zip(at_open)
-        .zip(at_close)
-        .filter(|((_, open), close)| open != close)
-        .map(|((index, _), _)| *index)
-        .collect();
-    ensure!(
-        restarted.is_empty(),
-        "validator(s) {restarted:?} restarted while this measurement window was open. Their \
-         `ika_skipped_consensus_txns` counters reset with their processes, so the window's \
-         subtraction is not a delta and the number it produces is meaningless — measure on \
-         observers that stay up for the whole window"
-    );
-    Ok(())
-}
-
-/// Liveness check on a closed re-submission measurement window.
-///
-/// This asserts on the INSTRUMENT, not on the phenomenon. A window that
-/// contains real traffic and still records zero skips means the observation
-/// point is dead — the one way this measurement is silently worthless — so a
-/// window carrying a workload must show something.
-///
-/// It deliberately does NOT compare against a control window. It used to: the
-/// rollback window had to exceed a window of ordinary traffic, on the theory
-/// that a re-derivation sprays re-submissions. Measuring it falsified that
-/// theory (v1.3.1 reconstructs replayed sessions without recomputing them, so
-/// there is little to re-submit), and an assertion that encodes a prediction
-/// fails when the prediction is wrong rather than when the system is. The
-/// comparison is now reported instead.
-fn require_resubmission_counters_alive(measured: u64, min_delta: u64) -> Result<()> {
-    ensure!(
-        measured >= min_delta,
-        "re-sent {measured} already-folded consensus transactions, fewer than the {min_delta} \
-         this window must produce for its observation point to be alive at all"
-    );
-    Ok(())
 }
 
 /// Scenario-level cross-version compatibility gate over the per-boundary,
@@ -1997,60 +1187,6 @@ mod tests {
                 .map(|(authority, reason)| (authority.to_string(), reason.to_string()))
                 .collect(),
         }
-    }
-
-    #[test]
-    fn a_window_whose_observer_restarted_cannot_be_closed() {
-        // The F2a escape, pinned: observer 0 restarted mid-window, so its
-        // counter reset and the closing subtraction is not a delta.
-        let error = require_observers_not_restarted(&[0], &[0], &[1])
-            .expect_err("a restarted observer's counter cannot measure its own window");
-        let error = error.to_string();
-        assert!(
-            error.contains("[0]"),
-            "names the restarted observer: {error}"
-        );
-        assert!(error.contains("is not a delta"), "says why: {error}");
-    }
-
-    #[test]
-    fn restarting_a_non_observer_leaves_the_window_measurable() {
-        // The rollback window is opened over peers and the SUBJECT restarts
-        // inside it — which is the whole scenario. The guard must not fire.
-        require_observers_not_restarted(&[1, 2, 3], &[0, 0, 0], &[0, 0, 0])
-            .expect("a window is unaffected by restarts of validators it does not observe");
-    }
-
-    #[test]
-    fn one_restarted_observer_among_many_still_fails() {
-        let error = require_observers_not_restarted(&[1, 2, 3], &[0, 0, 0], &[0, 2, 0])
-            .expect_err("one corrupted counter corrupts the sum they are added into");
-        assert!(error.to_string().contains("[2]"));
-    }
-
-    #[test]
-    fn a_window_carrying_traffic_but_counting_nothing_is_a_dead_observation_point() {
-        let error = require_resubmission_counters_alive(0, 1)
-            .expect_err("a window that counted nothing has proved nothing about its observers");
-        assert!(error.to_string().contains("fewer than the 1"));
-    }
-
-    #[test]
-    fn a_quiet_window_is_a_result_not_a_failure() {
-        // The rollback window is NOT required to out-produce its control. The
-        // first measured run recorded 0 against a control of 171 because
-        // v1.3.1 reconstructs replayed sessions without recomputing them —
-        // the phenomenon, not a broken test. Anything at or above the floor
-        // passes and the difference is reported.
-        require_resubmission_counters_alive(1, 1).expect("a barely-active window still reports");
-        require_resubmission_counters_alive(171, 1).expect("a busy window reports too");
-    }
-
-    #[test]
-    fn a_control_window_measures_without_asserting() {
-        // Opened with a floor of zero: whatever ordinary traffic produced is
-        // the number to compare against later, not a pass/fail of its own.
-        require_resubmission_counters_alive(0, 0).expect("a control window only reports");
     }
 
     #[test]

@@ -632,6 +632,19 @@ the section above rather than a latency term.
 
 ## Rolling back
 
+> **Status (2026-08-24): historical — proven at the v1.4.0 release commit, not
+> maintained since.** Every mechanism and number in this section was established
+> for **v1.4.0** by the `mid_epoch_rollback` scenario in `ika-upgrade-test`
+> (ika #2077) and by the v1.4.0 production validation tracked in ika #2064. That
+> scenario has since been **deleted** — v1.4.0 is published and validated in
+> production (two epoch boundaries, a mid-epoch reshare and a deliberate
+> worst-case restart), so the rollback safety net was deliberately retired.
+> Nothing re-checks a mid-epoch rollback against current `main`. **A mid-epoch
+> rollback to v1.3.1 from any commit after v1.4.0 is UNTESTED**; the guarantee
+> below holds for the v1.4.0 release commit and must be re-established before
+> anyone relies on it again. The evidence references kept below are records of
+> those runs, not of a gate that still runs.
+
 **The clean-rollback property is gone**, and it costs more than it did when
 only the per-round tables were deleted. An older binary rolled back mid-epoch
 finds an epoch store holding NOTHING it recognises as progress: the per-round
@@ -713,20 +726,21 @@ Two things this costs, both of them transient:
   idle-status updates, identical in both runs.
 
 The mechanism above is read off the two binaries' source; the numbers come
-from the `mid_epoch_rollback` scenario in `ika-upgrade-test`, which runs the
-candidate first and puts the v1.3.1 release back on one validator mid-epoch, on
-the same stores. It asserts the re-derivation reaches the peers' consumed round (the
+from the `mid_epoch_rollback` scenario that ran in `ika-upgrade-test` at the
+time (ika #2077 — since deleted, see the status note above), which ran the
+candidate first and put the v1.3.1 release back on one validator mid-epoch, on
+the same stores. It asserted that the re-derivation reaches the peers' consumed round (the
 witness is `ika_last_process_mpc_consensus_round` on the rolled-back node,
-which v1.3.1 sets from the tables its own fold writes), counts the re-emission
+which v1.3.1 sets from the tables its own fold writes), counted the re-emission
 at the peers on `ika_skipped_consensus_txns` against a control window of
-ordinary traffic, and requires a peer to witness an MPC output authored by the
+ordinary traffic, and required a peer to witness an MPC output authored by the
 rolled-back validator for a session created after the catch-up. The whole run
-is bracketed by an epoch ceiling, because a boundary would hand the node a
+was bracketed by an epoch ceiling, because a boundary would hand the node a
 fresh epoch store and make all three free.
 
-**A rollback taken AT a boundary is free, and that is measured too**, by the
-same scenario run one epoch later (the `x1-boundary-rollback` variant). Two
-independent readings:
+**A rollback taken AT a boundary is free, and that was measured too**, by the
+same scenario run one epoch later (the `x1-boundary-rollback` variant, run at
+the time and never carried in-repo). Two independent readings:
 
 - **Nothing to re-derive.** The node came up against a backlog of ~300 rounds
   (`target=306, reached=422`; ~280/406 on the first attempt), three orders of
@@ -742,8 +756,8 @@ So the boundary case is not merely cheaper than the mid-epoch one; on both
 terms it is indistinguishable from not rolling back at all.
 
 **The conditions those numbers were measured under**, because they bound what
-they are worth: two green runs of `mid_epoch_rollback` (actions/runs/32318375717
-and .../32346054927) on a four-validator localnet — so a three-validator quorum
+they are worth: two green runs of `mid_epoch_rollback` (historical evidence,
+actions/runs/32318375717 and .../32346054927) on a four-validator localnet — so a three-validator quorum
 — with a 30-minute epoch, the rollback taken about 59% of the way through it,
 and a ~19,330-round backlog to re-derive. Both were lightly loaded: a single
 user DKG → Presign → Sign lifecycle per window, nothing like production volume.
@@ -856,24 +870,28 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   reachable, and the one place a traced "bounded blast radius" should be
   replaced by a measurement.
 - **Mixed old/new binaries sharing an epoch** (`ika-upgrade-test`). The
-  BACKWARD direction — the rollback section above — is `mid_epoch_rollback`,
-  which puts the v1.3.1 release back on one validator mid-epoch and asserts
-  the re-derivation reaches the peers' consumed round, counts the
-  already-settled work it re-sends, and requires a peer to witness it
-  authoring MPC output again inside the same epoch. It is pinned to v1.3.1
-  and does NOT move with the deployed release: v1.3.1 is the last binary that
-  expects its own fold's tables to be in the epoch store, and that expectation
-  is the whole experiment.
+  BACKWARD direction — the rollback section above — **is no longer covered.**
+  It was `mid_epoch_rollback`, which put the v1.3.1 release back on one
+  validator mid-epoch and asserted the re-derivation reaches the peers'
+  consumed round, counted the already-settled work it re-sends, and required a
+  peer to witness it authoring MPC output again inside the same epoch. It was
+  pinned to v1.3.1 and did NOT move with the deployed release: v1.3.1 is the
+  last binary that expects its own fold's tables to be in the epoch store, and
+  that expectation was the whole experiment. It proved the property for the
+  v1.4.0 release commit (#2077, #2064) and was deliberately retired once
+  v1.4.0 shipped and was validated in production, so a rollback from any later
+  commit is untested.
 
   The FORWARD direction across this change was covered by `v131_rollout` /
   `v131_churn` while v1.3.1 was the deployed release. Their successors
   `v140_rollout` / `v140_churn` boot v1.4.0, which is itself post-#2074, so
   they no longer put two storage models in one committee — they gate wire and
   MPC-output agreement between two event-sourced binaries. **Nothing now
-  exercises a pre-#2074 binary sharing an epoch with a current one in the
-  forward direction**, and nothing will again: the fleet is past it. If that
-  coverage is wanted as a regression record rather than as a live gate, it has
-  to be a separately-pinned scenario, the way the backward one is.
+  exercises a pre-#2074 binary sharing an epoch with a current one, in either
+  direction**, and nothing will again: the fleet is past it. If that coverage
+  is wanted as a regression record rather than as a live gate, it has to be a
+  separately-pinned scenario built for the purpose — there is no longer a
+  pinned backward scenario to model it on.
 - **Upstream queue bytes under a real burst** (REQUIRED): throttle the drain
   on a live cluster and record `ika_consensus_round_channel_depth`, RSS and
   the commit-channel backlog. This closes both directions the local harness
