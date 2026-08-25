@@ -1,0 +1,18 @@
+# Companion support configuration for recommended_default_pricing.yaml.
+# Curve 0: secp256k1; ECDSA supports Keccak-256, SHA-256, and
+# double-SHA-256, while Taproot supports SHA-256.
+0:
+  0: [0, 1, 2]
+  1: [0]
+
+# Curve 1: secp256r1 ECDSA with SHA-256.
+1:
+  0: [0]
+
+# Curve 2: Curve25519 EdDSA.
+2:
+  0: [0]
+
+# Curve 3: Ristretto Schnorrkel.
+3:
+  0: [0]
