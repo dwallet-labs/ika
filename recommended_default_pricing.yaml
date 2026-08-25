@@ -6,8 +6,8 @@
 #
 # The IKA schedule is 100x the 2026-08-26 mainnet/testnet schedule.
 # Every user session also funds:
-# - 0.03 SUI for the notifier transaction that completes the session.
-# - 0.02 SUI for the shared network/system-call reimbursement pool.
+# - 0.02 SUI for the notifier transaction that completes the session.
+# - 0.20 SUI for the network-key DKG/reconfiguration reimbursement pool.
 #
 # Protocols:
 # 2=re-encrypt, 3=make share public, 4=imported-key verification,
@@ -21,112 +21,112 @@
     protocol: 2
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: null
     protocol: 3
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: null
     protocol: 4
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: null
     protocol: 9
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 0
     protocol: 5
   value:
     fee_ika: 25000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 0
     protocol: 6
   value:
     fee_ika: 10000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 0
     protocol: 7
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 0
     protocol: 8
   value:
     fee_ika: 10000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 0
     protocol: 10
   value:
     fee_ika: 11000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 1
     protocol: 5
   value:
     fee_ika: 12000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 1
     protocol: 6
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 1
     protocol: 7
   value:
     fee_ika: 1000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 1
     protocol: 8
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 0
     signature_algorithm: 1
     protocol: 10
   value:
     fee_ika: 6000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 
 # secp256r1; signature algorithm 0=ECDSA.
 - key:
@@ -135,72 +135,72 @@
     protocol: 2
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: null
     protocol: 3
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: null
     protocol: 4
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: null
     protocol: 9
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: 0
     protocol: 5
   value:
     fee_ika: 12000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: 0
     protocol: 6
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: 0
     protocol: 7
   value:
     fee_ika: 1000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: 0
     protocol: 8
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 1
     signature_algorithm: 0
     protocol: 10
   value:
     fee_ika: 6000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 
 # Curve25519; signature algorithm 0=EdDSA.
 - key:
@@ -209,72 +209,72 @@
     protocol: 2
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: null
     protocol: 3
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: null
     protocol: 4
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: null
     protocol: 9
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: 0
     protocol: 5
   value:
     fee_ika: 12000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: 0
     protocol: 6
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: 0
     protocol: 7
   value:
     fee_ika: 1000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: 0
     protocol: 8
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 2
     signature_algorithm: 0
     protocol: 10
   value:
     fee_ika: 6000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 
 # Ristretto; signature algorithm 0=Schnorrkel.
 - key:
@@ -283,69 +283,69 @@
     protocol: 2
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: null
     protocol: 3
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: null
     protocol: 4
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: null
     protocol: 9
   value:
     fee_ika: 2000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: 0
     protocol: 5
   value:
     fee_ika: 12000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: 0
     protocol: 6
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: 0
     protocol: 7
   value:
     fee_ika: 1000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: 0
     protocol: 8
   value:
     fee_ika: 4000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
 - key:
     curve: 3
     signature_algorithm: 0
     protocol: 10
   value:
     fee_ika: 6000000000
-    gas_fee_reimbursement_sui: 30000000
-    gas_fee_reimbursement_sui_for_system_calls: 20000000
+    gas_fee_reimbursement_sui: 20000000
+    gas_fee_reimbursement_sui_for_system_calls: 200000000
