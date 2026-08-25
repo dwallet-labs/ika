@@ -128,8 +128,9 @@ async fn v140_full_swap_then_committee_churn() {
         // reshare the v1.4.0-DKG'd network key. v1.4.0 is post-#2074, so
         // that inheritance is now within ONE storage model — the durable
         // tables both binaries keep, not a fold-side set one writes and the
-        // other does not. Crossing the event-sourcing change is
-        // `mid_epoch_rollback`'s job, and it stays pinned at v1.3.1 for it.
+        // other does not. Crossing the event-sourcing change was
+        // `mid_epoch_rollback`'s job; that scenario was retired with v1.4.0
+        // (#2077, #2064), so nothing exercises that crossing now.
         .stop_and_swap(&[0, 1, 2, 3], current.clone())
         .expect_all_validators_healthy()
         .wait_for_epoch(3)

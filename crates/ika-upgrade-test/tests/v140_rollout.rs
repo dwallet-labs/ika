@@ -26,12 +26,12 @@
 //! v1.4.0 is post-#2074, so both sides of this scenario now share one storage
 //! model and that ingredient is GONE from here — the assertions below are
 //! unchanged and still gate wire and MPC-output agreement, but they no longer
-//! stand behind any claim about mixed storage models. The one scenario that
-//! still crosses the boundary is `mid_epoch_rollback`, which is deliberately
-//! NOT retargeted with this family: it stays pinned to `release/mainnet-v1.3.1`
-//! because v1.3.1 is the last release that reopens an epoch store expecting its
-//! own fold's tables to be there, and retargeting it to v1.4.0 would leave it
-//! asserting nothing.
+//! stand behind any claim about mixed storage models. NOTHING crosses that
+//! boundary any more: `mid_epoch_rollback` was the one scenario that did —
+//! pinned to `release/mainnet-v1.3.1`, the last release that reopens an epoch
+//! store expecting its own fold's tables to be there — and it was retired once
+//! v1.4.0 shipped and was validated in production (#2077, #2064). A future
+//! storage-model boundary needs a scenario built for it.
 //!
 //! Opt-in (real binaries + long-running), via `RUN_V140_ROLLOUT=1`:
 //!

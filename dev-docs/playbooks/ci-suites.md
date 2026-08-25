@@ -121,22 +121,27 @@ the workflow's scenario names, `RUN_FLAG` mapping, `old_ref` defaults and
 both guard lists below, plus this playbook and the spec. Leaving any of
 them behind is the failure the convention exists to make visible.
 
-`mid_epoch_rollback` is the one scenario the family sweep must NOT carry
-along, and the v1.3.1 → v1.4.0 retarget is where that first mattered. Its
-subject is an old binary reopening an epoch store that an event-sourcing
-binary has been writing, so it needs the last release from BEFORE #2074 —
-v1.3.1 — and it keeps `old_ref=release/mainnet-v1.3.1` while everything
-else moves. Renaming it forward would have left it booting a post-#2074
-binary that finds its own fold's tables exactly where it expects them, with
-nothing to re-derive and three assertions that pass for free. When a
-scenario's OLD side is pinned to a specific capability rather than to
-"whatever is deployed", say so at the pin and leave it there.
+There are no capability-pinned scenarios left, but the convention still
+holds and is worth stating: when a scenario's OLD side is pinned to a
+specific capability rather than to "whatever is deployed", say so at the pin
+and leave it there — the family sweep must not carry it along.
+`mid_epoch_rollback` was the one such scenario, and the v1.3.1 → v1.4.0
+retarget is where that first mattered: its subject was an old binary
+reopening an epoch store that an event-sourcing binary had been writing, so
+it needed the last release from BEFORE #2074 (v1.3.1) and kept
+`old_ref=release/mainnet-v1.3.1` while everything else moved. Renaming it
+forward would have left it booting a post-#2074 binary that finds its own
+fold's tables exactly where it expects them, with nothing to re-derive and
+three assertions that pass for free. It was deleted once v1.4.0 shipped and
+was validated in production (#2077, #2064).
 
 Retargeting also costs the gate whatever the OLD side happened to bring
 beyond its version. The v1.3.1-based gate straddled the event-sourcing
 change by accident of timing; the v1.4.0-based one does not, because both
-sides are post-#2074. That is not a regression to fix in the gate — it is
-the reason the backward scenario is pinned separately.
+sides are post-#2074. That used to be covered by the separately-pinned
+backward scenario; with that scenario retired, nothing covers it, and a
+future storage-model boundary needs a purpose-built gate rather than an
+inherited one.
 Naming a gate after the protocol version instead is what
 produced the incomplete rename this convention now guards against: a
 scenario briefly called `v6_rollout` left the workflow's real-crypto and
@@ -146,10 +151,10 @@ superficially correct while the thing it tests changes underneath is
 worse than one that visibly goes stale.
 
 **Which gates must refuse mocks.** Every gate whose evidence is
-cross-binary agreement: `v140_rollout`, `v140_churn`, `malicious_v140` and
-`mid_epoch_rollback` — plus any transition gate, the moment one exists
-again. (The workflow has guarded all four since `mid_epoch_rollback`
-landed; this list had not caught up.) Mocked cryptography is deterministic, so two
+cross-binary agreement: `v140_rollout`, `v140_churn` and `malicious_v140` —
+plus any transition gate, the moment one exists again. (The list and the
+workflow both dropped `mid_epoch_rollback` when that scenario was deleted;
+the workflow now guards exactly these three.) Mocked cryptography is deterministic, so two
 binaries agree under it for reasons that say nothing about whether they
 agree in production — a green run on mocks is not weaker evidence of the
 same claim, it is evidence of a different one. Retarget this list with
@@ -208,21 +213,11 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v140
 # removes an original validator (5→4).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v140_churn
 
-# THE ROLLBACK GATE, and the only backward direction in the matrix: the
-# candidate runs the network, then the v1.3.1 release is put BACK on one
-# validator mid-epoch, on stores the candidate has been writing. Asserts the
-# old binary re-derives the epoch against empty fold-side tables, COUNTS the
-# already-settled work it re-sends (measured at the peers against a control
-# window; the number is the operator-facing "mid-epoch rollback re-emits"
-# figure, printed by the step as `re_submitted_consensus_transactions`), and
-# that a peer witnesses it authoring MPC output again before the boundary.
-# Its OLD side stays v1.3.1 while the rest of the family moved to v1.4.0:
-# v1.3.1 is the last release from before #2074, and a post-#2074 old binary
-# would find its own fold's tables intact and re-derive nothing.
-gh workflow run upgrade-test.yaml --ref <branch> -f test=mid_epoch_rollback
-#   the whole experiment must fit inside ONE epoch (the boundary hands the
-#   node a fresh epoch store and ends it), so give a loaded runner more room
-#   with -f epoch_duration_ms=1200000 rather than letting it drift across.
+# NOTE: there is no rollback gate any more, and no backward direction in the
+# matrix. `mid_epoch_rollback` proved a v1.4.0 -> v1.3.1 mid-epoch rollback
+# safe for the v1.4.0 release commit (#2077, #2064) and was deleted once
+# v1.4.0 shipped and was validated in production. Its measurements are kept,
+# marked historical, in ../specs/event-sourced-epoch.md ("Rolling back").
 
 # Loaded runner slack: bump epochs.
 #   -f epoch_duration_ms=600000

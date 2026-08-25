@@ -27,7 +27,8 @@ here.
   the bounded-batch boot replay that rebuilds it, why there is no
   watermark, the determinism contract, what the fold accumulates and what
   bounds it, the settled-state rule for replay-silent emission, and what a
-  mid-epoch rollback actually costs.
+  mid-epoch rollback actually cost at v1.4.0 (historical — that gate is
+  gone).
 - [`validator-mpc-data-announcements.md`](validator-mpc-data-announcements.md)
   — the off-chain validator MPC-data pipeline: blob derivation,
   consensus announcements, P2P propagation, ready signals, the freeze

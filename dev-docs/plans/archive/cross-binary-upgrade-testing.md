@@ -3,8 +3,9 @@
 > ARCHIVED PLAN — built by #1727, then superseded. **The two tests its results
 > table names, `tests/cross_binary.rs` and `tests/v118_upgrade.rs`, were deleted
 > in #1895** (`0f2679799f`); the current scenarios are `v140_rollout`,
-> `v140_churn`, `malicious_v140`, `mid_epoch_rollback`, `restart_spectator`,
-> `smoke` and `workload`. The contract is
+> `v140_churn`, `malicious_v140`, `restart_spectator`, `smoke` and `workload`
+> (`mid_epoch_rollback` was added later and deleted again once v1.4.0
+> shipped). The contract is
 > [`../../specs/cross-binary-upgrade.md`](../../specs/cross-binary-upgrade.md)
 > and the running procedure is
 > [`../../playbooks/ci-suites.md`](../../playbooks/ci-suites.md). Kept for the
