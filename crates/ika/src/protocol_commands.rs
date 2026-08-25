@@ -5,12 +5,14 @@ use crate::read_ika_sui_config_yaml;
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::Colorize;
+use fastcrypto::encoding::{Base64, Encoding};
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_sui_client::ika_protocol_transactions::{
-    perform_approved_upgrade, set_approved_upgrade_by_cap,
-    set_gas_fee_reimbursement_sui_system_call_value_by_cap, set_global_presign_config,
-    set_paused_curves_and_signature_algorithms, set_supported_and_pricing, try_migrate_coordinator,
-    try_migrate_coordinator_by_cap, try_migrate_system, try_migrate_system_by_cap,
+    build_set_supported_and_pricing_transaction, perform_approved_upgrade,
+    set_approved_upgrade_by_cap, set_gas_fee_reimbursement_sui_system_call_value_by_cap,
+    set_global_presign_config, set_paused_curves_and_signature_algorithms,
+    set_supported_and_pricing, try_migrate_coordinator, try_migrate_coordinator_by_cap,
+    try_migrate_system, try_migrate_system_by_cap,
 };
 use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
@@ -25,7 +27,7 @@ use std::{
     fs,
     path::PathBuf,
 };
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
 
@@ -36,8 +38,6 @@ const DEFAULT_GAS_BUDGET: u64 = 200_000_000;
 pub enum IkaProtocolCommand {
     #[clap(name = "set-approved-upgrade-by-cap")]
     SetApprovedUpgradeByCap {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
         #[clap(name = "package-id", long)]
@@ -51,8 +51,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "perform-approved-upgrade")]
     PerformApprovedUpgrade {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "package-id", long)]
         package_id: ObjectID,
         #[clap(long, name = "bytecode-dump-base64")]
@@ -64,8 +62,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "try-migrate-system")]
     TryMigrateSystem {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "new-package-id", long)]
         new_package_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
@@ -73,8 +69,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "try-migrate-coordinator")]
     TryMigrateCoordinator {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "new-package-id", long)]
         new_package_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
@@ -84,8 +78,6 @@ pub enum IkaProtocolCommand {
     TryMigrateSystemByCap {
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "new-package-id", long)]
         new_package_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
@@ -95,8 +87,6 @@ pub enum IkaProtocolCommand {
     TryMigrateCoordinatorByCap {
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "new-package-id", long)]
         new_package_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
@@ -104,8 +94,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "set-paused-curves-and-signature-algorithms")]
     SetPausedCurvesAndSignatureAlgorithms {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
         #[clap(name = "paused-curves", long, use_value_delimiter = true)]
@@ -119,8 +107,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "set-supported-and-pricing")]
     SetSupportedAndPricing {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
         #[clap(name = "default-pricing", long)]
@@ -130,13 +116,17 @@ pub enum IkaProtocolCommand {
             long
         )]
         supported_curves_to_signature_algorithms_to_hash_schemes_yaml: PathBuf,
+        /// Build base64-encoded unsigned TransactionData without signing or executing it.
+        #[clap(long)]
+        serialize_unsigned_transaction: bool,
+        /// Transaction sender. Only valid with --serialize-unsigned-transaction.
+        #[clap(long)]
+        sender: Option<SuiAddress>,
         #[clap(name = "ika-sui-config", long)]
         ika_sui_config: Option<PathBuf>,
     },
     #[clap(name = "set-gas-fee-reimbursement-sui-system-call-value-by-cap")]
     SetGasFeeReimbursementSuiSystemCallValueByCap {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
         #[clap(name = "gas-fee-reimbursement-sui-system-call-value", long)]
@@ -146,8 +136,6 @@ pub enum IkaProtocolCommand {
     },
     #[clap(name = "set-global-presign-config")]
     SetGlobalPresignConfig {
-        #[clap(name = "gas-budget", long)]
-        gas_budget: Option<u64>,
         #[clap(name = "protocol-cap-id", long)]
         protocol_cap_id: ObjectID,
         #[clap(name = "global-presign-config", long)]
@@ -166,6 +154,7 @@ pub enum IkaProtocolCommandResponse {
     TryMigrateCoordinatorByCap(ExecutedTransaction),
     SetPausedCurvesAndSignatureAlgorithms(ExecutedTransaction),
     SetSupportedAndPricing(ExecutedTransaction),
+    UnsignedTransaction(String),
     SetGasFeeReimbursementSuiSystemCallValueByCap(ExecutedTransaction),
     SetGlobalPresignConfig(ExecutedTransaction),
 }
@@ -174,10 +163,10 @@ impl IkaProtocolCommand {
     pub async fn execute(
         self,
         context: &impl TransactionContext,
+        gas_budget: Option<u64>,
     ) -> Result<IkaProtocolCommandResponse, anyhow::Error> {
         let response = match self {
             IkaProtocolCommand::SetApprovedUpgradeByCap {
-                gas_budget,
                 protocol_cap_id,
                 package_id,
                 bytecode_dump_base64,
@@ -217,7 +206,6 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::SetApprovedUpgradeByCap(response)
             }
             IkaProtocolCommand::PerformApprovedUpgrade {
-                gas_budget,
                 package_id,
                 bytecode_dump_base64,
                 bytecode_dump_base64_file,
@@ -258,7 +246,6 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::PerformApprovedUpgrade(response)
             }
             IkaProtocolCommand::TryMigrateSystem {
-                gas_budget,
                 new_package_id,
                 ika_sui_config,
             } => {
@@ -276,7 +263,6 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::TryMigrateSystem(response)
             }
             IkaProtocolCommand::TryMigrateCoordinator {
-                gas_budget,
                 new_package_id,
                 ika_sui_config,
             } => {
@@ -295,7 +281,6 @@ impl IkaProtocolCommand {
             }
             IkaProtocolCommand::TryMigrateSystemByCap {
                 protocol_cap_id,
-                gas_budget,
                 new_package_id,
                 ika_sui_config,
             } => {
@@ -315,7 +300,6 @@ impl IkaProtocolCommand {
             }
             IkaProtocolCommand::TryMigrateCoordinatorByCap {
                 protocol_cap_id,
-                gas_budget,
                 new_package_id,
                 ika_sui_config,
             } => {
@@ -336,7 +320,6 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::TryMigrateCoordinatorByCap(response)
             }
             IkaProtocolCommand::SetPausedCurvesAndSignatureAlgorithms {
-                gas_budget,
                 protocol_cap_id,
                 paused_curves,
                 paused_signature_algorithms,
@@ -363,12 +346,18 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::SetPausedCurvesAndSignatureAlgorithms(response)
             }
             IkaProtocolCommand::SetSupportedAndPricing {
-                gas_budget,
                 protocol_cap_id,
                 default_pricing_yaml,
                 supported_curves_to_signature_algorithms_to_hash_schemes_yaml,
+                serialize_unsigned_transaction,
+                sender,
                 ika_sui_config,
             } => {
+                if sender.is_some() && !serialize_unsigned_transaction {
+                    return Err(anyhow::anyhow!(
+                        "--sender requires --serialize-unsigned-transaction"
+                    ));
+                }
                 let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
@@ -381,22 +370,41 @@ impl IkaProtocolCommand {
                         supported_curves_to_signature_algorithms_to_hash_schemes_yaml,
                     )?))?;
 
-                let response = set_supported_and_pricing(
-                    context,
-                    config.packages.ika_dwallet_2pc_mpc_package_id,
-                    config.objects.ika_dwallet_coordinator_object_id,
-                    config.packages.ika_system_package_id,
-                    config.objects.ika_system_object_id,
-                    protocol_cap_id,
-                    default_pricing_yaml,
-                    supported_curves_to_signature_algorithms_to_hash_schemes,
-                    gas_budget,
-                )
-                .await?;
-                IkaProtocolCommandResponse::SetSupportedAndPricing(response)
+                if serialize_unsigned_transaction {
+                    let sender = sender.unwrap_or(context.active_address()?);
+                    let tx_data = build_set_supported_and_pricing_transaction(
+                        context,
+                        sender,
+                        config.packages.ika_dwallet_2pc_mpc_package_id,
+                        config.objects.ika_dwallet_coordinator_object_id,
+                        config.packages.ika_system_package_id,
+                        config.objects.ika_system_object_id,
+                        protocol_cap_id,
+                        default_pricing_yaml,
+                        supported_curves_to_signature_algorithms_to_hash_schemes,
+                        gas_budget,
+                    )
+                    .await?;
+                    IkaProtocolCommandResponse::UnsignedTransaction(Base64::encode(bcs::to_bytes(
+                        &tx_data,
+                    )?))
+                } else {
+                    let response = set_supported_and_pricing(
+                        context,
+                        config.packages.ika_dwallet_2pc_mpc_package_id,
+                        config.objects.ika_dwallet_coordinator_object_id,
+                        config.packages.ika_system_package_id,
+                        config.objects.ika_system_object_id,
+                        protocol_cap_id,
+                        default_pricing_yaml,
+                        supported_curves_to_signature_algorithms_to_hash_schemes,
+                        gas_budget,
+                    )
+                    .await?;
+                    IkaProtocolCommandResponse::SetSupportedAndPricing(response)
+                }
             }
             IkaProtocolCommand::SetGasFeeReimbursementSuiSystemCallValueByCap {
-                gas_budget,
                 protocol_cap_id,
                 gas_fee_reimbursement_sui_system_call_value,
                 ika_sui_config,
@@ -419,7 +427,6 @@ impl IkaProtocolCommand {
                 IkaProtocolCommandResponse::SetGasFeeReimbursementSuiSystemCallValueByCap(response)
             }
             IkaProtocolCommand::SetGlobalPresignConfig {
-                gas_budget,
                 protocol_cap_id,
                 global_presign_config,
                 ika_sui_config,
@@ -477,6 +484,9 @@ impl Display for IkaProtocolCommandResponse {
                     "{}",
                     write_transaction_response_without_transaction_data(response)?
                 )?;
+            }
+            IkaProtocolCommandResponse::UnsignedTransaction(tx_bytes) => {
+                writer.push_str(tx_bytes);
             }
         }
         write!(f, "{}", writer.trim_end_matches('\n'))

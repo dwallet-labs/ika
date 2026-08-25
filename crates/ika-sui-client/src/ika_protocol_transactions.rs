@@ -16,10 +16,10 @@ use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use std::collections::HashMap;
 use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, ObjectArg};
+use sui_types::transaction::{Argument, CallArg, ObjectArg, TransactionData};
 
 use crate::transaction_context::TransactionContext;
 use crate::transport::ExecutedTransaction;
@@ -361,6 +361,36 @@ pub async fn set_supported_and_pricing(
     supported_curves_to_signature_algorithms_to_hash_schemes: HashMap<u32, HashMap<u32, Vec<u32>>>,
     gas_budget: u64,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
+    let sender = context.active_address()?;
+    let tx_data = build_set_supported_and_pricing_transaction(
+        context,
+        sender,
+        ika_dwallet_2pc_mpc_coordinator_package_id,
+        ika_dwallet_2pc_mpc_coordinator_object_id,
+        ika_system_package_id,
+        ika_system_object_id,
+        protocol_cap_id,
+        default_pricing,
+        supported_curves_to_signature_algorithms_to_hash_schemes,
+        gas_budget,
+    )
+    .await?;
+
+    ika_validator_transactions::execute_transaction(context, tx_data).await
+}
+
+pub async fn build_set_supported_and_pricing_transaction(
+    context: &impl TransactionContext,
+    sender: SuiAddress,
+    ika_dwallet_2pc_mpc_coordinator_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    protocol_cap_id: ObjectID,
+    default_pricing: Vec<Entry<PricingInfoKey, PricingInfoValue>>,
+    supported_curves_to_signature_algorithms_to_hash_schemes: HashMap<u32, HashMap<u32, Vec<u32>>>,
+    gas_budget: u64,
+) -> Result<TransactionData, anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let verified_protocol_cap = get_verified_protocol_cap(
@@ -407,11 +437,7 @@ pub async fn set_supported_and_pricing(
         args,
     );
 
-    let sender = context.active_address()?;
-
-    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
-
-    ika_validator_transactions::execute_transaction(context, tx_data).await
+    Ok(construct_unsigned_txn(context, sender, gas_budget, ptb).await?)
 }
 
 pub async fn set_gas_fee_reimbursement_sui_system_call_value_by_cap(

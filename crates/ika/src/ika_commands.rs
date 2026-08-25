@@ -132,32 +132,16 @@ pub enum IkaCommand {
     /// A tool for validators and validator candidates.
     #[clap(name = "validator")]
     Validator {
-        /// Sets the file storing the state of our user accounts (an empty one will be created if missing)
-        #[clap(long = "client.config")]
-        config: Option<PathBuf>,
         #[clap(subcommand)]
         cmd: Option<IkaValidatorCommand>,
-        /// Return command outputs in JSON format.
-        #[clap(long, global = true)]
-        json: bool,
-        #[clap(short = 'y', long = "yes")]
-        accept_defaults: bool,
     },
 
     #[cfg(feature = "protocol-commands")]
     /// A tool for protocol governance operations.
     #[clap(name = "protocol")]
     Protocol {
-        /// Sets the file storing the state of our user accounts (an empty one will be created if missing)
-        #[clap(long = "client.config")]
-        config: Option<PathBuf>,
         #[clap(subcommand)]
         cmd: Option<IkaProtocolCommand>,
-        /// Return command outputs in JSON format.
-        #[clap(long, global = true)]
-        json: bool,
-        #[clap(short = 'y', long = "yes")]
-        accept_defaults: bool,
     },
 
     /// dWallet operations: create, sign, presign, import, and key management.
@@ -279,21 +263,15 @@ impl IkaCommand {
 
                 Ok(())
             }
-            IkaCommand::Validator {
-                config,
-                cmd,
-                json: cmd_json,
-                ..
-            } => {
-                let use_json = json || cmd_json;
+            IkaCommand::Validator { cmd } => {
+                let use_json = json;
                 match cmd {
                     Some(IkaValidatorCommand::SetNextEpochMPCData) => {
                         IkaValidatorCommand::execute_set_next_epoch_mpc_data()?.print(!use_json);
                     }
                     Some(cmd) => {
-                        let config_path = config
-                            .or(client_config)
-                            .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                        let config_path =
+                            client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                         let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
                         cmd.execute(&context).await?.print(!use_json);
                     }
@@ -307,19 +285,13 @@ impl IkaCommand {
                 Ok(())
             }
             #[cfg(feature = "protocol-commands")]
-            IkaCommand::Protocol {
-                config,
-                cmd,
-                json: cmd_json,
-                ..
-            } => {
-                let use_json = json || cmd_json;
-                let config_path = config
-                    .or(client_config)
-                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+            IkaCommand::Protocol { cmd } => {
+                let use_json = json;
+                let config_path =
+                    client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let context = SdkTransactionContext::from_sui_client_config(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&context).await?.print(!use_json);
+                    cmd.execute(&context, _gas_budget).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
