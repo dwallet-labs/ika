@@ -4,7 +4,8 @@
 # - fee_ika: INKU (1 IKA = 1_000_000_000 INKU)
 # - SUI reimbursements: MIST (1 SUI = 1_000_000_000 MIST)
 #
-# The IKA schedule is 50x the 2026-08-26 mainnet/testnet schedule.
+# The IKA schedule is 50x the 2026-08-26 mainnet/testnet schedule, except
+# standard dWallet DKG (protocol 9), which is 4 IKA (200x the deployed fee).
 # Every user session funds 0.005 SUI for the shared network/system-call
 # reimbursement pool used for network-key reconfiguration.
 #
@@ -52,7 +53,7 @@
     signature_algorithm: null
     protocol: 9
   value:
-    fee_ika: 1000000000
+    fee_ika: 4000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -166,7 +167,7 @@
     signature_algorithm: null
     protocol: 9
   value:
-    fee_ika: 1000000000
+    fee_ika: 4000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -240,7 +241,7 @@
     signature_algorithm: null
     protocol: 9
   value:
-    fee_ika: 1000000000
+    fee_ika: 4000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -314,7 +315,7 @@
     signature_algorithm: null
     protocol: 9
   value:
-    fee_ika: 1000000000
+    fee_ika: 4000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:

@@ -8,7 +8,7 @@ This document compares the pricing deployed on both Ika mainnet and testnet with
 
 | Component | Before | Suggested | Change |
 |---|---:|---:|---:|
-| IKA protocol fee | 0.01–0.25 IKA | 0.5–12.5 IKA | 50× |
+| IKA protocol fee | 0.01–0.25 IKA | 0.5–12.5 IKA | 50×, except standard DKG at 200× |
 | Notifier reimbursement, non-presign | 0 SUI | 0 SUI | Unchanged |
 | Notifier reimbursement, ECDSA presign | 0 SUI | 0.015 SUI | +0.015 SUI |
 | Notifier reimbursement, Schnorr-style presign | 0 SUI | 0.003 SUI | +0.003 SUI |
@@ -55,7 +55,7 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 | 0 secp256k1 | — | 2 Re-encrypt | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 0 secp256k1 | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 0 secp256k1 | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
-| 0 secp256k1 | — | 9 dWallet DKG | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
+| 0 secp256k1 | — | 9 dWallet DKG | 0.02 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.012599 |
 | 0 secp256k1 | 0 ECDSA | 5 Presign | 0.25 | 12.5 | 0 + 0 | 0.015 + 0.005 | $0.000550 | $0.042698 |
 | 0 secp256k1 | 0 ECDSA | 6 Sign | 0.1 | 5 | 0 + 0 | 0.000 + 0.005 | $0.000220 | $0.014798 |
 | 0 secp256k1 | 0 ECDSA | 7 Future sign | 0.04 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.008201 |
@@ -69,7 +69,7 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 | 1 secp256r1 | — | 2 Re-encrypt | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 1 secp256r1 | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 1 secp256r1 | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
-| 1 secp256r1 | — | 9 dWallet DKG | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
+| 1 secp256r1 | — | 9 dWallet DKG | 0.02 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.012599 |
 | 1 secp256r1 | 0 ECDSA | 5 Presign | 0.12 | 12.5 | 0 + 0 | 0.015 + 0.005 | $0.000264 | $0.042698 |
 | 1 secp256r1 | 0 ECDSA | 6 Sign | 0.04 | 5 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.014798 |
 | 1 secp256r1 | 0 ECDSA | 7 Future sign | 0.01 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.008201 |
@@ -78,7 +78,7 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 | 2 Curve25519 | — | 2 Re-encrypt | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 2 Curve25519 | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 2 Curve25519 | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
-| 2 Curve25519 | — | 9 dWallet DKG | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
+| 2 Curve25519 | — | 9 dWallet DKG | 0.02 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.012599 |
 | 2 Curve25519 | 0 EdDSA | 5 Presign | 0.12 | 6 | 0 + 0 | 0.003 + 0.005 | $0.000264 | $0.019278 |
 | 2 Curve25519 | 0 EdDSA | 6 Sign | 0.04 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.008201 |
 | 2 Curve25519 | 0 EdDSA | 7 Future sign | 0.01 | 0.5 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.004902 |
@@ -87,7 +87,7 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 | 3 Ristretto | — | 2 Re-encrypt | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 3 Ristretto | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 3 Ristretto | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
-| 3 Ristretto | — | 9 dWallet DKG | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
+| 3 Ristretto | — | 9 dWallet DKG | 0.02 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.012599 |
 | 3 Ristretto | 0 Schnorrkel | 5 Presign | 0.12 | 6 | 0 + 0 | 0.003 + 0.005 | $0.000264 | $0.019278 |
 | 3 Ristretto | 0 Schnorrkel | 6 Sign | 0.04 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.008201 |
 | 3 Ristretto | 0 Schnorrkel | 7 Future sign | 0.01 | 0.5 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.004902 |
