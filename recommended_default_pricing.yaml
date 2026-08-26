@@ -174,7 +174,7 @@
     signature_algorithm: 0
     protocol: 5
   value:
-    fee_ika: 6000000000
+    fee_ika: 12500000000
     gas_fee_reimbursement_sui: 15000000
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -182,7 +182,7 @@
     signature_algorithm: 0
     protocol: 6
   value:
-    fee_ika: 2000000000
+    fee_ika: 5000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -190,7 +190,7 @@
     signature_algorithm: 0
     protocol: 7
   value:
-    fee_ika: 500000000
+    fee_ika: 2000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -198,7 +198,7 @@
     signature_algorithm: 0
     protocol: 8
   value:
-    fee_ika: 2000000000
+    fee_ika: 5000000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 - key:
@@ -206,7 +206,7 @@
     signature_algorithm: 0
     protocol: 10
   value:
-    fee_ika: 3000000000
+    fee_ika: 5500000000
     gas_fee_reimbursement_sui: 0
     gas_fee_reimbursement_sui_for_system_calls: 5000000
 

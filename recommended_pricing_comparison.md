@@ -70,11 +70,11 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 | 1 secp256r1 | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 1 secp256r1 | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 1 secp256r1 | — | 9 dWallet DKG | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
-| 1 secp256r1 | 0 ECDSA | 5 Presign | 0.12 | 6 | 0 + 0 | 0.015 + 0.005 | $0.000264 | $0.028404 |
-| 1 secp256r1 | 0 ECDSA | 6 Sign | 0.04 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.008201 |
-| 1 secp256r1 | 0 ECDSA | 7 Future sign | 0.01 | 0.5 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.004902 |
-| 1 secp256r1 | 0 ECDSA | 8 Sign with partial user signature | 0.04 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.008201 |
-| 1 secp256r1 | 0 ECDSA | 10 dWallet DKG with sign | 0.06 | 3 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.010400 |
+| 1 secp256r1 | 0 ECDSA | 5 Presign | 0.12 | 12.5 | 0 + 0 | 0.015 + 0.005 | $0.000264 | $0.042698 |
+| 1 secp256r1 | 0 ECDSA | 6 Sign | 0.04 | 5 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.014798 |
+| 1 secp256r1 | 0 ECDSA | 7 Future sign | 0.01 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.008201 |
+| 1 secp256r1 | 0 ECDSA | 8 Sign with partial user signature | 0.04 | 5 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.014798 |
+| 1 secp256r1 | 0 ECDSA | 10 dWallet DKG with sign | 0.06 | 5.5 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.015897 |
 | 2 Curve25519 | — | 2 Re-encrypt | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 2 Curve25519 | — | 3 Make share public | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
 | 2 Curve25519 | — | 4 Imported-key verification | 0.02 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.006002 |
