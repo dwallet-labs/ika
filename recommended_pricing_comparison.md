@@ -12,7 +12,7 @@ This document compares the pricing deployed on both Ika mainnet and testnet with
 | Notifier reimbursement, non-presign | 0 SUI | 0 SUI | Unchanged |
 | Notifier reimbursement, ECDSA presign | 0 SUI | 0.015 SUI | +0.015 SUI |
 | Notifier reimbursement, Schnorr-style presign | 0 SUI | 0.003 SUI | +0.003 SUI |
-| System-call reimbursement contribution | 0 SUI | 0.02 SUI | +0.02 SUI |
+| System-call reimbursement contribution | 0 SUI | 0.005 SUI | +0.005 SUI |
 
 The two SUI fields cover different costs:
 
@@ -39,10 +39,10 @@ Only secp256k1/ECDSA and Curve25519/EdDSA presigns were observed in the queried 
 
 The USD estimates use **1 IKA = $0.002199** and **1 SUI = $0.7605**, from [CoinGecko’s IKA page](https://www.coingecko.com/en/coins/ika) and [CoinGecko’s SUI page](https://www.coingecko.com/en/coins/sui).
 
-- 0.02 SUI system-call contribution = $0.015210.
+- 0.005 SUI system-call contribution = $0.003803.
 - 0.003 SUI small-presign notifier reimbursement = $0.002282.
 - 0.015 SUI ECDSA-presign notifier reimbursement = $0.011408.
-- The suggested configured charge ranges from about $0.017409 to $0.081592 per request at this price snapshot.
+- The suggested configured charge ranges from about $0.006002 to $0.070185 per request at this price snapshot.
 
 USD totals below include the configured IKA fee, the applicable notifier reimbursement, and the system-call contribution. They exclude SUI gas paid separately by the end user.
 
@@ -52,47 +52,47 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 
 | Curve | Signature | Protocol | Before IKA | Suggested IKA | Before SUI (notifier + system) | Suggested SUI (notifier + system) | Before USD | Suggested USD |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| 0 secp256k1 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 0 secp256k1 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 0 secp256k1 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 0 secp256k1 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 0 secp256k1 | 0 ECDSA | 5 Presign | 0.25 | 25 | 0 + 0 | 0.015 + 0.02 | $0.000550 | $0.081592 |
-| 0 secp256k1 | 0 ECDSA | 6 Sign | 0.1 | 10 | 0 + 0 | 0.000 + 0.02 | $0.000220 | $0.037200 |
-| 0 secp256k1 | 0 ECDSA | 7 Future sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 0 secp256k1 | 0 ECDSA | 8 Sign with partial user signature | 0.1 | 10 | 0 + 0 | 0.000 + 0.02 | $0.000220 | $0.037200 |
-| 0 secp256k1 | 0 ECDSA | 10 dWallet DKG with sign | 0.11 | 11 | 0 + 0 | 0.000 + 0.02 | $0.000242 | $0.039399 |
-| 0 secp256k1 | 1 Taproot | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.02 | $0.000264 | $0.043880 |
-| 0 secp256k1 | 1 Taproot | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 0 secp256k1 | 1 Taproot | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.02 | $0.000022 | $0.017409 |
-| 0 secp256k1 | 1 Taproot | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 0 secp256k1 | 1 Taproot | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.02 | $0.000132 | $0.028404 |
-| 1 secp256r1 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 1 secp256r1 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 1 secp256r1 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 1 secp256r1 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 1 secp256r1 | 0 ECDSA | 5 Presign | 0.12 | 12 | 0 + 0 | 0.015 + 0.02 | $0.000264 | $0.053006 |
-| 1 secp256r1 | 0 ECDSA | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 1 secp256r1 | 0 ECDSA | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.02 | $0.000022 | $0.017409 |
-| 1 secp256r1 | 0 ECDSA | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 1 secp256r1 | 0 ECDSA | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.02 | $0.000132 | $0.028404 |
-| 2 Curve25519 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 2 Curve25519 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 2 Curve25519 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 2 Curve25519 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 2 Curve25519 | 0 EdDSA | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.02 | $0.000264 | $0.043880 |
-| 2 Curve25519 | 0 EdDSA | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 2 Curve25519 | 0 EdDSA | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.02 | $0.000022 | $0.017409 |
-| 2 Curve25519 | 0 EdDSA | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 2 Curve25519 | 0 EdDSA | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.02 | $0.000132 | $0.028404 |
-| 3 Ristretto | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 3 Ristretto | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 3 Ristretto | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 3 Ristretto | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.02 | $0.000044 | $0.019608 |
-| 3 Ristretto | 0 Schnorrkel | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.02 | $0.000264 | $0.043880 |
-| 3 Ristretto | 0 Schnorrkel | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 3 Ristretto | 0 Schnorrkel | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.02 | $0.000022 | $0.017409 |
-| 3 Ristretto | 0 Schnorrkel | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.02 | $0.000088 | $0.024006 |
-| 3 Ristretto | 0 Schnorrkel | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.02 | $0.000132 | $0.028404 |
+| 0 secp256k1 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 0 secp256k1 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 0 secp256k1 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 0 secp256k1 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 0 secp256k1 | 0 ECDSA | 5 Presign | 0.25 | 25 | 0 + 0 | 0.015 + 0.005 | $0.000550 | $0.070185 |
+| 0 secp256k1 | 0 ECDSA | 6 Sign | 0.1 | 10 | 0 + 0 | 0.000 + 0.005 | $0.000220 | $0.025793 |
+| 0 secp256k1 | 0 ECDSA | 7 Future sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 0 secp256k1 | 0 ECDSA | 8 Sign with partial user signature | 0.1 | 10 | 0 + 0 | 0.000 + 0.005 | $0.000220 | $0.025793 |
+| 0 secp256k1 | 0 ECDSA | 10 dWallet DKG with sign | 0.11 | 11 | 0 + 0 | 0.000 + 0.005 | $0.000242 | $0.027992 |
+| 0 secp256k1 | 1 Taproot | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.005 | $0.000264 | $0.032472 |
+| 0 secp256k1 | 1 Taproot | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 0 secp256k1 | 1 Taproot | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.006002 |
+| 0 secp256k1 | 1 Taproot | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 0 secp256k1 | 1 Taproot | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.016997 |
+| 1 secp256r1 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 1 secp256r1 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 1 secp256r1 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 1 secp256r1 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 1 secp256r1 | 0 ECDSA | 5 Presign | 0.12 | 12 | 0 + 0 | 0.015 + 0.005 | $0.000264 | $0.041598 |
+| 1 secp256r1 | 0 ECDSA | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 1 secp256r1 | 0 ECDSA | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.006002 |
+| 1 secp256r1 | 0 ECDSA | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 1 secp256r1 | 0 ECDSA | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.016997 |
+| 2 Curve25519 | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 2 Curve25519 | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 2 Curve25519 | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 2 Curve25519 | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 2 Curve25519 | 0 EdDSA | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.005 | $0.000264 | $0.032472 |
+| 2 Curve25519 | 0 EdDSA | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 2 Curve25519 | 0 EdDSA | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.006002 |
+| 2 Curve25519 | 0 EdDSA | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 2 Curve25519 | 0 EdDSA | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.016997 |
+| 3 Ristretto | — | 2 Re-encrypt | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 3 Ristretto | — | 3 Make share public | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 3 Ristretto | — | 4 Imported-key verification | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 3 Ristretto | — | 9 dWallet DKG | 0.02 | 2 | 0 + 0 | 0.000 + 0.005 | $0.000044 | $0.008201 |
+| 3 Ristretto | 0 Schnorrkel | 5 Presign | 0.12 | 12 | 0 + 0 | 0.003 + 0.005 | $0.000264 | $0.032472 |
+| 3 Ristretto | 0 Schnorrkel | 6 Sign | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 3 Ristretto | 0 Schnorrkel | 7 Future sign | 0.01 | 1 | 0 + 0 | 0.000 + 0.005 | $0.000022 | $0.006002 |
+| 3 Ristretto | 0 Schnorrkel | 8 Sign with partial user signature | 0.04 | 4 | 0 + 0 | 0.000 + 0.005 | $0.000088 | $0.012599 |
+| 3 Ristretto | 0 Schnorrkel | 10 dWallet DKG with sign | 0.06 | 6 | 0 + 0 | 0.000 + 0.005 | $0.000132 | $0.016997 |
 
 ## Base-unit values used by the CLI
 
@@ -101,6 +101,6 @@ USD totals below include the configured IKA fee, the applicable notifier reimbur
 - Non-presign notifier reimbursement: `0` MIST.
 - ECDSA-presign notifier reimbursement: `15_000_000` MIST.
 - Schnorr-style-presign notifier reimbursement: `3_000_000` MIST.
-- System-call reimbursement contribution: `20_000_000` MIST.
+- System-call reimbursement contribution: `5_000_000` MIST.
 
 The exact CLI-ready values are in [`recommended_default_pricing.yaml`](./recommended_default_pricing.yaml). The supported curve/signature/hash map is unchanged and is kept separately in [`recommended_supported_curves_to_signature_algorithms_to_hash_schemes.yaml`](./recommended_supported_curves_to_signature_algorithms_to_hash_schemes.yaml).
