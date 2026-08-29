@@ -209,11 +209,51 @@ pub struct DynamicFieldPage {
 pub type CheckpointSummaryStream =
     BoxStream<'static, Result<CertifiedCheckpointSummary, TransportError>>;
 
+/// What the Sui fullnode behind a transport reports about *itself* — as
+/// opposed to about the chain. Sourced from the `GetServiceInfo` RPC.
+///
+/// Both fields are `Option` because the proto marks them optional: a node that
+/// answers the call is not obliged to fill them in, and a proxy in front of a
+/// fullnode may strip them. `None` is therefore "the node answered but said
+/// nothing", which is a different state from "the call failed" (an `Err` on
+/// [`SuiTransport::get_sui_node_info`]) and from "this transport has no such
+/// RPC" (`Ok(None)` on the same method).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SuiNodeInfo {
+    /// `GetServiceInfoResponse.server` — the fullnode's own software version
+    /// string, the gRPC analogue of the HTTP `server` header (e.g.
+    /// `sui-node/1.78.1-abc1234`). This is the field that answers "which Sui
+    /// release is this operator actually running".
+    pub server_version: Option<String>,
+    /// `GetServiceInfoResponse.chain_id` — the genesis checkpoint digest,
+    /// verbatim as the node spelled it. Kept as the raw string rather than
+    /// parsed into a [`ChainIdentifier`]: this is a label value, and a parse
+    /// failure here must not cost us the `server_version` that came back in
+    /// the same response.
+    pub chain_identifier: Option<String>,
+}
+
 #[async_trait]
 pub trait SuiTransport: Send + Sync {
     // -- chain metadata ---------------------------------------------------------------------
     async fn get_chain_identifier(&self) -> Result<String, TransportError>;
     async fn get_current_epoch(&self) -> Result<u64, TransportError>;
+    /// Identity of the Sui fullnode this transport talks to: its software
+    /// version and chain id. Feeds `ika_sui_client_sui_node_info` — see
+    /// [`crate::metrics::SuiClientMetrics::sui_node_info`] for why the fleet
+    /// needs it.
+    ///
+    /// `Ok(None)` means *this transport structurally cannot answer* — the p2p
+    /// mirror relay speaks Ika's own wire protocol and never sees a Sui
+    /// fullnode's service info. That is deliberately distinct from `Err`,
+    /// which means a real fullnode was asked and the call failed. The
+    /// refresher reports the two differently, and stops polling on the former.
+    ///
+    /// Default is `Ok(None)` so that the many test doubles and relay
+    /// transports implementing this trait need no change.
+    async fn get_sui_node_info(&self) -> Result<Option<SuiNodeInfo>, TransportError> {
+        Ok(None)
+    }
     /// Sui [`Committee`] for the given epoch (or current if `None`). Used as
     /// a fallback when the committee ratchet's BLS proof chain is broken
     /// by upstream pruning of end-of-epoch checkpoints.

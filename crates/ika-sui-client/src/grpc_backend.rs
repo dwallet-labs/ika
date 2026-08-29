@@ -106,6 +106,15 @@ impl GrpcSuiClient {
         }
     }
 
+    /// The read transport this backend was built over. Handed to the
+    /// `ika_sui_client_sui_node_info` refresher, which needs a `'static`
+    /// handle to the same uplink the client reads through — so that the
+    /// version it reports is the version of the node actually serving this
+    /// client, not of some separately-opened connection.
+    pub fn transport(&self) -> std::sync::Arc<dyn SuiTransport> {
+        self.transport.clone()
+    }
+
     /// The writer uplink, or a clear error on a read-only node. Transaction
     /// building/submission (and the migration-sweep reads that serve it) are
     /// notifier-gated to a direct fullnode connection.

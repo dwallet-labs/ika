@@ -50,7 +50,7 @@ use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 use crate::rate_limit::RateLimitGate;
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, ExecutedTransaction,
-    SubmittedTransaction, SuiFundsBreakdown, SuiTransport, SuiWriter, TransportError,
+    SubmittedTransaction, SuiFundsBreakdown, SuiNodeInfo, SuiTransport, SuiWriter, TransportError,
 };
 
 /// Sui rejects a transaction whose gas payment names more than
@@ -786,6 +786,27 @@ impl SuiTransport for SuiGrpcClient {
         SuiGrpcClient::get_chain_identifier(self)
             .await
             .map(|chain_identifier| chain_identifier.to_string())
+    }
+
+    async fn get_sui_node_info(&self) -> Result<Option<SuiNodeInfo>, TransportError> {
+        // Same `GetServiceInfo` call `get_latest_checkpoint_sequence` and
+        // `get_sui_chain_identifier` already use; we read two different
+        // fields off it. It takes no arguments and touches no store beyond
+        // the node's own watermarks, so it is the cheapest call the fullnode
+        // serves — which is what makes it safe to poll on a timer.
+        let mut rpc = self.rpc.clone();
+        let response = self
+            .gated_network(async move {
+                rpc.ledger_client()
+                    .get_service_info(proto::GetServiceInfoRequest::default())
+                    .await
+            })
+            .await?
+            .into_inner();
+        Ok(Some(SuiNodeInfo {
+            server_version: response.server_opt().map(str::to_owned),
+            chain_identifier: response.chain_id_opt().map(str::to_owned),
+        }))
     }
 
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {

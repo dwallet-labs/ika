@@ -46,6 +46,7 @@ pub mod ika_dwallet_transactions;
 pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
+pub mod node_info;
 pub mod rate_limit;
 pub mod transaction_builder;
 pub mod transaction_context;
@@ -102,6 +103,11 @@ pub struct SuiClient<P> {
     system_arg_cache: OnceCell<ObjectArg>,
     clock_arg_cache: OnceCell<ObjectArg>,
     dwallet_coordinator_arg_cache: OnceCell<ObjectArg>,
+    /// Keeps `ika_sui_client_sui_node_info` current for as long as this client
+    /// exists — the handle aborts the refresh task on drop, so a short-lived
+    /// CLI client does not leave a timer behind. `None` on clients built for
+    /// tests, which have no registry anyone scrapes.
+    _node_info_refresh: Option<node_info::SuiNodeInfoRefresh>,
 }
 
 pub type SuiBackend = grpc_backend::GrpcSuiClient;
@@ -144,6 +150,11 @@ impl SuiConnectorClient {
         let inner =
             grpc_backend::GrpcSuiClient::new_with_headers(grpc_url, headers, rate_limit_gate)
                 .await?;
+        // Spawned, never awaited: identifying the fullnode must not add a
+        // round trip to node boot, least of all on the wedged-uplink nodes
+        // this metric exists to describe.
+        let node_info_refresh =
+            node_info::spawn_sui_node_info_refresh(inner.transport(), sui_client_metrics.clone());
         let self_ = Self {
             inner,
             sui_client_metrics,
@@ -151,6 +162,7 @@ impl SuiConnectorClient {
             system_arg_cache: OnceCell::new(),
             clock_arg_cache: OnceCell::new(),
             dwallet_coordinator_arg_cache: OnceCell::new(),
+            _node_info_refresh: Some(node_info_refresh),
         };
         self_.describe().await?;
         Ok(self_)
@@ -166,6 +178,11 @@ impl SuiConnectorClient {
         ika_network_config: IkaNetworkConfig,
     ) -> anyhow::Result<Self> {
         let inner = grpc_backend::GrpcSuiClient::with_transport(transport);
+        // The relay transport has no service-info RPC, so this settles on
+        // `server_version="unsupported"` after one probe and stops — which is
+        // the honest answer for a node with no fullnode of its own.
+        let node_info_refresh =
+            node_info::spawn_sui_node_info_refresh(inner.transport(), sui_client_metrics.clone());
         let self_ = Self {
             inner,
             sui_client_metrics,
@@ -173,6 +190,7 @@ impl SuiConnectorClient {
             system_arg_cache: OnceCell::new(),
             clock_arg_cache: OnceCell::new(),
             dwallet_coordinator_arg_cache: OnceCell::new(),
+            _node_info_refresh: Some(node_info_refresh),
         };
         self_.describe().await?;
         Ok(self_)
@@ -218,6 +236,10 @@ where
             system_arg_cache: OnceCell::new(),
             clock_arg_cache: OnceCell::new(),
             dwallet_coordinator_arg_cache: OnceCell::new(),
+            // Not spawned for tests: `new_for_testing` is called from
+            // synchronous contexts with no runtime, and nothing scrapes the
+            // throwaway registry it builds.
+            _node_info_refresh: None,
         }
     }
 
