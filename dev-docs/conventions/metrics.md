@@ -277,6 +277,62 @@ is exported for every protocol (it is bounded — one series per protocol name)
 and emits zero for a completed protocol while its session remains tracked, so
 tests can distinguish a clean zero from a missing protocol observation.
 
+## A process registers only the families it drives
+
+The three `NodeMode`s share one start sequence, and it used to register nearly
+every family unconditionally. A notifier therefore exported `ika_dwallet_mpc_*`,
+the consensus-handler counters, the handoff-barrier gauges and the
+chain-observation gauges — all pinned forever at the value they were
+constructed with. That value is never a neutral one: `ika_handoff_prepare_waiting`
+at 0 reads "not wedged at the barrier", `ika_consensus_commit_silence_seconds`
+at 0 reads "a commit landed this second", and
+`ika_sui_connector_chain_epoch_overdue_seconds` at 0 reads "the epoch is on
+time". None of the series carry a `host` label, so fleet aggregations keyed on
+`network` or grouped `by (host)` ingested them silently: a nameless validator
+row in the fleet table, a phantom per-network row, and one false "epoch switch
+overdue" critical (ika #2051).
+
+**Absence is the correct signal for a subsystem this process does not run.** So
+the fix lives at registration, never at export — nothing filters a gathered
+family, and a family is not "suppressed to zero", it simply is not there:
+
+- a struct whose families are ALL driven by one role is constructed only in
+  that role (`ValidatorModeMetrics` in `ika-node`: the MPC service, the
+  checkpoint builders, consensus tx validation, handoff/commit telemetry), or
+  registered through a `new_for_mode` that hands a role-local registry to the
+  other modes (`AuthorityMetrics` — every family there is written by the
+  consensus handler);
+- a struct whose families are driven by DIFFERENT roles registers per family:
+  `EpochMetrics::new_for_mode` and `SuiConnectorMetrics::new_for_mode` route
+  each registration to the exported registry or to a role-local one that no
+  endpoint gathers. The handles are always constructed, so write sites stay
+  unconditional and a mis-classified family costs one lost observation on one
+  role rather than a panic.
+
+Two boundaries on the rule:
+
+- **`uptime{process=...}` and the process-level basics stay in every mode.**
+  The protocol-version gauges (`ika_binary_max_protocol_version` and friends)
+  report a real property of any running binary, not a subsystem's state, and
+  operators track notifier rollouts with them.
+- **The validator export set is not trimmed.** A validator keeps the
+  notifier-driven checkpoint-writer and gas families it does not drive. Removing
+  a family from a validator breaks dashboards that already read it, which is a
+  separate change with its own blast radius; this rule removes families only
+  from processes that never drove them.
+
+When a family stays on a mode that looks wrong for it, check what actually
+spawns its writer before "fixing" it. `ika_dwallet_mpc_data_blob_fetch_total`
+and `ika_joiner_bootstrap_outcomes_total` are exported by every mode because
+`monitor_reconfiguration` spawns the peer-blob fetcher and the joiner-bootstrap
+verifier unconditionally — a notifier really does run them (and really can
+fail-closed on a rejected handoff cert). Whether it *should* is a question
+about those subsystems, not about their metrics.
+
+The per-mode sets are pinned by `per_mode_registration` in
+`crates/ika-node/src/metrics.rs`, which composes the same constructors the
+start sequence uses and asserts the gathered family names for each mode.
+
 ## Validator host telemetry
 
 Validator processes register host telemetry in the default registry, so the

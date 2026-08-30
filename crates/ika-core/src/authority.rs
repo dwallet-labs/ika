@@ -4,7 +4,7 @@
 
 use arc_swap::{ArcSwap, Guard};
 use chrono::prelude::*;
-use ika_config::NodeConfig;
+use ika_config::{NodeConfig, NodeMode};
 use ika_types::messages_consensus::{AuthorityCapabilitiesV1, MovePackageDigest};
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -109,6 +109,23 @@ const POSITIVE_INT_BUCKETS: &[f64] = &[
 pub const DEV_INSPECT_GAS_COIN_VALUE: u64 = 1_000_000_000_000;
 
 impl AuthorityMetrics {
+    /// Registers into `registry` only if `mode` runs the consensus handler.
+    ///
+    /// Every family in this struct is written from the consensus commit path,
+    /// so on a fullnode or notifier they would export constant zeros — an
+    /// idle-but-healthy validator's reading. Registering them into a
+    /// role-local registry no endpoint gathers keeps them off that process's
+    /// `/metrics` entirely (ika #2051).
+    pub fn new_for_mode(mode: NodeMode, registry: &prometheus::Registry) -> AuthorityMetrics {
+        let unexported = prometheus::Registry::new();
+        Self::new(if mode.is_validator() {
+            registry
+        } else {
+            &unexported
+        })
+    }
+
+    /// Registers the whole set — the composition a validator process gets.
     pub fn new(registry: &prometheus::Registry) -> AuthorityMetrics {
         Self {
             skipped_consensus_txns: register_int_counter_with_registry!(
@@ -337,6 +354,7 @@ impl AuthorityState {
         committee_store: Arc<CommitteeStore>,
         checkpoint_store: Arc<DWalletCheckpointStore>,
         prometheus_registry: &Registry,
+        mode: NodeMode,
         config: NodeConfig,
     ) -> Arc<Self> {
         // The advertised capability range is constant for the process; export
@@ -352,7 +370,7 @@ impl AuthorityState {
             .set(supported_protocol_versions.max.as_u64() as i64);
         Self::check_protocol_version(supported_protocol_versions, epoch_store.protocol_version());
 
-        let metrics = Arc::new(AuthorityMetrics::new(prometheus_registry));
+        let metrics = Arc::new(AuthorityMetrics::new_for_mode(mode, prometheus_registry));
 
         let epoch = epoch_store.epoch();
 

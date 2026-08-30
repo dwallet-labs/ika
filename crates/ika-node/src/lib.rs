@@ -87,7 +87,7 @@ use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use typed_store::DBMetrics;
 use typed_store::rocks::default_db_options;
 
-use crate::metrics::IkaNodeMetrics;
+use crate::metrics::{IkaNodeMetrics, ValidatorTelemetryMetrics};
 
 pub mod admin;
 mod bind_retry;
@@ -140,6 +140,46 @@ impl ValidatorComponentMetrics {
             system_checkpoint: SystemCheckpointMetrics::new(registry),
             ika_tx_validator: IkaTxValidatorMetrics::new(registry),
         }
+    }
+}
+
+/// The metric families driven exclusively by validator-mode subsystems: the
+/// MPC service, the checkpoint builders and consensus tx validation, and the
+/// handoff-barrier / commit-liveness telemetry.
+///
+/// Built — and therefore REGISTERED — only in validator mode, so a fullnode
+/// or notifier does not export them at all. That is the point: a family
+/// exported at its default value is indistinguishable from a real reading
+/// (`ika_dwallet_mpc_*` at zero reads as an idle validator, not as a process
+/// with no MPC service), so absence is the honest signal for a subsystem this
+/// process does not run. See ika #2051 and
+/// `dev-docs/conventions/metrics.md`.
+///
+/// Registration is per PROCESS, not per epoch: the handles are built once at
+/// startup and cloned into each (re-)construction of the validator
+/// components, for the reason spelled out on `ValidatorComponentMetrics`.
+#[derive(Clone)]
+pub struct ValidatorModeMetrics {
+    dwallet_mpc: Arc<DWalletMPCMetrics>,
+    components: ValidatorComponentMetrics,
+    telemetry: Arc<ValidatorTelemetryMetrics>,
+}
+
+impl ValidatorModeMetrics {
+    /// `Some` in validator mode, `None` in every other mode — a node that
+    /// never starts these subsystems never registers their families.
+    ///
+    /// This keys off the process's `NodeMode` rather than current committee
+    /// membership on purpose: a validator-mode process that is not (yet) in
+    /// the committee still registers them, because it starts those
+    /// subsystems the moment it joins, and re-registering into the
+    /// process-wide registry then would panic.
+    pub fn for_mode(mode: NodeMode, registry: &Registry) -> Option<Self> {
+        mode.is_validator().then(|| Self {
+            dwallet_mpc: DWalletMPCMetrics::new(registry),
+            components: ValidatorComponentMetrics::new(registry),
+            telemetry: Arc::new(ValidatorTelemetryMetrics::new(registry)),
+        })
     }
 }
 
@@ -225,6 +265,11 @@ pub struct IkaNode {
     state: Arc<AuthorityState>,
     registry_service: RegistryService,
     metrics: Arc<IkaNodeMetrics>,
+
+    /// Handoff-barrier and commit-liveness telemetry. `None` outside
+    /// validator mode, where neither subsystem runs and the families are
+    /// deliberately not registered — see `ValidatorModeMetrics`.
+    validator_telemetry: Option<Arc<ValidatorTelemetryMetrics>>,
 
     _discovery: discovery::Handle,
     _connection_monitor_handle: mysten_network::anemo_connection_monitor::ConnectionMonitorHandle,
@@ -756,18 +801,18 @@ impl IkaNode {
                 .ika_dwallet_coordinator_object_id,
         );
 
-        let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
-        // Registered once for the process; see `ValidatorComponentMetrics`.
-        let validator_component_metrics =
-            ValidatorComponentMetrics::new(&registry_service.default_registry());
-        let validator_component_metrics_for_reconfig = validator_component_metrics.clone();
+        // Registered once for the process, and only in the mode that runs the
+        // subsystems behind them; see `ValidatorModeMetrics`.
+        let validator_metrics =
+            ValidatorModeMetrics::for_mode(mode, &registry_service.default_registry());
+        let validator_metrics_for_reconfig = validator_metrics.clone();
 
         let epoch_store = AuthorityPerEpochStore::new(EpochStoreParams {
             name: config.authority_name(),
             committee: committee_arc.clone(),
             parent_path: config.db_path().join("store"),
             db_options: Some(epoch_options.options),
-            metrics: EpochMetrics::new(&registry_service.default_registry()),
+            metrics: EpochMetrics::new_for_mode(mode, &registry_service.default_registry()),
             epoch_start_configuration,
             chain_identifier,
             packages_config,
@@ -1177,12 +1222,14 @@ impl IkaNode {
             committee_store.clone(),
             dwallet_checkpoint_store.clone(),
             &prometheus_registry,
+            mode,
             config.clone(),
         )
         .await;
         info!("created authority state");
 
-        let sui_connector_metrics = SuiConnectorMetrics::new(&registry_service.default_registry());
+        let sui_connector_metrics =
+            SuiConnectorMetrics::new_for_mode(mode, &registry_service.default_registry());
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
             watch::channel::<Committee>(committee.clone());
         let (chain_next_committee_sender, chain_next_epoch_committee_receiver) =
@@ -1298,9 +1345,12 @@ impl IkaNode {
         // a reconfiguration. Validator mode only: a fullnode or notifier has
         // no consensus subscriptions to lose. See `commit_liveness_watchdog`
         // for why the #2016 reconfiguration watchdog cannot cover this.
-        let commit_liveness = if mode.is_validator() {
+        let commit_liveness = if let Some(validator_metrics) = &validator_metrics {
             commit_liveness_watchdog::CommitLivenessWatchdog::spawn(
-                ika_node_metrics.consensus_commit_silence_seconds.clone(),
+                validator_metrics
+                    .telemetry
+                    .consensus_commit_silence_seconds
+                    .clone(),
                 ika_node_metrics.reconfig_phase.clone(),
             )
         } else {
@@ -1330,8 +1380,9 @@ impl IkaNode {
                 ika_node_metrics.clone(),
                 previous_epoch_last_dwallet_checkpoint_sequence_number,
                 previous_epoch_last_system_checkpoint_sequence_number,
-                dwallet_mpc_metrics.clone(),
-                validator_component_metrics.clone(),
+                validator_metrics
+                    .clone()
+                    .expect("validator mode registers the validator metric families"),
                 sui_data_receivers.clone(),
                 noa_dwallet_finalized.clone(),
                 noa_system_finalized.clone(),
@@ -1371,6 +1422,7 @@ impl IkaNode {
             state,
             registry_service,
             metrics: ika_node_metrics,
+            validator_telemetry: validator_metrics.map(|metrics| metrics.telemetry),
 
             _discovery: discovery_handle,
             _connection_monitor_handle: connection_monitor_handle,
@@ -1431,8 +1483,7 @@ impl IkaNode {
             let result = Self::monitor_reconfiguration(
                 node_copy,
                 sui_client_clone,
-                dwallet_mpc_metrics,
-                validator_component_metrics_for_reconfig,
+                validator_metrics_for_reconfig,
                 sui_data_receivers.clone(),
             )
             .await;
@@ -1981,8 +2032,7 @@ impl IkaNode {
         ika_node_metrics: Arc<IkaNodeMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
-        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        validator_component_metrics: ValidatorComponentMetrics,
+        validator_metrics: ValidatorModeMetrics,
         sui_data_receivers: SuiDataReceivers,
         noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
@@ -2025,11 +2075,16 @@ impl IkaNode {
             &registry_service.default_registry(),
         );
 
-        let ValidatorComponentMetrics {
-            dwallet_checkpoint: dwallet_checkpoint_metrics,
-            system_checkpoint: system_checkpoint_metrics,
-            ika_tx_validator: ika_tx_validator_metrics,
-        } = validator_component_metrics;
+        let ValidatorModeMetrics {
+            dwallet_mpc: dwallet_mpc_metrics,
+            components:
+                ValidatorComponentMetrics {
+                    dwallet_checkpoint: dwallet_checkpoint_metrics,
+                    system_checkpoint: system_checkpoint_metrics,
+                    ika_tx_validator: ika_tx_validator_metrics,
+                },
+            telemetry: _,
+        } = validator_metrics;
         Self::start_epoch_specific_validator_components(
             &config,
             state.clone(),
@@ -2522,8 +2577,9 @@ impl IkaNode {
     pub async fn monitor_reconfiguration(
         self: Arc<Self>,
         sui_client: Arc<SuiConnectorClient>,
-        dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
-        validator_component_metrics: ValidatorComponentMetrics,
+        // `None` outside validator mode; the branch that consumes it runs
+        // only when this process may take up validator duties.
+        validator_metrics: Option<ValidatorModeMetrics>,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<()> {
         loop {
@@ -3286,8 +3342,9 @@ impl IkaNode {
                             self.metrics.clone(),
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
-                            dwallet_mpc_metrics.clone(),
-                            validator_component_metrics.clone(),
+                            validator_metrics
+                                .clone()
+                                .expect("validator mode registers the validator metric families"),
                             sui_data_receivers.clone(),
                             self.noa_dwallet_finalized.clone(),
                             self.noa_system_finalized.clone(),
@@ -3628,7 +3685,12 @@ impl IkaNode {
             "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \
              before starting MPC"
         );
-        self.metrics.handoff_prepare_waiting.set(1);
+        // Present in validator mode, which is the only mode that reaches this
+        // barrier; the families are not registered anywhere else.
+        let telemetry = self.validator_telemetry.clone();
+        if let Some(telemetry) = &telemetry {
+            telemetry.handoff_prepare_waiting.set(1);
+        }
         let started_at = std::time::Instant::now();
         let mut retries: u64 = 0;
 
@@ -3687,10 +3749,12 @@ impl IkaNode {
 
             if ready {
                 let elapsed = started_at.elapsed();
-                self.metrics.handoff_prepare_waiting.set(0);
-                self.metrics
-                    .handoff_prepare_duration_seconds
-                    .observe(elapsed.as_secs_f64());
+                if let Some(telemetry) = &telemetry {
+                    telemetry.handoff_prepare_waiting.set(0);
+                    telemetry
+                        .handoff_prepare_duration_seconds
+                        .observe(elapsed.as_secs_f64());
+                }
                 info!(
                     next_epoch,
                     "prepare-then-start: epoch {next_epoch} handoff data ready+verified after \
@@ -3701,7 +3765,9 @@ impl IkaNode {
             }
 
             retries += 1;
-            self.metrics.handoff_prepare_retries_total.inc();
+            if let Some(telemetry) = &telemetry {
+                telemetry.handoff_prepare_retries_total.inc();
+            }
 
             // Anchor held but some certified output still missing locally:
             // retry fetching JUST the missing ones (the local-presence
