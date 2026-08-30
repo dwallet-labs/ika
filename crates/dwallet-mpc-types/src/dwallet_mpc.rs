@@ -288,10 +288,11 @@ pub enum DWalletSignatureAlgorithm {
 }
 
 impl DWalletSignatureAlgorithm {
-    /// True for the Fast Schnorr (VSS) signature algorithms. These are gated by
-    /// the `fast_schnorr_supported` protocol feature flag, support DKG-created
-    /// keys only (never imported), and do not support the combined
-    /// DKG-and-sign fast path.
+    /// True for the Fast Schnorr (VSS) signature algorithms. These support
+    /// DKG-created keys only (never imported), and do not support the combined
+    /// DKG-and-sign fast path. They are not externally requestable — the
+    /// on-chain supported-algorithm map omits them — but the internal presign
+    /// pool fills them so NOA VSS sign has presigns to consume.
     pub fn is_vss(&self) -> bool {
         matches!(
             self,

@@ -2449,9 +2449,9 @@ impl DWalletMPCManager {
         // Iterate the dedicated internal-pool driver — `network_presign_pool_algorithms`
         // is decoupled from `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`
         // (the externally-requestable list serialized into the on-chain
-        // `support_config`). VSS variants live ONLY here, gated on the feature
-        // flag: they feed NOA (network-owned-address) VSS sign but are not
-        // externally requestable on-chain.
+        // `support_config`). VSS variants live ONLY here: they feed NOA
+        // (network-owned-address) VSS sign but are not externally requestable
+        // on-chain.
         let pool_algorithms = network_presign_pool_algorithms();
         // Ordered (`BTreeSet`) for stable iteration/logging, but the sequence
         // counters are now PER (key, curve, algorithm) pool (not a single shared
