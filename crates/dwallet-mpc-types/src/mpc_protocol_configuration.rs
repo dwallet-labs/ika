@@ -202,15 +202,13 @@ pub fn supported_curve_to_signature_algorithms()
 /// This is the dedicated source for the internal pool iteration — deliberately
 /// independent of `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`,
 /// which is the externally-requestable list serialized into the on-chain
-/// `support_config`. Fast Schnorr (VSS) variants are included here when the
-/// feature is enabled at this protocol version, but are deliberately NOT in
-/// the externally-supported map — the on-chain `validate_curve_and_signature_algorithm`
-/// rejects external `request_sign` / `request_presign` for them, while the
-/// internal pool still fills so NOA VSS sign has presigns to consume.
-pub fn network_presign_pool_algorithms(
-    fast_schnorr_supported: bool,
-) -> Vec<(DWalletCurve, DWalletSignatureAlgorithm)> {
-    let mut algorithms = vec![
+/// `support_config`. Fast Schnorr (VSS) variants are included here, but are
+/// deliberately NOT in the externally-supported map — the on-chain
+/// `validate_curve_and_signature_algorithm` rejects external `request_sign` /
+/// `request_presign` for them, while the internal pool still fills so NOA VSS
+/// sign has presigns to consume.
+pub fn network_presign_pool_algorithms() -> Vec<(DWalletCurve, DWalletSignatureAlgorithm)> {
+    vec![
         (
             DWalletCurve::Secp256k1,
             DWalletSignatureAlgorithm::ECDSASecp256k1,
@@ -225,24 +223,19 @@ pub fn network_presign_pool_algorithms(
             DWalletCurve::Ristretto,
             DWalletSignatureAlgorithm::Schnorrkel,
         ),
-    ];
-    if fast_schnorr_supported {
-        algorithms.extend([
-            (
-                DWalletCurve::Secp256k1,
-                DWalletSignatureAlgorithm::TaprootVSS,
-            ),
-            (
-                DWalletCurve::Curve25519,
-                DWalletSignatureAlgorithm::EdDSAVSS,
-            ),
-            (
-                DWalletCurve::Ristretto,
-                DWalletSignatureAlgorithm::SchnorrkelVSS,
-            ),
-        ]);
-    }
-    algorithms
+        (
+            DWalletCurve::Secp256k1,
+            DWalletSignatureAlgorithm::TaprootVSS,
+        ),
+        (
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSAVSS,
+        ),
+        (
+            DWalletCurve::Ristretto,
+            DWalletSignatureAlgorithm::SchnorrkelVSS,
+        ),
+    ]
 }
 
 /// Convert curve u32 to DWalletCurve enum

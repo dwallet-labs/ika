@@ -34,9 +34,9 @@ use sui_types::base_types::ObjectID;
 use tracing::info;
 
 /// The Fast Schnorr (VSS) signature algorithms — their internal presign pools
-/// are driven alongside [`ALL_ALGORITHMS`] when `fast_schnorr_supported` is on,
-/// and their presign inputs additionally require the epoch's off-chain VSS
-/// validator key set to have been ingested.
+/// are driven alongside [`ALL_ALGORITHMS`], and their presign inputs
+/// additionally require the epoch's off-chain VSS validator key set to have
+/// been ingested.
 const VSS_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
     (
         DWalletCurve::Secp256k1,

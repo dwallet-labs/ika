@@ -2349,7 +2349,6 @@ impl DWalletMPCManager {
             self.next_active_committee.clone(),
             self.validator_mpc_keys_by_party_id.clone(),
             self.next_epoch_validator_mpc_keys.clone(),
-            &self.protocol_config,
         )
     }
 
@@ -2453,8 +2452,7 @@ impl DWalletMPCManager {
         // `support_config`). VSS variants live ONLY here, gated on the feature
         // flag: they feed NOA (network-owned-address) VSS sign but are not
         // externally requestable on-chain.
-        let pool_algorithms =
-            network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
+        let pool_algorithms = network_presign_pool_algorithms();
         // Ordered (`BTreeSet`) for stable iteration/logging, but the sequence
         // counters are now PER (key, curve, algorithm) pool (not a single shared
         // counter consumed in iteration order), so a pool's sequence stream no

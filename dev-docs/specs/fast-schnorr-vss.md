@@ -1,9 +1,13 @@
 # Fast Schnorr (VSS) signing
 
-Status: `ProtocolConfig::fast_schnorr_supported` is still a live flag, but it
-is ON at every supported version — it was turned on in the v4 arm and
-`MIN_PROTOCOL_VERSION` is now 7 — so the reject branch that reads it is
-unreachable in practice. The feature is reachable **only** on the internal
+Status: `ProtocolConfig::fast_schnorr_supported` was turned on in the v4 arm
+and `MIN_PROTOCOL_VERSION` is now 7, so it is ON at every supported version.
+Nothing reads it any more: the Rust-side reject branch and the conditional
+arm of the internal presign pool list were both unreachable and have been
+removed, so the VSS algorithms are unconditional. The flag field itself stays
+because the flag set is BCS-serialized into the `ProtocolConfig` digest that
+rides `AuthorityCapabilitiesV1` through consensus. The feature is reachable
+**only** on the internal
 network-owned-address (NOA) sign path; the external (user-dWallet-driven) VSS
 sign path is implemented but `#[ignore]`d and must not decode externally yet.
 That external limit is a code state, not a protocol-version gate. Pairs with
@@ -106,12 +110,12 @@ against the active committee directly.
 
 ## Decision rules
 
-- `fast_schnorr_supported` is the master gate, and it is on at every
-  supported version.
-- The is-VSS request gate rejects a VSS request **only** when
-  `fast_schnorr_supported` is off; it never parks or rejects an ordinary
-  (non-VSS) sign. With the flag on everywhere, that reject arm is currently
-  unreachable.
+- `fast_schnorr_supported` was the master gate; it is on at every supported
+  version, so the VSS algorithms are now unconditional and no code reads the
+  flag. The Rust-side is-VSS request rejection is gone — with the flag on
+  everywhere it could never fire, and it never parked or rejected an ordinary
+  (non-VSS) sign. On-chain `validate_curve_and_signature_algorithm` remains
+  the enforcement for external requests.
 - Internal NOA-VSS is reachable; external user-driven VSS sign is not yet
   enabled.
 - **Epoch-entry parking of VSS presign top-ups.** Internal presign top-up

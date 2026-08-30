@@ -55,7 +55,6 @@ async fn sign_flow_test() {
             DWalletCurve::Curve25519,
             DWalletSignatureAlgorithm::EdDSA,
         ),
-        enabled = pc.internal_presign_sessions_enabled(),
         "sign_flow_test: EdDSA presign config"
     );
 
