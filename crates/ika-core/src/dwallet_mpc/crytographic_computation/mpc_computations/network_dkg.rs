@@ -1038,6 +1038,204 @@ pub(crate) fn spawn_network_key_id_registration(
     });
 }
 
+/// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
+pub(crate) fn build_network_encryption_key_public_data(
+    epoch: u64,
+    dkg_at_epoch: u64,
+    state: NetworkDecryptionKeyPublicOutputType,
+    latest_network_reconfiguration_public_output: Option<
+        VersionedDecryptionKeyReconfigurationOutput,
+    >,
+    network_dkg_output: VersionedNetworkDkgOutput,
+    secp256k1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256k1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    >,
+    secp256r1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256r1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+    >,
+    ristretto_protocol_public_parameters: Arc<
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    >,
+    ristretto_decryption_key_share_public_parameters: Arc<
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+    >,
+    curve25519_protocol_public_parameters: Arc<
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    >,
+    curve25519_decryption_key_share_public_parameters: Arc<
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    >,
+    noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
+) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+    Ok(NetworkEncryptionKeyPublicData {
+        epoch,
+        dkg_at_epoch,
+        state,
+        latest_network_reconfiguration_public_output,
+        network_dkg_output,
+        secp256k1_protocol_public_parameters,
+        secp256k1_decryption_key_share_public_parameters,
+        secp256r1_protocol_public_parameters,
+        secp256r1_decryption_key_share_public_parameters,
+        ristretto_protocol_public_parameters,
+        ristretto_decryption_key_share_public_parameters,
+        curve25519_protocol_public_parameters,
+        curve25519_decryption_key_share_public_parameters,
+        secp256k1_network_owned_address_dkg_output: noa_dkg_data.secp256k1.dkg_output.clone(),
+        secp256r1_network_owned_address_dkg_output: noa_dkg_data.secp256r1.dkg_output.clone(),
+        curve25519_network_owned_address_dkg_output: noa_dkg_data.curve25519.dkg_output.clone(),
+        ristretto_network_owned_address_dkg_output: noa_dkg_data.ristretto.dkg_output.clone(),
+        secp256k1_network_owned_address_public_key: noa_dkg_data.secp256k1.public_key.clone(),
+        secp256r1_network_owned_address_public_key: noa_dkg_data.secp256r1.public_key.clone(),
+        curve25519_network_owned_address_public_key: noa_dkg_data.curve25519.public_key.clone(),
+        ristretto_network_owned_address_public_key: noa_dkg_data.ristretto.public_key.clone(),
+    })
+}
+
+/// Times one instantiation sub-call, logs its duration at info level, and
+/// feeds the `dwallet_mpc_network_key_instantiation_sub_call_duration_seconds`
+/// histogram for cross-epoch/release trending. The instantiation dominates
+/// the epoch-boundary cost; the per-sub-call breakdown localizes any
+/// slowdown to a concrete operation instead of one opaque call.
+pub(crate) fn timed_sub_call<T, E>(
+    metrics: &DWalletMPCMetrics,
+    label: &str,
+    sub_call: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let start = Instant::now();
+    let result = sub_call();
+    let elapsed = start.elapsed();
+    metrics
+        .network_key_instantiation_sub_call_duration_seconds
+        .with_label_values(&[label])
+        .observe(elapsed.as_secs_f64());
+    info!(
+        sub_call = label,
+        elapsed_ms = elapsed.as_millis() as u64,
+        "network key instantiation sub-call finished"
+    );
+    result
+}
+
+fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
+    epoch: u64,
+    dkg_at_epoch: u64,
+    access_structure: &WeightedThresholdAccessStructure,
+    public_output_bytes: &SerializedWrappedMPCPublicOutput,
+    metrics: &DWalletMPCMetrics,
+) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+    let mpc_public_output: VersionedNetworkDkgOutput =
+        bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
+
+    // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
+    // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
+    // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
+    // Each sub-call is individually timed: the instantiation dominates the
+    // epoch-boundary cost, and the per-sub-call breakdown localizes any
+    // slowdown to a concrete operation instead of one opaque call.
+    macro_rules! build_from_public_output {
+        ($public_output:expr) => {{
+            let public_output = $public_output;
+            let secp256k1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_protocol_public_parameters",
+                || public_output.secp256k1_protocol_public_parameters(),
+            )?);
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_decryption_key_share",
+                || public_output.secp256k1_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let secp256r1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_protocol_public_parameters",
+                || public_output.secp256r1_protocol_public_parameters(),
+            )?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_decryption_key_share",
+                || public_output.secp256r1_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let ristretto_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_protocol_public_parameters",
+                || public_output.ristretto_protocol_public_parameters(),
+            )?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_decryption_key_share",
+                || public_output.ristretto_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let curve25519_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_protocol_public_parameters",
+                || public_output.curve25519_protocol_public_parameters(),
+            )?);
+            let curve25519_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_decryption_key_share",
+                || {
+                    public_output
+                        .curve25519_decryption_key_share_public_parameters(access_structure)
+                },
+            )?);
+
+            let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
+                compute_all_network_owned_address_dkg_outputs(
+                    &secp256k1_protocol_public_parameters,
+                    &secp256r1_protocol_public_parameters,
+                    &ristretto_protocol_public_parameters,
+                    &curve25519_protocol_public_parameters,
+                )
+            })?;
+
+            build_network_encryption_key_public_data(
+                epoch,
+                dkg_at_epoch,
+                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                None,
+                mpc_public_output.clone(),
+                secp256k1_protocol_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
+                secp256r1_protocol_public_parameters,
+                secp256r1_decryption_key_share_public_parameters,
+                ristretto_protocol_public_parameters,
+                ristretto_decryption_key_share_public_parameters,
+                curve25519_protocol_public_parameters,
+                curve25519_decryption_key_share_public_parameters,
+                &noa_dkg_data,
+            )
+        }};
+    }
+
+    match &mpc_public_output {
+        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
+            "V1 network DKG anchors are not supported on this instantiation path              (deployed keys instantiate from their reconfiguration output)."
+                .to_string(),
+        )),
+        // The crypto types for the V2 (bwd-compat) and V3 (pre-aggregation)
+        // shapes were removed from inkrypto; the variants remain only for BCS
+        // variant-index stability.
+        VersionedNetworkDkgOutput::V2(_) | VersionedNetworkDkgOutput::V3(_) => {
+            Err(DwalletMPCError::InternalError(
+                "pre-aggregation (V2/V3) network DKG outputs are no longer supported for instantiation."
+                    .to_string(),
+            ))
+        }
+        VersionedNetworkDkgOutput::V4(public_output_bytes) => {
+            let public_output: twopc_mpc::decentralized_party::dkg::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            build_from_public_output!(public_output)
+        }
+    }
+}
+
 /// One-off tool (not a unit test): fetches the deployed network key from
 /// testnet/mainnet and prints its `NetworkKeyId` (curve25519 NOA ed25519
 /// pubkey) for baking into the temporary static ObjectID->NetworkKeyId
@@ -1296,204 +1494,6 @@ mod network_key_id_derivation_tool {
                     ),
                 }
             }
-        }
-    }
-}
-
-/// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
-pub(crate) fn build_network_encryption_key_public_data(
-    epoch: u64,
-    dkg_at_epoch: u64,
-    state: NetworkDecryptionKeyPublicOutputType,
-    latest_network_reconfiguration_public_output: Option<
-        VersionedDecryptionKeyReconfigurationOutput,
-    >,
-    network_dkg_output: VersionedNetworkDkgOutput,
-    secp256k1_protocol_public_parameters: Arc<
-        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    >,
-    secp256k1_decryption_key_share_public_parameters: Arc<
-        class_groups::Secp256k1DecryptionKeySharePublicParameters,
-    >,
-    secp256r1_protocol_public_parameters: Arc<
-        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
-    >,
-    secp256r1_decryption_key_share_public_parameters: Arc<
-        class_groups::Secp256r1DecryptionKeySharePublicParameters,
-    >,
-    ristretto_protocol_public_parameters: Arc<
-        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
-    >,
-    ristretto_decryption_key_share_public_parameters: Arc<
-        class_groups::RistrettoDecryptionKeySharePublicParameters,
-    >,
-    curve25519_protocol_public_parameters: Arc<
-        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
-    >,
-    curve25519_decryption_key_share_public_parameters: Arc<
-        class_groups::Curve25519DecryptionKeySharePublicParameters,
-    >,
-    noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
-    Ok(NetworkEncryptionKeyPublicData {
-        epoch,
-        dkg_at_epoch,
-        state,
-        latest_network_reconfiguration_public_output,
-        network_dkg_output,
-        secp256k1_protocol_public_parameters,
-        secp256k1_decryption_key_share_public_parameters,
-        secp256r1_protocol_public_parameters,
-        secp256r1_decryption_key_share_public_parameters,
-        ristretto_protocol_public_parameters,
-        ristretto_decryption_key_share_public_parameters,
-        curve25519_protocol_public_parameters,
-        curve25519_decryption_key_share_public_parameters,
-        secp256k1_network_owned_address_dkg_output: noa_dkg_data.secp256k1.dkg_output.clone(),
-        secp256r1_network_owned_address_dkg_output: noa_dkg_data.secp256r1.dkg_output.clone(),
-        curve25519_network_owned_address_dkg_output: noa_dkg_data.curve25519.dkg_output.clone(),
-        ristretto_network_owned_address_dkg_output: noa_dkg_data.ristretto.dkg_output.clone(),
-        secp256k1_network_owned_address_public_key: noa_dkg_data.secp256k1.public_key.clone(),
-        secp256r1_network_owned_address_public_key: noa_dkg_data.secp256r1.public_key.clone(),
-        curve25519_network_owned_address_public_key: noa_dkg_data.curve25519.public_key.clone(),
-        ristretto_network_owned_address_public_key: noa_dkg_data.ristretto.public_key.clone(),
-    })
-}
-
-/// Times one instantiation sub-call, logs its duration at info level, and
-/// feeds the `dwallet_mpc_network_key_instantiation_sub_call_duration_seconds`
-/// histogram for cross-epoch/release trending. The instantiation dominates
-/// the epoch-boundary cost; the per-sub-call breakdown localizes any
-/// slowdown to a concrete operation instead of one opaque call.
-pub(crate) fn timed_sub_call<T, E>(
-    metrics: &DWalletMPCMetrics,
-    label: &str,
-    sub_call: impl FnOnce() -> Result<T, E>,
-) -> Result<T, E> {
-    let start = Instant::now();
-    let result = sub_call();
-    let elapsed = start.elapsed();
-    metrics
-        .network_key_instantiation_sub_call_duration_seconds
-        .with_label_values(&[label])
-        .observe(elapsed.as_secs_f64());
-    info!(
-        sub_call = label,
-        elapsed_ms = elapsed.as_millis() as u64,
-        "network key instantiation sub-call finished"
-    );
-    result
-}
-
-fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
-    epoch: u64,
-    dkg_at_epoch: u64,
-    access_structure: &WeightedThresholdAccessStructure,
-    public_output_bytes: &SerializedWrappedMPCPublicOutput,
-    metrics: &DWalletMPCMetrics,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
-    let mpc_public_output: VersionedNetworkDkgOutput =
-        bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
-
-    // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
-    // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
-    // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
-    // Each sub-call is individually timed: the instantiation dominates the
-    // epoch-boundary cost, and the per-sub-call breakdown localizes any
-    // slowdown to a concrete operation instead of one opaque call.
-    macro_rules! build_from_public_output {
-        ($public_output:expr) => {{
-            let public_output = $public_output;
-            let secp256k1_protocol_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "secp256k1_protocol_public_parameters",
-                || public_output.secp256k1_protocol_public_parameters(),
-            )?);
-            let secp256k1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "secp256k1_decryption_key_share",
-                || public_output.secp256k1_decryption_key_share_public_parameters(access_structure),
-            )?);
-            let secp256r1_protocol_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "secp256r1_protocol_public_parameters",
-                || public_output.secp256r1_protocol_public_parameters(),
-            )?);
-            let secp256r1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "secp256r1_decryption_key_share",
-                || public_output.secp256r1_decryption_key_share_public_parameters(access_structure),
-            )?);
-            let ristretto_protocol_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "ristretto_protocol_public_parameters",
-                || public_output.ristretto_protocol_public_parameters(),
-            )?);
-            let ristretto_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "ristretto_decryption_key_share",
-                || public_output.ristretto_decryption_key_share_public_parameters(access_structure),
-            )?);
-            let curve25519_protocol_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "curve25519_protocol_public_parameters",
-                || public_output.curve25519_protocol_public_parameters(),
-            )?);
-            let curve25519_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
-                metrics,
-                "curve25519_decryption_key_share",
-                || {
-                    public_output
-                        .curve25519_decryption_key_share_public_parameters(access_structure)
-                },
-            )?);
-
-            let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
-                compute_all_network_owned_address_dkg_outputs(
-                    &secp256k1_protocol_public_parameters,
-                    &secp256r1_protocol_public_parameters,
-                    &ristretto_protocol_public_parameters,
-                    &curve25519_protocol_public_parameters,
-                )
-            })?;
-
-            build_network_encryption_key_public_data(
-                epoch,
-                dkg_at_epoch,
-                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                None,
-                mpc_public_output.clone(),
-                secp256k1_protocol_public_parameters,
-                secp256k1_decryption_key_share_public_parameters,
-                secp256r1_protocol_public_parameters,
-                secp256r1_decryption_key_share_public_parameters,
-                ristretto_protocol_public_parameters,
-                ristretto_decryption_key_share_public_parameters,
-                curve25519_protocol_public_parameters,
-                curve25519_decryption_key_share_public_parameters,
-                &noa_dkg_data,
-            )
-        }};
-    }
-
-    match &mpc_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-            "V1 network DKG anchors are not supported on this instantiation path              (deployed keys instantiate from their reconfiguration output)."
-                .to_string(),
-        )),
-        // The crypto types for the V2 (bwd-compat) and V3 (pre-aggregation)
-        // shapes were removed from inkrypto; the variants remain only for BCS
-        // variant-index stability.
-        VersionedNetworkDkgOutput::V2(_) | VersionedNetworkDkgOutput::V3(_) => {
-            Err(DwalletMPCError::InternalError(
-                "pre-aggregation (V2/V3) network DKG outputs are no longer supported for instantiation."
-                    .to_string(),
-            ))
-        }
-        VersionedNetworkDkgOutput::V4(public_output_bytes) => {
-            let public_output: twopc_mpc::decentralized_party::dkg::PublicOutput =
-                bcs::from_bytes(public_output_bytes)?;
-            build_from_public_output!(public_output)
         }
     }
 }
