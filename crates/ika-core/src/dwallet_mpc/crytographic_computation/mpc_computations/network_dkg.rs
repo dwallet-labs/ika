@@ -1300,86 +1300,6 @@ mod network_key_id_derivation_tool {
     }
 }
 
-/// Reconstructs the full-shape aggregated (V4) network DKG output in memory
-/// from a V1 or V2 anchor and an aggregated (V4) reconfiguration output.
-///
-/// Neither pre-V3 anchor carries the trailing
-/// `threshold_encryption_to_sharing_output` that the full
-/// `decentralized_party::dkg::PublicOutput` carries; that field is produced
-/// only by the threshold-encryption-to-sharing sub-protocol, which those
-/// anchors predate. Once a full reconfiguration output is available it
-/// supplies that field, and the full DKG output is reconstructed by combining
-/// the anchor's reconfiguration-invariant class-group DKG output with the
-/// reconfiguration output (`PublicOutput::new_from_reconfiguration_output`).
-/// A V2 anchor is a `decentralized_party::dkg::PublicOutputCore`, whose
-/// class-group DKG output `PublicOutputCore::class_group_dkg_output` projects
-/// out; a V1 anchor (the deployed mainnet/testnet shape, written by a
-/// pre-1.1.8 binary) IS the raw `class_groups::dkg::PublicOutput` and decodes
-/// directly.
-///
-/// Returns `Some` only when the reconfiguration output's format is ahead of
-/// the anchor's — (V1/V2 anchor, V4 reconfiguration output); `None` when the
-/// anchor is already V4 or no V4 reconfiguration output exists. Encountering
-/// a pre-aggregation (V3) anchor or reconfiguration output is a hard error:
-/// their inkrypto types were removed, so such state must have migrated to V4
-/// (on a binary that still carried those types) before this binary runs. The
-/// reconstruction is a pure (RNG-free) function of its inputs, so every
-/// validator holding the same anchor and the same quorum-agreed
-/// reconfiguration output derives byte-identical V4 bytes.
-pub(crate) fn reconstruct_full_network_dkg_output(
-    network_dkg_output: &VersionedNetworkDkgOutput,
-    latest_network_reconfiguration_public_output: Option<
-        &VersionedDecryptionKeyReconfigurationOutput,
-    >,
-) -> DwalletMPCResult<Option<VersionedNetworkDkgOutput>> {
-    // Only an aggregated (V4) reconfiguration output can drive the
-    // reconstruction: the pre-aggregation (V3) types were removed from
-    // inkrypto, so a V3 latest output is a hard error rather than a silent
-    // no-op (leaving it in place would wedge every downstream decode anyway).
-    let reconfiguration_output_bytes = match latest_network_reconfiguration_public_output {
-        Some(VersionedDecryptionKeyReconfigurationOutput::V4(bytes)) => bytes,
-        Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
-            return Err(DwalletMPCError::InternalError(
-                "pre-aggregation (V3) reconfiguration outputs are no longer supported".to_string(),
-            ));
-        }
-        _ => return Ok(None),
-    };
-
-    let class_group_dkg_output = match network_dkg_output {
-        VersionedNetworkDkgOutput::V1(class_group_dkg_output_bytes) => {
-            bcs::from_bytes(class_group_dkg_output_bytes)?
-        }
-        VersionedNetworkDkgOutput::V2(dkg_public_output_core_bytes) => {
-            let dkg_public_output_core: dkg::PublicOutputCore =
-                bcs::from_bytes(dkg_public_output_core_bytes)?;
-            dkg_public_output_core.class_group_dkg_output()
-        }
-        // A V3 (pre-aggregation full-shape) anchor can no longer be decoded;
-        // the V3→V4 anchor migration must have completed (on a binary that
-        // still carried the pre-aggregation types) before this binary runs.
-        VersionedNetworkDkgOutput::V3(_) => {
-            return Err(DwalletMPCError::InternalError(
-                "pre-aggregation (V3) network DKG anchors are no longer supported".to_string(),
-            ));
-        }
-        VersionedNetworkDkgOutput::V4(_) => return Ok(None),
-    };
-
-    let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
-        bcs::from_bytes(reconfiguration_output_bytes)?;
-
-    let full_network_dkg_output = dkg::PublicOutput::new_from_reconfiguration_output(
-        class_group_dkg_output,
-        reconfiguration_output,
-    )
-    .map_err(DwalletMPCError::from)?;
-
-    Ok(Some(VersionedNetworkDkgOutput::V4(bcs::to_bytes(
-        &full_network_dkg_output,
-    )?)))
-}
-
 /// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
 pub(crate) fn build_network_encryption_key_public_data(
     epoch: u64,
@@ -1415,18 +1335,12 @@ pub(crate) fn build_network_encryption_key_public_data(
     >,
     noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
-    let reconstructed_full_network_dkg_output = reconstruct_full_network_dkg_output(
-        &network_dkg_output,
-        latest_network_reconfiguration_public_output.as_ref(),
-    )?;
-
     Ok(NetworkEncryptionKeyPublicData {
         epoch,
         dkg_at_epoch,
         state,
         latest_network_reconfiguration_public_output,
         network_dkg_output,
-        reconstructed_full_network_dkg_output,
         secp256k1_protocol_public_parameters,
         secp256k1_decryption_key_share_public_parameters,
         secp256r1_protocol_public_parameters,
@@ -1581,101 +1495,5 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 bcs::from_bytes(public_output_bytes)?;
             build_from_public_output!(public_output)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::reconstruct_full_network_dkg_output;
-    use dwallet_mpc_types::dwallet_mpc::{
-        VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    };
-
-    /// The reconstruction must fire ONLY when the reconfiguration output's
-    /// format is ahead of the anchor's: a V1/V2 anchor with an aggregated
-    /// (V4) reconfiguration output. Combinations without a V4 reconfiguration
-    /// output return `None` without touching the crypto decoders (so dummy
-    /// bytes are fine there); the firing combinations must engage the
-    /// decoders (errors on garbage); and pre-aggregation (V3) state — whose
-    /// inkrypto types were removed — must be a hard error, never a silent
-    /// `None`.
-    #[test]
-    fn reconstruct_full_network_dkg_output_gating() {
-        use VersionedDecryptionKeyReconfigurationOutput as Reconfiguration;
-        use VersionedNetworkDkgOutput as Dkg;
-
-        // V2 DKG output but no reconfiguration output yet (e.g. fresh DKG).
-        assert!(
-            reconstruct_full_network_dkg_output(&Dkg::V2(vec![]), None)
-                .unwrap()
-                .is_none()
-        );
-
-        // V2 DKG output with a V2 (core-only) reconfiguration output: the
-        // trailing threshold-encryption-to-sharing field is absent, so the
-        // full DKG output cannot be reconstructed.
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V2(vec![]),
-                Some(&Reconfiguration::V2(vec![])),
-            )
-            .unwrap()
-            .is_none()
-        );
-
-        // V1 anchor (the deployed shape) with only a V2 reconfiguration
-        // output: no threshold-encryption-to-sharing field yet, no
-        // reconstruction.
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V1(vec![]),
-                Some(&Reconfiguration::V2(vec![])),
-            )
-            .unwrap()
-            .is_none()
-        );
-
-        // A V4 (aggregated) anchor never reconstructs — it is the end state.
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V4(vec![]),
-                Some(&Reconfiguration::V4(vec![])),
-            )
-            .unwrap()
-            .is_none()
-        );
-
-        // V1 anchor + V4 reconfiguration output DOES engage the
-        // reconstruction — with garbage bytes it must fail decoding rather
-        // than return `None` (a `None` here would silently skip the deployed
-        // keys' one-time anchor migration).
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V1(vec![]),
-                Some(&Reconfiguration::V4(vec![])),
-            )
-            .is_err()
-        );
-
-        // Pre-aggregation (V3) reconfiguration output: undecodable with the
-        // current crypto crates — hard error, never a silent `None`.
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V1(vec![]),
-                Some(&Reconfiguration::V3(vec![])),
-            )
-            .is_err()
-        );
-
-        // Pre-aggregation (V3) anchor with a V4 reconfiguration output:
-        // the V3→V4 anchor migration must have completed on a binary that
-        // still carried the pre-aggregation types — hard error.
-        assert!(
-            reconstruct_full_network_dkg_output(
-                &Dkg::V3(vec![]),
-                Some(&Reconfiguration::V4(vec![])),
-            )
-            .is_err()
-        );
     }
 }

@@ -109,35 +109,6 @@ pub struct NetworkEncryptionKeyPublicData {
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
-
-    /// Full-shape aggregated (V4) network DKG output, reconstructed in memory
-    /// from [`Self::network_dkg_output`] and the latest reconfiguration
-    /// output.
-    ///
-    /// The deployed network keys' anchors (V1: the raw class-groups DKG
-    /// output; V2: a `PublicOutputCore`) lack the trailing
-    /// `threshold_encryption_to_sharing_output` that the full
-    /// `decentralized_party::dkg::PublicOutput` carries. That field is
-    /// produced only by the threshold-encryption-to-sharing sub-protocol,
-    /// which those anchors predate. An aggregated (V4) reconfiguration output
-    /// supplies it, and the full V4 DKG output is reconstructed by combining
-    /// the anchor's reconfiguration-invariant class-group DKG output with the
-    /// reconfiguration output.
-    ///
-    /// `Some` only at a migration epoch — a V1/V2 anchor with an aggregated
-    /// (V4) reconfiguration output; `None` otherwise (a V4 anchor is the end
-    /// state, and a V2-only reconfiguration output lacks the trailing field).
-    /// Pre-aggregation (V3) state is a hard error at instantiation — its
-    /// inkrypto types were removed.
-    ///
-    /// This `Some` value DRIVES the one-time canonical anchor migration: the
-    /// instantiation-completion path mirrors it via `cache_network_dkg_output`,
-    /// which flips the perpetual digest mirror and persists the V4 blob, after
-    /// which the off-chain overlay (and hence [`Self::network_dkg_output`]
-    /// itself) resolves V4 and this becomes `None`. Session identifiers are
-    /// keyed on the migration-invariant `NetworkKeyId`, not these bytes, so the
-    /// flip does not perturb them.
-    pub reconstructed_full_network_dkg_output: Option<VersionedNetworkDkgOutput>,
     pub secp256k1_protocol_public_parameters:
         Arc<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters>,
     /// The public parameters of the decryption key shares,
@@ -645,16 +616,6 @@ impl NetworkEncryptionKeyPublicData {
 
     pub fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
         &self.network_dkg_output
-    }
-
-    /// The forward-looking full-shape aggregated (V4) network DKG output
-    /// reconstructed in memory, or `None` when no reconstruction was possible
-    /// this epoch. See
-    /// [`Self::reconstructed_full_network_dkg_output`] — this is NOT the
-    /// consensus anchor; use [`Self::network_dkg_output`] for session
-    /// identifiers and handoff digests.
-    pub fn reconstructed_full_network_dkg_output(&self) -> Option<&VersionedNetworkDkgOutput> {
-        self.reconstructed_full_network_dkg_output.as_ref()
     }
 
     pub fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {

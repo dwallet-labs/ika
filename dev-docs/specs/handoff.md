@@ -23,21 +23,18 @@ next epoch inherits.
 - `items` — `(HandoffItemKey, digest)` pairs, sorted strictly ascending
   by key:
   - `NetworkDkgOutput { key_id }` — the canonical network DKG output.
-    Stable across epochs WITHIN a representation, with exactly one
-    consensus-deterministic transition over the key's lifetime: a
-    mainnet-v1.1.8-origin key's on-chain DKG anchor is V1 (the raw
-    `class_groups::dkg::PublicOutput`) and its reconfiguration outputs are
-    V2; the canonical DKG output migrates ONCE to the aggregated V4
-    `decentralized_party::dkg::PublicOutput`, driven by the cert-pinned
-    reconfiguration output becoming V4. Every validator then reconstructs
-    the full V4 output (`reconstruct_full_network_dkg_output`) and flips
-    its perpetual digest mirror. The flip is epoch-uniform because the
-    cert-pinned reconfiguration output is identical committee-wide.
-    Pre-aggregation V3 is NOT a migration target and is not a
-    representation this binary can read: a V3 anchor and a V3
-    reconfiguration output are each a hard error, because the inkrypto
-    types behind them were removed. A key whose live state was still V3
-    must have migrated to V4 before running this binary.
+    Stable across epochs. Historically it migrated once per key, from a
+    V1/V2 anchor to the aggregated V4
+    `decentralized_party::dkg::PublicOutput`: every validator
+    reconstructed the full V4 output from its anchor plus the cert-pinned
+    reconfiguration output and flipped its perpetual digest mirror. That
+    migration has completed on both live networks — every reporting
+    validator's canonical-version gauge reads 4 — so the reconstruction
+    machinery is gone and the mirror now simply caches the adopted anchor.
+    Pre-aggregation V3 is not a representation this binary can read: a V3
+    anchor and a V3 reconfiguration output are each a hard error, because
+    the inkrypto types behind them were removed. A key whose live state
+    was still V3 must have migrated to V4 before running this binary.
   - `NetworkReconfigurationOutput { key_id }` — this epoch's
     reconfiguration output. Its digest MUST come from the epoch-keyed
     perpetual slice (`network_reconfiguration_output_digest_by_epoch_and_key`,
