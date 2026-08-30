@@ -221,6 +221,17 @@ drain is healthy and this gauge reads 0, so a `1` means the gap went flat or
 started growing and something other than the backlog is holding the service
 up.
 
+The condition's fifteen-minute clock runs over that same catch-up gap, and
+this is load-bearing rather than incidental. It ran over
+`ika_mpc_consensus_round_lag` until ika #2095, which the bounded round
+channel had already made unusable for it (see the paragraph below): the lag
+reaches its low-water mark within seconds of boot and then sits slightly
+above that low for the whole of a boot replay, so **any** replay longer than
+the bound raised this alarm — on the healthy case, twice in production —
+while a genuinely stuck drain's lag jitter kept resetting the clock. The gap
+falls on every round a replay drains and freezes only when the drain stops
+closing on the tip, which is the distinction this alert is for.
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** It can carry
 neither alert. The fold hands each round to the drain over a bounded blocking
 channel (capacity 1,024) and the drain consumes during the boot replay, so the

@@ -179,6 +179,12 @@ pub struct EpochMetrics {
     /// being drained (healthy, no action, watch
     /// `ika_dwallet_mpc_catchup_gap_rounds` fall) from one that has stopped
     /// draining (this node will not come back on its own).
+    ///
+    /// The no-new-low clock behind it runs over that same catch-up gap, and
+    /// not over `ika_mpc_consensus_round_lag`: the bounded round channel
+    /// clamps the lag near zero, so a boot replay holds it flat above a
+    /// low-water mark set seconds after boot and this condition latched on
+    /// every replay that ran past the bound (ika #2095).
     pub mpc_catch_up_stuck_condition_active: IntGauge,
 
     /// Consensus timestamp (unix seconds) of the latest commit processed at
