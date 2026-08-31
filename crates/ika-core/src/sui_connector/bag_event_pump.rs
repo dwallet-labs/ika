@@ -55,9 +55,8 @@ pub struct BagEventPump {
     new_requests_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     uncompleted_requests_sender: watch::Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     metrics: Arc<OcsMetrics>,
-    /// Connector-level metrics: the pump feeds the same
-    /// `uncompleted_events_backlog` gauge the legacy (v≤3) syncer poller
-    /// feeds, so the series name is path-independent.
+    /// Connector-level metrics: the pump is the sole writer of the
+    /// `uncompleted_events_backlog` gauge.
     connector_metrics: Arc<SuiConnectorMetrics>,
     poll_interval: Duration,
     seen: HashSet<ObjectID>,
@@ -192,7 +191,7 @@ impl BagEventPump {
                     consecutive_failures += 1;
                     backoff = next_pump_backoff(backoff, self.poll_interval);
                     // Escalate to a single error once sustained; from then on the
-                    // grown backoff throttles the rate to ~1 line / 30s, so a long
+                    // grown backoff throttles the rate to ~1 line / 5s, so a long
                     // outage no longer floods the log at the poll rate.
                     if consecutive_failures >= PUMP_FAILURE_ESCALATION_TICKS {
                         error!(
@@ -277,8 +276,8 @@ impl BagEventPump {
             );
             let _ = self.new_requests_sender.send(delta_requests);
         }
-        // Same backlog gauge the legacy (v≤3) poller feeds: "chain has N
-        // uncompleted sessions from this validator's perspective".
+        // The backlog gauge: "chain has N uncompleted sessions from this
+        // validator's perspective".
         self.connector_metrics
             .uncompleted_events_backlog
             .set(snapshot_requests.len() as i64);

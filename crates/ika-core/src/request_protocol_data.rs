@@ -222,8 +222,9 @@ pub enum ProtocolData {
 }
 
 impl ProtocolData {
-    /// Returns the signature algorithm this request operates on, if any. Used by
-    /// the protocol-version feature gate (e.g. Fast Schnorr / VSS).
+    /// Returns the signature algorithm this request operates on, if any. Used for
+    /// metric labels and to detect VSS (Fast Schnorr) presigns, whose private
+    /// output must be persisted.
     pub fn signature_algorithm(&self) -> Option<DWalletSignatureAlgorithm> {
         match self {
             ProtocolData::Presign { data, .. } => Some(data.signature_algorithm),

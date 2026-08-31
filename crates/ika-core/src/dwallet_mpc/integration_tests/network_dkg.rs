@@ -1,10 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! This module contains the DWalletMPCService struct.
-//! It is responsible to read DWallet MPC messages from the
-//! local DB every [`READ_INTERVAL_MS`] seconds
-//! and forward them to the [`DWalletMPCManager`].
+//! Integration tests for the network DKG and network-key reconfiguration
+//! flows, plus the shared `create_network_key_test` / `reconfigure_network_key`
+//! helpers other test modules build on.
 
 use crate::SuiDataSenders;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::spawn_network_encryption_key_public_data_instantiation;

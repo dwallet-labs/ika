@@ -31,7 +31,7 @@
 //!   directly, extracted from a Sui genesis blob (verified against the
 //!   compiled-in chain identifier on public chains). The ratchet then walks
 //!   the end-of-epoch checkpoint chain forward from there.
-//! - If neither perpetual state nor bootstrap is available, [`Self::open`]
+//! - If neither perpetual state nor bootstrap is available, [`CommitteeStore::open`]
 //!   errors.
 
 use std::collections::BTreeMap;

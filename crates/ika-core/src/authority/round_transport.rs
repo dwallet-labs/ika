@@ -73,8 +73,8 @@ use tracing::warn;
 /// Smaller means the fold is pinned to the drain sooner; larger means more
 /// rounds resident in memory, and — once the cap exceeds the burst depth —
 /// no blocking at all, which is the table design's behaviour bought with RAM
-/// instead of disk. 1024 is roughly a few seconds of consensus at mainnet
-/// commit rates: enough that ordinary jitter does not couple the two, small
+/// instead of disk. 1024 is roughly a minute of consensus at mainnet commit
+/// rates (~19.5 rounds/s): enough that ordinary jitter does not couple the two, small
 /// enough that a sustained backlog is felt rather than hoarded.
 pub const DEFAULT_ROUND_CHANNEL_CAPACITY: usize = 1024;
 

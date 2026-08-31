@@ -194,9 +194,8 @@ pub struct EpochMetrics {
     pub consensus_last_committed_timestamp_seconds: IntGauge,
 
     /// The configured `mpc_data_freeze_grace_rounds` for the current
-    /// protocol version, or `-1` when the off-chain-metadata feature
-    /// (and thus the freeze) is disabled for it or the value is
-    /// undefined. Constant within an epoch.
+    /// protocol version, or `-1` when that version leaves the value
+    /// undefined (and thus runs no freeze). Constant within an epoch.
     pub dwallet_mpc_data_freeze_grace_rounds: IntGauge,
 
     /// The consensus leader round at which this epoch's mpc_data input

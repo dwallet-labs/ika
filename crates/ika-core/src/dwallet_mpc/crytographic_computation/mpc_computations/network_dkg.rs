@@ -1134,8 +1134,9 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
     // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
-    // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
-    // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
+    // DKG `PublicOutput`. Only the V4 (aggregated) shape reaches it — the match
+    // below rejects every other variant — so the sole instantiation is with
+    // `twopc_mpc::decentralized_party::dkg::PublicOutput`.
     // Each sub-call is individually timed: the instantiation dominates the
     // epoch-boundary cost, and the per-sub-call breakdown localizes any
     // slowdown to a concrete operation instead of one opaque call.
@@ -1423,8 +1424,8 @@ mod network_key_id_derivation_tool {
                         .expect("anchor bytes must decode as VersionedNetworkDkgOutput");
                 match &anchor {
                     VersionedNetworkDkgOutput::V1(v1_inner) => {
-                        // The exact decode the v3 bwd-compat V1 arm performs on
-                        // every reconfiguration of a deployed key.
+                        // The exact decode the reconfiguration party's V1-anchor
+                        // arm performs on every reconfiguration of a deployed key.
                         let decoded: class_groups::dkg::PublicOutput<
                             { twopc_mpc::secp256k1::SCALAR_LIMBS },
                             { twopc_mpc::secp256k1::class_groups::FUNDAMENTAL_DISCRIMINANT_LIMBS },

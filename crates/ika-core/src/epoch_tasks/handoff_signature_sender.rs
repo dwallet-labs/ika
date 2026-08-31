@@ -8,9 +8,10 @@
 //! `submit_to_consensus` only hands the tx to a background submitter
 //! that can still fail to sequence at the epoch boundary or on crash.
 //!
-//! Decoupled from `EndOfPublishSender` so the handoff cert is its
-//! own protocol step — the two used to share a task by accident of
-//! triggering on the same condition. Wiring contributors is the
+//! Runs as its own task rather than riding the `EndOfPublish` send
+//! path, so the handoff cert is its own protocol step: the two trigger
+//! on the same condition but retry and fail independently. Wiring
+//! contributors is the
 //! caller's job: pass any number of
 //! `Arc<dyn HandoffItemsBuilder>` and the task will fold their
 //! contributions into the attestation.

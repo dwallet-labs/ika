@@ -351,7 +351,7 @@ where
         // `validator_id -> consensus pubkey`, populated on first sight and
         // dropped at every epoch change. Keeps the consensus-basis re-keying
         // below off the per-tick chain path (see
-        // `committee_names_for_basis`) WITHOUT outliving the value's own
+        // `rekey_committee_to_consensus_names`) WITHOUT outliving the value's own
         // validity: a consensus key is not fixed at registration —
         // `set_next_epoch_consensus_pubkey_bytes` is an operator-callable
         // entry point and `rotate_next_epoch_info` effectuates it at epoch
@@ -678,7 +678,7 @@ where
     /// wedged reconfiguration once before — `get_validators_info_by_ids`
     /// fails transiently while validators restart during a rollout, which
     /// is precisely when the committee must still be assembled (see
-    /// `dev-docs/plans/authority-name-consensus-key.md`). With the cache,
+    /// `dev-docs/specs/committee-consensus-keys.md`). With the cache,
     /// steady-state ticks perform no chain read at all, so a committee
     /// whose members are already known can never be starved by RPC flake.
     async fn rekey_committee_to_consensus_names(

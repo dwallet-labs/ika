@@ -315,14 +315,6 @@ pub struct DWalletMPCMetrics {
     /// service termination has no source session), and `severity`.
     pub(crate) anomaly_snapshots_total: IntCounterVec,
 
-    /// Expected completion races: the session completed via the peers' output
-    /// quorum before this validator's own output returned through consensus,
-    /// while its local computation was still running, or before that
-    /// computation's late result arrived. This is how threshold cryptography
-    /// behaves for any validator outside the fastest two-thirds of a session,
-    /// so these are counted here — NOT in the anomaly taxonomy — to keep
-    /// `anomaly_snapshots_total` meaningful. Labels: `race` (fixed condition
-    /// strings), `session_type`.
     /// This validator concluded that IT ITSELF is malicious for a session —
     /// its own output diverged from the peers' quorum, or the majority output
     /// reported it. Fleet-visible by design: until this counter existed the
@@ -341,6 +333,14 @@ pub struct DWalletMPCMetrics {
     /// unbounded and identify operators.
     pub(crate) self_malicious_total: IntCounterVec,
 
+    /// Expected completion races: the session completed via the peers' output
+    /// quorum before this validator's own output returned through consensus,
+    /// while its local computation was still running, or before that
+    /// computation's late result arrived. This is how threshold cryptography
+    /// behaves for any validator outside the fastest two-thirds of a session,
+    /// so these are counted here — NOT in the anomaly taxonomy — to keep
+    /// `anomaly_snapshots_total` meaningful. Labels: `race` (fixed condition
+    /// strings), `session_type`.
     pub(crate) completion_races_total: IntCounterVec,
 
     /// Consensus-delivered MPC messages ignored because the local session was

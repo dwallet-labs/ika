@@ -195,7 +195,8 @@ impl Ord for DWalletSessionRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // System sessions have a higher priority than user session and therefore come first (are smaller).
         // Both system and user sessions are sorted by their sequence number between themselves.
-        // Internal sessions (presign and sign) have lowest priority.
+        // Internal presign sessions have the lowest priority; network-owned-address
+        // sign sessions have the highest.
         match (self.session_type, other.session_type) {
             (SessionType::User, SessionType::User) => self
                 .session_sequence_number

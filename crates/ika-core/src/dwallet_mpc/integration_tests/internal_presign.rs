@@ -356,7 +356,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
     //   1. number_of_consensus_rounds += 1
     //   2. process status updates → update network_is_idle
     //   3. instantiate_internal_presign_sessions (reads pool from epoch_store)
-    //   4. handle messages/outputs (step 5 — deposits presigns into epoch_store)
+    //   4. handle messages/outputs (deposits presigns into epoch_store)
     //
     // Step 3 sees pool BEFORE step 4 deposits. So we must read pool BEFORE
     // run_service_loop_iteration, not after.
@@ -416,7 +416,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             // Predict using exactly the state step 3 saw:
             // - guard: pre_instantiated == pre_completed (unchanged before step 3)
             // - delay: post_number_of_rounds (incremented before step 3)
-            // - pool: pre_pool (read from epoch_store before step 5 deposits)
+            // - pool: pre_pool (read from epoch_store before step 4 deposits)
             // - idle: post_is_idle (updated from status updates before step 3)
             let guard_open = pre_instantiated == pre_completed;
             let delay_aligned = post_number_of_rounds.is_multiple_of(delay);
