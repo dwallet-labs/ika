@@ -96,8 +96,10 @@ drift being guarded against.
   `pricing_and_fee_manager` → `pricing_and_fee_management`,
   `witnesses_approving_advance_epoch` → `witness_approving_advance_epoch`);
   a name-equality check would be a lie.
-- **Rust half** — the golden layout tests beside each mirror
-  (`cargo test --release -p ika-types layout_is_pinned`). Each builds a
+- **Rust half** — the golden layout tests beside each mirror, run by CI as
+  `cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned`
+  (the second name pins the `DWalletNetworkEncryptionKeyState` variant
+  indices, which are part of the same untagged byte stream). Each builds a
   fully-populated value and pins its encoded length and Blake2b digest.
   The struct literal is itself half of this: every field is written out
   with no `..Default::default()`, so an added or removed Rust field fails
@@ -119,7 +121,8 @@ All of these move in the same PR:
    share a layout, so the `1 | 2 =>` arm must stop claiming they do.
 3. The `const VERSION` bump plus `migrate()` that carries old state
    across.
-4. The golden tests: `cargo test --release -p ika-types layout_is_pinned`.
+4. The golden tests, both names CI runs:
+   `cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned`.
 5. The Residuals section of `dev-docs/specs/ocs-verified-sui-reads.md`.
 6. The manifest: `./scripts/check-chain-mirror-layout.sh --write`.
 

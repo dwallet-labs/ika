@@ -20,10 +20,12 @@ with that suite's default inputs. It only *dispatches* — each run reports
 under its own workflow (Test Cluster / Integration Tests CI / TS
 Integration Tests / Simtest) on the targeted branch, with its own logs.
 
-Caveat: GitHub fires `schedule:` triggers only from the repository
-DEFAULT branch (`main`). Until this orchestrator also lands on `main`,
-the nightly cron does not run; `workflow_dispatch` works from any branch
-it exists on.
+GitHub fires `schedule:` triggers only from the repository DEFAULT branch
+(`main`), where this orchestrator now lives, so the nightly cron is live;
+`workflow_dispatch` works from any branch it exists on. A branch in the
+matrix that does not currently exist — `dev` comes and goes with release
+trains — is skipped with a `::notice::` rather than failing the job, so
+a nightly that dispatched only the `main` half is expected, not broken.
 
 ## Dispatch commands
 
@@ -63,10 +65,15 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 `.github/workflows/upgrade-test.yaml` runs the out-of-process harness
 (`crates/ika-upgrade-test/`) — real, separately-compiled `ika-validator`
 child processes against an external `sui` localnet. Manual dispatch remains
-available. Pull requests that touch `ika-core/src`, `ika-types`,
-`ika-network`, the MPC or crypto crates, protocol configuration, the upgrade
-harness, or `Cargo.lock` automatically run the `v140_rollout` deployed-release
-gate rather than the entire matrix. Those are whole-crate globs on purpose:
+available. Pull requests matching the workflow's `paths:` filter — today
+`crates/ika-core/src/**`, `crates/ika-types/**`, `crates/ika-network/**`,
+`crates/dwallet-mpc-*/**`, `crates/ika-protocol-config/**`,
+`crates/ika-upgrade-test/**`, the root and per-crate `Cargo.toml`s,
+`Cargo.lock`, and the upgrade-test and release workflow files — automatically
+run the `v140_rollout` deployed-release gate rather than the entire matrix.
+Read that list rather than paraphrasing it: `crates/dwallet-mpc-*/**` is
+narrower than "the crypto crates" and does not match `dwallet-classgroups-types`
+or `dwallet-rng`. Those are whole-crate globs on purpose:
 the filter previously listed individual modules and silently stopped covering
 code three separate times as modules were added or split out — if you are
 adding a trigger for a module, widen to its crate instead. A change outside
@@ -167,8 +174,11 @@ accepting mocks.
 ```bash
 # `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
 # own matrix job on its own runner, in parallel (fail-fast off). Pass a
-# comma-separated subset to run several, or a single name to run one. All
-# scenarios need only the current build and run --test-threads=1.
+# comma-separated subset to run several, or a single name to run one. Every
+# scenario runs --test-threads=1 (each binds the fixed Sui localnet ports and
+# chdirs during publish, so only one can run per job). smoke, workload and
+# restart_spectator need only the current build; the three v140 gates also
+# build `old_ref` in an isolated git worktree at that ref's own toolchain.
 
 # Everything in parallel (default), or a subset:
 gh workflow run upgrade-test.yaml --ref <branch>                       # = test=all
@@ -213,6 +223,10 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=malicious_v140
 # removes an original validator (5→4).
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v140_churn
 
+# The mid-epoch-restart gate (#1952). Current build only, but it runs at
+# production presign-pool sizing, so it is not a cheap scenario.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=restart_spectator
+
 # NOTE: there is no rollback gate any more, and no backward direction in the
 # matrix. `mid_epoch_rollback` proved a v1.4.0 -> v1.3.1 mid-epoch rollback
 # safe for the v1.4.0 release commit (#2077, #2064) and was deleted once
@@ -240,6 +254,7 @@ notifier + a validator committee:
 | `v140_rollout` | **one current + three literal v1.4.0**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `v140_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.4.0-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `malicious_v140` | three literal v1.4.0 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
+| `restart_spectator` | current only, production presign-pool sizing | the #1952 mid-epoch-restart gate: a validator restarted far from a boundary, in an epoch with an established network key and ongoing internal-presign volume, resumes LIVE registry-driven top-up instantiation within the epoch — not merely staying consensus-healthy while peers absorb its sessions |
 
 ### CI runner resources
 
@@ -256,9 +271,15 @@ profile).
 
 ## Facts that save debugging time
 
-- **Concurrency groups cancel in-flight runs**: re-dispatching a workflow
-  on the same branch cancels the previous run of that workflow+ref. Don't
-  re-dispatch while a run you care about is in flight.
+- **Concurrency groups QUEUE, they don't cancel — with one exception.**
+  Every heavy suite uses a per-ref group (`<workflow>-<ref>`) with
+  `cancel-in-progress: false` (`upgrade-test.yaml` omits the key, which
+  means the same), so re-dispatching on the same branch leaves the
+  in-flight run alone and the new one waits its turn. The exception is
+  `ts-integration-tests.yaml`, which sets `cancel-in-progress: true` and
+  really does kill the previous run — and `ci.yaml`, which cancels on
+  every ref except `main`. So a re-dispatch is cheap on four of the five
+  suites and destructive on the TS one.
 - **Workflow definitions are pinned at dispatch**: a run uses the
   workflow file from the commit it was dispatched on; pushing fixes does
   not affect in-flight runs.

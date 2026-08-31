@@ -116,9 +116,12 @@ them has a bug — determine which before changing either.
 - [`playbooks/localnet.md`](playbooks/localnet.md) — running a
   Sui+ika localnet for SDK/integration testing without the traps.
 - [`playbooks/production-alerts.md`](playbooks/production-alerts.md) —
-  the alert rules for the designed halt/block modes (barrier wait,
-  wedged assembly, bootstrap fail-closed) that look healthy from
-  outside, plus secondary dashboard signals.
+  the alert rules for failures that don't page by themselves: broken
+  invariants and self-recognised maliciousness, the designed halt/block
+  modes (barrier wait, wedged assembly, bootstrap fail-closed) that look
+  healthy from outside, and the three MPC-progress conditions
+  (stopped contributing, fold parked on a wedged drain, catch-up stuck),
+  plus secondary dashboard signals.
 
 ### conventions/ — repo-specific procedures
 - [`conventions/sui-version-bump.md`](conventions/sui-version-bump.md)
@@ -157,7 +160,7 @@ them has a bug — determine which before changing either.
   — every `AuthorityEpochTables` field declares whether it is written
   through the commit boundary or directly (and, if directly, the
   reason its consumers survive that); the reader-side rule that #1917 was
-  actually born on, and the one table whose argument does not close.
+  actually born on, and the presign tables whose argument does not close.
   CI-enforced via `scripts/check-epoch-table-write-discipline.sh`.
 - [`conventions/chain-mirror-layout.md`](conventions/chain-mirror-layout.md)
   — the three Rust structs that are UNTAGGED mirrors of deployed Move

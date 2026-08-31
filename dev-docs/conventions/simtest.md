@@ -49,7 +49,7 @@ feature removed that cost, and `ika-test-cluster`'s dev-dependency
 self-reference builds the crate's tests with the mock unconditionally: a
 full 4-validator cluster boots and crosses epoch boundaries in ~3 minutes
 under msim, and the fault-simulation suite (`tests/sim_fault_*.rs`, plan:
-`../plans/simtest-fault-matrix.md`) is built on exactly that. Plain
+`../plans/archive/simtest-fault-matrix.md`) is built on exactly that. Plain
 `#[tokio::test]` functions are listed but IGNORED under the sim runner —
 `#[sim_test]` is the only runnable form there. For real-crypto coverage,
 `#[tokio::test]` remains the right tool.
@@ -86,8 +86,10 @@ can't rot between (manual/nightly) simtest runs.
 `ika-test-cluster` runs TWO epoch clocks, and they are independent:
 
 - **ika epoch** — set by `IkaTestClusterBuilder::with_sui_epoch_duration_ms`'s sibling
-  `with_epoch_duration_ms` (default `DEFAULT_EPOCH_DURATION_MS`), written into the
-  on-chain `InitiationParameters`. This is what `wait_for_epoch(n)` tracks.
+  `with_epoch_duration_ms`, written into the on-chain `InitiationParameters`. Unset,
+  the builder leaves it `None` and `InitiationParameters::default_epoch_duration_ms()`
+  supplies **24 hours** — so a test that never calls it never crosses an ika boundary
+  either. This is what `wait_for_epoch(n)` tracks.
 - **Sui epoch** — the underlying in-process Sui localnet's own committee clock.
 
 By default the test never sets the Sui clock, so the Sui `TestClusterBuilder` inherits

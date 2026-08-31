@@ -19,7 +19,7 @@ log-grepping, opposite goal.
 ```bash
 L=<log file>
 grep -o "run_epoch epoch=[0-9]*" $L | sort -u | tail -3          # highest epoch entered
-grep -E "Successfully locked last session|EndOfPublishV2 active" $L | awk '{print $1, $NF}' | tail -6
+grep -E "Successfully locked last session|handoff-cert quorum reached" $L | awk '{print $1, $NF}' | tail -6
 grep "MPC output reached quorum" $L | tail -1 | awk '{print $1}' # last quorum = stall onset
 ```
 
@@ -102,10 +102,11 @@ four fixed; kept for the diagnostic shapes):
 - **mid-epoch-restart strand (issue #1852): sessions parked, zero
   instantiation attempts.** Signature (per wedged validator):
   `ika_dwallet_mpc_requests_pending_for_network_key` climbing while
-  `network_key_instantiations_in_flight` stays 0,
-  `network_key_instantiation_failures_total` shows no increase (never
-  attempted, not failing), and `network_key_loaded_epoch` cut off
-  exactly at process restart. Mechanism: the validator restarted after
+  `ika_dwallet_mpc_network_key_instantiations_in_flight` stays 0,
+  `ika_dwallet_mpc_network_key_instantiation_failures_total` shows no
+  increase (never attempted, not failing), and
+  `ika_dwallet_mpc_network_key_loaded_epoch` cut off exactly at process
+  restart. Mechanism: the validator restarted after
   this epoch's reconfiguration completed; the overlay served only the
   just-produced next-committee output, which adoption skips
   (`adoption skipping network key` log with
@@ -209,12 +210,16 @@ Narrow the dead layer by checking each pipeline stage independently:
 grep -c "Presign request reached majority vote" $L   # consensus + votes alive?
 grep -c "Adding a new MPC session" $L                # admission alive?
 grep -c "popped presign from internal pool" $L       # serving alive?
-grep "retrieved missed events" $L | tail -2          # event sync alive? (count growing = backlog)
+grep -c "broadcasting new requests" $L               # event sync alive? (debug-level)
 ```
 
 The combination "votes flow + sessions added + zero quorums + zero
 serving" pinpoints computation/messaging; "nothing flows" pinpoints
-consensus or the service loop.
+consensus or the service loop. The event-sync backlog itself is a gauge
+rather than a log line: `ika_sui_connector_uncompleted_events_backlog`
+is how many sessions the chain still shows uncompleted from this
+validator's view, so a climbing value with the pump still ticking is a
+consumption problem, not a delivery one.
 
 ## 6. Trace ONE session end-to-end
 
@@ -244,7 +249,9 @@ construction; divergence = determinism bug).
   drain even mid-replay — an unremarkable reading there is not evidence the
   backlog is small. The MPC service announces the drain itself (`MPC
   service entered catch-up mode`), and the catch-up gap falls fast while
-  it runs (~40x the tip rate, with computation suppressed). What to act on is
+  it runs — with computation suppressed the drain manages ~1-2k rounds/s
+  against a ~19.5 rounds/s tip, so a backlog closes at fifty to a hundred
+  times the rate it grows. What to act on is
   `ika_mpc_stopped_contributing_condition_active == 1` (nothing is
   draining and MPC has stopped: `MPC subsystem has stopped keeping up
   with consensus`) or `ika_mpc_catch_up_stuck_condition_active == 1`

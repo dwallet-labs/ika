@@ -9,12 +9,14 @@ Pick the level by **how often the line fires** and **who has to read it**:
   ingest off-chain keys, a `send` on a live channel returned `Err`.)
 - `warn!` — a recoverable or expected-but-notable anomaly the node
   handles itself: a rejected peer message, a dropped stale announcement,
-  a transient that will retry. Not a failure of *this* node. Example:
-  a per-validator on-chain key that fails to decode is logged at `warn!`
-  and the validator is dropped from the committee — construction
-  proceeds (`sui_connector/sui_syncer.rs`, `new_committee`). Logging that
-  at `error!` — on a path that re-runs every poll tick — is exactly the
-  noise this rule exists to prevent.
+  a transient that will retry. Not a failure of *this* node. Example: a
+  validator whose on-chain metadata will not parse fails the whole
+  re-keying of the committee to consensus-basis names
+  (`rekey_committee_to_consensus_names` returns `InvalidCommittee`); the
+  caller logs `warn!` and `continue`s to the next sync tick
+  (`sui_connector/sui_syncer.rs`). Logging that at `error!` — on a path
+  that re-runs every poll tick — is exactly the noise this rule exists to
+  prevent.
 - `info!` — a low-frequency lifecycle milestone: roughly **once per
   epoch / session / reconfiguration**. Rule of thumb: if a healthy node
   can emit it more than a handful of times per epoch, it is not `info!`.
@@ -48,8 +50,9 @@ line on the compute path, it is `debug!`.
 
 - Off-chain validator-MPC-key **ingestion** (`mpc_manager.rs`) and
   **delivery** (`sui_connector/sui_syncer.rs`) of the agreed frozen set
-  — each guarded so it fires once per epoch (e.g. `sui_syncer` gates on
-  `current_keys_sent_for_epoch == Some(epoch)`). An `info!` here is only
+  — each guarded so it fires once per epoch (e.g. `sui_syncer` only enters
+  the delivery block while `current_keys_sent_for_epoch != Some(current_epoch)`,
+  and stamps it on success). An `info!` here is only
   correct *because* of that guard; the same log without a guard would be
   spam and belongs at `debug!`.
 - Epoch open/close, reconfiguration start/finish, committee changes.
