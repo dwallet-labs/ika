@@ -73,7 +73,7 @@ them has a bug — determine which before changing either.
 - [`specs/fast-schnorr-vss.md`](specs/fast-schnorr-vss.md) — the Fast
   Schnorr (VSS) signing feature: the three VSS algorithms and their
   curve/algorithm numbering, the version-3 PVSS key bundle and its
-  off-chain transport, the V3 presign/sign flow, the
+  off-chain transport, the V3 presign/sign flow, the retired
   `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
   still-gated external path.
 - [`specs/committee-consensus-keys.md`](specs/committee-consensus-keys.md)

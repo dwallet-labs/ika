@@ -1075,16 +1075,7 @@ impl DWalletMPCService {
 
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
-        // Wire gate for the rolling-upgrade window: `IdleStatusUpdate` is a
-        // consensus transaction kind introduced with internal presign
-        // sessions. A 1.1.8 peer cannot decode it — its `verify_batch`
-        // rejects the WHOLE block containing one, and its replay path panics
-        // on an undecodable sequenced transaction — so it must never reach
-        // the wire while the network runs a protocol version whose peers may
-        // predate the kind. Same flag that gates the DB write and read
-        // streams for these updates.
-        let idle_status_changed = self.protocol_config.internal_presign_sessions_enabled()
-            && self.last_sent_idle_status != Some(is_idle);
+        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
         let has_noa_presign_demands = !self.buffered_noa_presign_demands.is_empty();
@@ -1538,14 +1529,12 @@ impl DWalletMPCService {
             // key, and no round means no adoption).
 
             // 3. Instantiate internal presign sessions (now uses agreed values).
-            if self.protocol_config.internal_presign_sessions_enabled() {
-                self.dwallet_mpc_manager
-                    .instantiate_internal_presign_sessions(
-                        consensus_round,
-                        self.number_of_consensus_rounds,
-                        self.network_is_idle,
-                    );
-            }
+            self.dwallet_mpc_manager
+                .instantiate_internal_presign_sessions(
+                    consensus_round,
+                    self.number_of_consensus_rounds,
+                    self.network_is_idle,
+                );
 
             // 4. Handle MPC messages.
             self.dwallet_mpc_manager

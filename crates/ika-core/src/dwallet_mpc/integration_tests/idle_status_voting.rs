@@ -7,7 +7,6 @@ use crate::dwallet_mpc::integration_tests::utils::{
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use ika_protocol_config::ProtocolConfig;
-use ika_types::messages_consensus::ConsensusTransactionKind;
 use tracing::info;
 
 /// Creates a protocol config override guard tuned for the idle-status lifecycle test.
@@ -707,81 +706,4 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
     );
 
     info!("Test passed: 2-2 split idle status vote does not reach consensus");
-}
-
-/// The wire gate for the rolling 1.1.8-upgrade window: below the
-/// internal-presign activation (protocol v3 — the live mainnet state) the
-/// service must NEVER submit an `IdleStatusUpdate` consensus transaction.
-/// A 1.1.8 peer cannot decode that kind: its `verify_batch` rejects the
-/// whole block containing one, and its replay path panics on an
-/// undecodable sequenced transaction — one emission during the restart
-/// window is a consensus-layer interop break, regardless of the feature
-/// being unused. Without the gate this fails on the FIRST iteration:
-/// `last_sent_idle_status` starts `None`, so the ungated service submits
-/// an update immediately after start.
-#[tokio::test]
-#[cfg(test)]
-async fn test_no_idle_status_update_emitted_below_activation() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
-        config.set_internal_presign_sessions_for_testing(false);
-        config
-    });
-
-    let mut test_state = build_test_state(4);
-    let (consensus_round, _network_key_bytes, _network_key_id) =
-        create_network_key_test(&mut test_state).await;
-    test_state.consensus_round = consensus_round as usize;
-
-    for _round in 0..10 {
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
-        }
-        // Wire-level assertion, checked BEFORE this round's messages are
-        // drained for distribution: nothing submitted may be an
-        // IdleStatusUpdate.
-        for (validator, collector) in test_state
-            .sent_consensus_messages_collectors
-            .iter()
-            .enumerate()
-        {
-            let submitted = collector.submitted_messages.lock().unwrap();
-            assert!(
-                !submitted.iter().any(|message| matches!(
-                    &message.kind,
-                    ConsensusTransactionKind::IdleStatusUpdate(_)
-                )),
-                "validator {validator} submitted an IdleStatusUpdate below the \
-                 internal-presign activation — a 1.1.8 peer cannot decode it"
-            );
-        }
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            test_state.consensus_round as u64,
-        )
-        .await;
-        test_state.consensus_round += 1;
-    }
-
-    // And none may have reached any validator's drain.
-    for (validator, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-        let delivered = epoch_store.delivered_rounds.lock().unwrap();
-        // Without this the assertion below passes on a harness that delivered
-        // nothing at all, which is exactly how it would fail silently.
-        let last_round = delivered
-            .last()
-            .unwrap_or_else(|| panic!("validator {validator} was handed no rounds at all"))
-            .round;
-        let total: usize = delivered
-            .iter()
-            .map(|round| round.idle_status_updates.len())
-            .sum();
-        assert_eq!(
-            total, 0,
-            "validator {validator} received IdleStatusUpdates below the activation, across \
-             rounds up to {last_round}"
-        );
-    }
 }

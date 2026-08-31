@@ -19,7 +19,6 @@ use crate::request_protocol_data::{
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
-use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
@@ -59,24 +58,9 @@ pub(crate) fn session_input_from_request(
     next_active_committee: Option<Committee>,
     validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
     next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
-    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
-
-    // Defense-in-depth protocol-version gate for Fast Schnorr (VSS): the primary
-    // enforcement is the on-chain supported-algorithm map population, but reject
-    // any VSS presign/sign request here too if the active protocol version does
-    // not enable it. (Move has no version gate; this is the Rust-side gate.)
-    if let Some(signature_algorithm) = request.protocol_data.signature_algorithm()
-        && signature_algorithm.is_vss()
-        && !protocol_config.fast_schnorr_supported()
-    {
-        return Err(DwalletMPCError::InvalidInput(format!(
-            "Fast Schnorr (VSS) algorithm {signature_algorithm} requested but \
-             fast_schnorr_supported is disabled at this protocol version"
-        )));
-    }
 
     match &request.protocol_data {
         ProtocolData::DWalletDKG {

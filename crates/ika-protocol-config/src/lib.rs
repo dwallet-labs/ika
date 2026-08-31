@@ -204,11 +204,25 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     enforce_checkpoint_timestamp_monotonicity: bool,
 
-    // If true, enables internal presign session instantiation.
+    // Enabled internal presign session instantiation: the pool that fills
+    // network presigns, the `IdleStatusUpdate` consensus transaction kind,
+    // and the routing of global presign requests to that pool. Set at
+    // version 4 and therefore true at every supported version, so nothing
+    // reads it anymore — instantiation is unconditional. Kept because the
+    // flag set is part of the BCS-serialized `ProtocolConfig` whose digest
+    // rides `AuthorityCapabilitiesV1` through consensus: dropping a field
+    // changes every supported version's config digest relative to the
+    // binaries already deployed.
     #[serde(skip_serializing_if = "is_false")]
     internal_presign_sessions: bool,
 
-    // If true, enables V1 BLS-signed checkpoints (default on).
+    // If true, enables V1 BLS-signed checkpoints (default on). Set at version
+    // 4, so it is true at every supported version today — but unlike the
+    // always-true flags above it is still READ, and its gates are kept
+    // deliberately. BLS checkpoints are on the deprecation path: the
+    // `noa_checkpoints` flag below supersedes them, so this flag has a planned
+    // future false arm and sweeping its gates now would only mean rebuilding
+    // them.
     #[serde(skip_serializing_if = "is_false")]
     bls_checkpoints: bool,
 
@@ -216,8 +230,12 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     noa_checkpoints: bool,
 
-    // If true, enables Fast Schnorr (VSS) signature algorithms: TaprootVSS,
-    // EdDSAVSS, SchnorrkelVSS. DKG-created keys only.
+    // Enabled the Fast Schnorr (VSS) signature algorithms — TaprootVSS,
+    // EdDSAVSS, SchnorrkelVSS — for DKG-created keys only. Set at version 4
+    // and therefore true at every supported version, so nothing reads it
+    // anymore: the internal presign pool always covers the VSS algorithms
+    // and the Rust-side request rejection is gone. Kept for the same
+    // config-digest reason as `internal_presign_sessions` above.
     #[serde(skip_serializing_if = "is_false")]
     fast_schnorr_supported: bool,
 
@@ -535,10 +553,6 @@ impl ProtocolConfig {
     //         )))
     //     }
     // }
-
-    pub fn internal_presign_sessions_enabled(&self) -> bool {
-        self.feature_flags.internal_presign_sessions
-    }
 
     pub fn mysticeti_num_leaders_per_round(&self) -> Option<usize> {
         self.feature_flags.mysticeti_num_leaders_per_round
