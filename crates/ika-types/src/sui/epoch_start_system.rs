@@ -169,11 +169,11 @@ impl EpochStartSystemV1 {
     }
 }
 
-/// A validator's `AuthorityName`: its consensus Ed25519 key, zero-padded into
-/// the 48-byte container. The BLS protocol key was the identity basis through
-/// protocol version 5 and is below this binary's minimum, so the consensus key
-/// is the only basis a supported epoch uses. The BLS key stays on `Committee`
-/// for aggregate-certificate (checkpoint) verification.
+/// A validator's `AuthorityName`: its consensus Ed25519 key, the raw 32 bytes.
+/// The BLS protocol key was the identity basis through protocol version 5 and
+/// is below this binary's minimum, so the consensus key is the only basis a
+/// supported epoch uses. The BLS key stays on `Committee` for
+/// aggregate-certificate (checkpoint) verification.
 pub fn validator_authority_name(validator: &EpochStartValidatorInfoV1) -> AuthorityName {
     AuthorityName::from_consensus_key(&validator.consensus_pubkey)
 }

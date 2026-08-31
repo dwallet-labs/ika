@@ -107,7 +107,9 @@ pub struct NetworkEncryptionKeyPublicData {
     pub latest_network_reconfiguration_public_output:
         Option<VersionedDecryptionKeyReconfigurationOutput>,
     /// The public output of the `NetworkDKG` process (the first and only one).
-    /// On first instance it will be equal to `latest_public_output`.
+    /// Until the first reconfiguration
+    /// (`latest_network_reconfiguration_public_output` is `None`), this is the
+    /// latest output.
     pub network_dkg_output: VersionedNetworkDkgOutput,
     pub secp256k1_protocol_public_parameters:
         Arc<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters>,

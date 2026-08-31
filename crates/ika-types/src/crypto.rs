@@ -484,13 +484,14 @@ where {
         AuthorityPublicKeyBytes(bytes)
     }
 
-    /// The canonical `AuthorityName` of a validator identified by its
-    /// consensus Ed25519 key: the 32 key bytes zero-padded up to the 48-byte
-    /// container, so the wire encoding (and every name-keyed map) is
-    /// untouched by the identity basis. Zero padding is enforced here — the
-    /// only constructor for consensus-basis names — so equality and hashing
-    /// are consistent. The consensus key is recoverable as the first 32
-    /// bytes, symmetric to how a BLS-basis name decodes to the BLS key.
+    /// A consensus Ed25519 key placed in the 48-byte BLS container: the 32 key
+    /// bytes zero-padded up to the container width.
+    ///
+    /// This is NOT how a validator is named. Through protocol v6 the padded
+    /// container WAS the `AuthorityName`; since v7 [`AuthorityName`] is a
+    /// separate type holding the raw 32 bytes, built by
+    /// [`AuthorityName::from_consensus_key`]. This constructor only reproduces
+    /// the historical padded encoding.
     pub fn from_consensus_key(key: &NetworkPublicKey) -> Self {
         let mut bytes = [0u8; AuthorityPublicKey::LENGTH];
         bytes[..Ed25519PublicKey::LENGTH].copy_from_slice(key.as_bytes());

@@ -74,8 +74,8 @@ pub struct HandoffAttestation {
 /// like this one use the consensus key, which verifiers look up in the
 /// previous committee's on-chain validator info as `consensus_pubkey`.
 ///
-/// `signer` identifies the validator (by their `AuthorityName`, i.e.
-/// protocol pubkey), but the `signature` is over
+/// `signer` identifies the validator by their `AuthorityName`, which IS
+/// that consensus pubkey, and the `signature` is over
 /// `bcs(IntentMessage::new(Intent::ika_app(HandoffAttestation), attestation))`
 /// using `signer`'s consensus key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,9 +105,9 @@ mod tests {
     use super::*;
 
     fn make_authority(byte: u8) -> AuthorityName {
-        // BLS12381 min_pk public keys are 48 bytes. The fake bytes
-        // never need to verify a real signature in the type-level
-        // roundtrip tests below.
+        // An `AuthorityName` is a 32-byte Ed25519 consensus key. The
+        // fake bytes never need to verify a real signature in the
+        // type-level roundtrip tests below.
         AuthorityName([byte; 32])
     }
 

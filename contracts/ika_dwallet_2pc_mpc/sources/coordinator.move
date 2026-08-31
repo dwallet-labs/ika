@@ -41,7 +41,7 @@ const EInvalidMigration: u64 = 1;
 const EDeprecatedFunction: u64 = 2;
 
 // === Constants ===
-/// Flag to indicate the version of the ika system.
+/// Current version of the coordinator inner object structure.
 const VERSION: u64 = 2;
 
 // === Structs ===
@@ -56,7 +56,7 @@ public struct DWalletCoordinator has key {
 
 // === Functions that can only be called by init ===
 
-/// Create a new System object and make it shared.
+/// Create a new DWalletCoordinator object and make it shared.
 /// This function will be called only once in init.
 public(package) fun create(
     package_id: ID,

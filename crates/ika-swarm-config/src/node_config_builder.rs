@@ -390,8 +390,8 @@ impl FullnodeConfigBuilder {
         ika_dwallet_coordinator_object_id: ObjectID,
         notifier_client_key_pair: Option<SuiKeyPair>,
     ) -> NodeConfig {
-        // Take advantage of ValidatorGenesisConfigBuilder to build the keypairs and addresses,
-        // even though this is a fullnode.
+        // Take advantage of ValidatorInitializationConfigBuilder to build the keypairs and
+        // addresses, even though this is a fullnode.
         let validator_config_builder = ValidatorInitializationConfigBuilder::new();
 
         let validator_config = validator_config_builder.build(rng);

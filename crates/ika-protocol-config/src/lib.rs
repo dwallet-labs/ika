@@ -31,8 +31,10 @@ const MAX_PROTOCOL_VERSION: u64 = 7;
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
 // Version 5: aggregated_network_key_public_outputs on — network DKG /
 //            reconfiguration public outputs switch to the aggregated wire
-//            format (V4-tagged); V3-tagged pre-aggregation outputs remain
-//            readable forever (testnet persisted them at v4).
+//            format (V4-tagged). The V3 variant index is retained for BCS
+//            stability, but V3 BYTES no longer decode: the crypto crate
+//            removed the pre-aggregation type, so any key still tagged V3
+//            must have reconfigured to V4 before this binary runs.
 // Version 6: two coordinated flips activated together at the v6 boundary.
 //   (a) consensus_key_authority_names — `AuthorityName` (validator identity)
 //            became the Ed25519 consensus key, zero-padded to the 48-byte
@@ -161,7 +163,7 @@ struct FeatureFlags {
     // Add feature flags here, e.g.:
     // #[serde(skip_serializing_if = "is_false")]
     // new_protocol_feature: bool,
-    // === Used at Sui consensus for current ProtocolConfig version (MAX 84) ===
+    // === Mirrors of Sui's consensus settings, fed to consensus-core ===
 
     // Probe rounds received by peers from every authority.
     #[serde(skip_serializing_if = "is_false")]
@@ -259,7 +261,9 @@ struct FeatureFlags {
     // versioned output enums; false kept producing the pre-aggregation V3
     // format. Set at version 5 and therefore true at every supported
     // version, so nothing reads it anymore — V4 is the only format produced.
-    // V3-tagged outputs stay DECODABLE forever (testnet persisted them).
+    // V3 bytes are no longer decodable either: the crypto crate removed the
+    // pre-aggregation type, so those decode arms are hard errors and a key
+    // still tagged V3 must have reconfigured to V4 before this binary runs.
     //
     // Kept for the same reason as `off_chain_validator_metadata` above: the
     // flag set is part of the BCS-serialized `ProtocolConfig` whose digest
@@ -281,9 +285,10 @@ struct FeatureFlags {
     // and carried on `Committee` for BLS aggregate-certificate (checkpoint)
     // verification. Set at version 6 and therefore true at every supported
     // version, so nothing reads it anymore — the consensus key is the only
-    // identity basis a supported epoch uses. Committees persisted under
-    // BLS-basis names stay READABLE through `Committee`'s alias translation
-    // (`expanded_keys`), which is structural, not gated on this flag.
+    // identity basis a supported epoch uses. A BLS key can no longer be
+    // recovered from a name, so committees that verify BLS
+    // aggregate certificates carry the `AuthorityName -> BLS pubkey` map
+    // explicitly from chain via `Committee::new_with_protocol_keys`.
     //
     // Kept for the same reason as `off_chain_validator_metadata` above: the
     // flag set is part of the BCS-serialized `ProtocolConfig` whose digest
@@ -434,7 +439,7 @@ pub struct ProtocolConfig {
     /// If the total session count is below this threshold, the validator is considered idle.
     idle_session_count_threshold: Option<u64>,
 
-    // === Used at Sui consensus for current ProtocolConfig version (MAX 84) ===
+    // === Mirrors of Sui's consensus settings, fed to consensus-core ===
     /// The maximum serialised transaction size (in bytes) accepted by consensus. That should be bigger than the
     /// `max_tx_size_bytes` with some additional headroom.
     consensus_max_transaction_size_bytes: Option<u64>,

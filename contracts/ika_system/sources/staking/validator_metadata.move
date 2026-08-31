@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-/// Metadata that describes a validator. Attached to the `StakingPool`
+/// Metadata that describes a validator. Attached to the `Validator`
 module ika_system::validator_metadata;
 
 use std::string::String;

@@ -212,7 +212,7 @@ where
     }
 }
 
-/// [`Layer`] for adding a per-checkpoint limit to the number of inflight GetCheckpointContent
+/// [`Layer`] for adding a per-checkpoint limit to the number of inflight GetCheckpointMessage
 /// requests.
 #[derive(Clone)]
 pub(super) struct CheckpointMessageDownloadLimitLayer {
@@ -250,7 +250,7 @@ impl<S> tower::layer::Layer<S> for CheckpointMessageDownloadLimitLayer {
     }
 }
 
-/// Middleware for adding a per-checkpoint limit to the number of inflight GetCheckpointContent
+/// Middleware for adding a per-checkpoint limit to the number of inflight GetCheckpointMessage
 /// requests.
 #[derive(Clone)]
 pub(super) struct CheckpointMessageDownloadLimit<S> {
@@ -350,7 +350,7 @@ impl<S> tower::layer::Layer<S> for SystemCheckpointDownloadLimitLayer {
     }
 }
 
-/// Middleware for adding a per-system_checkpoint limit to the number of inflight GetSystemCheckpointContent
+/// Middleware for adding a per-system_checkpoint limit to the number of inflight GetSystemCheckpoint
 /// requests.
 #[derive(Clone)]
 pub(super) struct SystemCheckpointDownloadLimit<S> {

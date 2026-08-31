@@ -61,10 +61,10 @@ impl ValidatorInitializationConfig {
 
         // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
         //
-        // Publish the BARE mainnet-v1.1.8 `ClassGroupsEncryptionKeyAndProof`
-        // shape on-chain — the `.class_groups` component of the full validator
-        // bundle — so a mainnet-v1.1.8 binary can decode this record and the
-        // v118 upgrade rehearsal boots. The richer `ValidatorEncryptionKeysAndProofs`
+        // Publish the BARE `ClassGroupsEncryptionKeyAndProof` shape on-chain —
+        // the `.class_groups` component of the full validator bundle — the
+        // same shape deployed release binaries decode from chain state (the
+        // cross-binary upgrade rehearsals rely on this). The richer `ValidatorEncryptionKeysAndProofs`
         // bundle (class groups + per-curve PVSS + the Fast Schnorr VSS HPKE key)
         // travels off-chain via validator P2P; chain reads decode the bare shape.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {

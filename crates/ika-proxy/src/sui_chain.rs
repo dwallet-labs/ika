@@ -53,7 +53,7 @@ mod tests {
     use super::*;
 
     /// The public Sui chain identifiers, as reported by a fullnode's
-    /// `getChainIdentifier` and logged by `ika_sui_client` on connect.
+    /// chain-identifier RPC and logged by `ika_sui_client` on connect.
     const SUI_MAINNET: &str = "35834a8a";
     const SUI_TESTNET: &str = "4c78adac";
 

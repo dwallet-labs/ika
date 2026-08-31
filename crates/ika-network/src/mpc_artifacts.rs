@@ -65,11 +65,6 @@ pub use handoff_cert::{
     GetCertifiedHandoffAttestationRequest, HandoffCertStorage, fetch_certified_handoff_attestation,
 };
 
-/// Build a `ValidatorMetadataServer` backed by `storage`, an
-/// announcement-relay handle, and a certified-handoff store. The
-/// relay handle starts empty; the node installs a relay impl into
-/// it once per-epoch state is up. The cert store is wired directly
-/// to perpetual storage at construction time.
 /// Concurrent `GetMpcDataBlob` reads. A blob is multi-megabyte MPC data
 /// served out of storage, so this is the heaviest of the three — calibrated
 /// alongside `sui_state_mirror`'s heaviest read (`changeset_page`, 16).
@@ -84,6 +79,11 @@ const INFLIGHT_SUBMIT_ANNOUNCEMENT: usize = 16;
 /// cheap, matching `sui_state_mirror`'s checkpoint-read tier.
 const INFLIGHT_GET_HANDOFF_CERT: usize = 64;
 
+/// Build a `ValidatorMetadataServer` backed by `storage`, an
+/// announcement-relay handle, and a certified-handoff store. The
+/// relay handle starts empty; the node installs a relay impl into
+/// it once per-epoch state is up. The cert store is wired directly
+/// to perpetual storage at construction time.
 pub fn build_server<S: MpcDataBlobStorage, C: HandoffCertStorage>(
     storage: Arc<S>,
     relay: Arc<AnnouncementRelayHandle>,

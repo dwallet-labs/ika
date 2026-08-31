@@ -85,7 +85,7 @@ const EHaveNotReachedMidEpochTime: u64 = 7;
 
 // === Structs ===
 
-/// Uses SystemParametersV1 as the parameters.
+/// The inner system state object, wrapped by `System`.
 public struct SystemInner has store {
     /// The current epoch ID, starting from 0.
     epoch: u64,
@@ -215,7 +215,7 @@ public struct SetApprovedUpgradeEvent has copy, drop {
     digest: Option<vector<u8>>,
 }
 
-/// Event emitted when the epoch ends.
+/// Event emitted when the end-of-publish checkpoint message is processed.
 public struct EndOfPublishEvent has copy, drop {
     epoch: u64,
 }
@@ -307,12 +307,12 @@ public(package) fun initialize(
     )
 }
 
-/// Can be called by anyone who wishes to become a validator candidate and starts accusing delegated
-/// stakes in their staking pool. Once they have at least `MIN_VALIDATOR_JOINING_STAKE` amount of stake they
+/// Can be called by anyone who wishes to become a validator candidate and starts accruing delegated
+/// stakes in their staking pool. Once they have at least the minimum joining stake they
 /// can call `request_add_validator` to officially become an active validator at the next epoch.
 /// Aborts if the caller is already a pending or active validator, or a validator candidate.
-/// Note: `proof_of_possession_bytes` MUST be a valid signature using proof_of_possession_sender and protocol_pubkey_bytes.
-/// To produce a valid PoP, run [fn test_proof_of_possession_bytes].
+/// Note: `proof_of_possession_bytes` MUST be a valid BLS signature by `protocol_pubkey_bytes`
+/// over the protocol key and the sender's address (see `verify_proof_of_possession`).
 public(package) fun request_add_validator_candidate(
     self: &mut SystemInner,
     name: String,
@@ -363,10 +363,7 @@ public(package) fun request_add_validator(self: &mut SystemInner, cap: &Validato
 }
 
 /// A validator can call this function to request a removal in the next epoch.
-/// We use the sender of `ctx` to look up the validator
-/// (i.e. sender must match the sui_address in the validator).
-/// At the end of the epoch, the `validator` object will be returned to the sui_address
-/// of the validator.
+/// The validator is looked up by the `ValidatorCap`.
 public(package) fun request_remove_validator(self: &mut SystemInner, cap: &ValidatorCap) {
     self.validator_set.request_remove_validator(self.epoch, cap);
 }
@@ -542,7 +539,7 @@ public(package) fun set_next_epoch_network_pubkey_bytes(
     self.validator_set.set_next_epoch_network_pubkey_bytes(network_pubkey_bytes, cap);
 }
 
-/// Sets a validator's public key of worker key.
+/// Sets a validator's public key of consensus key.
 /// The change will only take effects starting from the next epoch.
 public(package) fun set_next_epoch_consensus_pubkey_bytes(
     self: &mut SystemInner,
@@ -617,11 +614,10 @@ public(package) fun initiate_advance_epoch(
 
 /// This function should be called at the end of an epoch, and advances the system to the next epoch.
 /// It does the following things:
-/// 1. Add storage charge to the storage fund.
-/// 2. Burn the storage rebates from the storage fund. These are already refunded to transaction sender's
-///    gas coins.
-/// 3. Distribute computation charge to validator stake.
-/// 4. Update all validators.
+/// 1. Collects the epoch's fee rewards and, once past `stake_subsidy_start_epoch`,
+///    the stake subsidy for distribution.
+/// 2. Distributes the rewards to validator stake.
+/// 3. Updates all validators and switches to the next epoch's committee.
 public(package) fun advance_epoch(
     self: &mut SystemInner,
     advance_epoch_approver: AdvanceEpochApprover,

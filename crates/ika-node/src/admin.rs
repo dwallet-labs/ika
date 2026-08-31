@@ -246,7 +246,6 @@ async fn set_filter(
 async fn capabilities(State(state): State<Arc<AppState>>) -> (StatusCode, String) {
     let epoch_store = state.node.state().load_epoch_store_one_call_per_task();
 
-    // Only one of v1 or v2 will be populated at a time
     let capabilities = epoch_store.get_capabilities_v1();
     let mut output = String::new();
     for capability in capabilities.unwrap_or_default() {

@@ -276,9 +276,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         let mut validator_initialization_configs = match committee {
             CommitteeConfig::Size(size) => {
                 // We always get fixed protocol keys from this function (which is isolated from
-                // external test randomness because it uses a fixed seed). Necessary because some
-                // tests call `make_tx_certs_and_signed_effects`, which locally forges a cert using
-                // this same committee.
+                // external test randomness because it uses a fixed seed).
                 let (_, keys) = Committee::new_simple_test_committee_of_size(size.into());
 
                 keys.into_iter()

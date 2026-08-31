@@ -685,21 +685,16 @@ fn new_curve_to_signature_algorithm_vecmap(
 pub enum GenesisGlobalPresignConfig {
     /// Route the production curve/algorithm set to global presign — the
     /// actual mainnet on-chain state (verified: mainnet's
-    /// `GlobalPresignConfig` holds exactly these maps). Servable at every
-    /// protocol version: at v4+ from the validators' internal presign pool
-    /// (`internal_presign_sessions`), below that as a user-requested MPC
-    /// session — the 1.1.8 behavior, which this branch retains as the
-    /// pre-activation fallback in `handle_mpc_request` (the `v118_upgrade`
-    /// rehearsal exercises both serving modes across its swap).
+    /// `GlobalPresignConfig` holds exactly these maps). Global presigns are
+    /// served from the validators' internal presign pool.
     Full,
     /// Empty config: every curve/algorithm allows per-dWallet presign —
     /// what `migrate()` creates, *not* the mainnet state (mainnet's config
     /// is the populated [`Self::Full`] shape). A harness arrangement that
     /// routes workload presigns through the per-dWallet (targeted) path —
     /// the only coverage of that path, since a populated config makes it
-    /// unreachable. The cross-binary churn test genesises with this and
-    /// applies the full config after its upgrade via
-    /// [`set_global_presign_config`].
+    /// unreachable. The cross-binary malicious-party rehearsal
+    /// (`malicious_v140`) genesises with this.
     Empty,
 }
 

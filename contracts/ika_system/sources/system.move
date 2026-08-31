@@ -30,7 +30,6 @@
 /// - Epoch progression and timing
 /// - Staking and delegation logic
 /// - Protocol treasury and rewards distribution
-/// - dWallet network coordination
 /// - System parameter management
 ///
 /// ## Key Responsibilities
@@ -53,11 +52,11 @@
 /// - Managing epoch timing and duration
 /// - Distributing stake subsidies and rewards
 ///
-/// ### dWallet Integration
-/// - Coordinating with dWallet 2PC MPC system
-/// - Managing encryption keys and DKG processes
-/// - Handling pricing and curve configurations
-/// - Processing dWallet network operations
+/// ### dWallet Coordination
+/// dWallet 2PC-MPC coordination itself lives in the separate `ika_dwallet_2pc_mpc`
+/// package; this module interacts with it only through the shared status and
+/// epoch-advancement objects (`SystemCurrentStatusInfo`, `AdvanceEpochApprover`,
+/// witness approvals).
 ///
 /// ### System Governance
 /// - Managing protocol upgrades via UpgradeCap
@@ -85,7 +84,7 @@
 /// To perform a proper type upgrade of `SystemInner`, follow these steps:
 /// 1. Define a new `SystemInnerV2` type in system_inner.move.
 /// 2. Create a data migration function that transforms `SystemInner` to `SystemInnerV2`.
-/// 3. Update the `VERSION` constant to 2 and replace all references to `SystemInner` with `SystemInnerV2`
+/// 3. Update the `VERSION` constant to the next version and replace all references to `SystemInner` with `SystemInnerV2`
 ///    in both system.move and system_inner.move.
 /// 4. Modify the `migrate` function to handle the version upgrade by:
 ///    - Removing the old inner object from the dynamic field
@@ -254,11 +253,11 @@ public fun initialize(
 }
 
 /// Can be called by anyone who wishes to become a validator candidate and starts accruing delegated
-/// stakes in their staking pool. Once they have at least `MIN_VALIDATOR_JOINING_STAKE` amount of stake they
+/// stakes in their staking pool. Once they have at least the minimum joining stake they
 /// can call `request_add_validator` to officially become an active validator at the next epoch.
 /// Aborts if the caller is already a pending or active validator, or a validator candidate.
-/// Note: `proof_of_possession_bytes` MUST be a valid signature using sui_address and protocol_pubkey_bytes.
-/// To produce a valid PoP, run [fn test_proof_of_possession_bytes].
+/// Note: `proof_of_possession_bytes` MUST be a valid BLS signature by `protocol_pubkey_bytes`
+/// over the protocol key and the sender's address (see `validator_info::verify_proof_of_possession`).
 public fun request_add_validator_candidate(
     self: &mut System,
     name: String,
@@ -307,10 +306,7 @@ public fun request_add_validator(self: &mut System, cap: &ValidatorCap) {
 }
 
 /// A validator can call this function to request a removal in the next epoch.
-/// We use the sender of `ctx` to look up the validator
-/// (i.e. sender must match the sui_address in the validator).
-/// At the end of the epoch, the `validator` object will be returned to the sui_address
-/// of the validator.
+/// The validator is looked up by the `ValidatorCap`.
 public fun request_remove_validator(self: &mut System, cap: &ValidatorCap) {
     self.inner_mut().request_remove_validator(cap)
 }
@@ -336,8 +332,7 @@ public fun request_add_stake(
 }
 
 /// Marks the amount as a withdrawal to be processed and removes it from the stake weight of the
-/// node. Allows the user to call withdraw_stake after the epoch change to the next epoch and
-/// shard transfer is done.
+/// node. Allows the user to call withdraw_stake after the epoch change to the next epoch.
 public fun request_withdraw_stake(self: &mut System, staked_ika: &mut StakedIka) {
     self.inner_mut().request_withdraw_stake(staked_ika);
 }
@@ -472,7 +467,7 @@ public fun set_next_epoch_network_pubkey_bytes(
     self.inner_mut().set_next_epoch_network_pubkey_bytes(network_pubkey, cap)
 }
 
-/// Sets a validator's public key of worker key.
+/// Sets a validator's public key of consensus key.
 /// The change will only take effects starting from the next epoch.
 public fun set_next_epoch_consensus_pubkey_bytes(
     self: &mut System,

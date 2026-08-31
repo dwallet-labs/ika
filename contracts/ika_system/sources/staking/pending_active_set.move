@@ -39,7 +39,7 @@ public struct PendingActiveSet has copy, drop, store {
     /// The maximum number of validators in the active set
     max_validator_count: u64,
     /// The minimum amount of staked IKA needed to enter the active set. This is used to
-    /// determine if a storage validator can be added to the active set
+    /// determine if a validator can be added to the active set
     min_validator_joining_stake: u64,
     /// The maximum number of validators that can be added or removed to the active set in an epoch
     max_validator_change_count: u64,
