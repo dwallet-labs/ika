@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use ika_config::node::NodeMode;
 use prometheus::{
     IntCounter, IntGauge, IntGaugeVec, Registry, register_int_counter_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
@@ -145,7 +146,38 @@ pub struct SuiConnectorMetrics {
 }
 
 impl SuiConnectorMetrics {
+    /// Registers the whole set — the composition a validator process gets.
     pub fn new(registry: &Registry) -> Arc<Self> {
+        Self::new_for_mode(NodeMode::Validator, registry)
+    }
+
+    /// Registers into `registry` only the families whose writers run in
+    /// `mode`.
+    ///
+    /// `SuiConnectorService` starts a different set of tasks per mode, and
+    /// each family here belongs to exactly one of them: the chain-observation
+    /// and off-chain-assembly gauges come from syncer loops that only a
+    /// validator starts, and the checkpoint-writer/gas gauges come from the
+    /// submission path that only a notifier runs. What a mode does not drive
+    /// is registered into a role-local registry that no endpoint gathers, so
+    /// it is absent from that process's `/metrics` instead of exported as a
+    /// constant zero (ika #2051).
+    ///
+    /// A validator keeps the notifier's families: this change only removes
+    /// families from processes that never drove them, leaving the validator
+    /// export set untouched.
+    pub fn new_for_mode(mode: NodeMode, registry: &Registry) -> Arc<Self> {
+        let unexported = Registry::new();
+        let validator_registry = if mode.is_validator() {
+            registry
+        } else {
+            &unexported
+        };
+        let checkpoint_writer_registry = if mode.is_fullnode() {
+            &unexported
+        } else {
+            registry
+        };
         let this = Self {
             last_synced_sui_checkpoints: register_int_gauge_vec_with_registry!(
                 "ika_sui_connector_last_synced_sui_checkpoints",
@@ -158,72 +190,72 @@ impl SuiConnectorMetrics {
             gas_coin_balance: register_int_gauge_with_registry!(
                 "ika_sui_connector_gas_coin_balance",
                 "Current balance of gas coin, in mist",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_sequence: register_int_gauge_with_registry!(
                 "ika_sui_connector_dwallet_checkpoint_sequence",
                 "Sequence number of the next dwallet checkpoint to write to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
 
             last_written_dwallet_checkpoint_sequence: register_int_gauge_with_registry!(
                 "ika_sui_connector_last_written_dwallet_checkpoint_sequence",
                 "Sequence number of the last dwallet checkpoint successfully written to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_write_requests_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_dwallet_checkpoint_write_requests_total",
                 "Total number of dwallet checkpoint write requests sent to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_writes_success_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_dwallet_checkpoint_writes_success_total",
                 "Total number of successful dwallet checkpoint writes to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
 
             dwallet_checkpoint_writes_failure_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_dwallet_checkpoint_writes_failure_total",
                 "Total number of failed dwallet checkpoint writes to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             system_checkpoint_writes_failure_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_system_checkpoint_writes_failure_total",
                 "Total number of failed system checkpoint writes to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             system_checkpoint_writes_success_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_system_checkpoint_writes_success_total",
                 "Total number of successful system checkpoint writes to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             system_checkpoint_write_requests_total: register_int_gauge_with_registry!(
                 "ika_sui_connector_system_checkpoint_write_requests_total",
                 "Total number of system checkpoint write requests sent to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             system_checkpoint_sequence: register_int_gauge_with_registry!(
                 "ika_sui_connector_system_checkpoint_sequence",
                 "Sequence number of the next system checkpoint to write to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             last_written_system_checkpoint_sequence: register_int_gauge_with_registry!(
                 "ika_sui_connector_last_written_system_checkpoint_sequence",
                 "Sequence number of the last system checkpoint successfully written to Sui",
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             network_key_overlay_incomplete: register_int_gauge_with_registry!(
@@ -249,98 +281,98 @@ impl SuiConnectorMetrics {
             off_chain_assembly_incomplete_ticks_total: register_int_counter_with_registry!(
                 "ika_off_chain_assembly_incomplete_ticks_total",
                 "Total sync ticks on which the off-chain validator-mpc_data assembly was incomplete",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             off_chain_assembly_incomplete: register_int_gauge_with_registry!(
                 "ika_off_chain_assembly_incomplete",
                 "1 while the latest off-chain validator-mpc_data assembly attempt is incomplete; 0 after success",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             off_chain_assembly_consecutive_incomplete_ticks:
                 register_int_gauge_with_registry!(
                     "ika_off_chain_assembly_consecutive_incomplete_ticks",
                     "Consecutive incomplete off-chain validator-mpc_data assembly ticks; reset to 0 on success",
-                    registry,
+                    validator_registry,
                 )
                 .unwrap(),
             off_chain_assembly_incomplete_duration_seconds:
                 register_int_gauge_with_registry!(
                     "ika_off_chain_assembly_incomplete_duration_seconds",
                     "Seconds since the current off-chain validator-mpc_data assembly incomplete period began; reset to 0 on success",
-                    registry,
+                    validator_registry,
                 )
                 .unwrap(),
             off_chain_assembly_missing: register_int_gauge_vec_with_registry!(
                 "ika_off_chain_assembly_missing",
                 "Members missing from the latest incomplete off-chain validator-mpc_data assembly attempt by bounded reason",
                 &["reason"],
-                registry,
+                validator_registry,
             )
             .unwrap(),
             off_chain_assembly_last_success_timestamp_seconds:
                 register_int_gauge_with_registry!(
                     "ika_off_chain_assembly_last_success_timestamp_seconds",
                     "Unix timestamp of the latest successful off-chain validator-mpc_data assembly in this process; 0 until the first success",
-                    registry,
+                    validator_registry,
                 )
                 .unwrap(),
             off_chain_assembly_wedged: register_int_gauge_with_registry!(
                 "ika_off_chain_assembly_wedged",
                 "1 while the off-chain validator-mpc_data assembly is permanently incomplete",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             epoch_switch_step_done: register_int_gauge_vec_with_registry!(
                 "ika_sui_connector_epoch_switch_step_done",
                 "Per-step gauge (0/1) for epoch-switch progress within the current epoch, re-derived from chain state each tick (restart-proof for all steps except request_advance_epoch)",
                 &["step"],
-                registry,
+                checkpoint_writer_registry,
             )
             .unwrap(),
             chain_received_end_of_publish: register_int_gauge_vec_with_registry!(
                 "ika_sui_connector_chain_received_end_of_publish",
                 "Mirror of received_end_of_publish on chain, one gauge per object",
                 &["object"],
-                registry,
+                validator_registry,
             )
             .unwrap(),
             chain_user_sessions_lag: register_int_gauge_with_registry!(
                 "ika_sui_connector_chain_user_sessions_lag",
                 "last_user_initiated_session_to_complete_in_current_epoch minus completed user sessions count",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             chain_active_user_sessions_count: register_int_gauge_with_registry!(
                 "ika_sui_connector_chain_active_user_sessions_count",
                 "Number of user sessions currently started but not yet completed on chain",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             chain_active_system_sessions_count: register_int_gauge_with_registry!(
                 "ika_sui_connector_chain_active_system_sessions_count",
                 "Number of system sessions currently started but not yet completed on chain",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             chain_epoch_overdue_seconds: register_int_gauge_with_registry!(
                 "ika_sui_connector_chain_epoch_overdue_seconds",
                 "Seconds elapsed past the planned end of the current epoch (clamped to >=0)",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             end_of_publish_blocked_reason: register_int_gauge_vec_with_registry!(
                 "ika_sui_connector_end_of_publish_blocked_reason",
                 "Per-condition gauge (0/1) indicating which gating condition in sync_dwallet_end_of_publish is currently blocking end-of-publish",
                 &["reason"],
-                registry,
+                validator_registry,
             )
             .unwrap(),
             uncompleted_events_backlog: register_int_gauge_with_registry!(
                 "ika_sui_connector_uncompleted_events_backlog",
                 "Uncompleted session events observed on chain on the most recent pull",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             chain_dwallet_checkpoint_writer_lag: register_int_gauge_with_registry!(
@@ -349,7 +381,7 @@ impl SuiConnectorMetrics {
                  last processed checkpoint sequence number; sustained positive values \
                  mean certified checkpoints are not landing on Sui (checkpoint writer \
                  stalled)",
-                registry,
+                validator_registry,
             )
             .unwrap(),
         };

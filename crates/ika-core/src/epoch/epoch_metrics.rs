@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use ika_config::node::NodeMode;
 use prometheus::{
     Histogram, IntCounterVec, IntGauge, Registry, register_histogram_with_registry,
     register_int_counter_vec_with_registry, register_int_gauge_with_registry,
@@ -299,7 +300,32 @@ pub struct EpochMetrics {
 }
 
 impl EpochMetrics {
+    /// Registers the whole set — the composition a validator process gets.
     pub fn new(registry: &Registry) -> Arc<Self> {
+        Self::new_for_mode(NodeMode::Validator, registry)
+    }
+
+    /// Registers into `registry` only the families whose writers run in
+    /// `mode`.
+    ///
+    /// The epoch store is opened by every mode, but most of what it measures
+    /// is written from the consensus, MPC and checkpoint paths that only a
+    /// validator runs. Those families are registered into a role-local
+    /// registry that no endpoint gathers, so a fullnode or notifier does not
+    /// export them at all: absence is the honest signal for "this process has
+    /// no such subsystem", where the constant zero or `-1` sentinel it used
+    /// to serve was indistinguishable from a real reading (ika #2051).
+    ///
+    /// The handles themselves are always constructed, so the write sites stay
+    /// unconditional and a mis-classified family costs a lost observation on
+    /// one role rather than a panic.
+    pub fn new_for_mode(mode: NodeMode, registry: &Registry) -> Arc<Self> {
+        let unexported = Registry::new();
+        let validator_registry = if mode.is_validator() {
+            registry
+        } else {
+            &unexported
+        };
         let this = Self {
             current_epoch: register_int_gauge_with_registry!(
                 "ika_current_epoch",
@@ -316,7 +342,7 @@ impl EpochMetrics {
                     65536.0, 131072.0, 262144.0, 524288.0, 1048576.0, 2097152.0, 4194304.0,
                     8388608.0, 16777216.0, 33554432.0
                 ],
-                registry
+                validator_registry
             )
             .unwrap(),
             current_voting_right: register_int_gauge_with_registry!(
@@ -333,7 +359,7 @@ impl EpochMetrics {
             epoch_total_computation_reward: register_int_gauge_with_registry!(
                 "ika_epoch_total_computation_reward",
                 "Total amount of computation rewards in the epoch",
-                registry
+                validator_registry
             ).unwrap(),
             epoch_reconfig_start_time_since_epoch_close_ms: register_int_gauge_with_registry!(
                 "ika_epoch_reconfig_start_time_since_epoch_close_ms",
@@ -348,12 +374,12 @@ impl EpochMetrics {
             epoch_first_checkpoint_created_time_since_epoch_begin_ms: register_int_gauge_with_registry!(
                 "ika_epoch_first_checkpoint_created_time_since_epoch_begin_ms",
                 "Time interval from when the epoch opens at new epoch to the first checkpoint is created locally",
-                registry
+                validator_registry
             ).unwrap(),
             epoch_first_system_checkpoint_created_time_since_epoch_begin_ms: register_int_gauge_with_registry!(
                 "ika_epoch_first_system_checkpoint_created_time_since_epoch_begin_ms",
                 "Time interval from when the epoch opens at new epoch to the first params message is created locally",
-                registry
+                validator_registry
             ).unwrap(),
             effective_buffer_stake: register_int_gauge_with_registry!(
                 "ika_effective_buffer_stake",
@@ -363,7 +389,7 @@ impl EpochMetrics {
             dwallet_mpc_data_freeze_epoch: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_freeze_epoch",
                 "Epoch of the most recent mpc_data freeze observed locally",
-                registry
+                validator_registry
             )
             .unwrap(),
             committee_quorum_threshold: register_int_gauge_with_registry!(
@@ -411,58 +437,58 @@ impl EpochMetrics {
             dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_excluded_validators",
                 "Number of validators the mpc_data freeze partition excluded this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_quorum_round: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_ready_quorum_round",
                 "Leader round where the mpc_data ready-signal stake quorum was first observed \
                  (freeze-grace anchor); -1 before quorum",
-                registry
+                validator_registry
             )
             .unwrap(),
             last_committed_leader_consensus_round: register_int_gauge_with_registry!(
                 "ika_last_committed_leader_consensus_round",
                 "Leader round of the latest consensus commit processed at the commit boundary \
                  (the freeze-grace round domain); -1 before the epoch's first commit",
-                registry
+                validator_registry
             )
             .unwrap(),
             mpc_consensus_round_lag: register_int_gauge_with_registry!(
                 "ika_mpc_consensus_round_lag",
                 "Consensus rounds the MPC service trails the consensus commit path by; unbounded growth means MPC has stopped while consensus keeps running (-1 before the MPC service reports its first round)",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             mpc_stopped_contributing_condition_active: register_int_gauge_with_registry!(
                 "ika_mpc_stopped_contributing_condition_active",
                 "1 while this node judges its MPC subsystem to have stopped contributing; alert on this rather than on a threshold over ika_mpc_consensus_round_lag, which the bounded round channel holds within a channel's worth of the drain and so cannot show a mid-epoch restart's replay (that is ika_dwallet_mpc_catchup_gap_rounds)",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             mpc_catch_up_stuck_condition_active: register_int_gauge_with_registry!(
                 "ika_mpc_catch_up_stuck_condition_active",
                 "1 while the MPC service reports a catch-up whose consensus-round gap has stopped closing (a drain that is still closing its gap is healthy and sets this to 0)",
-                registry,
+                validator_registry,
             )
             .unwrap(),
             consensus_last_committed_timestamp_seconds: register_int_gauge_with_registry!(
                 "ika_consensus_last_committed_timestamp_seconds",
                 "Consensus timestamp in unix seconds of the latest commit processed at the Ika commit boundary; 0 until this process handles its first commit",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_freeze_grace_rounds: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_freeze_grace_rounds",
                 "Configured mpc_data_freeze_grace_rounds for the current protocol version; \
                  -1 when the freeze feature is disabled or the value is undefined",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_freeze_round: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_freeze_round",
                 "Leader round where the mpc_data input set was frozen; -1 until the freeze",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_signal_deadline_timestamp_seconds: register_int_gauge_with_registry!(
@@ -470,98 +496,98 @@ impl EpochMetrics {
                 "Ready-signal emit deadline on the epoch's consensus clock (leader-proposed \
                  commit timestamps, unix seconds scale, NOT local wall clock); -1 while not \
                  yet computable",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_signals: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_ready_signals",
                 "Number of distinct EpochMpcDataReadySignal signers recorded this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_ready_signal_stake: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_ready_signal_stake",
                 "Stake attested by the recorded mpc_data ready signals this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_locally_validated_peers: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_locally_validated_peers",
                 "This validator's locally-validated mpc_data peer count",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_mpc_data_announcements_received: register_int_gauge_with_registry!(
                 "ika_dwallet_mpc_data_announcements_received",
                 "Number of validator mpc_data announcements recorded this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_handoff_cert_epoch: register_int_gauge_with_registry!(
                 "ika_dwallet_handoff_cert_epoch",
                 "Epoch of the most recent certified handoff attestation formed locally",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_handoff_signatures_collected: register_int_gauge_with_registry!(
                 "ika_dwallet_handoff_signatures_collected",
                 "Number of distinct verified handoff signatures aggregated this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_handoff_signatures_stake: register_int_gauge_with_registry!(
                 "ika_dwallet_handoff_signatures_stake",
                 "Stake accumulated by the verified handoff signatures this epoch",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_handoff_signatures_buffered: register_int_gauge_with_registry!(
                 "ika_dwallet_handoff_signatures_buffered",
                 "Depth of the pending handoff-signature buffer",
-                registry
+                validator_registry
             )
             .unwrap(),
             dwallet_handoff_signatures_rejected_total: register_int_counter_vec_with_registry!(
                 "ika_dwallet_handoff_signatures_rejected_total",
                 "Handoff signatures rejected by the verification path, by verdict",
                 &["verdict"],
-                registry
+                validator_registry
             )
             .unwrap(),
             own_mpc_data_blob_unhealthy: register_int_gauge_with_registry!(
                 "ika_own_mpc_data_blob_unhealthy",
                 "1 while this validator's own mpc_data blob is missing/invalid in perpetual storage",
-                registry
+                validator_registry
             )
             .unwrap(),
             processed_consensus_messages: register_int_gauge_with_registry!(
                 "ika_epoch_processed_consensus_messages",
                 "Consensus-transaction digests the epoch's fold holds for dedup",
-                registry
+                validator_registry
             )
             .unwrap(),
             pending_dwallet_checkpoint_signatures: register_int_gauge_with_registry!(
                 "ika_epoch_pending_dwallet_checkpoint_signatures",
                 "Peer dWallet checkpoint signatures held for aggregation",
-                registry
+                validator_registry
             )
             .unwrap(),
             pending_system_checkpoint_signatures: register_int_gauge_with_registry!(
                 "ika_epoch_pending_system_checkpoint_signatures",
                 "Peer system checkpoint signatures held for aggregation",
-                registry
+                validator_registry
             )
             .unwrap(),
             pending_dwallet_checkpoints: register_int_gauge_with_registry!(
                 "ika_epoch_pending_dwallet_checkpoints",
                 "Entries in the dWallet checkpoint builder's input queue, sampled on mutation",
-                registry
+                validator_registry
             )
             .unwrap(),
             pending_system_checkpoints: register_int_gauge_with_registry!(
                 "ika_epoch_pending_system_checkpoints",
                 "Entries in the system checkpoint builder's input queue, sampled on mutation",
-                registry
+                validator_registry
             )
             .unwrap(),
         };

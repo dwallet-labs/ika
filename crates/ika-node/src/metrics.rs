@@ -87,20 +87,6 @@ pub struct IkaNodeMetrics {
     pub binary_max_protocol_version: IntGauge,
     pub configured_max_protocol_version: IntGauge,
 
-    /// 1 while the prepare-then-start barrier is blocking the new epoch's
-    /// MPC components on full verified handoff data; 0 otherwise. A value
-    /// stuck at 1 is the dashboard signal that a validator is wedged
-    /// waiting for handoff data and is not signing.
-    pub handoff_prepare_waiting: IntGauge,
-    /// Number of prepare-then-start barrier poll iterations spent waiting
-    /// for handoff data.
-    pub handoff_prepare_retries_total: IntCounter,
-    /// Wall-clock seconds spent inside the prepare-then-start barrier.
-    /// Observed only on successful barrier exit, so this trends the
-    /// distribution of completed (possibly slow) waits — stuck-barrier
-    /// alerting is `handoff_prepare_waiting` + `handoff_prepare_retries_total`.
-    pub handoff_prepare_duration_seconds: Histogram,
-
     /// Joiner/anchor bootstrap cert-fetch outcomes, by outcome
     /// (`verified` / `rejected` / `unavailable`). `rejected` fail-closes
     /// the node, so its durable value is the `verified` epoch-cadence
@@ -118,8 +104,36 @@ pub struct IkaNodeMetrics {
     /// reconfig watchdog is armed (see `reconfig_watchdog::phase`); 0
     /// outside it. Any nonzero value that persists is a node parked in the
     /// teardown-to-restart window (#1864), and the value names the hanging
-    /// await.
+    /// await. Every mode arms that watchdog — a fullnode or notifier crosses
+    /// the same unbounded awaits in `reconfigure_state` — so this is not
+    /// validator-only telemetry.
     pub reconfig_phase: IntGauge,
+}
+
+/// Telemetry for subsystems only a validator-mode process runs: the
+/// prepare-then-start handoff barrier and the commit-liveness watchdog.
+///
+/// Registered only in validator mode, so a fullnode or notifier does not
+/// export these families at all. Each of them reads as a healthy validator
+/// when it sits at its default — a `handoff_prepare_waiting` of 0 says "not
+/// wedged at the barrier" and a `consensus_commit_silence_seconds` of 0 says
+/// "a commit landed this second" — which is precisely why absence, not a
+/// zero, is the correct signal on a process with no such subsystem
+/// (ika #2051).
+pub struct ValidatorTelemetryMetrics {
+    /// 1 while the prepare-then-start barrier is blocking the new epoch's
+    /// MPC components on full verified handoff data; 0 otherwise. A value
+    /// stuck at 1 is the dashboard signal that a validator is wedged
+    /// waiting for handoff data and is not signing.
+    pub handoff_prepare_waiting: IntGauge,
+    /// Number of prepare-then-start barrier poll iterations spent waiting
+    /// for handoff data.
+    pub handoff_prepare_retries_total: IntCounter,
+    /// Wall-clock seconds spent inside the prepare-then-start barrier.
+    /// Observed only on successful barrier exit, so this trends the
+    /// distribution of completed (possibly slow) waits — stuck-barrier
+    /// alerting is `handoff_prepare_waiting` + `handoff_prepare_retries_total`.
+    pub handoff_prepare_duration_seconds: Histogram,
 
     /// Seconds since this process last finished processing a consensus
     /// commit, while the commit-liveness watchdog is armed and running;
@@ -157,6 +171,34 @@ impl IkaNodeMetrics {
                 registry,
             )
             .unwrap(),
+            joiner_bootstrap_outcomes_total: register_int_counter_vec_with_registry!(
+                "ika_joiner_bootstrap_outcomes_total",
+                "Joiner/anchor bootstrap cert-fetch outcomes",
+                &["outcome"],
+                registry,
+            )
+            .unwrap(),
+            mpc_data_blob_fetch_total: register_int_counter_vec_with_registry!(
+                "ika_dwallet_mpc_data_blob_fetch_total",
+                "P2P mpc_data blob fetch outcomes",
+                &["result"],
+                registry,
+            )
+            .unwrap(),
+            reconfig_phase: register_int_gauge_with_registry!(
+                "ika_reconfig_phase",
+                "Sub-phase of the epoch-reconfiguration critical section while the reconfig \
+                 watchdog is armed; 0 outside it",
+                registry,
+            )
+            .unwrap(),
+        }
+    }
+}
+
+impl ValidatorTelemetryMetrics {
+    pub fn new(registry: &Registry) -> Self {
+        Self {
             handoff_prepare_waiting: register_int_gauge_with_registry!(
                 "ika_handoff_prepare_waiting",
                 "1 while the prepare-then-start barrier is blocking the new epoch's MPC \
@@ -181,27 +223,6 @@ impl IkaNodeMetrics {
                 vec![
                     1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1200.0, 1800.0
                 ],
-                registry,
-            )
-            .unwrap(),
-            joiner_bootstrap_outcomes_total: register_int_counter_vec_with_registry!(
-                "ika_joiner_bootstrap_outcomes_total",
-                "Joiner/anchor bootstrap cert-fetch outcomes",
-                &["outcome"],
-                registry,
-            )
-            .unwrap(),
-            mpc_data_blob_fetch_total: register_int_counter_vec_with_registry!(
-                "ika_dwallet_mpc_data_blob_fetch_total",
-                "P2P mpc_data blob fetch outcomes",
-                &["result"],
-                registry,
-            )
-            .unwrap(),
-            reconfig_phase: register_int_gauge_with_registry!(
-                "ika_reconfig_phase",
-                "Sub-phase of the epoch-reconfiguration critical section while the reconfig \
-                 watchdog is armed; 0 outside it",
                 registry,
             )
             .unwrap(),
@@ -382,5 +403,376 @@ ika_counter_2 1"
                 .any(|family| family.name() == "ika_counter"),
             "the registry service must keep collecting even with no server bound"
         );
+    }
+}
+
+/// What each `NodeMode` registers, pinned.
+///
+/// The node used to register every metric family in the shared part of its
+/// start sequence, so a notifier exported `ika_dwallet_mpc_*`, the consensus
+/// handler counters, the handoff-barrier gauges and the chain-observation
+/// gauges it never drives — at values indistinguishable from a healthy
+/// validator's (ika #2051). Registration now follows the subsystems each mode
+/// actually runs, and these lists are what pins it.
+#[cfg(test)]
+mod per_mode_registration {
+    use super::IkaNodeMetrics;
+    use crate::ValidatorModeMetrics;
+    use ika_config::NodeMode;
+    use prometheus::Registry;
+
+    /// The ika-side metric structs the start sequence registers in `mode`,
+    /// composed into one registry, returning the family names the endpoint
+    /// would serve.
+    ///
+    /// `gather()` — what `/metrics` actually serves — is the right domain
+    /// here, and it omits a `*_vec` family with no label children: a family
+    /// nothing has observed never reaches the endpoint. Every registered
+    /// literal, vec or not, is covered instead by
+    /// `scripts/check-metric-names.sh`.
+    ///
+    /// The families left out of this composition are mode-independent (the
+    /// anemo/quinn network, rocksdb, archive and pruner families) or already
+    /// mode-gated elsewhere (the host telemetry in `node_runner`), so none of
+    /// them can move a per-mode difference.
+    fn exported_families(mode: NodeMode) -> Vec<String> {
+        let registry = Registry::new();
+
+        // Registered by every mode, each internally registering only the
+        // families that mode's own subsystems write.
+        let _epoch = ika_core::epoch::epoch_metrics::EpochMetrics::new_for_mode(mode, &registry);
+        let _authority = ika_core::authority::AuthorityMetrics::new_for_mode(mode, &registry);
+        let _sui_connector =
+            ika_core::sui_connector::metrics::SuiConnectorMetrics::new_for_mode(mode, &registry);
+        let _ocs = ika_core::sui_connector::ocs_metrics::OcsMetrics::new(&registry);
+        let _proof_provider = ika_network::proof_provider::ProofProviderMetrics::new(&registry);
+        let _node = IkaNodeMetrics::new(&registry);
+
+        // Registered only where the subsystems behind them run: the MPC
+        // service, the checkpoint builders and the validator telemetry, plus
+        // the consensus handles built inside `construct_validator_components`.
+        let _validator = ValidatorModeMetrics::for_mode(mode, &registry);
+        let _consensus = mode.is_validator().then(|| {
+            (
+                ika_core::consensus_manager::ConsensusManagerMetrics::new(&registry),
+                ika_core::consensus_adapter::ConsensusAdapterMetrics::new(&registry),
+            )
+        });
+
+        let mut names: Vec<String> = registry
+            .gather()
+            .into_iter()
+            .map(|family| family.name().to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn assert_families(mode: NodeMode, expected: &[&str]) {
+        let actual = exported_families(mode);
+        let expected: Vec<String> = expected.iter().map(|name| name.to_string()).collect();
+        let missing: Vec<&String> = expected.iter().filter(|n| !actual.contains(n)).collect();
+        let unexpected: Vec<&String> = actual.iter().filter(|n| !expected.contains(n)).collect();
+        assert!(
+            missing.is_empty() && unexpected.is_empty(),
+            "{mode} export set changed.\n  no longer exported: {missing:?}\n  newly exported: \
+             {unexpected:?}"
+        );
+    }
+
+    /// The set a validator exports. This change must leave it untouched: it
+    /// is the set EVERY mode registered before registration was gated.
+    const VALIDATOR_FAMILIES: &[&str] = &[
+        "ika_binary_max_protocol_version",
+        "ika_committee_quorum_threshold",
+        "ika_committee_total_stake",
+        "ika_committee_validity_threshold",
+        "ika_configured_max_protocol_version",
+        "ika_consensus_boot_replay_folded_commit_index",
+        "ika_consensus_boot_replay_latency_seconds",
+        "ika_consensus_boot_replay_target_commit_index",
+        "ika_consensus_calculated_throughput",
+        "ika_consensus_calculated_throughput_profile",
+        "ika_consensus_commit_silence_seconds",
+        "ika_consensus_fold_blocked_seconds_total",
+        "ika_consensus_fold_blocked_sends_total",
+        "ika_consensus_handler_cancelled_transactions",
+        "ika_consensus_handler_num_low_scoring_authorities",
+        "ika_consensus_last_committed_timestamp_seconds",
+        "ika_consensus_manager_shutdown_latency",
+        "ika_consensus_manager_start_latency",
+        "ika_consensus_round_channel_depth",
+        "ika_current_epoch",
+        "ika_current_protocol_version",
+        "ika_current_voting_right",
+        "ika_dwallet_checkpoint_aggregator_committed_stake",
+        "ika_dwallet_checkpoint_aggregator_current_seq",
+        "ika_dwallet_checkpoint_aggregator_distinct_digests",
+        "ika_dwallet_checkpoint_aggregator_plurality_stake",
+        "ika_dwallet_checkpoint_aggregator_uncommitted_stake",
+        "ika_dwallet_checkpoint_creation_latency",
+        "ika_dwallet_checkpoint_errors",
+        "ika_dwallet_checkpoint_pending_queue_depth",
+        "ika_dwallet_checkpoint_roots_count",
+        "ika_dwallet_checkpoint_signatures_verified",
+        "ika_dwallet_handoff_cert_epoch",
+        "ika_dwallet_handoff_signatures_buffered",
+        "ika_dwallet_handoff_signatures_collected",
+        "ika_dwallet_handoff_signatures_stake",
+        "ika_dwallet_mpc_catchup_gap_rounds",
+        "ika_dwallet_mpc_catchup_mode",
+        "ika_dwallet_mpc_cryptographic_computation_core_budget",
+        "ika_dwallet_mpc_cryptographic_computations_running",
+        "ika_dwallet_mpc_data_announcements_received",
+        "ika_dwallet_mpc_data_excluded_validators",
+        "ika_dwallet_mpc_data_freeze_epoch",
+        "ika_dwallet_mpc_data_freeze_grace_rounds",
+        "ika_dwallet_mpc_data_freeze_round",
+        "ika_dwallet_mpc_data_locally_validated_peers",
+        "ika_dwallet_mpc_data_ready_quorum_round",
+        "ika_dwallet_mpc_data_ready_signal_deadline_timestamp_seconds",
+        "ika_dwallet_mpc_data_ready_signal_stake",
+        "ika_dwallet_mpc_data_ready_signals",
+        "ika_dwallet_mpc_global_presign_requests_waiting",
+        "ika_dwallet_mpc_internal_presign_requests_pending_for_network_key_data",
+        "ika_dwallet_mpc_malicious_actors_count",
+        "ika_dwallet_mpc_messages_after_terminal_session_total",
+        "ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version",
+        "ika_dwallet_mpc_network_encryption_key_latest_reconfiguration_output_version",
+        "ika_dwallet_mpc_network_key_instantiations_in_flight",
+        "ika_dwallet_mpc_number_of_expected_sign_sessions",
+        "ika_dwallet_mpc_number_of_unexpected_sign_sessions",
+        "ika_dwallet_mpc_prior_cert_blobs_missing",
+        "ika_dwallet_mpc_requests_pending_for_frozen_mpc_data",
+        "ika_dwallet_mpc_requests_pending_for_next_active_committee",
+        "ika_dwallet_mpc_self_output_to_quorum_consensus_rounds",
+        "ika_dwallet_mpc_service_end_of_publish_local",
+        "ika_dwallet_mpc_sessions_with_self_output_no_quorum",
+        "ika_dwallet_mpc_user_sessions_active_without_local_output",
+        "ika_effective_buffer_stake",
+        "ika_epoch_first_checkpoint_created_time_since_epoch_begin_ms",
+        "ika_epoch_first_system_checkpoint_created_time_since_epoch_begin_ms",
+        "ika_epoch_pending_dwallet_checkpoint_signatures",
+        "ika_epoch_pending_dwallet_checkpoints",
+        "ika_epoch_pending_system_checkpoint_signatures",
+        "ika_epoch_pending_system_checkpoints",
+        "ika_epoch_processed_consensus_messages",
+        "ika_epoch_reconfig_start_time_since_epoch_close_ms",
+        "ika_epoch_total_computation_reward",
+        "ika_epoch_total_duration",
+        "ika_epoch_validator_halt_duration_ms",
+        "ika_handoff_prepare_duration_seconds",
+        "ika_handoff_prepare_retries_total",
+        "ika_handoff_prepare_waiting",
+        "ika_highest_accumulated_system_checkpoint_epoch",
+        "ika_last_certified_dwallet_checkpoint",
+        "ika_last_certified_dwallet_checkpoint_age",
+        "ika_last_certified_system_checkpoint",
+        "ika_last_certified_system_checkpoint_age",
+        "ika_last_committed_leader_consensus_round",
+        "ika_last_constructed_dwallet_checkpoint",
+        "ika_last_constructed_system_checkpoint",
+        "ika_last_created_dwallet_checkpoint_age",
+        "ika_last_created_system_checkpoint_age",
+        "ika_last_dwallet_checkpoint_pending_height",
+        "ika_last_ignored_dwallet_checkpoint_signature_received",
+        "ika_last_ignored_system_checkpoint_signature_received",
+        "ika_last_process_mpc_consensus_round",
+        "ika_last_sent_dwallet_checkpoint_signature",
+        "ika_last_sent_system_checkpoint_signature",
+        "ika_last_skipped_dwallet_checkpoint_signature_submission",
+        "ika_last_skipped_system_checkpoint_signature_submission",
+        "ika_last_system_checkpoint_pending_height",
+        "ika_messages_included_in_dwallet_checkpoint",
+        "ika_messages_included_in_system_checkpoint",
+        "ika_mpc_catch_up_stuck_condition_active",
+        "ika_mpc_consensus_round_lag",
+        "ika_mpc_data_announcement_blob_bytes",
+        "ika_mpc_stopped_contributing_condition_active",
+        "ika_network_key_overlay_incomplete",
+        "ika_network_key_registry_read_empty_condition_active",
+        "ika_ocs_cache_first_stale_total",
+        "ika_ocs_chain_latest_epoch",
+        "ika_ocs_committee_head_epoch",
+        "ika_ocs_dynamic_fields_walk_entries_returned_total",
+        "ika_ocs_dynamic_fields_walk_entries_seen_total",
+        "ika_ocs_dynamic_fields_walk_entries_skipped_transient_total",
+        "ika_ocs_high_water_violations_total",
+        "ika_ocs_last_successful_relay_timestamp_seconds",
+        "ika_ocs_proof_snapshot_cache_hits_total",
+        "ika_ocs_proof_tree_cache_hits_total",
+        "ika_ocs_proof_tree_cache_misses_total",
+        "ika_ocs_pusher_cursor_seq",
+        "ika_ocs_pusher_fetch_failures_total",
+        "ika_ocs_pusher_fold_verify_seconds",
+        "ika_ocs_pusher_gap_archive_repairs_total",
+        "ika_ocs_pusher_gap_dropped_total",
+        "ika_ocs_pusher_pushed_total",
+        "ika_ocs_pusher_skipped_irrelevant_total",
+        "ika_ocs_pusher_stalled",
+        "ika_ocs_ratchet_stalled",
+        "ika_off_chain_assembly_consecutive_incomplete_ticks",
+        "ika_off_chain_assembly_incomplete",
+        "ika_off_chain_assembly_incomplete_duration_seconds",
+        "ika_off_chain_assembly_incomplete_ticks_total",
+        "ika_off_chain_assembly_last_success_timestamp_seconds",
+        "ika_off_chain_assembly_missing",
+        "ika_off_chain_assembly_wedged",
+        "ika_own_mpc_data_blob_unhealthy",
+        "ika_protocol_upgrade_effective_threshold",
+        "ika_protocol_upgrade_supporting_stake",
+        "ika_reconfig_phase",
+        "ika_remote_dwallet_checkpoint_forks",
+        "ika_remote_system_checkpoint_forks",
+        "ika_sequencing_certificate_authority_position",
+        "ika_sequencing_certificate_positions_moved",
+        "ika_sequencing_certificate_preceding_disconnected",
+        "ika_sequencing_in_flight_semaphore_wait",
+        "ika_sequencing_in_flight_submissions",
+        "ika_skipped_consensus_txns",
+        "ika_skipped_consensus_txns_cache_hit",
+        "ika_split_brain_dwallet_checkpoint_forks",
+        "ika_split_brain_system_checkpoint_forks",
+        "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        "ika_sui_connector_chain_active_system_sessions_count",
+        "ika_sui_connector_chain_active_user_sessions_count",
+        "ika_sui_connector_chain_dwallet_checkpoint_writer_lag",
+        "ika_sui_connector_chain_epoch_overdue_seconds",
+        "ika_sui_connector_chain_user_sessions_lag",
+        "ika_sui_connector_dwallet_checkpoint_sequence",
+        "ika_sui_connector_dwallet_checkpoint_write_requests_total",
+        "ika_sui_connector_dwallet_checkpoint_writes_failure_total",
+        "ika_sui_connector_dwallet_checkpoint_writes_success_total",
+        "ika_sui_connector_gas_coin_balance",
+        "ika_sui_connector_last_written_dwallet_checkpoint_sequence",
+        "ika_sui_connector_last_written_system_checkpoint_sequence",
+        "ika_sui_connector_system_checkpoint_sequence",
+        "ika_sui_connector_system_checkpoint_write_requests_total",
+        "ika_sui_connector_system_checkpoint_writes_failure_total",
+        "ika_sui_connector_system_checkpoint_writes_success_total",
+        "ika_sui_connector_uncompleted_events_backlog",
+        "ika_supported_protocol_version_max",
+        "ika_supported_protocol_version_min",
+        "ika_system_checkpoint_creation_latency",
+        "ika_system_checkpoint_errors",
+        "ika_system_checkpoint_roots_count",
+        "ika_system_checkpoint_signatures_verified",
+        "verifier_runtime_per_module_success_latency",
+        "verifier_runtime_per_module_timeout_latency",
+        "verifier_runtime_per_ptb_success_latency",
+        "verifier_runtime_per_ptb_timeout_latency",
+    ];
+
+    const NOTIFIER_FAMILIES: &[&str] = &[
+        "ika_binary_max_protocol_version",
+        "ika_committee_quorum_threshold",
+        "ika_committee_total_stake",
+        "ika_committee_validity_threshold",
+        "ika_configured_max_protocol_version",
+        "ika_current_epoch",
+        "ika_current_protocol_version",
+        "ika_current_voting_right",
+        "ika_effective_buffer_stake",
+        "ika_epoch_reconfig_start_time_since_epoch_close_ms",
+        "ika_epoch_total_duration",
+        "ika_epoch_validator_halt_duration_ms",
+        "ika_network_key_overlay_incomplete",
+        "ika_network_key_registry_read_empty_condition_active",
+        "ika_ocs_cache_first_stale_total",
+        "ika_ocs_chain_latest_epoch",
+        "ika_ocs_committee_head_epoch",
+        "ika_ocs_dynamic_fields_walk_entries_returned_total",
+        "ika_ocs_dynamic_fields_walk_entries_seen_total",
+        "ika_ocs_dynamic_fields_walk_entries_skipped_transient_total",
+        "ika_ocs_high_water_violations_total",
+        "ika_ocs_last_successful_relay_timestamp_seconds",
+        "ika_ocs_proof_snapshot_cache_hits_total",
+        "ika_ocs_proof_tree_cache_hits_total",
+        "ika_ocs_proof_tree_cache_misses_total",
+        "ika_ocs_pusher_cursor_seq",
+        "ika_ocs_pusher_fetch_failures_total",
+        "ika_ocs_pusher_fold_verify_seconds",
+        "ika_ocs_pusher_gap_archive_repairs_total",
+        "ika_ocs_pusher_gap_dropped_total",
+        "ika_ocs_pusher_pushed_total",
+        "ika_ocs_pusher_skipped_irrelevant_total",
+        "ika_ocs_pusher_stalled",
+        "ika_ocs_ratchet_stalled",
+        "ika_protocol_upgrade_effective_threshold",
+        "ika_protocol_upgrade_supporting_stake",
+        "ika_reconfig_phase",
+        "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        "ika_sui_connector_dwallet_checkpoint_sequence",
+        "ika_sui_connector_dwallet_checkpoint_write_requests_total",
+        "ika_sui_connector_dwallet_checkpoint_writes_failure_total",
+        "ika_sui_connector_dwallet_checkpoint_writes_success_total",
+        "ika_sui_connector_gas_coin_balance",
+        "ika_sui_connector_last_written_dwallet_checkpoint_sequence",
+        "ika_sui_connector_last_written_system_checkpoint_sequence",
+        "ika_sui_connector_system_checkpoint_sequence",
+        "ika_sui_connector_system_checkpoint_write_requests_total",
+        "ika_sui_connector_system_checkpoint_writes_failure_total",
+        "ika_sui_connector_system_checkpoint_writes_success_total",
+        "ika_supported_protocol_version_max",
+        "ika_supported_protocol_version_min",
+    ];
+
+    const FULLNODE_FAMILIES: &[&str] = &[
+        "ika_binary_max_protocol_version",
+        "ika_committee_quorum_threshold",
+        "ika_committee_total_stake",
+        "ika_committee_validity_threshold",
+        "ika_configured_max_protocol_version",
+        "ika_current_epoch",
+        "ika_current_protocol_version",
+        "ika_current_voting_right",
+        "ika_effective_buffer_stake",
+        "ika_epoch_reconfig_start_time_since_epoch_close_ms",
+        "ika_epoch_total_duration",
+        "ika_epoch_validator_halt_duration_ms",
+        "ika_network_key_overlay_incomplete",
+        "ika_network_key_registry_read_empty_condition_active",
+        "ika_ocs_cache_first_stale_total",
+        "ika_ocs_chain_latest_epoch",
+        "ika_ocs_committee_head_epoch",
+        "ika_ocs_dynamic_fields_walk_entries_returned_total",
+        "ika_ocs_dynamic_fields_walk_entries_seen_total",
+        "ika_ocs_dynamic_fields_walk_entries_skipped_transient_total",
+        "ika_ocs_high_water_violations_total",
+        "ika_ocs_last_successful_relay_timestamp_seconds",
+        "ika_ocs_proof_snapshot_cache_hits_total",
+        "ika_ocs_proof_tree_cache_hits_total",
+        "ika_ocs_proof_tree_cache_misses_total",
+        "ika_ocs_pusher_cursor_seq",
+        "ika_ocs_pusher_fetch_failures_total",
+        "ika_ocs_pusher_fold_verify_seconds",
+        "ika_ocs_pusher_gap_archive_repairs_total",
+        "ika_ocs_pusher_gap_dropped_total",
+        "ika_ocs_pusher_pushed_total",
+        "ika_ocs_pusher_skipped_irrelevant_total",
+        "ika_ocs_pusher_stalled",
+        "ika_ocs_ratchet_stalled",
+        "ika_protocol_upgrade_effective_threshold",
+        "ika_protocol_upgrade_supporting_stake",
+        "ika_reconfig_phase",
+        "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        "ika_supported_protocol_version_max",
+        "ika_supported_protocol_version_min",
+    ];
+
+    #[test]
+    fn a_validator_exports_every_family() {
+        assert_families(NodeMode::Validator, VALIDATOR_FAMILIES);
+    }
+
+    #[test]
+    fn a_notifier_exports_only_the_families_it_drives() {
+        assert_families(NodeMode::Notifier, NOTIFIER_FAMILIES);
+    }
+
+    #[test]
+    fn a_fullnode_exports_only_the_families_it_drives() {
+        assert_families(NodeMode::Fullnode, FULLNODE_FAMILIES);
     }
 }
