@@ -2019,6 +2019,13 @@ impl DWalletMPCManager {
                                  the handoff cert (key unadopted) — skipping adoption"
                             );
                         }
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "overlay reconfiguration output does not match the prior \
+                             epoch's cert (expected once this epoch's reconfiguration \
+                             completes) — keeping the adopted prior value"
+                        );
                     }
                     continue;
                 }

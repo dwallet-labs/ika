@@ -64,8 +64,9 @@ pub enum Step {
     WaitForNetworkKeyReconfigurationCompleted(u64),
     /// Poll until every running validator reports a canonical network DKG
     /// output version `>= at_least` (via its `/metrics`), or time out. Confirms
-    /// the off-chain handoff migrated the DKG output (e.g. 2 -> 3 after the v4
-    /// reconfiguration); the on-chain copy stays V2, so this is metric-based.
+    /// the whole committee agrees on the DKG-output wire version it serves in
+    /// the off-chain handoff; that version has no chain field, so this is
+    /// metric-based.
     ExpectNetworkDkgOutputVersionAtLeast(u64),
     ExpectReconfigurationOutputVersionAtLeast(u64),
     /// Register a brand-new validator on chain (candidate → stake → join) and

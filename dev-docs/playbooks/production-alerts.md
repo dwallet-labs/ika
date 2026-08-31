@@ -232,6 +232,19 @@ while a genuinely stuck drain's lag jitter kept resetting the clock. The gap
 falls on every round a replay drains and freezes only when the drain stops
 closing on the tip, which is the distinction this alert is for.
 
+**The monitoring side's uptime guard is temporary — remove it only when every
+validator runs the fix.** The alert rule currently suppresses this condition
+for the first hour of a validator's uptime, because a binary from before the
+ika #2107 fix still times the condition on the clamped round lag and
+false-latches during a boot replay. That false latch lives in the validator
+binary, so merging the fix and tagging a release removes nothing: the guard
+comes off only once every validator on BOTH mainnet and testnet is actually
+running a release that carries it (v1.4.1 or newer), which has to be confirmed
+per network against what the committee is running, not against what has been
+published. Take it off then, and do not leave it standing longer: it blinds the
+alert for the first hour after a restart, which is precisely the window in
+which a post-restart replay can get stuck.
+
 **Do not alert on `ika_mpc_consensus_round_lag` directly.** It can carry
 neither alert. The fold hands each round to the drain over a bounded blocking
 channel (capacity 1,024) and the drain consumes during the boot replay, so the

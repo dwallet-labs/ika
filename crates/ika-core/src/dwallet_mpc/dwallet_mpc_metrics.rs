@@ -241,12 +241,14 @@ pub struct DWalletMPCMetrics {
     /// computations (the admission ceiling `running` is compared against).
     pub(crate) cryptographic_computation_core_budget: IntGauge,
 
-    /// Version (2 or 3) of the canonical network DKG output this validator most
-    /// recently mirrored into the off-chain handoff. Migrates 2 -> 3 once, when
-    /// a deployed key's cert-pinned reconfiguration output becomes V3 (protocol
-    /// v4) and the validator reconstructs the full V3 output. `0` until the
-    /// first off-chain instantiation. (With one network key this reflects that
-    /// key; with several it reflects the most recently instantiated.)
+    /// Wire version tag of the canonical network DKG output this validator most
+    /// recently mirrored into the off-chain handoff: 1 or 2 for the deployed
+    /// keys' original anchors, 4 for an aggregated full-shape output (V3 is
+    /// undecodable and never observed). `0` until the first off-chain
+    /// instantiation. This binary never rewrites an anchor, so the value simply
+    /// reports the tag the overlay serves and does not move within a key's
+    /// lifetime. (With one network key this reflects that key; with several it
+    /// reflects the most recently instantiated.)
     pub(crate) network_encryption_key_canonical_dkg_output_version: IntGauge,
 
     /// Version of the latest network-key reconfiguration output installed on

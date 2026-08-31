@@ -164,9 +164,9 @@ pub struct NetworkEncryptionKeyPublicData {
 /// It is a deterministic function of the network DKG output (the NOA DKG
 /// is seeded on the class-group encryption key), so every validator
 /// derives the same value; and it is invariant across reconfiguration
-/// and the v2->v3 DKG-output reconstruction because that encryption key
-/// is invariant. Kept Sui-free (no `ObjectID`): `dwallet-mpc-types` does
-/// not depend on `sui-types`.
+/// and across any re-tagging of the DKG output, because that encryption
+/// key is invariant. Kept Sui-free (no `ObjectID`): `dwallet-mpc-types`
+/// does not depend on `sui-types`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NetworkKeyId(pub [u8; 32]);
 
@@ -463,18 +463,18 @@ pub enum VersionedSignOutput {
 ///   every dealer's full PVSS dealing. Its inkrypto type
 ///   (`NonAggregatedPublicOutput`) was REMOVED — V3 bytes can no longer be
 ///   decoded, and every decode arm errors. The variant remains only for BCS
-///   variant-index stability. Persisted V3 anchors must have migrated to V4
-///   (via the anchor migration, on a binary that still carried the type)
-///   before this binary runs.
+///   variant-index stability. A persisted V3 anchor is therefore unreadable
+///   here: it must already have been rewritten to V4 by an earlier binary
+///   that still carried the type.
 /// - `V4` — bytes from
 ///   `twopc_mpc::decentralized_party::dkg::PublicOutput`: the same
 ///   `PublicOutputCore` prefix, with the trailing sharing output in the
 ///   aggregated shape (one summed randomizer-share ciphertext per receiver
 ///   instead of every dealer's full PVSS dealing — O(n) instead of O(n²)).
 ///   The protocol aggregates at output formation, so the DKG Party's output
-///   IS this shape and `advance_network_dkg_v2` tags it V4 as-is. A V4-tagged
-///   anchor also arises from the anchor migration once the reconfiguration
-///   output is V4.
+///   IS this shape and `advance_network_dkg_v2` tags it V4 as-is. This binary
+///   never rewrites an existing anchor, so a V4-tagged anchor is either one a
+///   V4-era DKG produced or one an earlier binary already rewrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
@@ -504,7 +504,7 @@ impl VersionedNetworkDkgOutput {
 /// Wire-tagged decentralized-reconfiguration public output.
 ///
 /// - `V1` — previously-deployed shape; never produced anymore. Retained for
-///   BCS variant-index stability of `V2`/`V3`.
+///   BCS variant-index stability of `V2`/`V3`/`V4`.
 /// - `V2` — bytes with the shape of
 ///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore` (the
 ///   historical backward-compatible reconfiguration party's output). No
