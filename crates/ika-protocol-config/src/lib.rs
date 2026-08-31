@@ -216,11 +216,13 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     internal_presign_sessions: bool,
 
-    // Enabled V1 BLS-signed checkpoints. Set at version 4 and therefore true
-    // at every supported version, so nothing reads it anymore — the BLS
-    // checkpoint services, pending-checkpoint writes and signature
-    // aggregation are unconditional. Kept for the same config-digest reason
-    // as `internal_presign_sessions` above.
+    // If true, enables V1 BLS-signed checkpoints (default on). Set at version
+    // 4, so it is true at every supported version today — but unlike the
+    // always-true flags above it is still READ, and its gates are kept
+    // deliberately. BLS checkpoints are on the deprecation path: the
+    // `noa_checkpoints` flag below supersedes them, so this flag has a planned
+    // future false arm and sweeping its gates now would only mean rebuilding
+    // them.
     #[serde(skip_serializing_if = "is_false")]
     bls_checkpoints: bool,
 

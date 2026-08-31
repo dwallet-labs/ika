@@ -1940,7 +1940,9 @@ impl DWalletMPCService {
                     }
 
                     // BLS checkpoint path (Sui only for now).
-                    if *chain == CounterpartyChainKind::Sui {
+                    if *chain == CounterpartyChainKind::Sui
+                        && self.protocol_config.bls_checkpoints()
+                    {
                         let pending_checkpoint =
                             PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
                                 messages: checkpoint_messages.clone(),

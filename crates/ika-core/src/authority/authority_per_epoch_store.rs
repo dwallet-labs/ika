@@ -5122,7 +5122,10 @@ impl AuthorityPerEpochStore {
                 verified_system_checkpoint_messages.clone(),
             );
         }
-        if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
+        if self.protocol_config().bls_checkpoints()
+            && make_checkpoint
+            && !verified_system_checkpoint_messages.is_empty()
+        {
             let checkpoint_height = consensus_commit_info.round;
 
             let pending_system_checkpoint =
@@ -5151,7 +5154,10 @@ impl AuthorityPerEpochStore {
 
         // Only after the commit's state is applied, notify checkpoint service
         // to start building any new pending checkpoints.
-        if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
+        if self.protocol_config().bls_checkpoints()
+            && make_checkpoint
+            && !verified_system_checkpoint_messages.is_empty()
+        {
             debug!(
                 ?consensus_commit_info.round,
                 "Notifying system_checkpoint service about new pending checkpoint(s)",
@@ -5813,7 +5819,11 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::DWalletCheckpointSignature(info),
                 ..
             }) => {
-                if let Some(service) = checkpoint_service {
+                // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
+                // When only NOA checkpoints are active, BLS signature aggregation is skipped.
+                if self.protocol_config().bls_checkpoints()
+                    && let Some(service) = checkpoint_service
+                {
                     // We usually call notify_checkpoint_signature in IkaTxValidator, but that
                     // step can be skipped when a batch is already part of a certificate, so we
                     // must also notify here.
@@ -5838,7 +5848,10 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::SystemCheckpointSignature(data),
                 ..
             }) => {
-                if let Some(service) = system_checkpoint_service {
+                // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
+                if self.protocol_config().bls_checkpoints()
+                    && let Some(service) = system_checkpoint_service
+                {
                     service.notify_checkpoint_signature(self, data)?;
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)

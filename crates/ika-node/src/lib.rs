@@ -2377,6 +2377,11 @@ impl IkaNode {
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<DWalletCheckpointService>, JoinSet<()>)> {
+        if !epoch_store.protocol_config().bls_checkpoints() {
+            info!("BLS checkpoints disabled, skipping DWallet checkpoint service");
+            return None;
+        }
+
         let epoch_start_timestamp_ms = epoch_store.epoch_start_state().epoch_start_timestamp_ms();
         let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
 
@@ -2430,6 +2435,11 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         replay_waiter: ReplayWaiter,
     ) -> Option<(Arc<SystemCheckpointService>, JoinSet<()>)> {
+        if !epoch_store.protocol_config().bls_checkpoints() {
+            info!("BLS checkpoints disabled, skipping System checkpoint service");
+            return None;
+        }
+
         let epoch_start_timestamp_ms = epoch_store.epoch_start_state().epoch_start_timestamp_ms();
         let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
 
