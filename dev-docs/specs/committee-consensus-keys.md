@@ -7,7 +7,7 @@ different identity basis or a different encoding width, and the code that
 used to switch between them has been deleted rather than disabled.
 The design record — including the first, reverted identity-flip attempt
 and why it failed — is
-[`../plans/authority-name-consensus-key.md`](../plans/archive/authority-name-consensus-key.md).
+[`../plans/archive/authority-name-consensus-key.md`](../plans/archive/authority-name-consensus-key.md).
 
 A validator has **two** long-lived public keys with different jobs:
 

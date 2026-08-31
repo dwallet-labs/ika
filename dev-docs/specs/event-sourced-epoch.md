@@ -122,8 +122,9 @@ memory-bounded — it scans in the same 250-commit batches and yields between
 commits — but it is not the path this spec describes and not the path the
 observability watches. Measured on a 4-validator net with real class-groups
 traffic: 72,592 and 74,388 commits, both restarts, deterministic (ika #2085,
-found during the #2064 gate-1 measurement). Every unit test built its fixture
-with finalized commits, which is why CI stayed green through all of it; the
+found during the ika #2064 release-validation measurements). Every unit test
+built its fixture with finalized commits, which is why CI stayed green
+through all of it; the
 regression test is now built the way production writes the store —
 `replay_folds_every_commit_when_transaction_voting_is_off`, with
 `replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized` pinning
@@ -274,7 +275,7 @@ that window: the capability notification, both epoch-task senders on their
 timers, and — because the replay regenerates their whole input queue — the
 checkpoint builders.
 
-Two changes make that window safe:
+Three changes make that window safe:
 
 - **`UpdatableConsensusClient` waits instead of aborting.** It used to panic
   if the client was still unset 300 seconds after a submission was issued,

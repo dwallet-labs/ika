@@ -1,9 +1,10 @@
 # Continuous trusted-peer discovery (peer-only joiner bootstrap)
 
 How a freshly-registered **peer-only** validator gets dialed and boots with
-no static seed peers and no direct Sui uplink. Landed on
-`feat/ocs-grpc-migration` (#1744); supersedes the `validator_seed_peers`
-upgrade-test workaround.
+no static seed peers and no direct Sui uplink. This replaced an earlier
+workaround in which a joiner was reachable only because the test harness
+hand-configured its dialers with a static peer list; the mechanism below
+needs no such list, in tests or in production.
 
 ## The problem
 
@@ -70,7 +71,7 @@ parallel reader and no special-casing per topology.
   the whole set. Only the whole-refresh failure warn is throttled.
   Likewise a single unresolvable/withdrawn validator is skipped, not fatal —
   including one whose `p2p_address` does not convert to an anemo address,
-  which is dropped silently during the mapping step.
+  which is dropped with a warn during the mapping step.
 - **Keep the last good set.** A transient read error leaves `last_sent` untouched; the
   watch channel still holds the last value, so `known_peers` is unaffected.
 

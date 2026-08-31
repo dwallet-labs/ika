@@ -1014,7 +1014,7 @@ on the changeset index's version+digest currency signal *plus* the TTL
 bound — two attestations of the same "still current" property. Extending
 the cache-first serve beyond the singleton anchors to *all* slowly-changing
 mirror reads remains future work — see
-[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/archive/ocs-changeset-stream-mirror-currency.md).
+[`../plans/archive/ocs-changeset-stream-mirror-currency.md`](../plans/archive/ocs-changeset-stream-mirror-currency.md).
 
 ## Retained state: surviving a restart and a pruning fullnode
 
@@ -1156,7 +1156,7 @@ because the bytes came from a peer's disk rather than its fullnode.
     both addresses — it is **load-bearing**, not defensive: without it those DKG
     events are dropped.
 
-    Two consequences:
+    Three consequences:
 
     - **This invariant is unaffected.** It asserts the type of the two
       singleton ANCHOR objects, and those were created by the original

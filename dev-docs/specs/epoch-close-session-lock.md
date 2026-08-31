@@ -34,8 +34,10 @@ Skew delays *when* a validator acts on a session, never *whether*.
 is set, user `completed_sessions_count == frozen target`, and system
 sessions `completed == started`. Nothing about network keys enters here.
 
-The Rust EndOfPublish gate (`sui_syncer`) is a strict SUPERSET, not a
-mirror: it requires those three AND `all_immediate_sessions_completed`,
+The Rust EndOfPublish gate (`ready_to_end_publish` in `sui_syncer`) is a
+strict SUPERSET, not a mirror: it requires those same three — spelled
+`session_locked`, `all_epoch_sessions_finished` and
+`all_immediate_sessions_completed` on the Rust side — AND
 `next_epoch_committee_exists`,
 `all_network_encryption_keys_reconfiguration_completed`,
 `all_noa_checkpoints_finalized` and no outstanding pricing-calculation

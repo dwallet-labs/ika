@@ -8,7 +8,7 @@ serve dWallet sessions throughout. This file is the protocol-level
 contract that any change touching versioning, serialization, or the
 epoch boundary must preserve. The out-of-process harness that verifies
 it lives in `crates/ika-upgrade-test/`; the design record and findings
-are in [`../plans/cross-binary-upgrade-testing.md`](../plans/archive/cross-binary-upgrade-testing.md).
+are in [`../plans/archive/cross-binary-upgrade-testing.md`](../plans/archive/cross-binary-upgrade-testing.md).
 
 ## How a version advances
 
@@ -25,9 +25,10 @@ The version is not config-driven — it is a stake-weighted on-chain vote:
   `SET_NEXT_PROTOCOL_VERSION` system checkpoint message.
 
 Move packages upgrade through Sui package upgrades; the coordinator
-schema may gain behavior at a version boundary (e.g.
-`internal_presign_sessions` activates at v4). Crypto/MPC payloads are
-versioned implicitly inside bcs-encoded enums — `VersionedMPCData`,
+schema may gain behavior at a version boundary (the worked example,
+`internal_presign_sessions` activating at v4, is now history — the flag is
+true at every supported version and its gates have been swept). Crypto/MPC
+payloads are versioned implicitly inside bcs-encoded enums — `VersionedMPCData`,
 `VersionedNetworkDkgOutput`, `VersionedPresignOutput`,
 `VersionedSignOutput`.
 
@@ -66,11 +67,14 @@ serialization/schema change, MUST preserve all of the following.
    failure mode: **an in-flight session that can never complete on the
    running version wedges the epoch permanently** — the epoch cannot
    close, so the version can never advance to the one that would serve
-   it. The pre-activation global-presign fallback in `handle_mpc_request`
-   exists precisely for this: a global presign requested at v3 on a
-   binary that *serves* global presigns from the v4-only internal pool
-   must fall through to a user-requested MPC session, or one in-flight
-   presign at restart deadlocks the whole network. See
+   it. The worked instance was the v3→v4 global-presign boundary:
+   `handle_mpc_request` carried a pre-activation fallback so that a global
+   presign requested while the internal pool that serves it did not yet
+   exist ran as an ordinary user-requested MPC session, rather than
+   stranding and deadlocking the network on one in-flight presign. That
+   fallback is **gone** — the flag it tested is true at every supported
+   version and its gates were swept — but the hazard it answered is one
+   any future activation boundary must answer again. See
    [`epoch-close-session-lock.md`](epoch-close-session-lock.md) for the
    completion-target / close-predicate rules this builds on.
 
