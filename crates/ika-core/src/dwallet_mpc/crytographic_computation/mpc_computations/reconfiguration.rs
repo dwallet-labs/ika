@@ -135,14 +135,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         }
 
         match network_dkg_public_output {
-            // The deployed mainnet/testnet keys carry a V1 anchor: the raw
-            // `class_groups::dkg::PublicOutput`, written once by the original
-            // (pre-1.1.8) DKG and never rewritten. Under the main party the
-            // anchor stays V1 until the one-time canonical-anchor migration
-            // flips it to V4 (`reconstruct_full_network_dkg_output` + the
-            // canonical mirror at instantiation), so the first main
-            // reconfiguration of a deployed key runs from (V1 anchor, V2 prior
-            // output). The V1 bytes decode directly to the
+            // A V1 anchor is the raw `class_groups::dkg::PublicOutput`,
+            // written once by the original (pre-1.1.8) DKG and never
+            // rewritten on chain. The deployed keys have since migrated their
+            // canonical anchor to V4, but this arm stays because a V1 anchor
+            // must remain decodable — a node has to keep reading its own
+            // history. The V1 bytes decode directly to the
             // `class_groups::dkg::PublicOutput` the constructor takes — the
             // same value the V2/V4 arm reaches via
             // `dkg_public_output_core.into()`.
