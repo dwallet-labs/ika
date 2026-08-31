@@ -227,6 +227,18 @@ stopped reaching new lows, over a bound generous against the observed drain
 rate. Between them, "not contributing" and "not recovering" are both loud, and
 the recovering-normally case is silent.
 
+**The quantity the no-new-low clock watches has to be the one that moves while
+the subsystem recovers.** That detector was built when the raw commit-round lag
+was that quantity, and kept watching it after the bounded round channel took
+the property away — the lag reaches its low-water mark within seconds of boot
+and then sits slightly above it for the whole of a boot replay, so the clock
+ran out on precisely the healthy case (ika #2095, twice in production), while a
+stuck drain's lag jitter kept resetting it. It now watches
+`ika_dwallet_mpc_catchup_gap_rounds`. Whenever a detector times "no progress",
+check that its progress variable still has room to move under the current
+backpressure design; a clamped one inverts the detector rather than blunting
+it.
+
 The suppression outlived the spike it was built for, and that is worth knowing
 before reading the gauge: under the bounded round channel a replay cannot move
 the raw lag at all. The fold parks rather than run more than a channel's worth
