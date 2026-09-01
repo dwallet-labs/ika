@@ -119,7 +119,14 @@ jobs:
         # ika-types' tests (Cargo Test Check is compile-only), so the pins
         # must run here or a retype merges green. ika-types has no MPC
         # crypto, so the debug profile is fine.
-        run: cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned
+        run: |
+          set -o pipefail
+          cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned \
+            | tee "$RUNNER_TEMP/layout-pins.log"
+          # cargo exits 0 when a name filter matches nothing, so renaming a
+          # pinned test would silently disable this gate. Require that tests
+          # actually ran.
+          grep -qE '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/layout-pins.log"
       - name: System checkpoint message widths
         # Move peels a checkpoint's whole message vector as one flat BCS stream,
         # with no per-message length prefix to resynchronize on, so a Rust
@@ -127,7 +134,13 @@ jobs:
         # every message after it in the same checkpoint. The pins live in
         # ika-types' tests, which PR CI otherwise never executes (Cargo Test
         # Check is compile-only), so they must be named here to run at all.
-        run: cargo test -p ika-types --lib -- variant_encodings_are_pinned_to_the_move_peel_widths
+        run: |
+          set -o pipefail
+          cargo test -p ika-types --lib -- variant_encodings_are_pinned_to_the_move_peel_widths \
+            | tee "$RUNNER_TEMP/width-pins.log"
+          # Same vacuity guard as the layout pins above: a name filter that
+          # matches nothing still exits 0.
+          grep -qE '^test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/width-pins.log"
       - name: Sui version consistency
         # The Sui pin lives in several places that don't update together;
         # see dev-docs/conventions/sui-version-bump.md.

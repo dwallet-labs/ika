@@ -1,16 +1,22 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Fixed-vector determinism pins for the aggregated-output anchor migration.
+//! Fixed-vector wire-format pin for the aggregated (V4) canonical anchor.
 //!
-//! Every validator independently derives and persists the aggregated (V4)
-//! canonical anchor via `new_from_reconfiguration_output`, so byte-identical
-//! quorum rests entirely on that derivation being canonically ordered
-//! (receivers, curve-parts, summation, bcs map encoding) across binaries and
-//! refactors. This test pins the derivation against committed fixtures
-//! captured from one real protocol run: any change to the derived bytes — an
-//! iteration-order regression, a serializer change, a struct reshape — fails
-//! it.
+//! Nothing in this binary calls
+//! `decentralized_party::dkg::PublicOutput::new_from_reconfiguration_output`
+//! any more — the derivation ran once, on an earlier binary, and the V4
+//! anchors it produced are the live state the deployed networks hold. The pin
+//! stays because that encoding is still load-bearing wire format here: every
+//! epoch this binary decodes those very bytes and derives the protocol public
+//! parameters from them, so an inkrypto-side reshape of
+//! `decentralized_party::dkg::PublicOutput` — a field reorder, a serializer
+//! change, an ordering regression in the derivation — would silently
+//! reinterpret state nobody can regenerate, and every MPC output computed
+//! against it would byte-diverge from the rest of the committee. Re-running
+//! the original derivation is simply the sharpest way to pin that encoding: it
+//! reproduces the exact bytes of a real protocol run, inputs and output both
+//! committed as fixtures.
 //!
 //! The pre-aggregation (V3) fixture pins that lived here were removed with
 //! the crypto types they exercised (`NonAggregatedPublicOutput` and its
@@ -28,9 +34,10 @@ const PINNED_AGGREGATED_RECONFIGURATION_OUTPUT: &[u8] =
 const DKG_OUTPUT_CORE: &[u8] = include_bytes!("fixtures/dkg_output_core.bcs");
 const PINNED_AGGREGATED_ANCHOR: &[u8] = include_bytes!("fixtures/dkg_anchor_aggregated.bcs");
 
-/// Anchor-migration determinism: rebuilding the canonical anchor from a V2
-/// (core-only) anchor's class-group DKG output and the aggregated
-/// reconfiguration output must yield the exact pinned V4 anchor bytes.
+/// Anchor encoding pin: rebuilding the canonical anchor from a V2 (core-only)
+/// anchor's class-group DKG output and the aggregated reconfiguration output
+/// must yield the exact pinned V4 anchor bytes — the bytes the deployed keys
+/// hold today and that this binary re-reads every epoch.
 #[test]
 fn v2_start_anchor_migration_matches_fixed_vector() {
     let core: twopc_mpc::decentralized_party::dkg::PublicOutputCore =
@@ -49,8 +56,9 @@ fn v2_start_anchor_migration_matches_fixed_vector() {
     assert_eq!(
         bcs::to_bytes(&anchor).expect("serialize the rebuilt anchor"),
         PINNED_AGGREGATED_ANCHOR,
-        "the V2-start anchor migration no longer reproduces the pinned V4 anchor bytes — \
-         a determinism regression that would split the byte-identical quorum on the \
-         deployed keys' one-time anchor migration"
+        "the pinned V4 anchor bytes are no longer reproduced — the encoding of \
+         `decentralized_party::dkg::PublicOutput` moved out from under the anchors the \
+         deployed keys already hold, so this binary would derive different protocol \
+         public parameters from that unregenerable state than its peers do"
     );
 }

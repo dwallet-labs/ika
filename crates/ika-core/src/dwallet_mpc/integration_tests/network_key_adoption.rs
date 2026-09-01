@@ -239,6 +239,119 @@ async fn stale_epoch_network_key_data_is_not_spawned() {
     );
 }
 
+/// A cert-digest mismatch on a key that is ALREADY adopted must leave that
+/// adopted value in place — not drop it, and not overwrite it with the
+/// mismatching overlay. The two outcomes differ sharply: the adopted value is
+/// the one the committee certified and the one this validator is instantiating
+/// from, so dropping it on a mismatch would silently stop the validator from
+/// signing with the key for the rest of the epoch, while keeping it is the
+/// intended skip-and-retry (the overlay re-merges every sync tick). Only an
+/// UNADOPTED key contradicting the cert is the security-relevant anomaly, and
+/// that one is rejected (covered by the empty-reconfiguration test above).
+#[tokio::test]
+async fn already_adopted_key_survives_a_cert_digest_mismatch() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+    let prior_epoch = epoch_id - 1;
+
+    let key_id = ObjectID::random();
+    let network_key_id = NetworkKeyId([0x43; 32]);
+    crate::network_key_id_mapping::register(key_id, network_key_id);
+
+    let dkg_output = b"cert-pinned network dkg public output".to_vec();
+    let reconfiguration_output = b"cert-pinned network reconfiguration public output".to_vec();
+
+    // The prior epoch's cert pins both digests for this key (items sorted by
+    // `HandoffItemKey`: DKG < reconfiguration).
+    let attestation = HandoffAttestation {
+        epoch: prior_epoch,
+        next_committee_pubkey_set_hash: [0u8; 32],
+        items: vec![
+            (
+                HandoffItemKey::NetworkDkgOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&dkg_output),
+            ),
+            (
+                HandoffItemKey::NetworkReconfigurationOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&reconfiguration_output),
+            ),
+        ],
+    };
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(
+            prior_epoch,
+            CertifiedHandoffAttestation {
+                attestation,
+                signatures: vec![],
+            },
+        );
+
+    let manager = service.dwallet_mpc_manager_mut();
+
+    // First pass: the overlay matches the cert on both digests, so the key is
+    // adopted.
+    let matching_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            dkg_output.clone(),
+            reconfiguration_output.clone(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&matching_overlay);
+    assert!(
+        manager.adopted_network_key_data.contains_key(&key_id),
+        "the cert-matching overlay entry must be adopted"
+    );
+
+    // Second pass: the overlay's DKG output no longer matches the cert. The
+    // pass must skip the key (no adoption of the mismatching bytes) while
+    // leaving the already-adopted value untouched.
+    let mismatching_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            b"some other network dkg public output".to_vec(),
+            reconfiguration_output.clone(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&mismatching_overlay);
+    let adopted = manager
+        .adopted_network_key_data
+        .get(&key_id)
+        .expect("the already-adopted key must survive a cert-digest mismatch");
+    assert_eq!(
+        adopted.network_dkg_public_output, dkg_output,
+        "the adopted value must stay at the cert-matching bytes, not be overwritten \
+         by the mismatching overlay"
+    );
+    assert_eq!(
+        adopted.current_reconfiguration_public_output, reconfiguration_output,
+        "the adopted reconfiguration bytes must be untouched by the skipped pass"
+    );
+}
+
 /// A cert-referenced key whose `ObjectID` has no `NetworkKeyId` mapping
 /// (a joiner that never instantiated the key — the mapping registers at
 /// instantiation, which needs adoption first) must NOT be treated as

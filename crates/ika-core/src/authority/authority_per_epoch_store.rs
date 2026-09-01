@@ -3712,6 +3712,21 @@ impl AuthorityPerEpochStore {
         let stalled_for = if draining {
             let now = Instant::now();
             let mut drain = self.mpc_catch_up_drain.lock();
+            // The seeded low can be tiny, zero included, and that is not a
+            // latch waiting to happen. It is NOT the case that a reported
+            // catch-up implies a gap near the gate's entry threshold: the gate
+            // enters above `CATCH_UP_ENTER_GAP_ROUNDS` but HOLDS all the way
+            // down to `CATCH_UP_EXIT_GAP_ROUNDS`, and it measures its gap once
+            // per drain iteration against the cursor from BEFORE that
+            // iteration, while the round below is republished after every
+            // round the same iteration consumes. So the round travelling with
+            // a `catching_up` flag is strictly fresher than the one the gate
+            // judged, and the gap computed here can already be zero.
+            // What keeps that from latching the alarm is time, not distance:
+            // the drain re-observes on a seconds scale, and the moment the
+            // gate disengages `draining` goes false and the branch below drops
+            // this tracker outright — so an end-of-catch-up low is discarded
+            // orders of magnitude sooner than `MPC_CATCH_UP_STUCK_DRAIN`.
             let progress = drain.get_or_insert(CatchUpDrainProgress {
                 lowest_gap_rounds: gap_rounds,
                 lowest_gap_at: now,

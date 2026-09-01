@@ -248,7 +248,7 @@ mod tests {
     ///
     /// Each row pins one variant's complete BCS encoding against the arm that
     /// consumes it in the `message_data_enum_tag` match of
-    /// `process_checkpoint_message_by_quorum`
+    /// `process_checkpoint_message`
     /// (`contracts/ika_system/sources/system/system_inner.move`): the leading byte
     /// is the tag the arm's `*_MESSAGE_TYPE` constant matches, and the remaining
     /// bytes are what that arm's `peel_*` sequence consumes.
@@ -325,7 +325,7 @@ mod tests {
                 bcs::to_bytes(&kind).unwrap(),
                 expected,
                 "{kind:?} no longer encodes as the Move dispatch reads it (tag {} then {move_peels}, \
-                 in `process_checkpoint_message_by_quorum` in \
+                 in `process_checkpoint_message` in \
                  contracts/ika_system/sources/system/system_inner.move). Move peels the \
                  checkpoint's messages as one flat stream, so a width or tag change here \
                  desynchronizes every message that follows it in the same checkpoint. Change the \
