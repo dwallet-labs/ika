@@ -336,7 +336,30 @@ next epoch inherits.
    SKIPS. A node LEAVING the committee does not prepare — it will never
    use the data. Entering epoch 0 at genesis is skipped: no predecessor
    epoch exists to be handed off from (the same `epoch >= 1` test the
-   joiner bootstrap uses). Nothing else is exempt.
+   joiner bootstrap uses).
+
+   One certified ITEM is also exempt, and it has to be. The certificate
+   names keys by `NetworkKeyId`; every local digest slice and blob cache
+   is keyed by `ObjectID`. The translation is a process-global map holding
+   the deployed keys as compiled-in constants plus whatever this PROCESS
+   has instantiated or derived. A key outside the constants that this
+   process has not touched — every fresh localnet/CI DKG, seen by a joiner
+   or by a just-restarted validator — has no entry, and the barrier can do
+   nothing about it: the installer has no `ObjectID` to cache bytes under,
+   and the derivation that would register one runs from the MPC manager's
+   adoption pass, which does not exist until the barrier releases. So an
+   unmapped item passes the readiness predicate and is reported instead
+   (`unmapped_cert_keys` on the periodic warn). That does not admit stale
+   shares: adoption DEFERS an unmapped key rather than installing anything
+   for it, and once the background derivation registers the mapping it
+   re-applies the same cert-digest gate and refuses a local output that
+   contradicts the certificate. The barrier's own contribution — the
+   certificate being local — is what arms that gate. The cost is liveness:
+   the key's sessions park until the stranded-key recovery fills them.
+   Blocking instead would deadlock every joiner and every restart on a
+   network whose keys are outside the constants.
+
+   Nothing else is exempt.
 
    FAIL-CLOSED. A contradicted anchor — peers served certificates and
    none verified, or a locally persisted one that no longer verifies —
