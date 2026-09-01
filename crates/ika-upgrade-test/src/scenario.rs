@@ -1358,12 +1358,13 @@ impl Scenario {
                     let wedged = wedged_sample
                         .as_ref()
                         .context("ExpectDrainResumed before ExpectDrainWedged")?;
-                    // Resumption first, then health: the drain has to consume
-                    // past the round it was stuck on before a window means
-                    // anything, and how long the backlog takes to clear is the
-                    // machine's, not the scenario's, to decide.
+                    // Resumption first, then health: the drain has to
+                    // consume past the round it was stuck on AND clear the
+                    // backlog the fold was parked on before a healthy-drain
+                    // window means anything. How long that takes is the
+                    // machine's business, not the scenario's.
                     let resumed = c
-                        .wait_for_mpc_consumed_round_past(
+                        .wait_for_drain_recovered(
                             *index,
                             wedged.last_process_mpc_consensus_round,
                             self.epoch_timeout,

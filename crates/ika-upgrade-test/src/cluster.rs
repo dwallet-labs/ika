@@ -2446,9 +2446,18 @@ impl ClusterOfProcesses {
         }
     }
 
-    /// Poll until validator `index`'s drain has consumed a round beyond
-    /// `past_round` — the direct evidence that a parked drain resumed.
-    pub async fn wait_for_mpc_consumed_round_past(
+    /// Poll until validator `index`'s drain has both consumed a round beyond
+    /// `past_round` and pulled its channel back off capacity — the direct
+    /// evidence that a parked drain resumed AND cleared the backlog the fold
+    /// was parked on.
+    ///
+    /// Both conditions, not just the first. The consumed-round gauge is set
+    /// per round, while the depth gauge is republished on a 5s timer, so a
+    /// scrape taken the moment the drain restarts can carry a fresh round
+    /// number beside a depth still reading capacity. A caller that opened its
+    /// healthy-drain window there would evaluate the tail of the wedge as if
+    /// it were the recovery.
+    pub async fn wait_for_drain_recovered(
         &self,
         index: usize,
         past_round: u64,
@@ -2457,7 +2466,9 @@ impl ClusterOfProcesses {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let sample = self.scrape_drain_wedge(index).await?;
-            if sample.last_process_mpc_consensus_round > past_round {
+            if sample.last_process_mpc_consensus_round > past_round
+                && sample.round_channel_depth < ROUND_CHANNEL_CAPACITY
+            {
                 tracing::info!(
                     index,
                     consumed_round = sample.last_process_mpc_consensus_round,
@@ -2469,8 +2480,9 @@ impl ClusterOfProcesses {
             }
             ensure!(
                 tokio::time::Instant::now() < deadline,
-                "validator {index}'s drain never consumed a round past {past_round} within \
-                 {timeout:?}; last sample: {sample:?}"
+                "validator {index}'s drain never both consumed a round past {past_round} and \
+                 pulled its channel off capacity {ROUND_CHANNEL_CAPACITY} within {timeout:?}; \
+                 last sample: {sample:?}"
             );
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
