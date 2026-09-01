@@ -41,8 +41,6 @@ use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
 use arc_swap::ArcSwap;
 use commitment::CommitmentSizedNumber;
-use dwallet_classgroups_types::ValidatorMPCSecrets;
-use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(any(test, feature = "test-utils"))]
@@ -51,7 +49,7 @@ use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId};
+use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -3207,42 +3205,44 @@ impl DWalletMPCService {
             ));
         }
 
-        let root_seed = config
+        // A root seed must be configured — every MPC key this validator holds
+        // is derived from it. The seed-identity guarantee that used to be
+        // enforced here against the on-chain `mpc_data_bytes` field now lives
+        // on the off-chain announcement path; see the note below.
+        config
             .root_seed_key_pair
-            .clone()
-            .ok_or(DwalletMPCError::MissingRootSeed)?
-            .root_seed()
-            .clone();
+            .as_ref()
+            .ok_or(DwalletMPCError::MissingRootSeed)?;
 
-        let (_validator_mpc_secrets, validator_encryption_keys_and_proofs) =
-            ValidatorMPCSecrets::from_seed(&root_seed);
-
-        // Verify that the validator's local class-groups key is the same as stored
-        // in the system state object on-chain. This makes sure the seed we are using
-        // is the same seed we used at setup to create the encryption key, and thus it
-        // assures we will generate the same decryption key too.
+        // NOTE (#2119): the on-chain `mpc_data_bytes` field is DEPRECATED and
+        // is no longer read here. It used to be decoded as a bare
+        // `ClassGroupsEncryptionKeyAndProof` and compared against the locally
+        // derived key, to assert "the seed I run is the seed I registered
+        // with". Two things make that check wrong rather than merely
+        // redundant:
         //
-        // The on-chain `mpc_data_bytes` is always the bare
-        // `ClassGroupsEncryptionKeyAndProof`; the full
-        // `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
-        // PVSS + the Fast Schnorr VSS HPKE key) travels off-chain via validator
-        // P2P. Decode the bare shape and compare the class-groups component —
-        // the part that identifies the seed. (PVSS / VSS keys are verified
-        // off-chain on the assembly path in `assemble_committee_mpc_data_off_chain`.)
-        let onchain_bytes = onchain_validator.get_mpc_data().unwrap().mpc_data_bytes();
-        let Ok(onchain_class_groups) =
-            bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&onchain_bytes)
-        else {
-            return Err(DwalletMPCError::MPCManagerError(
-                "could not decode the validator's class-groups key stored in the system state object".to_string(),
-            ));
-        };
-        if onchain_class_groups != validator_encryption_keys_and_proofs.class_groups {
-            return Err(DwalletMPCError::MPCManagerError(
-                "validator's class-groups key does not match the one stored in the system state object".to_string(),
-            ));
-        }
-
+        //  1. It is fail-closed against a field new validators will register
+        //     with a PLACEHOLDER, which would brick them at first boot.
+        //  2. It already contradicted the documented seed-rotation flow.
+        //     `ika validator set-next-epoch-mpc-data` replaces the local
+        //     `root-seed.key` ONLY and deliberately does NOT submit the
+        //     derived public data to Sui (see
+        //     dev-docs/specs/validator-mpc-data-announcements.md, "CLI
+        //     updates"). So after a supported rotation the on-chain field is
+        //     stale by construction, and this check would refuse to start MPC
+        //     on a correctly rotated validator.
+        //
+        // The guarantee is re-homed onto the material that actually decides
+        // what peers encrypt to: the per-epoch mpc_data announcement/freeze
+        // record. `MpcDataAnnouncementSender::check_seed_identity`
+        // (crates/ika-core/src/epoch_tasks/mpc_data_announcement_sender.rs)
+        // compares this validator's locally derived blob hash against the
+        // FROZEN digest the network agreed for it, every tick, and reports an
+        // invariant violation on mismatch. That is the point at which running
+        // the wrong seed becomes harmful (peers deal shares to the frozen
+        // key), and unlike the old check it also catches the case the on-chain
+        // field could never see: a seed swapped after the freeze, or a
+        // carry-forward that pinned the previous seed's blob.
         Ok(())
     }
 }

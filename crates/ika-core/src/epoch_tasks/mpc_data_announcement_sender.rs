@@ -48,7 +48,7 @@ use ika_types::error::IkaError;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
@@ -200,6 +200,16 @@ const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
 /// costs ~150 lines rather than ~4,000.
 const READY_SIGNAL_DEFERRAL_LOG_EVERY: u64 = 150;
 
+/// Cadence of the seed-identity re-log (see [`SeedIdentity`]): the
+/// first check of the epoch and every 150th afterwards. The condition
+/// is a fixed point for the epoch once it holds, so the point of
+/// repeating is that the state stays visible from anywhere in the log
+/// rather than only from whoever caught the first line. The invariant
+/// COUNTER is latched separately (once per epoch) — the sender ticks on
+/// a seconds cadence and a per-tick `report_invariant_violation!` would
+/// turn one incident into hundreds of invariant events per host per hour.
+const SEED_IDENTITY_LOG_EVERY: u64 = 150;
+
 /// The deadline after which the emit gate stops waiting for uncovered
 /// next-epoch members, denominated in the epoch's CONSENSUS clock (max
 /// processed `commit_timestamp_ms`) — never machine wall-clock. Pure
@@ -241,6 +251,65 @@ pub(crate) fn ready_signal_deadline_ms(
     let grace = (epoch_duration_ms / 24)
         .clamp(POST_PUBLICATION_GRACE_MIN_MS, POST_PUBLICATION_GRACE_MAX_MS);
     Some(backstop.min(first_seen_ms.saturating_add(grace)))
+}
+
+/// Verdict of the off-chain seed-identity check (issue #2119).
+///
+/// This is the re-homed form of the boot-time check that used to
+/// decode the deprecated on-chain `mpc_data_bytes` field and compare
+/// it to the locally derived class-groups key
+/// (`DWalletMPCService::verify_validator_keys`). The question is the
+/// same — "is the seed I am running the seed the network expects my
+/// shares to be encrypted to?" — but it is asked against the record
+/// that actually decides that, the per-epoch announcement/freeze,
+/// rather than a chain field that is never updated and is now a
+/// placeholder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedIdentity {
+    /// Nothing recorded for this validator this epoch yet — no
+    /// commitment exists to compare the running seed against. The
+    /// normal state on the first ticks of an epoch.
+    NoRecord,
+    /// The recorded digest is the blob this root seed derives.
+    Matches,
+    /// This validator announced one blob earlier this epoch and now
+    /// derives a different one, and the freeze has NOT fired. That is
+    /// exactly the supported mid-epoch seed rotation
+    /// (`ika validator set-next-epoch-mpc-data` replaces `root-seed.key`
+    /// and the node restarts): the sender re-announces under a newer
+    /// timestamp and the freeze picks up the new digest. Visible, not
+    /// fatal.
+    RotatedBeforeFreeze,
+    /// The FROZEN digest — the consensus-agreed set peers encrypt
+    /// this validator's shares to — is not the blob this root seed
+    /// derives. Unrecoverable for the epoch: the frozen set is
+    /// immutable, so every share dealt to this validator lands under a
+    /// key it does not hold. The old on-chain check could not see this
+    /// case at all (a post-freeze seed swap, or a carry-forward that
+    /// pinned the previous seed's blob).
+    FrozenMismatch,
+}
+
+/// Pure decision for the seed-identity check. Frozen record wins: once
+/// the freeze has fired it, not the announcement table, is what peers
+/// encrypt to.
+pub(crate) fn decide_seed_identity(
+    local_digest: [u8; 32],
+    frozen_digest_for_self: Option<[u8; 32]>,
+    announced_digest_for_self: Option<[u8; 32]>,
+) -> SeedIdentity {
+    if let Some(frozen) = frozen_digest_for_self {
+        return if frozen == local_digest {
+            SeedIdentity::Matches
+        } else {
+            SeedIdentity::FrozenMismatch
+        };
+    }
+    match announced_digest_for_self {
+        Some(announced) if announced == local_digest => SeedIdentity::Matches,
+        Some(_) => SeedIdentity::RotatedBeforeFreeze,
+        None => SeedIdentity::NoRecord,
+    }
 }
 
 /// Per-epoch producer task that broadcasts this validator's
@@ -329,6 +398,14 @@ pub struct MpcDataAnnouncementSender {
     /// restart) is harmless. Making this anchor fleet-identical
     /// (consensus-sequenced publication attestations) is issue #1869.
     next_committee_first_seen_ms: AtomicU64,
+    /// Number of seed-identity checks run this epoch. Bounds the
+    /// re-log to [`SEED_IDENTITY_LOG_EVERY`].
+    seed_identity_checks: AtomicU64,
+    /// Whether the epoch's `report_invariant_violation!` for a frozen
+    /// seed mismatch has already fired. Latched so the fleet-visible
+    /// invariant counter records the incident once per epoch instead of
+    /// once per tick.
+    seed_identity_violation_reported: AtomicBool,
 }
 
 impl MpcDataAnnouncementSender {
@@ -393,6 +470,8 @@ impl MpcDataAnnouncementSender {
             announcement_submit_attempts: AtomicU64::new(0),
             ready_signal_deferrals: AtomicU64::new(0),
             next_committee_first_seen_ms: AtomicU64::new(0),
+            seed_identity_checks: AtomicU64::new(0),
+            seed_identity_violation_reported: AtomicBool::new(false),
         }
     }
 
@@ -414,6 +493,11 @@ impl MpcDataAnnouncementSender {
             if let Err(err) = self.send_announcement().await {
                 warn!(error=?err, "failed to send validator mpc data announcement; will retry");
             }
+
+            // Seed-identity guard (#2119). Runs after `send_announcement`
+            // so the derived blob is already cached and this is a map
+            // lookup, not a re-derivation.
+            self.check_seed_identity();
 
             if let Err(err) = self.send_epoch_ready_signal().await {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
@@ -497,6 +581,109 @@ impl MpcDataAnnouncementSender {
         Ok(recorded
             .map(|r| r.timestamp_ms == cached.timestamp_ms && r.blob_hash == cached.blob_hash)
             .unwrap_or(false))
+    }
+
+    /// Off-chain seed-identity guard (issue #2119) — the re-homed form
+    /// of the boot check that used to decode the deprecated on-chain
+    /// `mpc_data_bytes` field in
+    /// `DWalletMPCService::verify_validator_keys`.
+    ///
+    /// Compares the blob hash this validator's running root seed
+    /// derives against the digest the network has on record for it:
+    /// the FROZEN digest once the freeze has fired, otherwise its own
+    /// announcement row. A frozen mismatch is the state the old check
+    /// existed to prevent — peers deal this validator's shares to a
+    /// class-groups key it does not hold — and it is reported as a
+    /// fleet-visible invariant violation. A pre-freeze divergence is
+    /// the supported seed rotation and is only surfaced, because the
+    /// sender re-announces and the freeze then picks up the new digest.
+    ///
+    /// Best-effort by construction: an unreadable store or a
+    /// not-yet-derived blob yields no opinion and the next tick tries
+    /// again. It never blocks announcing — withholding the announcement
+    /// on a mismatch would remove the very thing that repairs a
+    /// pre-freeze rotation.
+    fn check_seed_identity(&self) {
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return;
+        };
+        // Read the cache only — `send_announcement` (which ran first)
+        // owns deriving and persisting the blob, and a derivation here
+        // would duplicate the epoch's single most expensive computation.
+        let Some(local_digest) = self
+            .cached_announcement
+            .lock()
+            .expect("mutex poisoned")
+            .as_ref()
+            .map(|announcement| announcement.blob_hash)
+        else {
+            return;
+        };
+        let Ok(frozen) = epoch_store.get_frozen_validator_mpc_data_input_set() else {
+            return;
+        };
+        let Ok(announced) = epoch_store.get_validator_mpc_data_announcement(&self.authority) else {
+            return;
+        };
+        let verdict = decide_seed_identity(
+            local_digest,
+            frozen.get(&self.authority).copied(),
+            announced
+                .filter(|announcement| announcement.epoch == self.epoch_id)
+                .map(|announcement| announcement.blob_hash),
+        );
+        if matches!(verdict, SeedIdentity::Matches | SeedIdentity::NoRecord) {
+            return;
+        }
+        let checks = self.seed_identity_checks.fetch_add(1, Ordering::Relaxed);
+        let should_log = checks.is_multiple_of(SEED_IDENTITY_LOG_EVERY);
+        match verdict {
+            SeedIdentity::FrozenMismatch => {
+                // Latch the counter: one incident, one invariant event
+                // per epoch, however many ticks observe it.
+                if !self
+                    .seed_identity_violation_reported
+                    .swap(true, Ordering::Relaxed)
+                {
+                    ika_types::report_invariant_violation!(
+                        "mpc_data_frozen_digest_seed_mismatch",
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        frozen_digest = ?frozen.get(&self.authority).map(hex::encode),
+                        local_digest = %hex::encode(local_digest),
+                        "the epoch's FROZEN mpc_data digest for this validator is not the \
+                         blob its running root seed derives — peers are dealing this \
+                         validator's shares to a class-groups key it does not hold. The \
+                         frozen set is immutable for the epoch, so this cannot self-heal: \
+                         restore the root seed this validator announced with, or expect \
+                         its MPC participation to fail for the epoch."
+                    );
+                } else if should_log {
+                    warn!(
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        local_digest = %hex::encode(local_digest),
+                        "frozen mpc_data digest still disagrees with the running root \
+                         seed (already reported once this epoch)"
+                    );
+                }
+            }
+            SeedIdentity::RotatedBeforeFreeze => {
+                if should_log {
+                    warn!(
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        local_digest = %hex::encode(local_digest),
+                        "this validator's recorded mpc_data announcement is for a \
+                         different blob than its running root seed derives — a seed \
+                         rotation. The freeze has not fired, so the re-announcement \
+                         under a newer timestamp repairs this; if the freeze fires \
+                         first, the epoch's shares go to the old key."
+                    );
+                }
+            }
+            SeedIdentity::Matches | SeedIdentity::NoRecord => unreachable!("returned above"),
+        }
     }
 
     /// Runs `log` on the first emit-gate deferral of the epoch and
@@ -1034,6 +1221,60 @@ mod tests {
     /// instead of stacking duplicate table entries.
     fn name(n: u8) -> AuthorityName {
         AuthorityName([n; 32])
+    }
+
+    fn digest(n: u8) -> [u8; 32] {
+        [n; 32]
+    }
+
+    /// #2119: the seed-identity guarantee the deprecated on-chain
+    /// `mpc_data_bytes` check used to provide, re-homed onto the record
+    /// that actually decides what peers encrypt to.
+    ///
+    /// The frozen digest wins over the announcement row: once the freeze
+    /// has fired it, not the table, is the set the network deals to, and
+    /// it is immutable for the epoch.
+    #[test]
+    fn seed_identity_reports_a_frozen_mismatch_over_the_announcement() {
+        // Nothing recorded yet — the normal state on an epoch's first
+        // ticks. No commitment exists, so no opinion.
+        assert_eq!(
+            decide_seed_identity(digest(1), None, None),
+            SeedIdentity::NoRecord
+        );
+        // Announced, not yet frozen, and it is our blob.
+        assert_eq!(
+            decide_seed_identity(digest(1), None, Some(digest(1))),
+            SeedIdentity::Matches
+        );
+        // Frozen at our blob — the healthy steady state.
+        assert_eq!(
+            decide_seed_identity(digest(1), Some(digest(1)), Some(digest(1))),
+            SeedIdentity::Matches
+        );
+        // Announced one blob, now deriving another, freeze not fired: the
+        // supported mid-epoch seed rotation. The sender re-announces under
+        // a newer timestamp and the freeze picks the new digest up, so this
+        // is surfaced, not fatal.
+        assert_eq!(
+            decide_seed_identity(digest(2), None, Some(digest(1))),
+            SeedIdentity::RotatedBeforeFreeze
+        );
+        // The frozen digest is NOT our blob: peers are dealing our shares
+        // to a class-groups key we do not hold, and the frozen set cannot
+        // change this epoch. This is the case the old on-chain check
+        // existed for — and, unlike it, this one also sees a swap that
+        // happened AFTER the announcement landed.
+        assert_eq!(
+            decide_seed_identity(digest(2), Some(digest(1)), Some(digest(1))),
+            SeedIdentity::FrozenMismatch
+        );
+        // Even a freshly re-announced blob does not rescue a frozen
+        // mismatch — the frozen record is what peers encrypt to.
+        assert_eq!(
+            decide_seed_identity(digest(2), Some(digest(1)), Some(digest(2))),
+            SeedIdentity::FrozenMismatch
+        );
     }
 
     /// Expected `NotYet` with its wait reason spelled out. The reason

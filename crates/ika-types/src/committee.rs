@@ -73,17 +73,22 @@ pub struct Committee {
     pub epoch: EpochId,
     pub voting_rights: Vec<(AuthorityName, StakeUnit)>,
     /// Per-validator class-groups CRT-decryption-key encryption key + proof.
-    /// This is the ONLY validator MPC key carried on `Committee`: it is the
-    /// bare mainnet-v1.1.8 shape stored on Sui, so it is available from the
-    /// chain in every epoch (including the v3→v4 transition).
     ///
-    /// The off-chain-only validator MPC material — the three per-curve PVSS
-    /// HPKE keys and the Fast Schnorr (VSS) HPKE key — is deliberately NOT on
-    /// `Committee`. It never lived on Sui; it travels off-chain via validator
-    /// announcements and is delivered to the MPC manager per-epoch (see
-    /// `ValidatorMpcKeysByPartyId` and the off-chain key channels), populated
-    /// only once the information is actually available rather than initialised
-    /// empty here.
+    /// LEGACY / always empty on every production path since #2119.
+    ///
+    /// ALL validator MPC material — class-groups included, alongside the three
+    /// per-curve PVSS HPKE keys and the Fast Schnorr (VSS) HPKE key — travels
+    /// off-chain via validator announcements and is delivered to the MPC
+    /// manager per-epoch (see `ValidatorMpcKeysByPartyId` and the off-chain key
+    /// channels). Nothing reads this map: the reconfiguration public input
+    /// takes only the access structure (voting weights + thresholds) from a
+    /// `Committee`.
+    ///
+    /// The field is retained rather than deleted because `Committee` is
+    /// persisted in `committee_map` and mirrored positionally by
+    /// [`LegacyCommittee`] — bcs is positional, so removing it is a storage
+    /// format change. Old records still decode with their historical contents;
+    /// newly built committees carry an empty map.
     pub class_groups_public_keys_and_proofs:
         HashMap<AuthorityName, ClassGroupsEncryptionKeyAndProof>,
     pub quorum_threshold: u64,
@@ -359,20 +364,6 @@ impl Committee {
                 ((idx + 1) as PartyID, *auth)
             })
             .collect()
-    }
-
-    pub fn class_groups_public_key_and_proof(
-        &self,
-        authority: &AuthorityName,
-    ) -> IkaResult<ClassGroupsEncryptionKeyAndProof> {
-        match self.class_groups_public_keys_and_proofs.get(authority) {
-            Some(v) => Ok(v.clone()),
-            None => Err(IkaError::InvalidCommittee(format!(
-                "Authority #{} not found, committee size {}",
-                authority,
-                self.voting_rights.len()
-            ))),
-        }
     }
 
     /// Samples authorities by weight
@@ -692,10 +683,10 @@ pub struct NetworkMetadata {
     pub network_address: Multiaddr,
     pub consensus_address: Multiaddr,
     pub network_public_key: Option<NetworkPublicKey>,
-    /// Bare mainnet-v1.1.8 class-groups key — the only validator MPC key on the
-    /// chain-derived metadata. The off-chain-only PVSS / VSS HPKE keys are not
-    /// carried here; they reach the MPC manager via the off-chain key channels.
-    pub class_groups_public_key_and_proof: Option<ClassGroupsEncryptionKeyAndProof>,
+    // No validator MPC key material here. This used to carry a
+    // `class_groups_public_key_and_proof` decoded from the on-chain
+    // `mpc_data_bytes`; nothing ever read it, and that field is deprecated
+    // (#2119). Validator key material travels off-chain.
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

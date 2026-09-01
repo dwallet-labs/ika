@@ -324,9 +324,10 @@ validator latched for the whole epoch. Sourcing rules
 - `assemble_committee_mpc_data_off_chain` resolves each `(authority,
   digest)` pair through the blob store and decodes; the gate is strict —
   one missing or undecodable blob fails the whole assembly with
-  `Incomplete`. Partial maps are never returned, because the
-  reconfiguration MPC reads `Committee.class_groups_public_keys_and_proofs`
-  directly and a silent gap drops that validator's share.
+  `Incomplete`. Partial maps are never returned, because the assembled
+  bundles ARE the reconfiguration MPC's key input
+  (`get_validator_mpc_keys_by_party_id` re-keys them to `PartyID`) and a
+  silent gap drops that validator's share.
 - Assembly output is a pure function of the input pairs (blobs are
   content-addressed), so identical pairs are served from a cache and a
   post-freeze `Complete` assembly is final for the epoch: the sync loop
@@ -374,25 +375,25 @@ validator latched for the whole epoch. Sourcing rules
 2. Every blob reference is content-addressed; bytes are verified
    against their digest at every trust boundary (store insert, P2P
    fetch, assembly decode).
-3. `Committee.class_groups_public_keys_and_proofs` is load-bearing for
-   the reconfiguration MPC: it is never populated partially and never
-   left empty for a non-excluded member. This binds every builder of
-   the map, not only the off-chain assembly. The chain-view builders —
-   `get_epoch_start_system` in `ika-sui-client` (feeding
-   `EpochStartSystem::get_ika_committee`, the epoch store's committee)
-   and the sui_syncer's bootstrap chain read inside `new_committee`
-   (which serves only the window before the off-chain source is
-   installed — there is NO chain fallback for validator mpc_data once it
-   is, and chain is write-only from then on) — enforce it at
-   the read boundary: an active member whose on-chain `mpc_data`
-   record is missing or undecodable fails the WHOLE read (retried by
-   `must_get_epoch_start_system` / the next sync tick), never a silent
-   member skip. Chain state cannot legitimately lack the record (it is
-   written at candidate registration and never emptied; operational
-   updates use the off-chain path), so absence is always a read defect —
-   and each validator reads through its own fullnode, so a tolerated
-   local gap would be an unagreed party-set exclusion: divergent MPC public
-   inputs across honest validators. Exclusion decisions belong
+3. The off-chain assembly's key maps are load-bearing for the
+   reconfiguration MPC: they are never populated partially and never
+   left empty for a non-excluded member. A silent gap would be an
+   unagreed party-set exclusion — divergent MPC public inputs across
+   honest validators — so the assembly fails whole and retries.
+
+   Since #2119 this binds ONLY the off-chain assembly. No chain read
+   contributes validator key material any more:
+   `EpochStartSystem::get_ika_committee` and the sui_syncer's
+   bootstrap-window path inside `new_committee` (which serves only the
+   window before the off-chain source is installed — there is NO chain
+   fallback for validator mpc_data once it is, and chain is write-only
+   from then on) build committees with an EMPTY
+   `Committee.class_groups_public_keys_and_proofs`. That map has no
+   production reader: a `Committee` supplies the reconfiguration public
+   input with an access structure (voting weights + thresholds) and
+   nothing else. The on-chain `mpc_data_bytes` field it used to be
+   decoded from is deprecated, and a new validator registers with a
+   placeholder. Exclusion decisions belong
    exclusively to the consensus-agreed freeze. The completeness check
    lives at the read boundary, NOT on `Committee` construction — a
    post-freeze assembled committee legitimately omits *excluded*

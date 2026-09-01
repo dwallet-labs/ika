@@ -4,15 +4,12 @@
 use enum_dispatch::enum_dispatch;
 use std::collections::HashMap;
 
-use crate::committee::{
-    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeWithNetworkMetadata, NetworkMetadata,
-    StakeUnit,
-};
+use crate::committee::{Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit};
 use crate::crypto::{AuthorityName, AuthorityPublicKey, AuthorityPublicKeyBytes, NetworkPublicKey};
 use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
-use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
+use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
 use ika_protocol_config::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{EpochId, ObjectID};
@@ -185,25 +182,14 @@ fn build_committee_with_network_metadata(
     let validators = active_validators
         .iter()
         .map(|validator| {
-            // Chain reads decode the mainnet-v1.1.8 bare
-            // `ClassGroupsEncryptionKeyAndProof` shape exclusively. The
-            // off-chain-only PVSS / VSS HPKE keys are not carried on the
-            // chain-derived metadata; they reach the MPC manager via the
-            // off-chain key channels.
+            // No validator MPC key material is carried here. The
+            // `class_groups_public_key_and_proof` field this used to decode
+            // out of the on-chain `mpc_data_bytes` had no reader anywhere in
+            // the workspace, and that field is deprecated (#2119) — a
+            // validator may register with placeholder bytes. Every consumer
+            // of validator key material takes it from the off-chain
+            // announcement pipeline instead.
             let name = validator_authority_name(validator);
-            let class_groups_public_key_and_proof =
-                validator.mpc_data.as_ref().and_then(|mpc_data| {
-                    bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes())
-                        .map_err(|e| {
-                            error!(
-                                authority = ?name,
-                                error = ?e,
-                                "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof \
-                                 from Move-side mpc_data"
-                            );
-                        })
-                        .ok()
-                });
 
             (
                 name,
@@ -214,7 +200,6 @@ fn build_committee_with_network_metadata(
                         network_address: validator.network_address.clone(),
                         consensus_address: validator.consensus_address.clone(),
                         network_public_key: Some(validator.network_pubkey.clone()),
-                        class_groups_public_key_and_proof,
                     },
                 ),
             )
@@ -235,44 +220,25 @@ fn build_ika_committee(
         .map(|validator| (validator_authority_name(validator), validator.voting_power))
         .collect();
 
-    // Chain reads decode the mainnet-v1.1.8 bare
-    // `ClassGroupsEncryptionKeyAndProof` shape exclusively — the only
-    // validator MPC key on `Committee`. The off-chain-only PVSS / VSS HPKE
-    // keys reach the MPC manager via the off-chain key channels, not here.
-    let class_groups_public_keys_and_proofs = active_validators
-        .iter()
-        .filter_map(|validator| {
-            let name = validator_authority_name(validator);
-            let Some(mpc_data) = validator.mpc_data.as_ref() else {
-                // The fetch (`get_epoch_start_system`) fails the whole read
-                // when an active member's record is missing, so this arm is
-                // reachable only from a degraded `EpochStartSystem` persisted
-                // before that gate existed. Loud because the built committee
-                // then silently drops this member from every MPC public input
-                // seeded from it (the class-groups map must never be partial
-                // for a non-excluded member).
-                crate::report_invariant_violation!(
-                    "persisted_epoch_start_mpc_data_missing",
-                    authority = ?name,
-                    "active committee member has no mpc_data record in the \
-                     persisted EpochStartSystem; its class-groups key is \
-                     missing from the committee"
-                );
-                return None;
-            };
-            match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes()) {
-                Ok(k) => Some((name, k)),
-                Err(e) => {
-                    error!(
-                        authority = ?name,
-                        error = ?e,
-                        "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof from Move-side mpc_data"
-                    );
-                    None
-                }
-            }
-        })
-        .collect();
+    // EMPTY, deliberately. `Committee.class_groups_public_keys_and_proofs`
+    // used to be filled here by decoding every active member's on-chain
+    // `mpc_data_bytes`. That field is deprecated (#2119) — a validator may
+    // register with placeholder bytes — and the map has no production reader:
+    //   * the MPC manager starts from `ValidatorMpcKeysByPartyId::empty()` and
+    //     takes ALL validator key material, class-groups included, from the
+    //     off-chain bundles (`ika-core/src/dwallet_mpc/mpc_manager.rs`,
+    //     `get_validator_mpc_keys_by_party_id`);
+    //   * the reconfiguration public input reads a `Committee` only for its
+    //     access structure — voting weights and thresholds
+    //     (`mpc_computations/reconfiguration.rs::generate_public_input`);
+    //   * `Committee::class_groups_public_key_and_proof` has no caller.
+    // Decoding a placeholder would have logged a decode error per member per
+    // epoch on every node — a chain-read defect that isn't one.
+    //
+    // The field itself stays: `Committee` is persisted in `committee_map` and
+    // mirrored positionally by `LegacyCommittee`, so removing it is a storage
+    // format change, not a cleanup. See the PR for #2119.
+    let class_groups_public_keys_and_proofs = HashMap::new();
 
     // Carry each validator's consensus Ed25519 key as committee data so
     // consensus-key-signed messages (handoff certs) can be verified by name
@@ -616,5 +582,83 @@ mod tests {
         let bytes = bcs::to_bytes(&v2).unwrap();
         let decoded: EpochStartSystem = bcs::from_bytes(&bytes).unwrap();
         assert_eq!(decoded, v2);
+    }
+
+    fn validator_with_mpc_data(
+        index: u8,
+        mpc_data: Option<VersionedMPCData>,
+    ) -> EpochStartValidatorInfoV1 {
+        use crate::crypto::{AuthorityKeyPair, NetworkKeyPair, get_key_pair_from_rng};
+        use fastcrypto::traits::KeyPair;
+        let protocol: AuthorityKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        let network: NetworkKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        let consensus: NetworkKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        let address: Multiaddr = "/ip4/127.0.0.1/udp/8080".parse().unwrap();
+        EpochStartValidatorInfoV1 {
+            validator_id: ObjectID::random(),
+            protocol_pubkey: protocol.public().clone(),
+            network_pubkey: network.public().clone(),
+            consensus_pubkey: consensus.public().clone(),
+            mpc_data,
+            network_address: address.clone(),
+            p2p_address: address.clone(),
+            consensus_address: address,
+            voting_power: 2_500,
+            hostname: format!("validator-{index}"),
+            name: format!("validator-{index}"),
+        }
+    }
+
+    /// #2119: the on-chain `mpc_data_bytes` field is deprecated, and a
+    /// validator may register with placeholder bytes. Building the epoch's
+    /// committee from an `EpochStartSystem` must not depend on it — not for
+    /// its own liveness, and not by logging a per-member decode error every
+    /// epoch on every node for what is a legitimate registration.
+    ///
+    /// Membership, stake and thresholds stay chain-true; the class-groups
+    /// map is empty because ALL validator key material now comes from the
+    /// off-chain announcement pipeline.
+    #[test]
+    fn committee_build_ignores_placeholder_on_chain_mpc_data() {
+        let placeholder = VersionedMPCData::V1(dwallet_mpc_types::dwallet_mpc::MPCDataV1 {
+            mpc_data_bytes: b"ika-placeholder-mpc-data".to_vec(),
+        });
+        let validators = vec![
+            // A placeholder registration — the post-#2119 shape.
+            validator_with_mpc_data(0, Some(placeholder)),
+            // Empty bytes: the other plausible placeholder (an empty TableVec).
+            validator_with_mpc_data(
+                1,
+                Some(VersionedMPCData::V1(
+                    dwallet_mpc_types::dwallet_mpc::MPCDataV1 {
+                        mpc_data_bytes: Vec::new(),
+                    },
+                )),
+            ),
+            // No record at all.
+            validator_with_mpc_data(2, None),
+        ];
+        let expected_names: Vec<_> = validators.iter().map(validator_authority_name).collect();
+
+        let system = EpochStartSystem::new_v2(4, 7, 0, 1000, validators, 6_667, 3_334);
+        let committee = system.get_ika_committee();
+
+        assert_eq!(committee.epoch, 4);
+        assert_eq!(committee.quorum_threshold, 6_667);
+        assert_eq!(committee.validity_threshold, 3_334);
+        for name in &expected_names {
+            assert!(
+                committee.voting_rights.iter().any(|(n, _)| n == name),
+                "every active validator keeps its seat and stake regardless of \
+                 what its deprecated on-chain mpc_data record contains"
+            );
+        }
+        assert!(
+            committee.class_groups_public_keys_and_proofs.is_empty(),
+            "no validator key material is sourced from the deprecated chain field"
+        );
+        // The chain-derived network metadata carries no key material either.
+        let with_metadata = system.get_ika_committee_with_network_metadata();
+        assert_eq!(with_metadata.validators().len(), expected_names.len());
     }
 }
