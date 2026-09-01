@@ -2410,38 +2410,63 @@ impl ClusterOfProcesses {
     /// be a fixed sleep: the time to fill [`ROUND_CHANNEL_CAPACITY`] rounds is
     /// the cluster's commit rate, which varies by an order of magnitude
     /// between a loaded CI pod and a quiet developer machine.
+    /// A scrape failure here is NOT fatal, unlike in the assertion steps. This
+    /// runs immediately after the arming restart, and a booting validator's
+    /// metric surface is incomplete for a while: `consensus_ika_*` reaches
+    /// `/metrics` only when `ConsensusManager::start` adds consensus-core's
+    /// registry to the registry service, which is after the boot replay. A
+    /// wait that failed closed on that would fail on the boot it is waiting
+    /// out. The last error is carried into the timeout message so a scrape
+    /// that never succeeds still reports why.
     pub async fn wait_for_round_channel_at_capacity(
         &self,
         index: usize,
         timeout: Duration,
     ) -> Result<DrainWedgeSample> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut last = None;
+        let mut last: Option<DrainWedgeSample> = None;
+        // Only the LAST scrape's error is interesting: a wait that ends in a
+        // timeout wants the reason the final attempt failed, not a history.
+        let mut last_error: Option<String>;
         loop {
-            let sample = self.scrape_drain_wedge(index).await?;
-            if sample.round_channel_depth >= ROUND_CHANNEL_CAPACITY {
-                tracing::info!(
-                    index,
-                    depth = sample.round_channel_depth,
-                    consumed_round = sample.last_process_mpc_consensus_round,
-                    "round channel pinned at capacity: the consensus fold is parked on the drain"
-                );
-                return Ok(sample);
+            match self.scrape_drain_wedge(index).await {
+                Ok(sample) => {
+                    if sample.round_channel_depth >= ROUND_CHANNEL_CAPACITY {
+                        tracing::info!(
+                            index,
+                            depth = sample.round_channel_depth,
+                            consumed_round = sample.last_process_mpc_consensus_round,
+                            "round channel pinned at capacity: the consensus fold is parked on \
+                             the drain"
+                        );
+                        return Ok(sample);
+                    }
+                    if last.as_ref() != Some(&sample) {
+                        tracing::info!(
+                            index,
+                            depth = sample.round_channel_depth,
+                            consumed_round = sample.last_process_mpc_consensus_round,
+                            "waiting for the round channel to fill"
+                        );
+                        last = Some(sample);
+                    }
+                    last_error = None;
+                }
+                Err(error) => {
+                    tracing::info!(
+                        index,
+                        %error,
+                        "drain-wedge scrape incomplete; the validator is still coming up"
+                    );
+                    last_error = Some(error.to_string());
+                }
             }
             ensure!(
                 tokio::time::Instant::now() < deadline,
                 "validator {index}'s round channel never reached capacity \
-                 {ROUND_CHANNEL_CAPACITY} within {timeout:?}; last sample: {sample:?}"
+                 {ROUND_CHANNEL_CAPACITY} within {timeout:?}; last sample: {last:?}; last scrape \
+                 error: {last_error:?}"
             );
-            if last.as_ref() != Some(&sample) {
-                tracing::info!(
-                    index,
-                    depth = sample.round_channel_depth,
-                    consumed_round = sample.last_process_mpc_consensus_round,
-                    "waiting for the round channel to fill"
-                );
-                last = Some(sample);
-            }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
