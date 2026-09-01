@@ -701,7 +701,6 @@ ika_sui_connector_dwallet_checkpoint_writes_success_total
 ika_sui_connector_end_of_publish_blocked_reason
 ika_sui_connector_epoch_switch_step_done
 ika_sui_connector_gas_coin_balance
-ika_sui_connector_last_synced_sui_checkpoints
 ika_sui_connector_last_written_dwallet_checkpoint_sequence
 ika_sui_connector_last_written_system_checkpoint_sequence
 ika_sui_connector_system_checkpoint_sequence
@@ -790,7 +789,11 @@ registry, and CI now rejects any attempt to.
 ## 1.2.0 rename table (legacy → current)
 
 Renamed in the 1.2.0 release; update dashboards/alerts accordingly.
-(`dwallet_nativee_calls` also had its typo fixed.)
+(`dwallet_nativee_calls` also had its typo fixed.
+`sui_connector_last_synced_sui_checkpoints` was renamed here too but has
+since been deleted rather than renamed onward: nothing ever wrote the
+gauge after the event-listening task that fed it was replaced, so it is
+absent from both the inventory above and the table below.)
 
 | legacy (≤1.1.x) | current |
 |---|---|
@@ -879,7 +882,6 @@ Renamed in the 1.2.0 release; update dashboards/alerts accordingly.
 | `sui_connector_dwallet_checkpoint_writes_failure_total` | `ika_sui_connector_dwallet_checkpoint_writes_failure_total` |
 | `sui_connector_dwallet_checkpoint_writes_success_total` | `ika_sui_connector_dwallet_checkpoint_writes_success_total` |
 | `sui_connector_gas_coin_balance` | `ika_sui_connector_gas_coin_balance` |
-| `sui_connector_last_synced_sui_checkpoints` | `ika_sui_connector_last_synced_sui_checkpoints` |
 | `sui_connector_last_written_dwallet_checkpoint_sequence` | `ika_sui_connector_last_written_dwallet_checkpoint_sequence` |
 | `sui_connector_last_written_system_checkpoint_sequence` | `ika_sui_connector_last_written_system_checkpoint_sequence` |
 | `sui_connector_system_checkpoint_sequence` | `ika_sui_connector_system_checkpoint_sequence` |

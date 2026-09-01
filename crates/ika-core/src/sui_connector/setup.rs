@@ -46,7 +46,7 @@ use ika_network::sui_state_mirror::{
     self, Server as SuiStateMirrorImpl, SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport,
     SuiStateMirrorServer,
 };
-use ika_sui_client::genesis::load_and_verify_sui_genesis;
+use ika_sui_client::genesis::{compiled_in_chain_identifier, load_and_verify_sui_genesis};
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::rate_limit::RateLimitGate;
 use ika_sui_client::transport::{SuiTransport, TransportError};
@@ -357,12 +357,29 @@ pub async fn build_sui_connector_stack(
                 .as_ref()
                 .ok_or(SetupError::GenesisPathMissing)?;
             let boot = load_and_verify_sui_genesis(path, cfg.sui_chain_identifier)?;
-            info!(
-                epoch = boot.committee.epoch,
-                chain_identifier = %boot.chain_identifier.base58_encode(),
-                "OCS bootstrap: genesis-rooted committee[0] loaded; Sui chain identifier \
-                 verified against the compiled-in constant"
-            );
+            // Mainnet/Testnet carry a compiled-in genesis digest, so the blob
+            // — and `committee[0]`, which the loader re-binds to that digest —
+            // is anchored to a root the binary itself ships. Devnet/Custom
+            // have no such root: the blob is only checked for internal
+            // consistency, so the OCS trust chain is rooted in whatever the
+            // operator supplied. Only that second case warrants a warning.
+            if compiled_in_chain_identifier(cfg.sui_chain_identifier).is_some() {
+                info!(
+                    epoch = boot.committee.epoch,
+                    chain_identifier = %boot.chain_identifier.base58_encode(),
+                    "OCS bootstrap: genesis-rooted committee[0] loaded; Sui chain identifier \
+                     verified against the compiled-in constant"
+                );
+            } else {
+                warn!(
+                    epoch = boot.committee.epoch,
+                    chain = %cfg.sui_chain_identifier,
+                    chain_identifier = %boot.chain_identifier.base58_encode(),
+                    "OCS bootstrap: UNSAFE genesis committee[0] — this chain has no compiled-in \
+                     genesis digest to anchor the blob against, so the whole OCS trust chain is \
+                     only as trustworthy as the supplied genesis blob"
+                );
+            }
             Some(CommitteeBootstrap::Genesis(boot.committee))
         }
     };

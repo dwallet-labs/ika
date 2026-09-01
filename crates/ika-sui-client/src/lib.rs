@@ -693,7 +693,7 @@ where
         self.inner.get_chain_identifier().await.map_err(|e| {
             self.sui_client_metrics
                 .sui_rpc_errors
-                .with_label_values(&["get_validators_info_by_ids"])
+                .with_label_values(&["get_chain_identifier"])
                 .inc();
             IkaError::SuiClientInternalError(format!("Can't get_chain_identifier: {e}"))
         })
