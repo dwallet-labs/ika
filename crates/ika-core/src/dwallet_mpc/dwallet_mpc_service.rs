@@ -256,12 +256,12 @@ pub struct DWalletMPCService {
 ///
 /// The question is the one reader 1 asked ("is the seed I am running the
 /// seed the network expects my shares to be encrypted to?"), asked against
-/// the record that actually answers it for THIS epoch: the E-1 -> E handoff
-/// certificate's `ValidatorMpcData` item for this authority. That cert
-/// certifies epoch E's frozen mpc_data set — exactly the keys peers dealt
-/// this epoch's shares to — so a seed rotation announced before E's freeze
-/// is legitimately reflected in it, and a mismatch means this node cannot
-/// decrypt E's shares at all.
+/// the record that actually answers it for THIS epoch: the epoch-`E-1`
+/// handoff certificate's `ValidatorMpcData` item for this authority. That
+/// cert records `E-1`'s frozen mpc_data set — the keys `E-1`'s
+/// reconfiguration encrypted epoch `E`'s shares to — so a seed rotation
+/// announced before `E-1`'s freeze is legitimately reflected in it, and a
+/// mismatch means this node cannot decrypt `E`'s shares at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BootSeedIdentity {
     /// No certified digest for this authority: the genesis epoch, a true
@@ -325,11 +325,12 @@ pub(crate) fn enforce_boot_seed_identity(
         }
         BootSeedIdentity::Mismatch { certified, local } => {
             Err(DwalletMPCError::MPCManagerError(format!(
-                "root seed mismatch: the prior epoch's handoff certificate certifies \
-                 mpc_data blob {} for this validator, but the configured root seed \
-                 derives {}. Peers dealt this epoch's shares to the certified key, which \
-                 this node does not hold — refusing to start MPC. Restore the root seed \
-                 this validator announced with.",
+                "root seed mismatch: the prior epoch's handoff certificate (that \
+                 epoch's frozen mpc_data set, which its reconfiguration encrypted this \
+                 epoch's shares to) certifies mpc_data blob {} for this validator, but \
+                 the configured root seed derives {}. This node cannot decrypt the \
+                 shares it is about to be handed — refusing to start MPC. Restore the \
+                 root seed this validator announced with.",
                 hex::encode(certified),
                 hex::encode(local),
             )))
@@ -3268,10 +3269,15 @@ impl DWalletMPCService {
     /// single on-chain check that used to live here:
     ///
     ///  1. **Fail-closed, here at boot**: the running root seed's derived
-    ///     mpc_data blob digest must equal the digest the E-1 -> E handoff
-    ///     certificate certifies for this authority. That cert IS epoch E's
-    ///     frozen set, so this runs BEFORE any share is used and refuses to
-    ///     start MPC on a mismatch. Skipped — observe-only — when no
+    ///     mpc_data blob digest must equal the digest the epoch-`E-1`
+    ///     handoff certificate certifies for this authority. That cert
+    ///     records epoch `E-1`'s FROZEN mpc_data set — the key set `E-1`'s
+    ///     reconfiguration dealt epoch `E`'s shares to. (It is `E-1`'s
+    ///     frozen set, not `E`'s; `E`'s own freeze has not happened yet at
+    ///     boot, which is exactly why this is the record to check against.)
+    ///     So a mismatch means this node cannot decrypt the shares it is
+    ///     about to be handed, and the check runs BEFORE any of them is
+    ///     used. Skipped — observe-only — when no
     ///     certified digest exists for this authority (genesis, a true
     ///     joiner's first epoch, or the cert not yet installed at boot):
     ///     cert absence is not evidence of a wrong seed, and blocking boot

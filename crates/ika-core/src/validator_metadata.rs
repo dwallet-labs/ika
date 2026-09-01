@@ -981,10 +981,11 @@ pub fn default_handoff_items_builders(
 ///
 /// Under v4 the off-chain producer (`derive_mpc_data_blob`) always
 /// emits that full shape, so all three PVSS maps are populated for
-/// off-chain-assembled committees. The maps come back empty only for
-/// legacy / mixed-shape validators read via the chain fallback
-/// (mainnet-v1.1.8 bare class-groups shape) — matching the
-/// `filter_map` semantics in `sui_syncer::new_committee`.
+/// every off-chain-assembled committee. Since #2119 that is the ONLY
+/// way these bundles are ever built: the chain fallback that used to
+/// produce the bare mainnet-v1.1.8 class-groups shape is gone, and
+/// `sui_syncer::new_committee`'s bootstrap window returns no bundles
+/// at all rather than a PVSS-less one.
 #[derive(Debug, Clone)]
 pub struct OffChainCommitteeBundles {
     pub class_groups: std::collections::HashMap<

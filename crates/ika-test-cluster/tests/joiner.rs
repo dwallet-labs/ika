@@ -191,7 +191,7 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     // seat comes from the active-validator set, not from the deprecated
     // on-chain `mpc_data_bytes` field, which nothing decodes any more
     // (#2119).
-    assert_joiner_seated_with_grace(&mut cluster, &joiner, joiner_name, "real-key joiner").await;
+    assert_joiner_seated_with_grace(&cluster, &joiner, joiner_name, "real-key joiner").await;
 
     // The seat check above cannot see a freeze miss (see the test doc)
     // — the off-chain frozen set's durable record is the handoff cert's
@@ -349,7 +349,7 @@ async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
     // 3. It is SEATED: the chain committee carries its name and stake,
     //    which is all a `Committee` contributes to the reconfiguration MPC.
     assert_joiner_seated_with_grace(
-        &mut cluster,
+        &cluster,
         &joiner,
         joiner_name,
         &format!("registered with {shape:?}"),
@@ -434,55 +434,78 @@ async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
 /// landed after the mid-epoch selection). Absent at epoch 3 too means the
 /// joiner never activated — a registration/lifecycle bug, not timing.
 async fn assert_joiner_seated_with_grace(
-    cluster: &mut IkaTestCluster,
+    cluster: &IkaTestCluster,
     joiner: &JoinerHandle,
     joiner_name: AuthorityName,
     context: &str,
 ) {
-    fn seated_at(joiner: &JoinerHandle, name: AuthorityName, expected_epoch: u64) -> bool {
+    /// The joiner node's CURRENT epoch and whether it is seated in the
+    /// committee for that epoch. Deliberately returns the observed epoch
+    /// instead of asserting one: the node keeps advancing while this runs,
+    /// so pinning it to 2 would panic with "should be at epoch 2" on a
+    /// joiner that had merely raced ahead — turning the grace path this
+    /// function exists for into an unreachable branch.
+    fn observe(joiner: &JoinerHandle, name: AuthorityName) -> (u64, bool) {
         joiner.node_handle.with(|node| {
             let epoch_store = node.state().epoch_store_for_testing();
             let committee = epoch_store.committee();
-            assert_eq!(
+            (
                 committee.epoch(),
-                expected_epoch,
-                "joiner node should be at epoch {expected_epoch}"
-            );
-            committee
-                .voting_rights
-                .iter()
-                .any(|(n, stake)| *n == name && *stake > 0)
+                committee
+                    .voting_rights
+                    .iter()
+                    .any(|(n, stake)| *n == name && *stake > 0),
+            )
         })
     }
 
-    if seated_at(joiner, joiner_name, 2) {
+    let (epoch, seated) = observe(joiner, joiner_name);
+    assert!(
+        epoch >= 2,
+        "joiner node should have reached at least epoch 2 before its seat is checked; \
+         observed epoch {epoch}"
+    );
+    if seated {
         return;
     }
+    // Not seated at the epoch it is currently in. One bounded grace epoch:
+    // `request_add_validator` can land after `process_mid_epoch` selected
+    // the next committee, in which case the joiner activates one epoch
+    // later. Anchored on the OBSERVED epoch, not a hardcoded 3, so the
+    // grace is still exactly one epoch if the node had raced ahead.
+    let grace_epoch = epoch + 1;
     tracing::warn!(
         ?joiner_name,
         context,
-        "joiner not seated in the epoch-2 committee — registration landed after the \
-         mid-epoch committee selection, so it activates at epoch 3 (tolerated once); \
-         asserting the epoch-3 seat"
+        epoch,
+        grace_epoch,
+        "joiner not seated in its current committee — registration landed after the \
+         mid-epoch committee selection, so it activates one epoch later (tolerated \
+         once); asserting the seat at the grace epoch"
     );
     tokio::time::timeout(
         std::time::Duration::from_secs(300),
-        cluster.wait_for_epoch(3),
+        cluster.wait_for_epoch(grace_epoch),
     )
     .await
-    .expect("cluster did not reach epoch 3 within 300s during the joiner seat grace window");
+    .unwrap_or_else(|_| {
+        panic!("cluster did not reach epoch {grace_epoch} within 300s during the joiner seat grace window")
+    });
     tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        wait_for_node_epoch(&joiner.node_handle, 3),
+        wait_for_node_epoch(&joiner.node_handle, grace_epoch),
     )
     .await
-    .expect("joiner node did not reach epoch 3 within 60s of the cluster during the grace window");
+    .unwrap_or_else(|_| {
+        panic!("joiner node did not reach epoch {grace_epoch} within 60s of the cluster during the grace window")
+    });
+    let (observed_epoch, seated) = observe(joiner, joiner_name);
     assert!(
-        seated_at(joiner, joiner_name, 3),
-        "joiner {joiner_name:?} ({context}) was absent from the epoch-2 committee \
+        seated,
+        "joiner {joiner_name:?} ({context}) was absent from the epoch-{epoch} committee \
          (tolerated once — registration can miss the mid-epoch selection) and is STILL \
-         absent at epoch 3: it never activated, which is a registration/lifecycle bug, \
-         not a timing race"
+         absent at epoch {observed_epoch}: it never activated, which is a \
+         registration/lifecycle bug, not a timing race"
     );
 }
 
