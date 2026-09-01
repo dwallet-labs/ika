@@ -1328,10 +1328,6 @@ impl IkaTestClusterBuilder {
         self
     }
 
-    /// Per-validator `SupportedProtocolVersions` overrides — vector length must
-    /// equal `num_validators`. Use this to model a gradual upgrade scenario
-    /// where some validators support a newer max than others. When unset,
-    /// every validator gets `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     /// TESTS ONLY: hold every validator's handoff anchor back for `withhold`
     /// after it enters the prepare-then-start barrier. See
     /// `NodeConfig::withhold_handoff_anchor_for_testing`.
@@ -1340,6 +1336,10 @@ impl IkaTestClusterBuilder {
         self
     }
 
+    /// Per-validator `SupportedProtocolVersions` overrides — vector length must
+    /// equal `num_validators`. Use this to model a gradual upgrade scenario
+    /// where some validators support a newer max than others. When unset,
+    /// every validator gets `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     pub fn with_per_validator_supported_protocol_versions(
         mut self,
         per_validator_versions: Vec<SupportedProtocolVersions>,

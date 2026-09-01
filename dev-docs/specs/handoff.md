@@ -293,16 +293,34 @@ next epoch inherits.
 
    INPUTS (all four, on every path). The anchor epoch — the epoch being
    entered, minus one. That epoch's committee, which signed the
-   certificate and whose members serve it. Those members' peer ids. And
-   the epoch store for the epoch being ENTERED, which is where both
-   digest sources are read and where fetched outputs are cached. On the
-   two reconfiguration paths the anchor epoch's committee and peers come
-   straight from the outgoing epoch store. A booting process has no store
-   for the anchor epoch, so it resolves that committee from the local
-   committee store, falling back to `validator_set.previous_committee` on
-   chain — the joiner bootstrap's own resolution. A committee that cannot
-   be resolved leaves the barrier not-ready and it retries; that is
-   absence, never a licence to start unanchored.
+   certificate and against which every signature on it is verified. A set
+   of peers to ask for the certificate and the blobs. And the epoch store
+   for the epoch being ENTERED, which is where both digest sources are
+   read and where fetched outputs are cached.
+
+   On the two reconfiguration paths the anchor epoch's committee and its
+   peers come straight from the outgoing epoch store. A booting process
+   has no store for the anchor epoch: it resolves that committee from the
+   local committee store, falling back to
+   `validator_set.previous_committee` on chain (the joiner bootstrap's own
+   resolution), and it asks the ENTERING committee's peers — the set it
+   can actually dial — exactly as the joiner bootstrap does.
+
+   That chain fallback is the ONE not-ready condition the barrier does not
+   wait out indefinitely, and the reason is that waiting cannot fix it:
+   the fallback refuses to serve `validator_set.previous_committee` unless
+   the on-chain epoch is exactly `anchor_epoch + 1` (otherwise it would
+   hand back a committee for the wrong epoch), while the barrier's
+   `anchor_epoch` is fixed at boot. Once the chain crosses the next
+   boundary the condition is false forever, and a booting node cannot
+   re-read the chain — the reconfiguration loop, the admin server and both
+   watchdogs all start after node startup returns, which a blocked boot
+   barrier delays. So the boot path gives up on that one condition after a
+   bounded number of spaced attempts and FAILS STARTUP: the process exits
+   without entering the epoch, and its supervisor restarts it into
+   whichever epoch the chain has actually reached, where the anchor
+   resolves. Every other not-ready condition stays unbounded, because for
+   those, waiting is what makes them resolvable.
 
    Both digest sources are read from the store for the epoch being
    ENTERED, the only store a booting process has. That costs nothing on
