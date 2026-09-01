@@ -204,7 +204,11 @@ safe and self-healing here — the epoch's derived state is rebuilt by replay
 from the consensus store on boot (`../specs/event-sourced-epoch.md`), and no
 MPC work is lost that the committee has not already agreed. Capture the MPC
 service's logs first; a drain that stops without dying is not a failure mode
-with a known cause yet, and ika #2064 tracks the end-to-end coverage for it.
+with a known cause yet. The SHAPE above is now reproduced end to end on a real
+cluster by `ika-upgrade-test`'s `wedged_drain` scenario (ika #2102) — a run of
+it is the reference for what these series look like during a wedge and after
+a recovery, including that the watchdog holds and no restart is needed to
+resume once the drain is released.
 Look for an earlier fatal in the dWallet MPC service on that host too — the
 deliberate `break` on self-recognised maliciousness ends the service loop for
 the life of the process, and Alert 2 fires for that one. Recovery logs

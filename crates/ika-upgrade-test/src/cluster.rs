@@ -692,6 +692,247 @@ fn required_labeled_metric(
     Ok(value as u64)
 }
 
+/// Like [`required_unlabeled_metric`], but for a gauge whose domain includes
+/// negatives. `ika_consensus_commit_silence_seconds` publishes `-1` for "not
+/// armed, or held" — which is precisely the value the wedged-drain scenario
+/// needs to read, so it cannot go through the non-negative helper.
+fn required_signed_metric(body: &str, metric: &str, validator: &ValidatorProcess) -> Result<i64> {
+    let samples = parse_metric_samples(body, metric)?;
+    ensure!(
+        samples.len() == 1 && samples[0].labels.is_empty(),
+        "validator {} metrics endpoint {} returned {} non-canonical samples for {metric}",
+        validator.index,
+        validator.metrics_endpoint(),
+        samples.len()
+    );
+    let value = samples[0].value;
+    ensure!(
+        value.is_finite() && value.fract() == 0.0,
+        "validator {} metrics endpoint {} returned invalid {metric} value {value}",
+        validator.index,
+        validator.metrics_endpoint()
+    );
+    Ok(value as i64)
+}
+
+/// `DEFAULT_ROUND_CHANNEL_CAPACITY` from `ika-core`'s
+/// `authority::round_transport`, mirrored because this harness deliberately
+/// does not link `ika-core` — it drives separately-compiled binaries and reads
+/// them the way an operator does, over `/metrics`. A drift between the two
+/// shows up as the wedged-drain scenario timing out waiting for the depth to
+/// pin, with the observed depth in the error.
+pub const ROUND_CHANNEL_CAPACITY: u64 = 1024;
+
+/// The value `ika_consensus_commit_silence_seconds` carries while the
+/// commit-liveness watchdog is unarmed or HELD (`NOT_ARMED` in
+/// `ika-node`'s `commit_liveness_watchdog`). A parked fold is a hold input, so
+/// this is what a correctly-holding watchdog publishes throughout a wedge.
+pub const COMMIT_SILENCE_NOT_ARMED: i64 = -1;
+
+/// One validator's wedged-drain evidence, scraped in a single pass so the
+/// series are mutually consistent.
+///
+/// Named metrics rather than a generic key/value bag: these six are the entire
+/// external surface of a wedged-but-alive drain (ika #2102), and the point of
+/// the scenario is that an operator with nothing but these can tell the
+/// failure apart from an idle node and from an isolated one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DrainWedgeSample {
+    /// `ika_consensus_fold_blocked_seconds_total` — seconds the consensus fold
+    /// has spent parked on a full round channel. The wedge signal.
+    pub fold_blocked_seconds_total: u64,
+    /// `ika_last_process_mpc_consensus_round` — the drain's consumed round.
+    /// Flat while the drain is stuck; this is the "versus what" the counter
+    /// above is read against.
+    pub last_process_mpc_consensus_round: u64,
+    /// `ika_consensus_round_channel_depth` — rounds the fold has handed over
+    /// and the drain has not taken. Pins at [`ROUND_CHANNEL_CAPACITY`].
+    pub round_channel_depth: u64,
+    /// `ika_consensus_commit_silence_seconds` — the commit-liveness watchdog's
+    /// clock, or [`COMMIT_SILENCE_NOT_ARMED`] while it is held.
+    pub commit_silence_seconds: i64,
+    /// `consensus_ika_last_committed_leader_round` — consensus-core's PRODUCER
+    /// side. Keeps advancing while ika's commit handler is parked, which is
+    /// what makes "the node is still in consensus" assertable from outside.
+    pub committed_leader_round: u64,
+    /// `ika_validator_process_uptime_seconds`. A restart resets it to ~0, so a
+    /// monotonic reading across a window is a no-restart proof that needs no
+    /// cooperation from the process.
+    pub process_uptime_seconds: u64,
+}
+
+impl DrainWedgeSample {
+    fn parse(body: &str, validator: &ValidatorProcess) -> Result<Self> {
+        Ok(Self {
+            fold_blocked_seconds_total: required_unlabeled_metric(
+                body,
+                &["ika_consensus_fold_blocked_seconds_total"],
+                validator,
+            )?,
+            last_process_mpc_consensus_round: required_unlabeled_metric(
+                body,
+                &["ika_last_process_mpc_consensus_round"],
+                validator,
+            )?,
+            round_channel_depth: required_unlabeled_metric(
+                body,
+                &["ika_consensus_round_channel_depth"],
+                validator,
+            )?,
+            commit_silence_seconds: required_signed_metric(
+                body,
+                "ika_consensus_commit_silence_seconds",
+                validator,
+            )?,
+            committed_leader_round: required_unlabeled_metric(
+                body,
+                &["consensus_ika_last_committed_leader_round"],
+                validator,
+            )?,
+            process_uptime_seconds: required_unlabeled_metric(
+                body,
+                &["ika_validator_process_uptime_seconds"],
+                validator,
+            )?,
+        })
+    }
+}
+
+/// Half the observation window, in seconds — the line between "the fold was
+/// parked for essentially the whole window" and "the fold was not parked".
+///
+/// One threshold for both verdicts on purpose. A parked fold accrues blocked
+/// time at one second per second, so over a window of `w` it accrues ~`w`; a
+/// healthy one accrues zero, and under a transient burst some small amount.
+/// Anything at or above `w/2` is the wedge and anything below it is not, which
+/// is a single rule rather than two tunables that could drift into overlapping
+/// or into a gap where neither verdict holds.
+fn wedge_discriminator_seconds(window: Duration) -> u64 {
+    window.as_secs() / 2
+}
+
+/// The parked validator's verdict across one observation window.
+///
+/// Every clause is an OUTSIDE observation — no log, no admin endpoint, nothing
+/// the wedged subsystem itself reports. That is the claim under test: this
+/// failure is diagnosable from the metric surface alone.
+pub fn evaluate_wedged_drain(
+    before: &DrainWedgeSample,
+    after: &DrainWedgeSample,
+    window: Duration,
+    silence_ceiling_seconds: i64,
+) -> Result<()> {
+    let discriminator = wedge_discriminator_seconds(window);
+    let blocked_delta = after
+        .fold_blocked_seconds_total
+        .saturating_sub(before.fold_blocked_seconds_total);
+    ensure!(
+        blocked_delta >= discriminator,
+        "ika_consensus_fold_blocked_seconds_total grew by only {blocked_delta}s over a {}s \
+         window (expected >= {discriminator}s): the fold is NOT parked, so this is not the \
+         wedge the scenario induced. before={before:?} after={after:?}",
+        window.as_secs()
+    );
+    ensure!(
+        after.last_process_mpc_consensus_round == before.last_process_mpc_consensus_round,
+        "ika_last_process_mpc_consensus_round moved {} -> {} while the drain was parked: the \
+         drain is still consuming, so blocked time climbing means a slow drain rather than a \
+         stuck one — the two readings this scenario exists to keep apart",
+        before.last_process_mpc_consensus_round,
+        after.last_process_mpc_consensus_round
+    );
+    for (label, sample) in [("before", before), ("after", after)] {
+        ensure!(
+            sample.round_channel_depth == ROUND_CHANNEL_CAPACITY,
+            "ika_consensus_round_channel_depth is {} at the {label} sample, not pinned at the \
+             channel capacity {ROUND_CHANNEL_CAPACITY}: the fold is not parked on a full \
+             channel. sample={sample:?}",
+            sample.round_channel_depth
+        );
+        ensure!(
+            sample.commit_silence_seconds <= silence_ceiling_seconds,
+            "ika_consensus_commit_silence_seconds is {} at the {label} sample, above the \
+             ceiling {silence_ceiling_seconds}: the commit-liveness watchdog is COUNTING a \
+             parked fold as silence and is on its way to exiting a node whose fold is holding \
+             a commit it received — the hold this scenario exists to prove. sample={sample:?}",
+            sample.commit_silence_seconds
+        );
+    }
+    ensure!(
+        after.committed_leader_round > before.committed_leader_round,
+        "consensus_ika_last_committed_leader_round is flat at {} across the window: the parked \
+         validator has left consensus, so the scenario is observing an isolated node rather \
+         than a wedged drain on a node that is still committing",
+        before.committed_leader_round
+    );
+    ensure!(
+        after.process_uptime_seconds >= before.process_uptime_seconds,
+        "ika_validator_process_uptime_seconds went backwards ({} -> {}): the parked validator \
+         RESTARTED during the window. Nothing may exit a node whose only fault is a fold parked \
+         behind its own drain",
+        before.process_uptime_seconds,
+        after.process_uptime_seconds
+    );
+    Ok(())
+}
+
+/// The verdict a validator with a working drain must satisfy: used both for
+/// the healthy peers DURING the wedge (the two-sided half — the wedge must be
+/// one node's, not the cluster's) and for the parked validator AFTER it is
+/// unparked (recovery is exactly "it now looks like a healthy peer").
+pub fn evaluate_healthy_drain(
+    before: &DrainWedgeSample,
+    after: &DrainWedgeSample,
+    window: Duration,
+    silence_ceiling_seconds: i64,
+) -> Result<()> {
+    let discriminator = wedge_discriminator_seconds(window);
+    let blocked_delta = after
+        .fold_blocked_seconds_total
+        .saturating_sub(before.fold_blocked_seconds_total);
+    ensure!(
+        blocked_delta < discriminator,
+        "ika_consensus_fold_blocked_seconds_total grew by {blocked_delta}s over a {}s window \
+         (wedge threshold {discriminator}s): this validator's fold is parked too. \
+         before={before:?} after={after:?}",
+        window.as_secs()
+    );
+    ensure!(
+        after.last_process_mpc_consensus_round > before.last_process_mpc_consensus_round,
+        "ika_last_process_mpc_consensus_round is flat at {}: this validator's drain is not \
+         consuming",
+        before.last_process_mpc_consensus_round
+    );
+    for (label, sample) in [("before", before), ("after", after)] {
+        ensure!(
+            sample.round_channel_depth < ROUND_CHANNEL_CAPACITY,
+            "ika_consensus_round_channel_depth is pinned at capacity \
+             {ROUND_CHANNEL_CAPACITY} at the {label} sample: this validator's round channel is \
+             full. sample={sample:?}"
+        );
+        ensure!(
+            sample.commit_silence_seconds <= silence_ceiling_seconds,
+            "ika_consensus_commit_silence_seconds is {} at the {label} sample, above the \
+             ceiling {silence_ceiling_seconds}. sample={sample:?}",
+            sample.commit_silence_seconds
+        );
+    }
+    ensure!(
+        after.committed_leader_round > before.committed_leader_round,
+        "consensus_ika_last_committed_leader_round is flat at {}: this validator is not \
+         committing",
+        before.committed_leader_round
+    );
+    ensure!(
+        after.process_uptime_seconds >= before.process_uptime_seconds,
+        "ika_validator_process_uptime_seconds went backwards ({} -> {}): this validator \
+         RESTARTED during the window",
+        before.process_uptime_seconds,
+        after.process_uptime_seconds
+    );
+    Ok(())
+}
+
 fn metric_samples_for_protocol(
     body: &str,
     metric: &str,
@@ -2110,6 +2351,130 @@ impl ClusterOfProcesses {
             .stop()
             .await
     }
+
+    /// Restart ONE validator on the same binary with extra environment added.
+    ///
+    /// The only way to hand a running child a knob its on-disk config does not
+    /// carry: the harness spawns real `ika-validator` processes, so a
+    /// production-binary env var is the whole interface. The environment is
+    /// sticky on the process (see [`ValidatorProcess::set_extra_env`]), so a
+    /// later `stop_and_swap` keeps it — which is what a scenario wants for a
+    /// knob describing the validator rather than the run.
+    pub async fn restart_validator_with_env<K, V>(
+        &mut self,
+        index: usize,
+        vars: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<()>
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let validator = self
+            .validators
+            .get_mut(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        validator.set_extra_env(vars);
+        validator
+            .restart()
+            .await
+            .with_context(|| format!("restart validator {index} with extra environment"))
+    }
+
+    /// A path inside validator `index`'s own data dir. Scenarios use it for
+    /// sentinel files a child process watches, so two co-located validators
+    /// can never share one by accident.
+    pub fn validator_data_path(&self, index: usize, file_name: &str) -> Result<PathBuf> {
+        Ok(self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?
+            .data_dir()
+            .join(file_name))
+    }
+
+    /// Scrape one validator's wedged-drain evidence. See [`DrainWedgeSample`].
+    pub async fn scrape_drain_wedge(&self, index: usize) -> Result<DrainWedgeSample> {
+        let validator = self
+            .validators
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?;
+        let body = validator.metrics().await?;
+        DrainWedgeSample::parse(&body, validator)
+            .with_context(|| format!("parse drain-wedge metrics of validator {index}"))
+    }
+
+    /// Poll until validator `index`'s round channel is pinned at capacity,
+    /// i.e. the consensus fold is parked on the drain.
+    ///
+    /// This is the scenario's "the wedge has actually formed" gate. It cannot
+    /// be a fixed sleep: the time to fill [`ROUND_CHANNEL_CAPACITY`] rounds is
+    /// the cluster's commit rate, which varies by an order of magnitude
+    /// between a loaded CI pod and a quiet developer machine.
+    pub async fn wait_for_round_channel_at_capacity(
+        &self,
+        index: usize,
+        timeout: Duration,
+    ) -> Result<DrainWedgeSample> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut last = None;
+        loop {
+            let sample = self.scrape_drain_wedge(index).await?;
+            if sample.round_channel_depth >= ROUND_CHANNEL_CAPACITY {
+                tracing::info!(
+                    index,
+                    depth = sample.round_channel_depth,
+                    consumed_round = sample.last_process_mpc_consensus_round,
+                    "round channel pinned at capacity: the consensus fold is parked on the drain"
+                );
+                return Ok(sample);
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "validator {index}'s round channel never reached capacity \
+                 {ROUND_CHANNEL_CAPACITY} within {timeout:?}; last sample: {sample:?}"
+            );
+            if last.as_ref() != Some(&sample) {
+                tracing::info!(
+                    index,
+                    depth = sample.round_channel_depth,
+                    consumed_round = sample.last_process_mpc_consensus_round,
+                    "waiting for the round channel to fill"
+                );
+                last = Some(sample);
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    /// Poll until validator `index`'s drain has consumed a round beyond
+    /// `past_round` — the direct evidence that a parked drain resumed.
+    pub async fn wait_for_mpc_consumed_round_past(
+        &self,
+        index: usize,
+        past_round: u64,
+        timeout: Duration,
+    ) -> Result<DrainWedgeSample> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let sample = self.scrape_drain_wedge(index).await?;
+            if sample.last_process_mpc_consensus_round > past_round {
+                tracing::info!(
+                    index,
+                    consumed_round = sample.last_process_mpc_consensus_round,
+                    was_stuck_at = past_round,
+                    depth = sample.round_channel_depth,
+                    "the drain resumed consuming"
+                );
+                return Ok(sample);
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "validator {index}'s drain never consumed a round past {past_round} within \
+                 {timeout:?}; last sample: {sample:?}"
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
 }
 
 /// Serialize a `NodeConfig` to YAML in its data dir and spawn it as a child.
@@ -2211,6 +2576,197 @@ mod tests {
             PathBuf::from("node.log"),
             1,
         )
+    }
+
+    /// A validator whose drain is keeping up: nothing blocked, channel nearly
+    /// empty, watchdog unarmed-or-quiet.
+    fn healthy_sample() -> DrainWedgeSample {
+        DrainWedgeSample {
+            fold_blocked_seconds_total: 0,
+            last_process_mpc_consensus_round: 1_000,
+            round_channel_depth: 3,
+            commit_silence_seconds: COMMIT_SILENCE_NOT_ARMED,
+            committed_leader_round: 1_010,
+            process_uptime_seconds: 600,
+        }
+    }
+
+    /// The same validator one 300s window later, still healthy.
+    fn healthy_sample_after(window: Duration) -> DrainWedgeSample {
+        let mut sample = healthy_sample();
+        sample.last_process_mpc_consensus_round += 500;
+        sample.committed_leader_round += 500;
+        sample.process_uptime_seconds += window.as_secs();
+        sample
+    }
+
+    /// The wedge: the fold parked for the whole window, nothing consumed, the
+    /// channel pinned, the watchdog holding, consensus still committing.
+    fn wedged_sample_after(before: &DrainWedgeSample, window: Duration) -> DrainWedgeSample {
+        DrainWedgeSample {
+            fold_blocked_seconds_total: before.fold_blocked_seconds_total + window.as_secs(),
+            last_process_mpc_consensus_round: before.last_process_mpc_consensus_round,
+            round_channel_depth: ROUND_CHANNEL_CAPACITY,
+            commit_silence_seconds: COMMIT_SILENCE_NOT_ARMED,
+            committed_leader_round: before.committed_leader_round + 500,
+            process_uptime_seconds: before.process_uptime_seconds + window.as_secs(),
+        }
+    }
+
+    fn wedged_before() -> DrainWedgeSample {
+        let mut sample = healthy_sample();
+        sample.round_channel_depth = ROUND_CHANNEL_CAPACITY;
+        sample.fold_blocked_seconds_total = 12;
+        sample
+    }
+
+    const WINDOW: Duration = Duration::from_secs(300);
+    const SILENCE_CEILING: i64 = 60;
+
+    #[test]
+    fn the_wedge_signature_is_accepted() {
+        let before = wedged_before();
+        let after = wedged_sample_after(&before, WINDOW);
+        evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING).unwrap();
+    }
+
+    #[test]
+    fn a_healthy_drain_is_accepted_and_is_not_the_wedge() {
+        let before = healthy_sample();
+        let after = healthy_sample_after(WINDOW);
+        evaluate_healthy_drain(&before, &after, WINDOW, SILENCE_CEILING).unwrap();
+        // The two verdicts partition: what passes one must fail the other, or
+        // the peers' half of the assertion proves nothing.
+        evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("a healthy drain must not read as wedged");
+        let wedged_before = wedged_before();
+        let wedged_after = wedged_sample_after(&wedged_before, WINDOW);
+        evaluate_healthy_drain(&wedged_before, &wedged_after, WINDOW, SILENCE_CEILING)
+            .expect_err("a wedged drain must not read as healthy");
+    }
+
+    #[test]
+    fn a_slow_drain_is_not_a_wedged_one() {
+        // Blocked time climbing AND the consumed round climbing is the drain
+        // being slow, not stuck — the reading the alert docs warn is the easy
+        // one to confuse, and the scenario must not accept it as the wedge.
+        let before = wedged_before();
+        let mut after = wedged_sample_after(&before, WINDOW);
+        after.last_process_mpc_consensus_round += 200;
+        let error = evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("a slow drain must not satisfy the wedge assertion");
+        assert!(
+            error
+                .to_string()
+                .contains("ika_last_process_mpc_consensus_round moved")
+        );
+    }
+
+    #[test]
+    fn a_watchdog_that_counts_a_parked_fold_as_silence_fails_the_wedge_assertion() {
+        // The hold is the whole point: if the silence clock runs while the
+        // fold is parked, the node is on its way to exiting for a fault it
+        // does not have.
+        let before = wedged_before();
+        let mut after = wedged_sample_after(&before, WINDOW);
+        after.commit_silence_seconds = SILENCE_CEILING + 1;
+        let error = evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("a running silence clock must fail the hold assertion");
+        assert!(
+            error
+                .to_string()
+                .contains("ika_consensus_commit_silence_seconds")
+        );
+    }
+
+    #[test]
+    fn a_restart_during_the_window_fails_both_verdicts() {
+        // A restart resets the uptime gauge, which is the only no-restart
+        // evidence available from outside the process.
+        let before = wedged_before();
+        let mut after = wedged_sample_after(&before, WINDOW);
+        after.process_uptime_seconds = 5;
+        let error = evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("a restarted validator must fail the wedge assertion");
+        assert!(error.to_string().contains("RESTARTED"));
+
+        let healthy_before = healthy_sample();
+        let mut healthy_after = healthy_sample_after(WINDOW);
+        healthy_after.process_uptime_seconds = 5;
+        let error =
+            evaluate_healthy_drain(&healthy_before, &healthy_after, WINDOW, SILENCE_CEILING)
+                .expect_err("a restarted peer must fail the healthy assertion");
+        assert!(error.to_string().contains("RESTARTED"));
+    }
+
+    #[test]
+    fn an_isolated_node_does_not_read_as_a_wedged_drain() {
+        // A node that has left consensus produces a flat consumed round and a
+        // parked-looking channel too. What separates it is that its
+        // committed-leader round stops moving — the failure this scenario
+        // must not be able to mistake for the one it is building.
+        let before = wedged_before();
+        let mut after = wedged_sample_after(&before, WINDOW);
+        after.committed_leader_round = before.committed_leader_round;
+        let error = evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("an isolated node must not satisfy the wedge assertion");
+        assert!(
+            error
+                .to_string()
+                .contains("consensus_ika_last_committed_leader_round")
+        );
+    }
+
+    #[test]
+    fn a_channel_below_capacity_is_not_a_parked_fold() {
+        let before = wedged_before();
+        let mut after = wedged_sample_after(&before, WINDOW);
+        after.round_channel_depth = ROUND_CHANNEL_CAPACITY - 1;
+        let error = evaluate_wedged_drain(&before, &after, WINDOW, SILENCE_CEILING)
+            .expect_err("a channel below capacity means the fold is not parked");
+        assert!(
+            error
+                .to_string()
+                .contains("ika_consensus_round_channel_depth")
+        );
+    }
+
+    #[test]
+    fn drain_wedge_samples_parse_from_a_real_metrics_body() {
+        // Including the `-1` NOT_ARMED sentinel, which the non-negative
+        // metric helper cannot read, and a prefix-colliding neighbour.
+        let body = "\
+# HELP ika_consensus_fold_blocked_seconds_total help\n\
+ika_consensus_fold_blocked_seconds_total 42\n\
+ika_consensus_fold_blocked_sends_total 7\n\
+ika_last_process_mpc_consensus_round 1234\n\
+ika_consensus_round_channel_depth 1024\n\
+ika_consensus_commit_silence_seconds -1\n\
+consensus_ika_last_committed_leader_round 2345\n\
+ika_validator_process_uptime_seconds 601\n";
+        let sample = DrainWedgeSample::parse(body, &stopped_validator()).unwrap();
+        assert_eq!(
+            sample,
+            DrainWedgeSample {
+                fold_blocked_seconds_total: 42,
+                last_process_mpc_consensus_round: 1234,
+                round_channel_depth: 1024,
+                commit_silence_seconds: -1,
+                committed_leader_round: 2345,
+                process_uptime_seconds: 601,
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_wedge_metric_fails_closed() {
+        // A renamed or dropped series must fail the scenario rather than read
+        // as a zero — the inverted-conclusion trap these gauges have caused
+        // before.
+        let body = "ika_consensus_fold_blocked_seconds_total 42\n";
+        let error = DrainWedgeSample::parse(body, &stopped_validator())
+            .expect_err("a missing series must not parse as zero");
+        assert!(error.to_string().contains("missing required metric"));
     }
 
     fn network_key_metrics(outputs: &[(&str, &str)]) -> String {

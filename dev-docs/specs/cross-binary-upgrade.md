@@ -275,6 +275,13 @@ drives them across epochs. The surviving scenarios (current build only):
 - `tests/restart_spectator.rs` — a validator restarted mid-epoch must
   resume contributing rather than following consensus as a spectator,
   asserted on the internal presign pool's ordinal-stream log lines.
+- `tests/wedged_drain.rs` — a validator whose MPC drain is stuck but ALIVE
+  (parked by the production binary's `IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND`
+  hook, per-validator, via the harness's extra-env support) must fill its
+  round channel, park its consensus fold, HOLD the commit-liveness watchdog
+  rather than exit, keep committing in consensus, leave its peers untouched,
+  and resume on release without a restart — all asserted from `/metrics`,
+  which is the only evidence this failure has (ika #2102).
 How the mixed-rollout evidence weighs the upgraded validator's output: production
 finalizes a reconfiguration at a Byzantine quorum and does not wait for
 stragglers — a validator whose computation finishes after it processed the
