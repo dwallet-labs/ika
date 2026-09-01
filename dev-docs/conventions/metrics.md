@@ -289,6 +289,47 @@ is exported for every protocol (it is bounded — one series per protocol name)
 and emits zero for a completed protocol while its session remains tracked, so
 tests can distinguish a clean zero from a missing protocol observation.
 
+## Sui client: "they didn't answer" and "the answer was wrong" are two counters
+
+`ika_sui_client_sui_rpc_errors{method}` counts **transport** failures — the Sui
+RPC did not come back with an answer.
+`ika_sui_client_sui_response_errors_total{method, kind}` counts reads whose
+**RPC succeeded** and whose answer could not be used: BCS decode failures, a
+committee member absent from a fetched validator set, unparsable on-chain key
+material, a missing `mpc_data` record. `kind` is a closed set — `decode`,
+`not_found`, `missing_field`, `validator_info_parse`, `committee_pubkey_parse`,
+`invalid_committee` (see `SuiResponseErrorKind` in
+`crates/ika-sui-client/src/metrics.rs`).
+
+They were one counter until the #2116 follow-up, and the conflation was not
+cosmetic. The two point at opposite owners: an RPC error is the operator's
+fullnode (upgrade it, repoint it, check the endpoint), a response error is a bug
+in ika's own decoding or in what is on chain — and no ika change will fix the
+first while no operator action will fix the second. `sui_rpc_errors` is also the
+fleet's lead indicator for the epoch-boundary boot wedge, whose whole value comes
+from a healthy baseline of 0–6 errors/hour; a decoding defect firing into it both
+raises a Sui-outage page at the wrong team and blunts the band that made the
+wedge visible hours ahead.
+
+Two consequences for anyone touching these:
+
+- **`sui_rpc_errors` keeps its name, labels and help forever.** Dashboards and
+  the fleet's `rate()`-over-30m alert are built on it. Split *out of* it; never
+  rename it.
+- **The `must_get_*` retry wrappers classify by error variant**
+  (`SuiResponseErrorKind::classify`), because they see only a terminal
+  `IkaError` and cannot tell which half they are looking at. They fire once per
+  30-second retry round — ~120/hour — which on its own clears the alert
+  threshold, so a wrapper that counted every failure as an RPC failure would
+  have left a persistent decoding bug paging as an outage no matter how the
+  sites below it were labelled. Unknown variants fall through to
+  `sui_rpc_errors`, i.e. the historical behaviour, so adding an `IkaError`
+  variant cannot silently change an alert's meaning.
+
+An alert on one of these wants a companion rule on the other, not a replacement:
+"the uplink is failing" and "we cannot read what the uplink returns" are both
+worth knowing, and neither implies the other.
+
 ## A process registers only the families it drives
 
 The three `NodeMode`s share one start sequence, and it used to register nearly
@@ -687,6 +728,7 @@ ika_sui_client_chain_blob_reads
 ika_sui_client_rate_limited_errors_total
 ika_sui_client_sui_node_info
 ika_sui_client_sui_node_info_last_success_unixtime
+ika_sui_client_sui_response_errors_total
 ika_sui_client_sui_rpc_errors
 ika_sui_connector_chain_active_system_sessions_count
 ika_sui_connector_chain_active_user_sessions_count

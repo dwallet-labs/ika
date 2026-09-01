@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use ika_types::error::IkaError;
 use prometheus::{
     IntCounterVec, IntGauge, IntGaugeVec, Registry, register_int_counter_vec_with_registry,
     register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
@@ -49,9 +50,113 @@ pub fn chain_blob_read_counts() -> (u64, u64) {
     )
 }
 
+/// The `kind` label of [`SuiClientMetrics::sui_response_errors`] — *why* a read
+/// failed once the Sui RPC had already answered it.
+///
+/// Closed set, and deliberately small: the label's whole job is to let one
+/// panel say "this is a decoding/data bug" instead of "Sui is down", so it
+/// needs enough resolution to point at a code path and no more. Every variant
+/// corresponds to at least one increment site in [`crate::SuiClient`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuiResponseErrorKind {
+    /// The response bytes did not deserialize (BCS).
+    Decode,
+    /// The RPC answered, but the record we asked about is not in the answer —
+    /// e.g. a committee member with no row in the fetched validator set.
+    NotFound,
+    /// The record is present but a field/table entry the caller requires is
+    /// absent — e.g. an active committee member with no `mpc_data` row.
+    MissingField,
+    /// A `StakingPool`'s on-chain validator metadata (keys, addresses) is
+    /// present but does not parse.
+    ValidatorInfoParse,
+    /// A frozen committee member's BLS protocol public key does not parse.
+    /// Kept apart from [`Self::ValidatorInfoParse`] because the two read from
+    /// different on-chain sources (the committee snapshot vs. the validator
+    /// record), which is the first thing you need to know when one fires.
+    InvalidCommitteePubkeyParse,
+    /// A retry wrapper gave up on a read that failed with
+    /// [`IkaError::InvalidCommittee`]. The precise kind was already recorded
+    /// by the site inside the read that produced the error; this is the
+    /// coarser once-per-retry-round re-count, which is all the wrapper can
+    /// see.
+    InvalidCommittee,
+}
+
+impl SuiResponseErrorKind {
+    /// The `kind` label value. Stable — dashboards and alerts match on these.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Decode => "decode",
+            Self::NotFound => "not_found",
+            Self::MissingField => "missing_field",
+            Self::ValidatorInfoParse => "validator_info_parse",
+            Self::InvalidCommitteePubkeyParse => "committee_pubkey_parse",
+            Self::InvalidCommittee => "invalid_committee",
+        }
+    }
+
+    /// Classify a read that already came back as an [`IkaError`]: `Some(kind)`
+    /// if Sui answered and the answer was unusable, `None` if the RPC itself
+    /// is what failed.
+    ///
+    /// Used where the only thing in hand is the terminal error — the
+    /// `must_get_*` retry wrappers, which sit above a read that may have
+    /// failed for either reason and would otherwise re-count every decoding
+    /// bug as an RPC outage once per retry round (at a 30-second budget that
+    /// is ~120/hour, above the fleet's RPC-error alert threshold on its own).
+    ///
+    /// The catch-all arm resolves to "RPC failure", i.e. the historical
+    /// behaviour, so a variant added later keeps landing on the counter it
+    /// lands on today rather than silently changing an alert's meaning.
+    pub fn classify(error: &IkaError) -> Option<Self> {
+        match error {
+            IkaError::SuiClientSerializationError(_) => Some(Self::Decode),
+            IkaError::InvalidCommittee(_) => Some(Self::InvalidCommittee),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SuiClientMetrics {
+    /// Failures of the Sui RPC *transport*: the call did not come back with an
+    /// answer. Name, labels and help are unchanged since 1.2.0 and must stay
+    /// that way — this is the counter the fleet's Sui-uplink alerting is built
+    /// on, and its healthy baseline (0–6/hour) is what makes it a usable lead
+    /// indicator for a boot wedge.
+    ///
+    /// Failures where Sui *did* answer and the answer was unusable belong on
+    /// [`Self::sui_response_errors`]; mixing the two is what made an outage and
+    /// a decoding bug indistinguishable here (ika #2116 follow-up).
     pub sui_rpc_errors: IntCounterVec,
+    /// Failures of reads whose RPC **succeeded** and whose response could not
+    /// be used: BCS decode failures, a committee member missing from a fetched
+    /// validator set, unparsable on-chain key material, an absent `mpc_data`
+    /// record.
+    ///
+    /// Every one of these is a defect in ika's own data or decoding path (or in
+    /// what is on chain), not in the operator's fullnode — the opposite
+    /// on-call response from [`Self::sui_rpc_errors`], which is why they cannot
+    /// share a counter.
+    ///
+    /// # Cardinality
+    ///
+    /// `method` is the client method name, from the same closed set as
+    /// `sui_rpc_errors`; `kind` is [`SuiResponseErrorKind`], six values. Ten
+    /// `(method, kind)` pairs are reachable today — six from sites that name
+    /// their own kind, four more from the three `must_get_*` wrappers, which
+    /// can only reach `decode` and `invalid_committee`.
+    ///
+    /// # No zero baseline
+    ///
+    /// Deliberately not pre-registered at `0`, unlike
+    /// [`Self::sui_rate_limited_errors`]. The pairs are a cross product that
+    /// only the increment sites know, so seeding them means a second hand-kept
+    /// list of exactly the kind this repo's metric conventions exist to avoid —
+    /// and the counter it splits off from has no zero baseline either, so a
+    /// companion alert is written the same way its sibling already is.
+    pub sui_response_errors: IntCounterVec,
     /// Counts on-chain reads of the heavy blob fields backed by
     /// `mpc_data` / network-key / reconfig outputs. Each label is the
     /// name of a method that performs a chain-side blob fetch. Used by
@@ -136,6 +241,13 @@ impl SuiClientMetrics {
                 registry,
             )
             .unwrap(),
+            sui_response_errors: register_int_counter_vec_with_registry!(
+                "ika_sui_client_sui_response_errors_total",
+                "Total number of sui RPC calls that answered but whose response could not be used, by RPC method and failure kind",
+                &["method", "kind"],
+                registry,
+            )
+            .unwrap(),
             chain_blob_reads: register_int_counter_vec_with_registry!(
                 "ika_sui_client_chain_blob_reads",
                 "Total chain-side blob reads (mpc_data, network DKG output, reconfig output)",
@@ -192,6 +304,30 @@ impl SuiClientMetrics {
     pub fn new_for_testing() -> Arc<Self> {
         let registry = Registry::new();
         Self::new(&registry)
+    }
+
+    /// Record one failure of `method` whose RPC succeeded and whose response
+    /// was unusable. Never touches [`Self::sui_rpc_errors`].
+    pub fn record_response_error(&self, method: &str, kind: SuiResponseErrorKind) {
+        self.sui_response_errors
+            .with_label_values(&[method, kind.label()])
+            .inc();
+    }
+
+    /// Record one failed read of `method`, routing it to the counter its cause
+    /// belongs to: [`Self::sui_response_errors`] when Sui answered and the
+    /// answer was unusable, [`Self::sui_rpc_errors`] otherwise.
+    ///
+    /// For call sites that hold only the terminal [`IkaError`] and cannot see
+    /// which of the two happened — the `must_get_*` retry wrappers. A site
+    /// that *knows* it is looking at a bad response (a `bcs::from_bytes` arm,
+    /// say) should call [`Self::record_response_error`] with the precise kind
+    /// instead.
+    pub fn record_read_error(&self, method: &str, error: &IkaError) {
+        match SuiResponseErrorKind::classify(error) {
+            Some(kind) => self.record_response_error(method, kind),
+            None => self.sui_rpc_errors.with_label_values(&[method]).inc(),
+        }
     }
 
     /// Publish a fresh `GetServiceInfo` answer: flip the previously-active
