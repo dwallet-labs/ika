@@ -1018,9 +1018,13 @@ pub struct OffChainCommitteeBundles {
 /// successfully. `Incomplete` means *at least one* didn't; the
 /// caller returns `OffChainAssemblyIncomplete` and the outer sync
 /// loop retries on the next tick. Partial maps are
-/// never returned — reconfig MPC reads
-/// `Committee.class_groups_public_keys_and_proofs` directly and a
-/// missing entry silently drops that validator's share.
+/// never returned — these bundles ARE the reconfiguration MPC's key
+/// input (`get_validator_mpc_keys_by_party_id` re-keys them to
+/// `PartyID`) and a missing entry silently drops that validator's
+/// share. Since #2119 they are the ONLY source: no chain read
+/// contributes validator key material, and
+/// `Committee.class_groups_public_keys_and_proofs` is empty on every
+/// production path.
 #[derive(Debug)]
 pub enum OffChainMpcDataAssembly {
     Complete(Box<OffChainCommitteeBundles>),
@@ -1076,9 +1080,9 @@ impl OffChainAssemblyMissingReason {
 ///
 /// The completion gate is strict: even one authority missing a
 /// blob *or* failing decode aborts the assembly with `Incomplete`,
-/// because reconfig MPC consumes
-/// `Committee.class_groups_public_keys_and_proofs` directly and
-/// any gap silently drops that validator's share.
+/// because these bundles are consumed directly as the
+/// reconfiguration MPC's key input and any gap silently drops that
+/// validator's share.
 ///
 /// `blob_lookup` returns the bytes (e.g. from perpetual
 /// `mpc_artifact_blobs`) for a given digest, or `None`.
@@ -1137,9 +1141,8 @@ where
         vss_hpke.insert(authority, bundle.vss_hpke_public_key_and_proof);
     }
     // Empty input -> never `Complete`. `Complete` with empty maps
-    // would silently build a `Committee` whose
-    // `class_groups_public_keys_and_proofs` is empty, dropping every
-    // validator's share at reconfig MPC. Force the caller to handle
+    // would hand the reconfiguration MPC an empty key set, dropping
+    // every validator's share. Force the caller to handle
     // "no announcements yet" as `Incomplete` and retry.
     if !saw_any {
         return OffChainMpcDataAssembly::Incomplete {
@@ -1434,9 +1437,9 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
 /// proofs map from off-chain announcements + locally-cached
 /// blobs. Implementations return `Complete` only when every
 /// supplied authority resolved — partial maps are rejected
-/// upstream because reconfig MPC reads
-/// `Committee.class_groups_public_keys_and_proofs` directly and
-/// any silently-missing entry would drop that validator's share.
+/// upstream because the assembled bundles are the reconfiguration
+/// MPC's key input and any silently-missing entry would drop that
+/// validator's share.
 pub trait OffChainCommitteeMpcDataSource: Send + Sync + 'static {
     fn try_assemble_mpc_data(
         &self,
@@ -2917,9 +2920,8 @@ mod tests {
     }
 
     /// Empty announcements input must NOT produce `Complete` — a
-    /// `Complete` with empty maps would silently build a `Committee`
-    /// whose `class_groups_public_keys_and_proofs` is empty,
-    /// dropping every share at reconfig MPC. The pure helper
+    /// `Complete` with empty maps would hand the reconfiguration MPC
+    /// an empty key set, dropping every share. The pure helper
     /// returns `Incomplete` (with empty `missing`) so the caller's
     /// own context decides what to fill in.
     #[test]

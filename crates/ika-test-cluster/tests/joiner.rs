@@ -276,8 +276,25 @@ async fn test_garbage_on_chain_mpc_data_joiner_joins_mpc() {
     placeholder_registration_joiner_joins_mpc(OnChainMpcDataShape::GarbageBytes).await;
 }
 
+/// Invariant sites #2119 RETIRED, pinned by name so a reintroduction is
+/// caught rather than merely reviewed away. Each fired when a committee
+/// member's on-chain `mpc_data` record was missing or would not decode —
+/// exactly what a placeholder registration looks like.
+const RETIRED_ON_CHAIN_MPC_DATA_INVARIANT_SITES: &[&str] = &[
+    // `sui_syncer::new_committee`, bootstrap-window chain read.
+    "chain_fallback_mpc_data_missing",
+    "chain_fallback_mpc_data_decode",
+    // `epoch_start_system::build_ika_committee`.
+    "persisted_epoch_start_mpc_data_missing",
+];
+
 async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
     telemetry_subscribers::init_for_testing();
+    // Arm the process-global invariant counter BEFORE anything boots, so a
+    // violation during genesis, joiner registration or the epoch boundary is
+    // recorded and readable below. `get_or_init`, so this is a no-op if the
+    // process already registered it.
+    ika_types::metrics::init_invariant_violation_metric(&prometheus::Registry::new());
 
     // Same windows and cadences as `test_joiner_lands_in_next_committee_class_groups`
     // — see its comment for why 10s epochs are the floor here.
@@ -397,6 +414,28 @@ async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
              frozen set, so it never joined MPC"
         );
     }
+
+    // 5. And it did all of that QUIETLY: none of the invariant sites that
+    //    used to fire on an undecodable on-chain record was reported, at
+    //    boot or across the epoch boundary. A placeholder registration is
+    //    legitimate, so it must not look like a chain-read defect on any
+    //    node in the network.
+    for site in RETIRED_ON_CHAIN_MPC_DATA_INVARIANT_SITES {
+        assert_eq!(
+            ika_types::metrics::invariant_violation_count(site),
+            Some(0),
+            "retired invariant site {site:?} fired for a joiner registered with \
+             {shape:?} — the deprecated on-chain mpc_data field is being decoded \
+             again somewhere"
+        );
+    }
+    // The re-homed seed-identity guard must also stay silent: every
+    // validator here runs the seed it announced with.
+    assert_eq!(
+        ika_types::metrics::invariant_violation_count("mpc_data_frozen_digest_seed_mismatch"),
+        Some(0),
+        "the frozen mpc_data digest disagreed with some validator's running root seed"
+    );
 }
 
 /// Poll `node_handle`'s perpetual tables until its handoff cert for

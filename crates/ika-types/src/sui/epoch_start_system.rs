@@ -609,11 +609,44 @@ mod tests {
         }
     }
 
+    /// Counts `ERROR`-level tracing events, so a test can assert that a
+    /// code path emits none. Hand-rolled because `ika-types` has no
+    /// `tracing-subscriber` dependency and this needs seven trivial
+    /// methods.
+    #[derive(Clone, Default)]
+    struct ErrorEventCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl ErrorEventCounter {
+        fn count(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    impl tracing::Subscriber for ErrorEventCounter {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::ERROR {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
     /// #2119: the on-chain `mpc_data_bytes` field is deprecated, and a
     /// validator may register with placeholder bytes. Building the epoch's
     /// committee from an `EpochStartSystem` must not depend on it — not for
-    /// its own liveness, and not by logging a per-member decode error every
-    /// epoch on every node for what is a legitimate registration.
+    /// its own liveness, and NOT by logging a per-member decode error, which
+    /// would report a legitimate registration as a chain-read defect on
+    /// every node, at boot (`ika-node/src/lib.rs`, epoch-store construction)
+    /// and again at every epoch boundary.
     ///
     /// Membership, stake and thresholds stay chain-true; the class-groups
     /// map is empty because ALL validator key material now comes from the
@@ -641,7 +674,27 @@ mod tests {
         let expected_names: Vec<_> = validators.iter().map(validator_authority_name).collect();
 
         let system = EpochStartSystem::new_v2(4, 7, 0, 1000, validators, 6_667, 3_334);
-        let committee = system.get_ika_committee();
+
+        // Both chain-view builders, under an ERROR-counting subscriber, twice
+        // over: the same call the node makes at boot and again at the next
+        // epoch boundary. Zero ERROR events — no decode error, and (since
+        // `report_invariant_violation!` logs at ERROR) no invariant fires
+        // either.
+        let errors = ErrorEventCounter::default();
+        let committee = tracing::subscriber::with_default(errors.clone(), || {
+            for _ in 0..2 {
+                let _ = system.get_ika_committee_with_network_metadata();
+                let _ = system.get_ika_committee();
+            }
+            system.get_ika_committee()
+        });
+        assert_eq!(
+            errors.count(),
+            0,
+            "building the committee from placeholder / garbage / absent on-chain \
+             mpc_data records must emit no ERROR events — the field is deprecated \
+             and a placeholder registration is not a defect"
+        );
 
         assert_eq!(committee.epoch, 4);
         assert_eq!(committee.quorum_threshold, 6_667);
