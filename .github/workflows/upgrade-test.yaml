@@ -70,8 +70,28 @@ name: Upgrade Test
 on:
   pull_request:
     paths:
+      # WHAT THIS LIST IS, so the next person does not have to re-derive it:
+      # the `ika-validator` binary's own in-repo dependency closure — the crate
+      # that builds the binary (`ika-node`) plus every workspace crate it pulls
+      # in — together with the harness crate and the workflows that run it.
+      # If a source change can end up INSIDE the binary this suite spawns, or
+      # can change how the harness drives it, it belongs here. Re-derive with
+      # `cargo tree -p ika-node -e normal --workspace` when a crate is added;
+      # today that closure is ika-node, ika-core, ika-network, ika-types,
+      # ika-protocol-config, ika-config, ika-archival, ika-sui-client,
+      # ika-telemetry, dwallet-mpc-types, dwallet-mpc-centralized-party,
+      # dwallet-classgroups-types and dwallet-rng. (`ika-protocol-config-macros`
+      # is a workspace member but nothing depends on it, and the `consensus-*`,
+      # inkrypto and `sui-*` deps live OUT of this repo, pinned by tag/rev in
+      # the root manifest — so `Cargo.toml`/`Cargo.lock` below already catch
+      # every bump to them.)
       - "Cargo.toml"
       - "Cargo.lock"
+      # ika-core and ika-node are the only closure crates whose manifest carries
+      # feature flags this workflow itself toggles (enforce-minimum-cpu,
+      # dwallet-mpc-unsafe-mock, test-testing, jemalloc), so those two are
+      # listed whole; any other manifest edit that changes what gets built also
+      # moves `Cargo.lock`.
       - "crates/ika-core/Cargo.toml"
       # Whole crates, not module lists. This suite spawns REAL validator
       # processes that reach each other over anemo and swap binaries across
@@ -101,8 +121,37 @@ on:
       - "crates/ika-types/**"
       - "crates/ika-network/**"
       - "crates/ika-node/Cargo.toml"
+      # The binary itself. `ika-validator` is a bin target of THIS crate
+      # (`src/bin/ika-validator.rs`), and only its manifest was listed — so a
+      # change to node startup, the validator bin, service wiring or the
+      # archival/telemetry plumbing shipped without this suite ever running.
+      # Same failure mode as the per-module rot above, one level up.
+      - "crates/ika-node/src/**"
       - "crates/dwallet-mpc-*/**"
       - "crates/ika-protocol-config/**"
+      # The remainder of the closure. Source globs only (`src/**`): these crates
+      # carry READMEs, fixtures and config templates whose churn cannot change
+      # the binary, and a doc-only edit should not spend an `ika-k8s-large`
+      # runner. Broad within the crate, though — everything below is
+      # wire-format- or chain-contract-bearing across a binary swap:
+      #   ika-sui-client  — the chain reads/writes both binaries share; its
+      #                     untagged BCS mirrors ARE the wire format.
+      #   ika-config      — node + genesis config both binaries must parse
+      #                     identically for a mixed committee to boot.
+      #   ika-archival    — checkpoint archive/sync formats read across epochs.
+      #   ika-telemetry   — linked into the binary; its init runs before the
+      #                     node does, so a break there is a boot failure.
+      #   dwallet-classgroups-types, dwallet-rng — the class-groups key and
+      #                     RNG types that go out in mpc_data announcements and
+      #                     into MPC messages. NOT matched by
+      #                     `crates/dwallet-mpc-*/**`; that glob is narrower
+      #                     than "the crypto crates".
+      - "crates/ika-sui-client/src/**"
+      - "crates/ika-config/src/**"
+      - "crates/ika-archival/src/**"
+      - "crates/ika-telemetry/src/**"
+      - "crates/dwallet-classgroups-types/src/**"
+      - "crates/dwallet-rng/src/**"
       - "crates/ika-upgrade-test/**"
       - ".github/workflows/upgrade-test.yaml"
       - ".github/workflows/release.yaml"

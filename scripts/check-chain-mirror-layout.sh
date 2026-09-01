@@ -19,7 +19,8 @@
 # where a red build is the cheapest possible signal.
 #
 # The Rust half of the guard is the golden layout tests beside each mirror
-# (`cargo test --release -p ika-types layout_is_pinned`); this script is the
+# (`cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned`,
+# exactly as CI runs them); this script is the
 # Move half plus the mapping between them.
 #
 # Convention: dev-docs/conventions/chain-mirror-layout.md
@@ -242,7 +243,8 @@ if problems:
         "  3. the `const VERSION` bump plus `migrate()` that carries old state across (an\n"
         "     in-place field-add is rejected by Sui's compatible-policy upgrade checker, so\n"
         "     there is no same-version path to chain),\n"
-        "  4. the golden layout tests: cargo test --release -p ika-types layout_is_pinned,\n"
+        "  4. the golden layout tests, both names CI runs:\n"
+        "     cargo test -p ika-types --lib -- layout_is_pinned variant_indices_are_pinned,\n"
         f"  5. the Residuals section of {SPEC},\n"
         "  6. this manifest: ./scripts/check-chain-mirror-layout.sh --write\n\n"
         f"See {CONVENTION}."

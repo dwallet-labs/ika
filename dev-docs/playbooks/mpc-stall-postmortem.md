@@ -207,7 +207,7 @@ stale `~/.ika/ika_config/network.yaml`):
 Narrow the dead layer by checking each pipeline stage independently:
 
 ```bash
-grep -c "Presign request reached majority vote" $L   # consensus + votes alive?
+grep -c "Presign request reached majority vote" $L   # consensus + votes alive? (debug-level)
 grep -c "Adding a new MPC session" $L                # admission alive?
 grep -c "popped presign from internal pool" $L       # serving alive?
 grep -c "broadcasting new requests" $L               # event sync alive? (debug-level)
