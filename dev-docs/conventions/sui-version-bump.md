@@ -12,7 +12,8 @@ the locations below and runs in CI; it fails the build on drift.
 ## Checklist (current tag: the single `mainnet-v*` or `testnet-v*` pin in root Cargo.toml)
 
 1. **Root `Cargo.toml`** — every Sui git dependency carries the
-   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin (~90+ occurrences; sed them together):
+   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin (43 occurrences at
+   `mainnet-v1.77.2`; sed them together):
    ```bash
    sed -i "" "s/mainnet-v<OLD>/mainnet-v<NEW>/g" Cargo.toml   # adjust flavor if moving to/from testnet-v
    cargo update   # refresh Cargo.lock for the new revs

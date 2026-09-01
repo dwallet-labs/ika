@@ -110,10 +110,15 @@ current-committee peer served a handoff certificate and none verified
 bootstrap"). Alert on process exit plus the log line:
 
 ```
-joiner bootstrap rejected: no peer-served certificate verified
+cross-epoch bootstrap trust anchor REJECTED — halting the node (fail-closed)
+prepare-then-start: cross-epoch anchor REJECTED — halting the node (fail-closed)
 ```
 
-(or the `Rejected` outcome marker in `JoinerBootstrapVerifier` logs).
+The first fires on the joiner-bootstrap path, the second on the
+prepare-then-start barrier; either one is the halt. `JoinerBootstrapVerifier`
+also logs the `Rejected` classification just before it
+(`joiner fetched handoff cert(s) for the prior epoch but NONE verified`),
+and `ika_joiner_bootstrap_outcomes_total{outcome="rejected"}` counts it.
 **Operator action**: this is fail-closed on a real contradiction — do
 NOT auto-restart into it; verify the node's configured trust anchors
 and the peer set before bringing it back.

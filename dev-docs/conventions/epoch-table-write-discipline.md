@@ -54,9 +54,10 @@ validators, so "usually equal" is a divergence with a longer fuse.
 (The per-round streams this rule used to be mostly about are gone: the MPC
 drain is fed from the fold over a channel. So is everything the commits
 determine — votes, anchors, the freeze partition, checkpoint construction —
-which now lives in memory. What is left on disk is the presign material, the
-private VSS outputs, the output caches and the operator override, and every
-one of them is `direct`.)
+which now lives in memory. What is left on disk is the presign material and
+its markers, this validator's own presign private outputs, the network-key
+output digest caches and the operator override — 25 fields, and every one of
+them is `direct`.)
 
 **`commit-batched`** still exists, but it describes the in-memory
 commit-boundary group rather than a table. `ConsensusCommitOutput::apply_to_epoch_state`
@@ -81,9 +82,13 @@ Fixed vocabulary, so the reasons stay comparable:
 | `content-addressed` | the key is a hash of the value | can a rewrite ever store different bytes under the same key? |
 
 **`direct — UNPROVEN (#issue)`** — a direct write whose argument does not
-close. Tracked, not blessed. One exists today: the presign pools (#1928,
-pops commit in their own batch, so a replay can bind a different presign
-than peers). Adding a consumer that depends on the unproven property is a
+close. Tracked, not blessed. One issue accounts for all of them today —
+#1928 — but it covers 17 of the 25 fields, in two groups: the eight
+`internal_presign_pool_*` tables plus `internal_presign_pool_sizes` (pops
+commit in their own batch, so a replay can bind a different presign than
+peers), and the eight `assigned_presigns_*` tables, whose insert rides the
+pool's pop batch and therefore INHERITS that exposure rather than having
+its own. Adding a consumer that depends on the unproven property is a
 blocker, not a judgement call.
 
 `handoff_signatures` was the other one until #1927 moved all three of its

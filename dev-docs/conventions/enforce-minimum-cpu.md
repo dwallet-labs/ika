@@ -35,11 +35,15 @@ When enforcing, startup asserts ≥ 16 cores and panics below that.
 - CI and localnet builds of the CURRENT checkout need no feature
   juggling: default features are inert there (localnet ika system
   objects map to `Chain::Unknown`).
-- The upgrade-test harness still builds OLD refs
-  `--no-default-features` (`.github/workflows/upgrade-test.yaml` OLD
-  build step, `ika-upgrade-test/src/binary.rs`): at historical tags
-  enforcement was compile-time-only and panics on cgroup-throttled /
-  <16-core pods. Do not "clean" those flags.
+- The upgrade-test harness's own builder still builds OLD refs
+  `--no-default-features` (`ika-upgrade-test/src/binary.rs`): at historical
+  tags enforcement was compile-time-only and panics on cgroup-throttled /
+  <16-core pods. Do not "clean" that flag — it is there for refs older than
+  the runtime gate, not for the ref the suite happens to target today.
+  `.github/workflows/upgrade-test.yaml` is the opposite case and is also
+  deliberate: its OLD build step passes NO feature flags, because the ref it
+  builds (v1.4.0) already carries the runtime gate and the CI localnet's ika
+  system object maps to `Chain::Unknown`.
 - `IKA_PROTOCOL_CONFIG_CHAIN_OVERRIDE` (honored only when the real
   chain is `Unknown` — `ika-types/src/digests.rs`) makes a localnet
   claim testnet/mainnet for protocol-config selection, and that ALSO

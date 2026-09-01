@@ -568,7 +568,7 @@ Two metric readings name it directly, and both are cheap:
   `ika_dwallet_mpc_sessions_reconstructed_total` for the reconstruction-only
   shape; a session marked `session_origin="reconstructed_from_consensus"`
   with `active=false` is the signature.
-- **`ready_to_advance_result_total` with NO series at all** is a different
+- **`ika_dwallet_mpc_ready_to_advance_result_total` with NO series at all** is a different
   failure class from the same metric showing `not_ready` samples. No series
   means zero sessions ever reached the readiness check — nothing was ever
   attempted. Samples labelled `not_ready` mean sessions were attempted and
