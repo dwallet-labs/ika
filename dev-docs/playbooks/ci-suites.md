@@ -65,19 +65,26 @@ gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<at
 `.github/workflows/upgrade-test.yaml` runs the out-of-process harness
 (`crates/ika-upgrade-test/`) — real, separately-compiled `ika-validator`
 child processes against an external `sui` localnet. Manual dispatch remains
-available. Pull requests matching the workflow's `paths:` filter — today
-`crates/ika-core/src/**`, `crates/ika-types/**`, `crates/ika-network/**`,
-`crates/dwallet-mpc-*/**`, `crates/ika-protocol-config/**`,
-`crates/ika-upgrade-test/**`, the root and per-crate `Cargo.toml`s,
-`Cargo.lock`, and the upgrade-test and release workflow files — automatically
+available. Pull requests matching the workflow's `paths:` filter automatically
 run the `v140_rollout` deployed-release gate rather than the entire matrix.
-Read that list rather than paraphrasing it: `crates/dwallet-mpc-*/**` is
-narrower than "the crypto crates" and does not match `dwallet-classgroups-types`
-or `dwallet-rng`. Those are whole-crate globs on purpose:
-the filter previously listed individual modules and silently stopped covering
-code three separate times as modules were added or split out — if you are
-adding a trigger for a module, widen to its crate instead. A change outside
-those crates that could still affect cross-binary behaviour needs a manual
+**Read that filter in the workflow; do not paraphrase it here** — every
+paraphrase written so far has been wrong, and a wrong one hides gaps. The
+comment above the list states the rule the list follows: the `ika-validator`
+binary's in-repo dependency closure (the crate that builds the binary plus
+every workspace crate it pulls in), plus the harness crate and the workflows
+that run it. Two shapes in it are easy to misread: `crates/dwallet-mpc-*/**`
+is narrower than "the crypto crates" — it does not match
+`dwallet-classgroups-types` or `dwallet-rng`, which are listed separately —
+and several closure crates are listed as `src/**` source globs rather than
+whole-crate ones, so a README-only edit in those deliberately does not spend
+a runner.
+Entries are per-crate, never per-module: the filter once listed individual
+modules and silently stopped covering code three separate times as modules
+were added or split out, and the same rot then recurred one level up, with
+`crates/ika-node/src/**` — the crate that builds the very binary this suite
+spawns — missing while only its `Cargo.toml` was listed. If you are adding a
+trigger for a module, widen to its crate instead. A change outside those
+crates that could still affect cross-binary behaviour needs a manual
 dispatch; the suite not appearing on a PR is not evidence that it passed.
 There is currently **no protocol-version transition gate**: `MIN` and `MAX`
 are both 7, so no boundary exists to cross. `v127_v7_upgrade` and the
@@ -272,10 +279,19 @@ profile).
 ## Facts that save debugging time
 
 - **Concurrency groups QUEUE, they don't cancel — with one exception.**
-  Every heavy suite uses a per-ref group (`<workflow>-<ref>`) with
-  `cancel-in-progress: false` (`upgrade-test.yaml` omits the key, which
-  means the same), so re-dispatching on the same branch leaves the
-  in-flight run alone and the new one waits its turn. The exception is
+  Every heavy suite uses a per-ref group with `cancel-in-progress: false`,
+  so re-dispatching on the same branch leaves the in-flight run alone and
+  the new one waits its turn. Most spell that group
+  `${{ github.workflow }}-${{ github.ref }}`; `upgrade-test.yaml`
+  deliberately does not — it sets a LITERAL prefix,
+  `upgrade-test-${{ github.ref }}`, and spells `cancel-in-progress: false`
+  out. Inside a `workflow_call`, `${{ github.workflow }}` resolves to the
+  CALLER's workflow name, so the interpolated form made the release gate
+  compute the very group its caller was already holding; GitHub killed it
+  at startup as a self-deadlock and silently skipped the release Draft job
+  (first hit: `release/testnet-1.2.1`). Any workflow that is both
+  dispatchable and `workflow_call`-able needs the literal-prefix form. The
+  exception is
   `ts-integration-tests.yaml`, which sets `cancel-in-progress: true` and
   really does kill the previous run — and `ci.yaml`, which cancels on
   every ref except `main`. So a re-dispatch is cheap on four of the five
