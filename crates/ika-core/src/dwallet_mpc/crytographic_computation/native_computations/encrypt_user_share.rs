@@ -16,8 +16,8 @@ use twopc_mpc::dkg;
 use twopc_mpc::dkg::Protocol;
 
 /// Verifies that the given encrypted secret key share matches the encryption of the dWallet's
-/// secret share, validates the signature on the dWallet's public share,
-/// and ensures the signing public key matches the address that initiated this transaction.
+/// secret share, by checking the encryption-of-centralized-party-share proof
+/// against the dWallet's DKG public output.
 pub(crate) fn verify_encrypted_share(
     encrypted_centralized_secret_share_and_proof: &[u8],
     decentralized_public_output: &SerializedWrappedMPCPublicOutput,

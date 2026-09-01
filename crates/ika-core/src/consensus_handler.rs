@@ -69,9 +69,11 @@ use tracing::{debug, error, instrument, trace_span, warn};
 /// watchdog, because commits keep arriving. That case is covered by
 /// observability rather than by self-exit: `ika_consensus_round_channel_depth`
 /// pinned at capacity together with `ika_consensus_fold_blocked_seconds_total`
-/// climbing while `ika_last_process_mpc_consensus_round` is flat is a wedged drain,
-/// and the MPC lag alarm fires on it. Do not "fix" this by moving the call
-/// back after the boundary.
+/// climbing while `ika_last_process_mpc_consensus_round` is flat is a wedged
+/// drain. Alert on that triple, not on `ika_mpc_consensus_round_lag`: the
+/// bounded channel holds that gauge within a channel's worth of the drain, so
+/// it never reaches the lag alarm's threshold here. Do not "fix" this by moving
+/// the call back after the boundary.
 ///
 /// Consumers must be cheap and non-blocking: this runs on the commit path,
 /// once per commit, at sub-second cadence.

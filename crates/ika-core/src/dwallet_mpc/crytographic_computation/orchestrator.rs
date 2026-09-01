@@ -9,11 +9,11 @@
 //! tasks when all cores are occupied.
 //!
 //! Key responsibilities:
-//! — Manages a queue of pending cryptographic computations
+//! — Admits computations against the available-core budget; a full budget
+//!   rejects the offer and the manager re-offers on the next tick
 //! — Tracks currently running sessions and available CPU cores
 //! — Handles session spawning and completion notifications.
-//! — Implements special handling for aggregated sign operations
-//! — Ensures computations don't become redundant based on received messages
+//! — Deduplicates by [`ComputationId`] against the running and completed sets
 //!
 //! The orchestrator uses a channel-based notification system to track completed computation.
 
@@ -57,11 +57,11 @@ struct ComputationCompletionUpdate {
 /// It tracks available CPU cores and prevents launching tasks when all cores are occupied.
 ///
 /// Key responsibilities:
-/// — Manages a queue of pending cryptographic computations
+/// — Admits computations against the available-core budget; a full budget
+///   rejects the offer and the manager re-offers on the next tick
 /// — Tracks currently running sessions and available CPU cores
 /// — Handles session spawning and completion notifications
-/// — Implements special handling for aggregated sign operations
-/// — Ensures computations don't become redundant based on received messages
+/// — Deduplicates by [`ComputationId`] against the running and completed sets
 pub(crate) struct CryptographicComputationsOrchestrator {
     /// The number of logical CPUs available for cryptographic computations on the validator's
     /// machine. Used to limit parallel task execution.

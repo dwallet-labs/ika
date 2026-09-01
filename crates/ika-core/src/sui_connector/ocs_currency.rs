@@ -16,9 +16,9 @@
 //! the committee-signed changeset stream (contiguity-enforced) and `check_currency`
 //! gates every verified read (single / batch / bag) on mirrored / peer-only nodes
 //! — a `Stale`/`NotLive` verdict is rejected `NotCurrent`. Its load-bearing
-//! primitive is the **id-binding** check on non-inclusion proofs (the design's
-//! "Blocker 1"). Design notes:
-//! [`dev-docs/plans/ocs-changeset-stream-mirror-currency.md`].
+//! primitive is the **id-binding** check on non-inclusion proofs: without it a
+//! relay can serve a proof for the wrong id. Design notes:
+//! `dev-docs/specs/ocs-verified-sui-reads.md`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

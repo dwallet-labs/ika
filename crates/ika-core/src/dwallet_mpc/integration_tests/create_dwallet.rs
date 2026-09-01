@@ -34,7 +34,7 @@ pub(crate) struct DWalletTestResult {
 
 #[tokio::test]
 #[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+/// Runs a network DKG, then a full dWallet DKG against the resulting network key.
 async fn create_dwallet_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
@@ -79,7 +79,8 @@ async fn create_dwallet_test() {
 
 #[tokio::test]
 #[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+/// Creates a dWallet, then makes its user secret key shares public and asserts
+/// the request is accepted.
 async fn make_dwallet_public() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
@@ -154,7 +155,8 @@ async fn make_dwallet_public() {
 
 #[tokio::test]
 #[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+/// Creates an imported-key dWallet via the v1 centralized step and asserts the
+/// imported-key verification is accepted.
 async fn create_imported_dwallet() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
@@ -236,7 +238,8 @@ async fn create_imported_dwallet() {
 
 #[tokio::test]
 #[cfg(test)]
-/// Runs a network DKG and then uses the resulting network key to run the DWallet DKG first round.
+/// Creates an imported-key dWallet via the v2 centralized step and asserts the
+/// imported-key verification is accepted.
 async fn create_imported_dwallet_v2() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();

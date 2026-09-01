@@ -536,9 +536,9 @@ impl SignPublicInputByProtocol {
                     network_encryption_key_public_data,
                 )?,
             )),
-            // Fast Schnorr (VSS) sign PublicInput: the 8-field struct. Commitments
-            // come from the latest reconfiguration output (see
-            // `vss_reconfiguration_public_output`); dkg_output/presign/sign_data
+            // Fast Schnorr (VSS) sign PublicInput: the 9-field struct. Commitments
+            // come from the pre-derived VSS Shamir cache (`vss_shamir_cache`,
+            // computed once at network-key ingestion); dkg_output/presign/sign_data
             // decode exactly like the AHE Schnorr path (generic over the protocol).
             DWalletSignatureAlgorithm::TaprootVSS => Ok(SignPublicInputByProtocol::TaprootVSS(
                 build_secp256k1_taproot_vss_sign_public_input(
@@ -1357,10 +1357,8 @@ impl DKGAndSignPublicInputByProtocol {
         hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-        // `None` for non-VSS; `Some` for VSS protocols (unwrapped via
-        // `require_vss_cache`). The combined DKG-and-sign path is never VSS,
-        // so in practice this is always `None` here — but kept symmetric with
-        // the sign-only `try_new`.
+        // `None` for non-VSS; `Some` for the three VSS protocols, which unwrap it
+        // via `require_vss_cache`.
         vss_shamir_cache: Option<&crate::dwallet_mpc::network_dkg::VssShamirCachePerKey>,
         protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
@@ -1934,7 +1932,7 @@ where
 
 /// `decryption_key_shares` is the sign-protocol private input.
 ///
-/// For AHE-mode protocols (all five sign protocols ika uses at this bump) this resolves to
+/// For the five AHE-mode sign protocols this resolves to
 /// `Option<HashMap<PartyID, SecretKeyShareSizedInteger>>` and is sourced from the network
 /// DKG's decryption-key-shares map (i.e. the output of `decrypt_decryption_key_shares` on
 /// the network DKG output).

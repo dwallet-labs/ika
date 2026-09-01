@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! A [`SuiTransport`] decorator that splits operations between a primary
-//! transport (typically the relayed [`SuiMirrorTransport`]) and a direct gRPC
+//! transport (typically the relayed
+//! [`ika_network::sui_state_mirror::SuiMirrorTransport`]) and a direct gRPC
 //! fallback for the two read methods it routes directly:
 //!
 //! - `get_committee` — not served as a verified read; only the OCS ratchet's
@@ -238,7 +239,7 @@ mod tests {
     }
 
     /// The decorator routes each *relayed* read to the primary (never the
-    /// fallback) and each *directly-routed* write/submission method to the
+    /// fallback) and each *directly-routed* read method to the
     /// fallback (never the primary); a `NotFound` the primary returns on a
     /// relayed read is surfaced unchanged through the decorator.
     #[tokio::test]

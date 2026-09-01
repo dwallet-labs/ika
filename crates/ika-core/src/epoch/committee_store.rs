@@ -49,7 +49,7 @@ pub struct CommitteeStoreTables {
 /// rather than truncating to a wrong identity. Nothing live reads them: the
 /// only consumers of `get_committee` are the insert-time dedup (current epoch),
 /// joiner bootstrap (`prior_epoch = current - 1`, always v6+ since
-/// `MIN_PROTOCOL_VERSION = 6`), and a `ReadStore` impl whose callers are
+/// `MIN_PROTOCOL_VERSION = 7`), and a `ReadStore` impl whose callers are
 /// blanket forwarding impls. `ReadStore::get_committee` already propagates
 /// decode errors instead of panicking, precisely for old-layout records.
 const COMMITTEE_SCHEMA_VERSION_CURRENT: u64 = 3;

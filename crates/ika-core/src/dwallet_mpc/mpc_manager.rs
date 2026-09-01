@@ -323,11 +323,8 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
-    /// verified VSS), keyed by party id. At network-key-version 2 (no off-chain
-    /// pipeline) this is initialized at construction by re-keying
-    /// `class_groups` straight off the on-chain committee (the bare key Sui
-    /// already carries), with empty PVSS/VSS — all the backward-compatible DKG
-    /// needs. At version 3 it starts empty and the whole set (class_groups
+    /// verified VSS), keyed by party id. It starts empty at construction and
+    /// the whole set (class_groups
     /// included) is filled by `ingest_offchain_mpc_keys`: primarily assembled
     /// from the prior epoch's handoff certificate (restart-safe — issue
     /// #1879), falling back to the `current_epoch_mpc_keys` channel (fed once

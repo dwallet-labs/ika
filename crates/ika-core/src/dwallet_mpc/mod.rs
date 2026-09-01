@@ -96,7 +96,8 @@ pub(crate) fn authority_name_to_party_id_from_committee(
 /// Per-validator public MPC keys, indexed by `PartyID`. Holds the class-groups
 /// CRT encryption-key map alongside the three per-curve PVSS HPKE encryption-key
 /// maps that `decentralized_party::dkg::PublicInput::new` and the
-/// reconfiguration-party constructors require post-`9d35fa76` bump.
+/// reconfiguration-party constructors require since inkrypto introduced
+/// per-curve PVSS keys.
 ///
 /// Exists so that `network_dkg_v2_public_input` and the three reconfiguration
 /// `generate_public_input` constructors take one parameter instead of four

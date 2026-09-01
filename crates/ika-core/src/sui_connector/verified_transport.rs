@@ -23,9 +23,8 @@
 //!   `setup.rs`). Tracking is memory-safe here because every id on this path
 //!   is long-lived (the System/Coordinator wrappers, their versioned inners,
 //!   validator objects, table entries); the short-lived session-event bag
-//!   children never flow through `get_object` — the legacy uncompleted-events
-//!   walk that would fetch them is gated off whenever the OCS stack (and thus
-//!   this transport) exists. The gRPC backend's high-level reads
+//!   children never flow through `get_object` — their only consumer is the
+//!   `BagEventPump`'s `verified_dynamic_fields_page` walk. The gRPC backend's high-level reads
 //!   (`get_system_inner`, `get_dwallet_coordinator_inner`, the table walks)
 //!   decompose into exactly `get_object` + `list_dynamic_fields` +
 //!   `batch_get_objects`, so layering the stock backend over this transport

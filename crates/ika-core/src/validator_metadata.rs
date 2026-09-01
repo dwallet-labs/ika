@@ -338,9 +338,10 @@ pub enum CanonicalizeReadySignalOutcome {
 
 /// Byzantine-resistance diagnostics surfaced from
 /// `canonicalize_ready_signal_peers` so callers can decide whether
-/// to `warn!`. A non-empty `non_committee_dropped` or a non-zero
+/// to `warn!`. A large `non_committee_kept` or a non-zero
 /// `duplicates_collapsed` is usually a byzantine padding attempt —
-/// honest emitters send a deduped, committee-only peer set.
+/// honest emitters send a deduped set of committee members and
+/// announced joiners.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CanonicalizeReadySignalDiagnostics {
     /// Names that appeared in the inbound `validated_peers` with zero
@@ -366,12 +367,14 @@ pub struct CanonicalizeReadySignalDiagnostics {
 ///    consumers treat it as a set. Without dedup-on-receive a
 ///    byzantine signer can list a target N times to inflate that
 ///    target's attested stake by N*signer_stake.
-/// 2. **Committee filter.** Validators not in the current
-///    committee don't have stake and can't legitimately appear
-///    as attestation targets. Drop them so they can't be used as
-///    padding. The committee-filter drops are returned in
-///    `diagnostics.non_committee_dropped` so callers can log
-///    byzantine attempts.
+/// 2. **Committee weighting.** Validators with zero current-committee
+///    weight are KEPT — a next-epoch joiner legitimately has zero
+///    current weight but is a valid freeze target — so the canonical
+///    set stays a pure function of the sequenced bytes. They cannot
+///    serve as padding regardless: they contribute nothing to the
+///    coverage tally in step 3. They are reported in
+///    `diagnostics.non_committee_kept` so callers can log byzantine
+///    attempts.
 /// 3. **Quorum-coverage floor.** Reject signals whose canonical
 ///    peer set attests to less than the committee's quorum
 ///    threshold. An honest validator should not signal until its
@@ -1262,7 +1265,7 @@ pub struct ValidatedPeersDecision {
     /// (see `self_blob_unhealthy`).
     pub validated: std::collections::BTreeSet<AuthorityName>,
     /// `true` iff self's announcement appears in the input AND
-    /// self's blob fails the `blob_valid_for_digest` check. The
+    /// self's blob fails the `blob_decodes_to_valid_mpc_data` check. The
     /// caller is expected to emit a `warn!` when this is true so
     /// operators notice the persist failure.
     pub self_blob_unhealthy: bool,

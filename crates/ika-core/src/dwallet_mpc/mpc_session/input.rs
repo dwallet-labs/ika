@@ -45,8 +45,8 @@ pub(crate) enum PublicInput {
 }
 
 // TODO (#542): move this logic to run before writing the event to the DB, maybe include within the session info
-/// Parses a [`DWalletSessionRequest`] to extract the corresponding [`MPCParty`],
-/// public input, private input and session information.
+/// Parses a [`DWalletSessionRequest`] into the [`PublicInput`] and private
+/// input of the MPC round it requests.
 ///
 /// Returns an error if the event type does not correspond to any known MPC rounds
 /// or if deserialization fails.

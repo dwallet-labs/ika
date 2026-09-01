@@ -142,8 +142,9 @@ fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard 
 ///
 /// Asserts:
 /// 1. `network_is_idle` starts as `false` (default).
-/// 2. `network_is_idle()` undergoes at least 2 transitions through the consensus
-///    path, proving a full cycle (e.g. not_idle → idle → not_idle).
+/// 2. The transition counter reaches 3 through the consensus path — the initial
+///    state observation plus two genuine flips, proving a full cycle
+///    (not_idle → idle → not_idle).
 /// 3. Status updates submitted to consensus carry the correct `is_idle` flag.
 #[tokio::test]
 #[cfg(test)]

@@ -51,8 +51,6 @@ type AssignedPresigns =
 /// sequence number. Value: (presign session id, blending index, presign bytes).
 type ServedGlobalPresigns = Arc<Mutex<HashMap<u64, (SessionIdentifier, u16, Vec<u8>)>>>;
 
-/// A testing implementation of the `AuthorityPerEpochStoreTrait`.
-/// Records all received data for testing purposes.
 /// How many rounds a test validator's drain may fall behind before the
 /// harness's own "fold" blocks. Generous on purpose: the tests here drive one
 /// round at a time and drain it, so blocking would only ever mean a harness
@@ -101,6 +99,8 @@ pub(crate) fn empty_round_payload(round: Round) -> ConsensusRoundPayload {
     }
 }
 
+/// A testing implementation of the `AuthorityPerEpochStoreTrait`.
+/// Records all received data for testing purposes.
 pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
     /// This validator's half of the real round transport. The harness hands
@@ -1572,7 +1572,8 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_protocol_config::OverrideGuard;
 
-/// Number of MPC rounds the network DKG runs under `cryptography-private @ 9d35fa76`.
+/// Number of MPC rounds the network DKG runs under the pinned inkrypto
+/// revision (see the root `Cargo.toml`).
 /// Driven by upstream's threshold-encryption-to-sharing sub-protocol; bump if upstream changes.
 pub(crate) const EXPECTED_NETWORK_DKG_ROUND_COUNT: u64 = 7;
 

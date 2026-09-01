@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct SuiConnectorMetrics {
-    /// Latest Sui checkpoint synced per module by the legacy (v≤3)
-    /// event-listening task. Unused under v4 (OCS BagEventPump).
+    /// Latest Sui checkpoint synced per module. Registered but no longer
+    /// written: the event-listening task that fed it was removed when the OCS
+    /// `BagEventPump` replaced it, and nothing writes it today.
     pub last_synced_sui_checkpoints: IntGaugeVec,
 
     pub gas_coin_balance: IntGauge,
@@ -138,8 +139,8 @@ pub struct SuiConnectorMetrics {
     /// store trails the chain (local sync lag), which is a different problem.
     pub(crate) chain_dwallet_checkpoint_writer_lag: IntGauge,
 
-    /// Number of uncompleted session events observed on chain on the most
-    /// recent pull (legacy v≤3 poller) or bag-walk snapshot (v4 BagEventPump).
+    /// Number of uncompleted session events observed on chain in the most
+    /// recent `BagEventPump` bag-walk snapshot.
     /// Persistent non-zero means a session backlog (validators are missing
     /// things); drops to 0 once chain processes the responses.
     pub(crate) uncompleted_events_backlog: IntGauge,

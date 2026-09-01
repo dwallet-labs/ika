@@ -135,7 +135,7 @@ pub enum SetupError {
 ///
 /// - `Hydrated`: perpetual tables already have committees; ignore any
 ///   configured genesis blob (we've already verified past it).
-/// - `Genesis`: bootstrap committee[0] from the verified `sui_genesis` blob.
+/// - `Genesis`: bootstrap `committee[0]` from the verified `sui_genesis` blob.
 pub enum BootstrapPlan {
     Hydrated,
     /// Genesis-rooted: load the configured `sui_genesis` blob, verify its

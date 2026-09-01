@@ -12,7 +12,7 @@
 //! pubkey set).
 //!
 //! This task fetches that cert from current-committee peers over P2P
-//! and verifies it with [`verify_joiner_bootstrap_cert`] — epoch-bound
+//! and verifies it with [`crate::handoff_cert::verify_joiner_bootstrap_cert`] — epoch-bound
 //! to `E-1`, signatures checked against the `E-1` committee, and the
 //! pinned next-committee hash matched against `E`'s own committee. A
 //! verified cert is the joiner's cryptographic confirmation that the

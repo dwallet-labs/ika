@@ -23,8 +23,10 @@ pub struct OcsMetrics {
     // Committee ratchet
     /// Highest Sui epoch the committee ratchet has reached, or
     /// [`Self::COMMITTEE_HEAD_NOT_APPLICABLE`] (`-1`) on a node that builds no
-    /// ratchet — sui-state-direct and peer-only nodes never construct one, so
-    /// the mirroring task that owns this gauge is never spawned for them.
+    /// OCS stack at all (a notifier/fullnode role with no trust anchor), so the
+    /// mirroring task that owns this gauge is never spawned for it. Every node
+    /// that does build a stack runs a ratchet — direct, mirrored and peer-only
+    /// alike.
     ///
     /// The sentinel exists because `0` is otherwise ambiguous between "no
     /// ratchet, nothing to report" and "ratchet present and holding an empty
@@ -286,8 +288,8 @@ impl OcsMetrics {
             )
             .unwrap(),
         });
-        // Default to "no ratchet". Every node registers these metrics, but only
-        // sui-state-mirrored nodes spawn the task that maintains this gauge, so
+        // Default to "no ratchet". Every node registers these metrics, but a node
+        // with no OCS stack never spawns the task that maintains this gauge, so
         // without seeding it here the untouched value would be 0 — the exact
         // reading that means "ratchet present, committee empty".
         metrics
@@ -307,11 +309,11 @@ mod tests {
 
     /// A freshly-registered `OcsMetrics` must report "no ratchet", not epoch 0.
     ///
-    /// Every node registers these metrics, but only sui-state-mirrored nodes
-    /// spawn the task that maintains the gauge. Without the seed, a
-    /// sui-state-direct node and a mirrored node whose ratchet holds an empty
-    /// committee are indistinguishable at 0 — the ambiguity that made #1980
-    /// require a chain walk and a code read to diagnose.
+    /// Every node registers these metrics, but a node with no OCS stack never
+    /// spawns the task that maintains the gauge. Without the seed, such a node
+    /// and one whose ratchet holds an empty committee are indistinguishable at
+    /// 0 — the ambiguity that made #1980 require a chain walk and a code read
+    /// to diagnose.
     #[test]
     fn committee_head_defaults_to_not_applicable_not_zero() {
         let metrics = OcsMetrics::new(&Registry::new());
