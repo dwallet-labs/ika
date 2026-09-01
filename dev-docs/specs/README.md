@@ -42,9 +42,10 @@ here.
   every user-session completion path must follow, and the
   batch-processing rule for computation results.
 - [`committee-consensus-keys.md`](committee-consensus-keys.md) — the two
-  per-validator keys (BLS identity vs Ed25519 consensus key), why the
-  mapping is carried as `Committee` data rather than derived, the
-  same-snapshot rule for key and stake, and the 1.1.8 on-disk migration.
+  per-validator keys (the aggregatable BLS key vs the Ed25519 consensus
+  key, which IS the validator's identity), why the BLS mapping is carried
+  as `Committee` data rather than derived, the same-snapshot rule for key
+  and stake, and the 1.1.8 on-disk migration.
 - [`cross-binary-upgrade.md`](cross-binary-upgrade.md) — the in-place
   protocol-version upgrade contract: the stake-weighted version vote, the
   wire/on-disk compatibility invariants a mixed committee must preserve,
@@ -53,11 +54,13 @@ here.
 - [`fast-schnorr-vss.md`](fast-schnorr-vss.md) — Fast Schnorr (VSS)
   signing: the three VSS algorithms and their curve/algorithm numbering,
   the version-3 PVSS key bundle and its off-chain transport, the V3
-  presign/sign flow, and what is internal-NOA-only vs. still gated.
+  presign/sign flow, and what is reachable only on the internal
+  network-owned-address path vs. still disabled in code.
 - [`checkpoint-sync-floor.md`](checkpoint-sync-floor.md) — why pull-mode
   checkpoint sync starts from the on-chain processed cursor (a fresh-DB
   notifier can never fetch deep history from peers), the cold-start
-  deferral, and the gap-tolerant store invariants.
+  deferral, the matching floor under a validator's checkpoint aggregator
+  at epoch entry, and the gap-tolerant store invariants.
 - [`checkpoint-writer-observability.md`](checkpoint-writer-observability.md)
   — the deliberate single-notifier write path, why a stalled writer blocks
   the epoch close, and the two stall signals.

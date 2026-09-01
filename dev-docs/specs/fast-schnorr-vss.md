@@ -49,6 +49,17 @@ path is internal NOA-VSS.
 
 ## Key material — the version-3 bundle + per-curve PVSS
 
+**Two different "version 3"s meet in this section; they are separate axes
+that happen to coincide.** "Version-3" on its own always means the network
+key's CRYPTO version (`ProtocolConfig::network_encryption_key_version`,
+raised to 3 at protocol v4) — the bump that introduced
+`ValidatorEncryptionKeysAndProofs` and the `decentralized_party` protocols.
+A bare `V1`…`V4` always means the BCS wire tag on
+`VersionedNetworkDkgOutput` / `VersionedDecryptionKeyReconfigurationOutput`.
+Crypto-version-3 outputs were first written with the V3 tag (pre-aggregation,
+now undecodable) and are always V4 today, so "a crypto-version-3 key" and "a
+V4-tagged output" select the same keys by different routes.
+
 - Every committee member publishes the version-3 bundle OFF-CHAIN,
   `ValidatorEncryptionKeysAndProofs` = the class-groups CRT key + three
   per-curve PVSS HPKE keys. This is not an either/or with the bare
@@ -67,7 +78,7 @@ path is internal NOA-VSS.
   `dwallet-classgroups-types`).
 - The per-curve VSS Shamir cache (`VssShamirCachePerKey` — `first_` /
   `second_secret_key_polynomial_commitments` per curve) derives **only from a
-  version-3 network-key DKG output**. A pre-version-3 key has no VSS cache.
+  crypto-version-3 network key**. A pre-version-3 key has no VSS cache.
   The full-shape output is the aggregated (V4) wire tag — the only one the
   current crypto crates can decode (the pre-aggregation V3 type was removed
   from inkrypto; a V3-tagged output is a hard derivation failure, and such
@@ -96,9 +107,9 @@ against the active committee directly.
   DKG-and-sign builders) and reads the presign private output keyed by
   `vss_public_presign_identity(signature_algorithm, presign)` — the same
   `(session_id, blending_index)` the public- and private-input builders use.
-- Decoders are version-strict: the VSS decoders **require** V3; the AHE/ECDSA
-  decoders **reject** V3. A non-V3 presign on a VSS path is rejected (fail
-  closed).
+- Decoders are version-strict: the VSS decoders **require** V3; the non-VSS
+  (AHE/ECDSA) decoders **reject** V3. A non-V3 presign on a VSS path is
+  rejected (fail closed).
 - Per-curve dispatch is consistent across the protocol public parameters, the
   VSS Shamir cache field, signature parsing (`TaprootVSS → TaprootSignature`,
   `EdDSAVSS → EdDSASignature`, `SchnorrkelVSS → SchnorrkelSignature`), and the
@@ -135,8 +146,9 @@ against the active committee directly.
   stale-batch expiry. Any other input-construction error stays terminal.
 - **VSS Shamir-cache outcome tri-state (epoch-tagged).** The per-key cache
   map stores the derivation OUTCOME, not only successes: `Derived` (the
-  three-curve cache), `NotApplicable` (the key data had no full-shape V3/V4
-  output — a pre-V3 key), or `Failed` (a real deserialization/derivation failure,
+  three-curve cache), `NotApplicable` (every stored output for the key is
+  V1/V2-tagged — a pre-crypto-version-3 key; note a V3 tag lands in `Failed`,
+  not here), or `Failed` (a real deserialization/derivation failure,
   logged once at insertion). Every variant carries the epoch of the key data
   it was derived from, and the accessor treats an epoch mismatch — terminal
   variants INCLUDED — exactly like a missing entry (the not-ready class,
@@ -211,8 +223,8 @@ against the active committee directly.
 - A VSS presign is always V3; a non-V3 presign on a VSS path is rejected.
 - The published VSS HPKE public key equals the public counterpart of the
   orchestrator's secret (same seed-derived RNG stream).
-- VSS key material exists only for a version-3 key; the sign path needs the
-  per-curve VSS Shamir cache, which is absent pre-version-3.
+- VSS key material exists only for a crypto-version-3 key; the sign path
+  needs the per-curve VSS Shamir cache, which is absent pre-version-3.
 
 ## Tests
 

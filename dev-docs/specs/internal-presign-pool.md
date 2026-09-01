@@ -3,9 +3,9 @@
 How the internal presign pool is filled and drained, and the rule that keeps
 a validator that restarted mid-epoch serving the same presigns as the peers
 that did not (issue #1928). Actors: the internal-presign top-up loop and
-output handler in `DWalletMPCManager`, the global-presign and NOA-demand
-drains in `DWalletMPCService`, and the pool tables in
-`AuthorityEpochTables`.
+output handler in `DWalletMPCManager`, the global-presign and
+network-owned-address (NOA) demand drains in `DWalletMPCService`, and the
+pool tables in `AuthorityEpochTables`.
 
 ## What the pool is
 

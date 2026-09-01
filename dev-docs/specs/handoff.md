@@ -196,7 +196,7 @@ next epoch inherits.
   Consensus pubkeys are fixed at registration; members that have since
   left the active set are resolved from chain (their staking pool
   object persists) so churn cannot wrongly reject a valid certificate.
-  Two properties of the chain-read prior committee
+  Three properties of the chain-read prior committee
   (`fetch_previous_committee`) are load-bearing here:
   - **Snapshot-name keying.** The consensus-key map is keyed by each
     member's PRIOR-epoch snapshot name (resolved by validator id from
@@ -283,14 +283,15 @@ next epoch inherits.
    their digests match the prior epoch's certificate
    (`adopt_cert_verified_keys`): a reconfigured key must match BOTH its
    DKG digest and its epoch-specific reconfiguration digest. The DKG
-   digest migrates once (V1|V2 -> V4, above): at that single boundary an
-   ALREADY-ADOPTED key whose overlay DKG digest has moved past the prior
-   epoch's (pre-migration) certificate is the expected defer — it keeps its adopted
-   value rather than being dropped, exactly as a moved reconfiguration
-   output is tolerated; only an UNADOPTED key contradicting the
-   certificate is the security-relevant anomaly (the output-quorum
-   byte-equality tally remains the guard against a divergent output). A
-   certificate READ ERROR skips adoption for the tick (retry) — it must
+   digest is now stable across epochs (the one-per-key migration above is
+   finished), so a mismatch against the prior epoch's certificate is never
+   expected. Adoption is skipped either way: an ALREADY-ADOPTED key keeps
+   its installed value rather than being dropped, exactly as a moved
+   reconfiguration output is tolerated; only an UNADOPTED key
+   contradicting the certificate is the security-relevant anomaly worth a
+   warn (the output-quorum byte-equality tally remains the guard against a
+   divergent output). A certificate READ ERROR skips adoption for the tick
+   (retry) — it must
    not be conflated with a genuinely-absent certificate, which is an
    answer: a reconfigured key with no prior certificate is REJECTED
    (its output has no quorum anchor — a certificate is built durably
@@ -306,7 +307,7 @@ next epoch inherits.
    and adopting them cert-less; that scaffolding is removed — a
    network with keys DKG'd under v3 can no longer upgrade into v4+.)
 
-   Three adoption guards keep the installed parameter set identical
+   Five adoption guards keep the installed parameter set identical
    across the committee (a validator that installs anything else
    honestly computes byte-divergent MPC outputs and is convicted
    malicious by the output-quorum byte-equality tally — silently
@@ -360,14 +361,17 @@ next epoch inherits.
      holds exactly (asserted by the
      `off_chain_metadata_v4_does_not_read_blobs_from_chain` cluster
      test), and both paths install the identical canonical output for
-     the epoch (no fork surface). KNOWN RESIDUAL: a mid-epoch
-     restart during the single canonical-migration epoch is NOT
-     recovered — the prior cert pins the V1/V2 DKG digest while the
-     restarted validator's mirror already flipped to V4 (the pre-migration
-     bytes no longer exist locally), so adoption warns and skips until the
-     next epoch's cert pins V4. Fail-closed, bounded to that one
-     epoch, identical to pre-recovery behavior; epoch close is
-     unaffected (the validator still votes EndOfPublish).
+     the epoch (no fork surface). HISTORICAL RESIDUAL, no longer
+     reachable: while the one-per-key canonical migration was in flight, a
+     mid-epoch restart during a key's migration epoch was NOT recovered —
+     the prior cert pinned the V1/V2 DKG digest while the restarted
+     validator's mirror had already flipped to V4 (the pre-migration bytes
+     no longer existing locally), so adoption warned and skipped until the
+     next epoch's cert pinned V4. It was fail-closed, bounded to that one
+     epoch, and left the epoch close unaffected (the validator still voted
+     EndOfPublish). The migration has completed on both live networks and
+     the machinery that performed the flip is gone, so no epoch can enter
+     this state again.
    - Current-epoch validator MPC keys (mid-epoch restart, issue #1879).
      The manager's current-epoch key bundle
      (`validator_mpc_keys_by_party_id` — consumed by the within-epoch

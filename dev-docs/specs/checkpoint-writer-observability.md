@@ -11,10 +11,12 @@ misattribution). Actors: the notifier's `sui_executor`, every validator's
 
 MPC session completions only reach the chain inside certified dwallet
 checkpoints, submitted by the single notifier via
-`process_checkpoint_message_by_quorum`. The close gate
-(`all_epoch_sessions_finished` in `sui_syncer`, mirroring Move's
-`advance_epoch` assertion) compares the coordinator's on-chain
-`completed_sessions_count` with the frozen lock target — chain state only.
+`process_checkpoint_message_by_quorum`. The close gate's user-session term
+(`all_epoch_sessions_finished` in `sui_syncer`, one conjunct of both Move's
+`advance_epoch` assertion and the wider Rust EndOfPublish gate — see
+[`epoch-close-session-lock.md`](epoch-close-session-lock.md)) compares the
+coordinator's on-chain `completed_sessions_count` with the frozen lock
+target — chain state only.
 The epoch-switch calls (`process_mid_epoch`, pricing, the session lock,
 `request_advance_epoch`) are likewise notifier-submitted.
 
