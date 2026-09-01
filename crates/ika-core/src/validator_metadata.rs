@@ -648,11 +648,34 @@ pub fn verify_peer_blob_for_relay(bytes: &[u8], expected_digest: &[u8; 32]) -> P
 ///   of signers are excluded from the frozen working set.
 ///
 /// This is the structural check, not a cryptographic-validity
-/// check: it doesn't verify class-groups proofs (those happen
-/// inside MPC). A byzantine actor can produce bytes that pass
-/// this check but contain mathematically invalid keys; that
-/// failure surfaces in MPC, where the standard malicious-party
-/// detection catches it.
+/// check: it doesn't verify class-groups proofs. A byzantine actor
+/// can produce bytes that pass this check but contain
+/// mathematically invalid keys. Deliberately so — the
+/// cryptographic check lives in two other places, and neither
+/// belongs on this hot, per-blob path:
+///
+/// - **Client-side pre-flight (honest operators, issue #488):**
+///   `dwallet_classgroups_types::verify_class_groups_encryption_key_and_proof`,
+///   called by the `ika validator` CLI when it writes
+///   `validator.info` and again in `preflight_verify_class_groups_mpc_data`
+///   before `become-candidate` builds the registration
+///   transaction. Catches a corrupt or seed-mismatched payload
+///   before it ever reaches the chain; binds nobody who skips the
+///   CLI.
+/// - **The enforcing check (everyone, byzantine included):** MPC
+///   time. The class-groups DKG and reconfiguration first rounds
+///   run `verify_knowledge_of_decryption_key_proofs` (inkrypto
+///   `3ed95fe`, `class-groups/src/publicly_verifiable_secret_sharing/`
+///   `chinese_remainder_theorem/deal_shares.rs:106-111`) before
+///   dealing PVSS shares. A validator whose proof fails is put in
+///   that round's malicious set and dealt no share; the remaining
+///   honest parties finish the session as long as they still form
+///   an authorized subset. That verdict reaches the standard
+///   malicious-party detection here in ika via the round result.
+///
+/// On-chain enforcement is not available: Move cannot run
+/// class-groups arithmetic, so `mpc_data_bytes` is stored
+/// opaquely.
 pub fn blob_decodes_to_valid_mpc_data(blob: &[u8]) -> bool {
     use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
     let Ok(versioned) = bcs::from_bytes::<VersionedMPCData>(blob) else {

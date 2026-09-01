@@ -5028,6 +5028,7 @@ dependencies = [
  "ika-types",
  "mpc",
  "serde",
+ "thiserror 2.0.20",
  "twopc_mpc",
 ]
 

@@ -1,18 +1,25 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use std::collections::HashMap;
+
 use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
     CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS, CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
-    generate_class_groups_keypair,
+    SecretKeyShareCRTPrimeSetupParameters,
+    construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,
+    construct_setup_parameters_per_crt_prime, generate_class_groups_keypair,
+    verify_knowledge_of_decryption_key_proofs,
 };
 use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::generate_pvss_keypairs;
 use class_groups::{
-    CompactIbqf, RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    CompactIbqf, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, EquivalenceClass,
+    RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 use crypto_bigint::Uint;
 use dwallet_rng::RootSeed;
 use group::GroupElement as _;
+use group::PartyID;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, ValidatorEncryptionKeysAndProofs,
 };
@@ -187,6 +194,139 @@ impl ValidatorMPCSecrets {
     }
 }
 
+/// Why a [`ClassGroupsEncryptionKeyAndProof`] failed
+/// [`verify_class_groups_encryption_key_and_proof`].
+#[derive(Debug, thiserror::Error)]
+pub enum ClassGroupsKeyVerificationError {
+    /// The class-groups CRT setup / language public parameters could not be
+    /// derived. Not a property of the payload — this means the local build's
+    /// class-groups parameters are unusable, which would break MPC entirely.
+    #[error(
+        "failed to derive the class-groups CRT public parameters needed to verify the key: {0}"
+    )]
+    PublicParameters(String),
+
+    /// The bytes at CRT prime `crt_prime_index` are not a well-formed class-groups
+    /// encryption key (they do not instantiate as a group element under that
+    /// prime's public parameters).
+    #[error("the class-groups encryption key for CRT prime #{crt_prime_index} is malformed")]
+    MalformedEncryptionKey { crt_prime_index: usize },
+
+    /// The payload is well-formed but at least one UC knowledge-of-decryption-key
+    /// proof does not verify against its encryption key: the key and the proof do
+    /// not belong to the same decryption key.
+    #[error(
+        "the class-groups knowledge-of-decryption-key proof does not verify against the encryption key"
+    )]
+    InvalidProof,
+}
+
+/// Party id used to address the single key-and-proof being checked. The
+/// verification is per-key and stateless, so any id works; `1` matches the
+/// crypto library's 1-based party numbering.
+const PREFLIGHT_PARTY_ID: PartyID = 1;
+
+/// Cryptographically verifies a validator's class-groups CRT encryption key
+/// together with its UC knowledge-of-decryption-key proof, per CRT prime.
+///
+/// # What this protects, and what it does not
+///
+/// This is a **client-side pre-flight** for an *honest* operator. It catches a
+/// corrupt, truncated, hand-edited or seed-mismatched `mpc_data` payload — e.g. a
+/// `validator.info` regenerated against one `root-seed.key` and then registered
+/// while a different seed is on the node — *before* the candidate-registration
+/// transaction is built, instead of letting the operator discover it an epoch
+/// later as an unexplained malicious-party conviction.
+///
+/// It is **NOT an on-chain guarantee**. Nothing stops a byzantine actor from
+/// skipping this check and submitting arbitrary bytes: Move cannot run
+/// class-groups arithmetic, so `request_add_validator_candidate` stores
+/// `mpc_data_bytes` opaquely (`contracts/ika_system/sources/staking/validator_info.move:135`)
+/// and verifies only the BLS proof-of-possession (`:117-125`).
+///
+/// The on-chain-equivalent guarantee is enforced at MPC time, by every honest
+/// validator independently, against exactly the same proof: the class-groups DKG
+/// and reconfiguration first rounds deal PVSS shares through
+/// `class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::
+/// Party::deal_and_encrypt_shares_to_valid_encryption_key_holders`, which calls
+/// [`verify_knowledge_of_decryption_key_proofs`] (inkrypto `3ed95fe`,
+/// `class-groups/src/publicly_verifiable_secret_sharing/chinese_remainder_theorem/deal_shares.rs:106-111`)
+/// before dealing. A validator whose proof fails there is added to that round's
+/// malicious set, receives no share, and is excluded — while the remaining honest
+/// parties, as long as they still form an authorized subset, complete the session.
+/// Party construction itself (`class_groups::dkg::PublicInput::new`) does not
+/// verify: it only stores the keys and proofs.
+///
+/// This function deliberately calls that *same* upstream entry point, so the
+/// pre-flight verdict and the MPC-time verdict cannot drift apart.
+pub fn verify_class_groups_encryption_key_and_proof(
+    encryption_key_and_proof: &ClassGroupsEncryptionKeyAndProof,
+) -> Result<(), ClassGroupsKeyVerificationError> {
+    let setup_parameters_per_crt_prime =
+        construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER)
+            .map_err(|e| ClassGroupsKeyVerificationError::PublicParameters(e.to_string()))?;
+
+    let language_public_parameters_per_crt_prime =
+        construct_knowledge_of_decryption_key_public_parameters_per_crt_prime(
+            setup_parameters_per_crt_prime.each_ref(),
+        )
+        .map_err(|e| ClassGroupsKeyVerificationError::PublicParameters(e.to_string()))?;
+
+    let instantiated =
+        instantiate_encryption_keys(&setup_parameters_per_crt_prime, encryption_key_and_proof)?;
+
+    let (malicious_parties, _verified_encryption_keys) = verify_knowledge_of_decryption_key_proofs(
+        language_public_parameters_per_crt_prime,
+        Vec::new(),
+        HashMap::from([(PREFLIGHT_PARTY_ID, instantiated)]),
+    )
+    .map_err(|e| ClassGroupsKeyVerificationError::PublicParameters(e.to_string()))?;
+
+    if malicious_parties.contains(&PREFLIGHT_PARTY_ID) {
+        return Err(ClassGroupsKeyVerificationError::InvalidProof);
+    }
+
+    Ok(())
+}
+
+/// The per-CRT-prime encryption keys as live group elements, paired with the
+/// proofs that are about to be checked against them — the input shape
+/// [`verify_knowledge_of_decryption_key_proofs`] expects.
+type InstantiatedEncryptionKeysAndProofs = [(
+    EquivalenceClass<{ CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
+    ClassGroupsProof,
+); MAX_PRIMES];
+
+/// Instantiates each per-prime encryption key as a group element, exactly as
+/// `instantiate_encryption_keys_per_crt_prime` does inside the PVSS party
+/// constructor the DKG uses. There, a key that fails to instantiate silently
+/// lands its owner in `parties_without_valid_encryption_keys`; here there is a
+/// single owner and a human to tell, so name the offending prime instead.
+fn instantiate_encryption_keys(
+    setup_parameters_per_crt_prime: &[SecretKeyShareCRTPrimeSetupParameters; MAX_PRIMES],
+    encryption_key_and_proof: &ClassGroupsEncryptionKeyAndProof,
+) -> Result<InstantiatedEncryptionKeysAndProofs, ClassGroupsKeyVerificationError> {
+    let mut instantiated = Vec::with_capacity(MAX_PRIMES);
+    for (crt_prime_index, (encryption_key_value, proof)) in
+        encryption_key_and_proof.iter().enumerate()
+    {
+        let encryption_key = EquivalenceClass::new(
+            *encryption_key_value,
+            setup_parameters_per_crt_prime[crt_prime_index].equivalence_class_public_parameters(),
+        )
+        .map_err(|_| ClassGroupsKeyVerificationError::MalformedEncryptionKey { crt_prime_index })?;
+
+        instantiated.push((encryption_key, proof.clone()));
+    }
+
+    instantiated.try_into().map_err(|_| {
+        // Unreachable: `ClassGroupsEncryptionKeyAndProof` is itself `[_; MAX_PRIMES]`.
+        ClassGroupsKeyVerificationError::MalformedEncryptionKey {
+            crt_prime_index: MAX_PRIMES,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +348,157 @@ mod tests {
         let decoded: ValidatorEncryptionKeysAndProofs =
             bcs::from_bytes(&bytes).expect("BCS deserialize");
         assert_eq!(original, decoded);
+    }
+
+    /// Only the class-groups half of the validator's key material — skips the
+    /// three PVSS keypairs and the VSS HPKE keypair `ValidatorMPCSecrets::from_seed`
+    /// would also generate, none of which reach `mpc_data_bytes` on chain.
+    fn class_groups_key_and_proof(seed_byte: u8) -> ClassGroupsEncryptionKeyAndProof {
+        let (_secret, key_and_proof) =
+            ClassGroupsSecret::from_seed(&RootSeed::new([seed_byte; 32]));
+        key_and_proof
+    }
+
+    /// Asserts the payload is exactly what `blob_decodes_to_valid_mpc_data`-style
+    /// structural checks accept: it BCS round-trips at the on-chain shape. Every
+    /// "invalid" payload below is invalid *cryptographically only* — the whole
+    /// point of the issue.
+    fn assert_structurally_valid(key_and_proof: &ClassGroupsEncryptionKeyAndProof) {
+        let bytes = bcs::to_bytes(key_and_proof).expect("BCS serialize");
+        let decoded: ClassGroupsEncryptionKeyAndProof =
+            bcs::from_bytes(&bytes).expect("a structurally valid payload must BCS round-trip");
+        assert_eq!(*key_and_proof, decoded);
+    }
+
+    #[test]
+    fn preflight_accepts_a_key_and_proof_generated_from_the_same_seed() {
+        let key_and_proof = class_groups_key_and_proof(0xA5);
+        assert_structurally_valid(&key_and_proof);
+        verify_class_groups_encryption_key_and_proof(&key_and_proof)
+            .expect("a seed-generated key and proof must verify");
+    }
+
+    /// The seed-mismatch failure the pre-flight exists for: a `validator.info`
+    /// carrying the encryption key of one root seed and the proof of another
+    /// (an operator who regenerated one file but not the other, or restored a
+    /// stale backup). Structurally perfect, cryptographically dead.
+    #[test]
+    fn preflight_rejects_a_proof_generated_for_a_different_key() {
+        let ours = class_groups_key_and_proof(0xA5);
+        let theirs = class_groups_key_and_proof(0x5A);
+
+        let mismatched: ClassGroupsEncryptionKeyAndProof =
+            std::array::from_fn(|i| (ours[i].0, theirs[i].1.clone()));
+
+        assert_structurally_valid(&mismatched);
+        assert!(
+            matches!(
+                verify_class_groups_encryption_key_and_proof(&mismatched),
+                Err(ClassGroupsKeyVerificationError::InvalidProof)
+            ),
+            "a proof generated for a different key must be rejected"
+        );
+    }
+
+    /// Tampering *within* one otherwise-good payload: the per-CRT-prime proofs
+    /// are transposed, so every proof is checked against a key it was not made
+    /// for, under that prime's own language parameters.
+    #[test]
+    fn preflight_rejects_proofs_transposed_across_crt_primes() {
+        const {
+            assert!(
+                MAX_PRIMES >= 2,
+                "the transposition needs at least two primes"
+            );
+        }
+
+        let good = class_groups_key_and_proof(0xA5);
+
+        let tampered: ClassGroupsEncryptionKeyAndProof = std::array::from_fn(|i| {
+            let proof_from_the_next_prime = good[(i + 1) % MAX_PRIMES].1.clone();
+            (good[i].0, proof_from_the_next_prime)
+        });
+
+        assert_structurally_valid(&tampered);
+        assert!(
+            matches!(
+                verify_class_groups_encryption_key_and_proof(&tampered),
+                Err(ClassGroupsKeyVerificationError::InvalidProof)
+            ),
+            "proofs transposed across CRT primes must be rejected"
+        );
+    }
+
+    /// The compensating control from issue #488, exercised directly.
+    ///
+    /// This calls `verify_knowledge_of_decryption_key_proofs` the way the
+    /// class-groups DKG and reconfiguration first rounds call it — inkrypto
+    /// `3ed95fe`, `class-groups/src/publicly_verifiable_secret_sharing/`
+    /// `chinese_remainder_theorem/deal_shares.rs:106-111`, inside
+    /// `deal_and_encrypt_shares_to_valid_encryption_key_holders`, before any
+    /// PVSS share is dealt — over a four-party committee in which one party
+    /// registered a structurally-valid but cryptographically-invalid payload.
+    ///
+    /// What it establishes: the offending party alone is convicted and dropped
+    /// from the set that receives shares; the three honest parties keep their
+    /// keys and the session goes on. It is *not* a full DKG session (that needs
+    /// a cluster) — it pins the verification and exclusion step that a
+    /// byzantine registration actually runs into.
+    #[test]
+    fn dkg_time_verification_convicts_only_the_offending_party() {
+        let setup_parameters_per_crt_prime =
+            construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER)
+                .expect("CRT setup parameters");
+        let language_public_parameters_per_crt_prime =
+            construct_knowledge_of_decryption_key_public_parameters_per_crt_prime(
+                setup_parameters_per_crt_prime.each_ref(),
+            )
+            .expect("knowledge-of-decryption-key language parameters");
+
+        let honest_a = class_groups_key_and_proof(0x01);
+        let honest_b = class_groups_key_and_proof(0x02);
+        let honest_c = class_groups_key_and_proof(0x03);
+        // Party 4 publishes A's encryption key with B's proof.
+        let byzantine: ClassGroupsEncryptionKeyAndProof =
+            std::array::from_fn(|i| (honest_a[i].0, honest_b[i].1.clone()));
+
+        const BYZANTINE_PARTY_ID: PartyID = 4;
+        let committee: HashMap<PartyID, _> = [
+            (1, &honest_a),
+            (2, &honest_b),
+            (3, &honest_c),
+            (BYZANTINE_PARTY_ID, &byzantine),
+        ]
+        .into_iter()
+        .map(|(party_id, key_and_proof)| {
+            (
+                party_id,
+                instantiate_encryption_keys(&setup_parameters_per_crt_prime, key_and_proof)
+                    .expect("every payload here is structurally valid"),
+            )
+        })
+        .collect();
+
+        let (malicious_parties, surviving_encryption_keys) =
+            verify_knowledge_of_decryption_key_proofs(
+                language_public_parameters_per_crt_prime,
+                // No party was already excluded for a malformed key.
+                Vec::new(),
+                committee,
+            )
+            .expect("verification itself must not error out");
+
+        assert_eq!(
+            malicious_parties,
+            vec![BYZANTINE_PARTY_ID],
+            "exactly the party with the invalid proof must be convicted"
+        );
+        let mut survivors: Vec<PartyID> = surviving_encryption_keys.into_keys().collect();
+        survivors.sort_unstable();
+        assert_eq!(
+            survivors,
+            vec![1, 2, 3],
+            "the honest parties must keep their keys and go on dealing"
+        );
     }
 }

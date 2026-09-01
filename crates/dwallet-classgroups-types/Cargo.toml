@@ -10,6 +10,7 @@ group.workspace = true
 mpc.workspace = true
 crypto-bigint.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 ika-types.workspace = true
 twopc_mpc.workspace = true
 

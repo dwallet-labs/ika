@@ -14,8 +14,10 @@ use sui_types::{base_types::SuiAddress, multiaddr::Multiaddr};
 use crate::{IkaPackagesConfigFile, read_ika_sui_config_yaml};
 use clap::*;
 use colored::Colorize;
-use dwallet_classgroups_types::ValidatorMPCSecrets;
-use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
+use dwallet_classgroups_types::{
+    ValidatorMPCSecrets, verify_class_groups_encryption_key_and_proof,
+};
+use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
 use ika_config::node::read_authority_keypair_from_file;
@@ -439,6 +441,27 @@ impl IkaValidatorCommand {
                 // `validator_encryption_keys_and_proofs` is the public payload —
                 // only its class-groups slice is published on chain.
                 let _ = validator_mpc_secrets;
+
+                // Pre-flight: prove the class-groups key and proof about to be
+                // written into `validator.info` actually belong together, before
+                // the operator carries the file to `become-candidate`. See
+                // `preflight_verify_class_groups_mpc_data` for why this is an
+                // honest-operator guard and not an on-chain guarantee.
+                verify_class_groups_encryption_key_and_proof(
+                    &validator_encryption_keys_and_proofs.class_groups,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "the class-groups key material derived from the root seed at {:?} failed \
+                         cryptographic verification: {e}. The validator info was NOT written. A \
+                         validator registered with this payload would be convicted as a malicious \
+                         party at the next network DKG or reconfiguration and would hold a \
+                         committee seat without being able to participate in MPC. Check that the \
+                         root seed file is intact (restore it from your backup if not) and re-run.",
+                        dir.join("root-seed.key"),
+                    )
+                })?;
+
                 let mpc_data_bytes =
                     bcs::to_bytes(&validator_encryption_keys_and_proofs.class_groups)?;
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
@@ -516,8 +539,20 @@ impl IkaValidatorCommand {
                     ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &ika_on_sui_config_path)?;
 
-                let validator_info_bytes = fs::read_to_string(validator_info_file)?;
+                let validator_info_bytes = fs::read_to_string(&validator_info_file)?;
                 let validator_info: ValidatorInfo = serde_yaml::from_str(&validator_info_bytes)?;
+
+                // Pre-flight: the registration transaction stores `mpc_data` opaquely
+                // on chain, so this is the last point at which a bad payload can be
+                // caught cheaply. Verify before spending gas.
+                preflight_verify_class_groups_mpc_data(&validator_info.mpc_data).with_context(
+                    || {
+                        format!(
+                            "refusing to register the candidate from {validator_info_file:?}: its \
+                             class-groups MPC data did not pass cryptographic verification"
+                        )
+                    },
+                )?;
 
                 let (res, validator_caps) = request_add_validator_candidate(
                     context,
@@ -1176,6 +1211,56 @@ fn make_key_files(
     Ok(())
 }
 
+/// Client-side pre-flight for the class-groups material inside a candidate's
+/// [`VersionedMPCData`]: decode the on-chain payload shape and cryptographically
+/// verify the encryption key against its UC knowledge-of-decryption-key proof.
+///
+/// # This protects an honest operator; it is not an on-chain guarantee
+///
+/// It catches a corrupt, truncated, or seed-mismatched `mpc_data` — the common
+/// real failure, e.g. a `validator.info` generated against one `root-seed.key`
+/// and registered while the node runs a different one — before any gas is spent
+/// and before the operator is left debugging a malicious-party conviction an
+/// epoch later.
+///
+/// It cannot bind a byzantine actor, who simply skips this code path and submits
+/// bytes directly. Move cannot run class-groups arithmetic, so
+/// `request_add_validator_candidate` verifies only the BLS proof-of-possession
+/// (`contracts/ika_system/sources/staking/validator_info.move:117-125`) and
+/// stores `mpc_data_bytes` opaquely (`:135`).
+///
+/// The guarantee that does bind everyone is enforced at MPC time by every honest
+/// validator, against this same proof: see
+/// [`verify_class_groups_encryption_key_and_proof`], which calls the identical
+/// upstream verification the class-groups DKG and reconfiguration first rounds
+/// call before dealing PVSS shares. A validator whose proof fails there is put in
+/// that round's malicious set and excluded; the session continues for everyone
+/// else.
+fn preflight_verify_class_groups_mpc_data(mpc_data: &VersionedMPCData) -> Result<()> {
+    let VersionedMPCData::V1(v1) = mpc_data;
+
+    // The on-chain field carries the bare `ClassGroupsEncryptionKeyAndProof`
+    // (see `ika_types::committee::ValidatorEncryptionKeysAndProofs`); the fuller
+    // off-chain bundle never reaches this path.
+    let class_groups: ika_types::committee::ClassGroupsEncryptionKeyAndProof =
+        bcs::from_bytes(&v1.mpc_data_bytes()).context(
+            "the MPC data does not decode as a class-groups encryption key and proof; the \
+             validator info file is corrupt or was produced by an incompatible ika version",
+        )?;
+
+    verify_class_groups_encryption_key_and_proof(&class_groups).map_err(|e| {
+        anyhow::anyhow!(
+            "the class-groups encryption key and proof do not verify: {e}. This payload does not \
+             match the root seed it claims to come from — regenerate the validator info with \
+             `ika validator make-validator-info` against the root seed the node actually runs, or \
+             restore the correct root seed from backup. Registering it anyway would buy a \
+             committee seat that cannot participate in MPC: the same proof is re-verified by \
+             every honest validator at network DKG and at each reconfiguration, and this \
+             validator would be excluded there as a malicious party."
+        )
+    })
+}
+
 /// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE +
 /// VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
 /// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
@@ -1297,6 +1382,76 @@ mod tests {
             fs::read(&seed_path).unwrap(),
             first_bytes,
             "the existing seed must be left byte-identical"
+        );
+    }
+
+    /// Builds the exact on-chain payload `make-validator-info` writes and
+    /// `become-candidate` submits: `VersionedMPCData::V1` wrapping the BCS of
+    /// the bare `ClassGroupsEncryptionKeyAndProof`.
+    fn mpc_data_from(
+        class_groups: &ika_types::committee::ClassGroupsEncryptionKeyAndProof,
+    ) -> VersionedMPCData {
+        VersionedMPCData::V1(MPCDataV1 {
+            mpc_data_bytes: bcs::to_bytes(class_groups).unwrap(),
+        })
+    }
+
+    fn class_groups_key_and_proof(
+        seed_byte: u8,
+    ) -> ika_types::committee::ClassGroupsEncryptionKeyAndProof {
+        let (_secret, key_and_proof) = dwallet_classgroups_types::ClassGroupsSecret::from_seed(
+            &RootSeed::new([seed_byte; 32]),
+        );
+        key_and_proof
+    }
+
+    #[test]
+    fn preflight_accepts_the_payload_make_validator_info_produces() {
+        let mpc_data = mpc_data_from(&class_groups_key_and_proof(0xA5));
+        preflight_verify_class_groups_mpc_data(&mpc_data)
+            .expect("the payload this CLI itself generates must pass its own pre-flight");
+    }
+
+    /// A structurally-valid-but-cryptographically-invalid payload: the on-chain
+    /// bytes decode perfectly into `ClassGroupsEncryptionKeyAndProof` (so every
+    /// structural gate, on chain and off, accepts them), but the encryption key
+    /// came from one root seed and the proof from another. `become-candidate`
+    /// must refuse before spending gas.
+    #[test]
+    fn preflight_rejects_a_seed_mismatched_payload_before_registration() {
+        let ours = class_groups_key_and_proof(0xA5);
+        let theirs = class_groups_key_and_proof(0x5A);
+        let mismatched: ika_types::committee::ClassGroupsEncryptionKeyAndProof =
+            std::array::from_fn(|i| (ours[i].0, theirs[i].1.clone()));
+
+        let mpc_data = mpc_data_from(&mismatched);
+        // Structurally indistinguishable from a good payload.
+        let VersionedMPCData::V1(v1) = &mpc_data;
+        bcs::from_bytes::<ika_types::committee::ClassGroupsEncryptionKeyAndProof>(
+            &v1.mpc_data_bytes(),
+        )
+        .expect("the tampered payload must still decode — that is the whole point");
+
+        let error = preflight_verify_class_groups_mpc_data(&mpc_data)
+            .expect_err("a mismatched key and proof must not reach the chain");
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("do not verify"),
+            "the operator needs to be told the proof failed, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn preflight_rejects_mpc_data_that_is_not_a_class_groups_payload() {
+        let mpc_data = VersionedMPCData::V1(MPCDataV1 {
+            mpc_data_bytes: vec![0u8; 32],
+        });
+
+        let error = preflight_verify_class_groups_mpc_data(&mpc_data)
+            .expect_err("undecodable MPC data must not reach the chain");
+        assert!(
+            format!("{error:#}").contains("does not decode"),
+            "the operator needs to be told the file is corrupt"
         );
     }
 }
