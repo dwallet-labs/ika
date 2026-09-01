@@ -1194,8 +1194,15 @@ fn make_key_files(
 
 /// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE +
 /// VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
-/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
-/// (published in the on-chain validator record).
+/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload.
+///
+/// NEITHER return value is published on chain. Since #2119 the on-chain
+/// `mpc_data_bytes` field is a deprecated placeholder, and the public payload
+/// reaches peers only through the off-chain pipeline — the node re-derives it
+/// from this same seed at boot and announces it through consensus and P2P
+/// (`dev-docs/specs/validator-mpc-data-announcements.md`). Callers registering a
+/// candidate want this for its side effect (write-or-reuse `root-seed.key`) and
+/// as a fail-fast check that the seed yields usable material.
 fn read_or_generate_root_seed(
     seed_path: PathBuf,
 ) -> Result<(
@@ -1287,13 +1294,20 @@ mod tests {
     use super::*;
     use ika_sui_client::ika_validator_transactions::DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS;
 
-    /// `make-validator-info` must put the documented placeholder — and nothing
-    /// derived from the root seed — into `validator.info`, because that file is
-    /// exactly what `become-candidate` submits on chain (#2119). The assertion
-    /// is on the serialized artifact, since that is what an operator carries
-    /// between the two commands.
+    /// Pins the SERIALIZATION of the registration payload: the placeholder's
+    /// BCS, and the `mpc_data` field of the `validator.info` YAML that an
+    /// operator carries from `make-validator-info` to `become-candidate` (#2119).
+    ///
+    /// It builds the `ValidatorInfo` directly rather than driving
+    /// `make-validator-info` itself — that path needs a `TransactionContext` and
+    /// runs a full class-groups derivation, which does not belong in a unit
+    /// test. So this does NOT prove the command populates the field from the
+    /// constant; that link is held by the single call site in the
+    /// `MakeValidatorInfo` arm, and the on-the-wire shape is pinned separately
+    /// by `registration_ptb_pushes_exactly_the_placeholder_chunk` in
+    /// `ika-sui-client`.
     #[test]
-    fn registration_payload_is_exactly_the_documented_placeholder() {
+    fn registration_payload_serialization_is_the_documented_placeholder() {
         assert_eq!(
             bcs::to_bytes(&deprecated_on_chain_mpc_data_placeholder()).unwrap(),
             DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS.to_vec(),

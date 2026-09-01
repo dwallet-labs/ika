@@ -311,18 +311,26 @@ impl SuiClientInner for GrpcSuiClient {
                     validator.id
                 ))
             })?;
-            // Always the current record. `next_epoch_mpc_data_bytes` /
-            // `previous_mpc_data_bytes` are the on-chain rotation staging
-            // slots, and since #2119 nothing in this repo writes them: the
-            // `set_next_epoch_mpc_data_bytes` builders are gone and
-            // `ika validator set-next-epoch-mpc-data` only regenerates the
-            // local root seed. Selecting between the slots therefore chose
-            // between a value and a value that is always `None`, and the
-            // overlap invariant guarded a state no writer can produce.
-            // MPC-data rotation is off-chain (new root seed -> restart ->
-            // re-announce); the field this reads is itself deprecated and
-            // carries only a placeholder for validators registered after
-            // #2119.
+            // Always the current record, whatever the caller asked for.
+            // `next_epoch_mpc_data_bytes` / `previous_mpc_data_bytes` are the
+            // on-chain rotation staging slots. Since #2119 no writer for them
+            // remains in this repo: the `set_next_epoch_mpc_data_bytes`
+            // builders are gone and `ika validator set-next-epoch-mpc-data`
+            // only regenerates the local root seed. That is a statement about
+            // THIS repo, not a guarantee about chain state — the `sui_syncer`
+            // call site still passes `true`, the Move entry still exists, and
+            // `validator_info::rotate_next_epoch_info` would swap a staged slot
+            // into the current record at an epoch change if anything ever wrote
+            // one.
+            //
+            // Nothing has: a read-only walk of every validator record found
+            // both slots `None` on all 115 mainnet validators (ika epoch 398)
+            // and all 111 on testnet (epoch 401), with a current record present
+            // on every one.
+            //
+            // The field this reads is itself deprecated and carries only a
+            // placeholder for validators registered after #2119; MPC-data
+            // rotation is off chain (new root seed -> restart -> re-announce).
             let mpc_data_bytes = self
                 .read_table_vec_as_raw_bytes(info.mpc_data_bytes.contents.id)
                 .await?;

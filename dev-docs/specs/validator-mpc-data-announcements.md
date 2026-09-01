@@ -35,11 +35,59 @@ through the pipeline below.
   no callers). `ika validator set-next-epoch-mpc-data` regenerates the
   local `root-seed.key` and submits nothing; the reader in
   `grpc_backend.rs` no longer consults the `next_epoch_mpc_data_bytes` /
-  `previous_mpc_data_bytes` staging slots, which now have no writer. The
-  Move functions are deliberately left in place.
+  `previous_mpc_data_bytes` staging slots. The Move functions are
+  deliberately left in place.
+
+  Two caveats on "no writer", because neither is closed by Rust:
+  `sdk/typescript/src/tx/system.ts` still exports
+  `setNextEpochMpcDataBytes`, though the call cannot execute — it passes
+  the argument as `tx.pure(bcs.vector(bcs.vector(bcs.u8())))` where the
+  Move entry types it as `TableVec<vector<u8>>`, an object, so it is dead
+  rather than dangerous. And if anything ever DID stage a slot,
+  `validator_info::rotate_next_epoch_info` (`validator_info.move:299-319`)
+  swaps it into `mpc_data_bytes` at the next epoch change, moving the old
+  value to `previous_mpc_data_bytes` — so a staged slot is not inert, it
+  silently replaces the current record one epoch later.
+
+  As of ika epoch 398 (mainnet) and 401 (testnet) no such slot exists: a
+  read-only walk of every validator record found `next_epoch_mpc_data_bytes`
+  and `previous_mpc_data_bytes` `None` on all 115 mainnet and all 111
+  testnet validators, and a current record present on every one.
 - **Validators registered before #2119** still hold real bytes in the
-  field. Nothing reads them, so the two populations are
+  field. Post-Part-A nothing reads them, so the two populations are
   indistinguishable to the protocol; there is no migration.
+
+### Rollout precondition: register any time, activate LAST
+
+Submitting `become-candidate` with the placeholder is safe at any time,
+on any fleet version. A candidate's record is never read: the chain-view
+builder walks `validator_set.active_committee.members` only
+(`SuiClient::get_epoch_start_system`), and so does the syncer's
+bootstrap-window fallback.
+
+**Activation is the constraint.** A placeholder validator MUST NOT be
+staked into the ACTIVE committee until every node that builds a committee
+containing it runs a binary with the Part A readers — that means all
+committee validators, plus any fullnode or joiner that can still take the
+bootstrap-window chain-fallback path.
+
+On v1.4.0 (`release/mainnet-v1.4.0`, byte-identical to the testnet tag) an
+activated placeholder member is not a transient error, it is a permanent
+one:
+
+- the syncer's chain-fallback committee build decodes EVERY member's
+  on-chain bytes and hard-fails the whole build on the first one that will
+  not parse — `chain_fallback_mpc_data_decode` plus
+  `MissingOnChainMpcData`, retried forever, because no chain state change
+  can ever satisfy it. That breaks committee construction for every node
+  in the bootstrap window, not just the new validator; and
+- the new validator additionally fails its own boot-time seed identity
+  check, which decodes its on-chain bytes and compares them against its
+  locally derived class-groups key, so it never starts MPC.
+
+In a rolling upgrade, therefore: swap the whole fleet to a Part A binary
+first, and make placeholder **activation** the last step. Registering
+candidates earlier is fine and costs nothing.
 
 ## Problem
 
@@ -441,10 +489,22 @@ validator latched for the whole epoch. Sourcing rules
    `VersionedMPCData` — `get_epoch_start_system`'s "present and
    decodable" gate therefore still holds for every member, old or new,
    and a gap there is still a read defect. What the record *contains* is
-   no longer class-groups material for new validators, so the readers
-   that decode the payload (the boot-time seed identity check and the
-   chain-fallback committee build, both in `ika-core`) are moved off the
-   field by the other half of #2119. Add no new readers of this field.
+   no longer class-groups material for new validators. FOUR readers decode
+   the payload, and Part A covers all of them:
+
+   - `ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` — the boot-time seed
+     identity check (fail-closed: the node does not start MPC);
+   - `ika-core/src/sui_connector/sui_syncer.rs` — the bootstrap-window
+     chain-fallback committee build (fail-closed: the whole build errors
+     for retry);
+   - `ika-types/src/sui/epoch_start_system.rs:196` and `:263` — both
+     fail-SOFT: they log via `error!` / `report_invariant_violation!` and
+     drop the member, yielding a PARTIAL class-groups map. That is the more
+     dangerous shape, since it degrades silently rather than failing the
+     read, and it is why invariant 3 puts the completeness gate at the
+     chain-read boundary instead.
+
+   Add no new readers of this field.
 4. Post-freeze, all mpc-data decisions read the frozen set only.
 
 Code anchors: `crates/ika-types/src/validator_metadata.rs` (types),
