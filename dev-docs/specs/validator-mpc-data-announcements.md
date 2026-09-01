@@ -2,9 +2,44 @@
 
 Status: active and unconditional — `MIN_PROTOCOL_VERSION` and
 `MAX_PROTOCOL_VERSION` are both 7, so no supported version turns this off.
-The legacy chain field remains for candidate registration, but operational
-MPC-data updates do not write it; the consensus + P2P pipeline described
-here is the only update and read path.
+The consensus + P2P pipeline described here is the only update and read
+path for validator MPC data.
+
+## The on-chain `mpc_data_bytes` field is a deprecated placeholder
+
+The Move field `ValidatorInfo.mpc_data_bytes` (`validator_info.move`) is
+**deprecated and to be completely ignored** — issue #2119. It used to
+carry the bare `ClassGroupsEncryptionKeyAndProof`; nothing about it was
+ever enforced or verified (#488, closed on that basis; #2117, closed
+unmerged), and everything a validator's peers actually need travels
+through the pipeline below.
+
+- **What a candidate now registers.** `ika validator make-validator-info`
+  writes a fixed placeholder into `validator.info`, and
+  `become-candidate` submits it verbatim: a `VersionedMPCData::V1` with
+  an empty payload, whose BCS is exactly the two bytes `[0x00, 0x00]`,
+  stored as the single entry of the `TableVec<vector<u8>>` the Move
+  entry still takes. The constant is
+  `ika_sui_client::ika_validator_transactions::deprecated_on_chain_mpc_data_placeholder`;
+  its doc comment carries the full rationale, including why it is not a
+  zero-chunk `TableVec` (that reads back as zero bytes and does not
+  decode as `VersionedMPCData`, which would trip the chain-read
+  completeness gate in invariant 3 below for every node).
+- **The contract is unchanged.** No Move function was removed or
+  altered; the entry keeps accepting `mpc_data_bytes: TableVec<vector<u8>>`.
+  Only what the CLI *sends* changed. Move never indexes into the vector
+  — it is stored, swapped and drained, never read element-wise — so the
+  single-entry shape is immaterial on chain.
+- **There is no on-chain rotation.** The `set_next_epoch_mpc_data_bytes`
+  transaction builders have been removed from `ika-sui-client` (they had
+  no callers). `ika validator set-next-epoch-mpc-data` regenerates the
+  local `root-seed.key` and submits nothing; the reader in
+  `grpc_backend.rs` no longer consults the `next_epoch_mpc_data_bytes` /
+  `previous_mpc_data_bytes` staging slots, which now have no writer. The
+  Move functions are deliberately left in place.
+- **Validators registered before #2119** still hold real bytes in the
+  field. Nothing reads them, so the two populations are
+  indistinguishable to the protocol; there is no migration.
 
 ## Problem
 
@@ -34,10 +69,11 @@ which bytes* deterministic in consensus order.
   the write boundary; P2P fetchers MUST hash-verify fetched bytes
   against the requested digest.
 - **CLI updates**: `ika validator set-next-epoch-mpc-data` replaces the
-  local `root-seed.key` only. It MUST NOT submit the derived public data
-  to Sui. After the validator installs the new file and restarts, the
-  announcement sender derives the full blob and distributes it through
-  consensus and P2P using the paths below.
+  local `root-seed.key` only (refusing to overwrite an existing one). It
+  MUST NOT submit the derived public data to Sui — since #2119 there is
+  no builder left that could. After the validator installs the new file
+  and restarts, the announcement sender derives the full blob and
+  distributes it through consensus and P2P using the paths below.
 
 ## Announcement paths
 
@@ -398,6 +434,17 @@ validator latched for the whole epoch. Sourcing rules
    post-freeze assembled committee legitimately omits *excluded*
    members, so a type-level "map covers all members" invariant would
    be wrong.
+
+   Since #2119 this clause describes only the *envelope*. A validator
+   registered after #2119 carries a placeholder in the on-chain record,
+   and the placeholder is deliberately shaped so it still decodes as a
+   `VersionedMPCData` — `get_epoch_start_system`'s "present and
+   decodable" gate therefore still holds for every member, old or new,
+   and a gap there is still a read defect. What the record *contains* is
+   no longer class-groups material for new validators, so the readers
+   that decode the payload (the boot-time seed identity check and the
+   chain-fallback committee build, both in `ika-core`) are moved off the
+   field by the other half of #2119. Add no new readers of this field.
 4. Post-freeze, all mpc-data decisions read the frozen set only.
 
 Code anchors: `crates/ika-types/src/validator_metadata.rs` (types),

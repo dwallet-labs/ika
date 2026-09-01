@@ -27,6 +27,12 @@ ika validator make-validator-info \
   <NAME> <DESCRIPTION> <IMAGE_URL> <PROJECT_URL> <HOST_NAME> <GAS_PRICE> <SENDER_SUI_ADDRESS>
 ```
 
+Writes `protocol.key`, `network.key`, `consensus.key`, `root-seed.key` and `validator.info` into the current directory. Existing key files and an existing root seed are reused, never overwritten; `validator.info` is rewritten on every run.
+
+`root-seed.key` is the validator's MPC identity and the only file that cannot be regenerated — back it up before doing anything else. The node derives its full class-groups key material from this seed at boot and announces it to peers off chain; the seed itself is never published.
+
+The `mpc_data` field inside `validator.info` is **not** key material. The on-chain `mpc_data_bytes` field is deprecated and ignored, so `make-validator-info` writes a fixed two-byte placeholder there (see [`become-candidate`](#become-candidate)).
+
 ### `config-env`
 
 Configure the Ika package and system object IDs for the CLI environment.
@@ -49,6 +55,8 @@ Register as a validator candidate using a validator info file.
 ```bash
 ika validator become-candidate <VALIDATOR_INFO_PATH>
 ```
+
+The transaction submits a placeholder for the on-chain `mpc_data_bytes` field. That field is deprecated and ignored ([ika#2119](https://github.com/dwallet-labs/ika/issues/2119)): a validator's real MPC key material is derived from `root-seed.key` and distributed off chain, through consensus announcements and peer-to-peer fetches. Nothing reads the on-chain field, and nothing needs to be written there again — the placeholder exists only because the Move entry still requires the argument.
 
 ### `remove-candidate`
 
@@ -274,4 +282,6 @@ ika validator set-next-epoch-consensus-pubkey \
 ika validator set-next-epoch-mpc-data
 ```
 
-Generates a new `root-seed.key` in the current directory, replacing any existing file. This command does not submit a Sui transaction. Install the new file at the validator's configured root-seed path and restart the validator; the node derives and announces its MPC data through consensus and P2P.
+Generates a new `root-seed.key` in the current directory. This command does not submit a Sui transaction — there is no on-chain MPC-data rotation, and the on-chain `mpc_data_bytes` field is deprecated and ignored ([ika#2119](https://github.com/dwallet-labs/ika/issues/2119)). Install the new file at the validator's configured root-seed path and restart the validator; the node derives and announces its MPC data through consensus and P2P.
+
+It refuses to run if `root-seed.key` already exists in the current directory. A root seed cannot be recovered once replaced, so move the old file aside deliberately if you really intend to rotate.

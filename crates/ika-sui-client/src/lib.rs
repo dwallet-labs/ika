@@ -354,6 +354,9 @@ where
         })
     }
 
+    /// See [`SuiClientInner::get_mpc_data_from_validators_pool`]: this reads the
+    /// deprecated on-chain `mpc_data_bytes` field (#2119), and
+    /// `read_next_mpc_data` is ignored.
     pub async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
@@ -480,6 +483,13 @@ where
                         // the degraded `EpochStartSystem` would be persisted and
                         // rebuilt on every restart. Fail the whole read instead;
                         // `must_get_epoch_start_system` retries until it completes.
+                        //
+                        // Since #2119 this gate is about the record's PRESENCE
+                        // and decodability, not its contents: a validator
+                        // registered after #2119 carries
+                        // `deprecated_on_chain_mpc_data_placeholder` here, which
+                        // is shaped precisely so it still decodes as a
+                        // `VersionedMPCData` and keeps this check meaningful.
                         let Some(mpc_data) = validators_mpc_data.get(&validator.id) else {
                             self.sui_client_metrics
                                 .sui_rpc_errors
@@ -966,6 +976,15 @@ pub trait SuiClientInner: Send + Sync {
         dwallet_coordinator_id: ObjectID,
     ) -> Result<Vec<u8>, Self::Error>;
 
+    /// Read the validators' **deprecated** on-chain `mpc_data_bytes` records
+    /// (issue #2119). Validators registered after #2119 carry only
+    /// [`crate::ika_validator_transactions::deprecated_on_chain_mpc_data_placeholder`]
+    /// here; the real key material travels off chain.
+    ///
+    /// `read_next_epoch_mpc_data` is retained for source compatibility with the
+    /// existing call sites and is IGNORED — the on-chain rotation slots it
+    /// selected (`next_epoch_mpc_data_bytes` / `previous_mpc_data_bytes`) have
+    /// no writer left in this repo.
     #[allow(clippy::ptr_arg)]
     async fn get_mpc_data_from_validators_pool(
         &self,

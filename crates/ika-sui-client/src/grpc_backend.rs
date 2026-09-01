@@ -301,7 +301,7 @@ impl SuiClientInner for GrpcSuiClient {
     async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
-        read_next_mpc_data: bool,
+        _read_next_epoch_mpc_data: bool,
     ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
         let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
@@ -311,26 +311,21 @@ impl SuiClientInner for GrpcSuiClient {
                     validator.id
                 ))
             })?;
-            let mpc_data_id = if read_next_mpc_data
-                && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
-                && info.previous_mpc_data_bytes.is_none()
-            {
-                next_epoch_mpc_data_bytes.contents.id
-            } else {
-                if info.next_epoch_mpc_data_bytes.is_some()
-                    && info.previous_mpc_data_bytes.is_some()
-                {
-                    ika_types::report_invariant_violation!(
-                        "grpc_validator_mpc_data_overlap",
-                        validator_id=?validator.id,
-                        "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
-                    );
-                }
-
-                info.mpc_data_bytes.contents.id
-            };
-
-            let mpc_data_bytes = self.read_table_vec_as_raw_bytes(mpc_data_id).await?;
+            // Always the current record. `next_epoch_mpc_data_bytes` /
+            // `previous_mpc_data_bytes` are the on-chain rotation staging
+            // slots, and since #2119 nothing in this repo writes them: the
+            // `set_next_epoch_mpc_data_bytes` builders are gone and
+            // `ika validator set-next-epoch-mpc-data` only regenerates the
+            // local root seed. Selecting between the slots therefore chose
+            // between a value and a value that is always `None`, and the
+            // overlap invariant guarded a state no writer can produce.
+            // MPC-data rotation is off-chain (new root seed -> restart ->
+            // re-announce); the field this reads is itself deprecated and
+            // carries only a placeholder for validators registered after
+            // #2119.
+            let mpc_data_bytes = self
+                .read_table_vec_as_raw_bytes(info.mpc_data_bytes.contents.id)
+                .await?;
 
             match bcs::from_bytes::<VersionedMPCData>(&mpc_data_bytes) {
                 Ok(validator_mpc_data) => {
