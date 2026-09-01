@@ -856,8 +856,7 @@ fun calculate_total_stakes(self: &mut ValidatorSet): u64 {
     stake
 }
 
-/// Compute both the individual reward adjustments and total reward adjustment for staking rewards
-/// as well as storage fund rewards.
+/// Compute both the individual reward adjustments and total reward adjustment for staking rewards.
 fun compute_reward_adjustments(
     mut slashed_validator_indices: vector<u64>,
     reward_slashing_rate: u16,

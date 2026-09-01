@@ -71,9 +71,9 @@ pub enum SystemCheckpointMessageKind {
 pub struct SystemCheckpointMessage {
     pub epoch: EpochId,
     pub sequence_number: SystemCheckpointSequenceNumber,
-    /// Timestamp of the system checkpoint - number of milliseconds from the Unix epoch
-    /// System checkpoint timestamps are monotonic, but not strongly monotonic - subsequent
-    /// system checkpoints can have same timestamp if they originate from the same underlining consensus commit
+    /// The system-configuration changes this checkpoint applies, in order.
+    /// Move reads them as one flat BCS stream, so both the order and each
+    /// variant's encoded width are part of the wire contract.
     pub messages: Vec<SystemCheckpointMessageKind>,
 }
 

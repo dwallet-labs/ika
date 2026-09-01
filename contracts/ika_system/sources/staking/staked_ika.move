@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /// Implements the `StakedIka` functionality - a staked IKA is an object that
-/// represents a staked amount of IKAs in a staking pool. It is created in the
-/// `staking_pool` on staking and can be split, joined, and burned. The burning
-/// is performed via the `withdraw_stake` method in the `staking_pool`.
+/// represents a staked amount of IKAs in a validator's staking pool. It is
+/// created in the `validator` on staking and can be split, joined, and burned.
+/// The burning is performed via the `withdraw_stake` method in the `validator`.
 module ika_system::staked_ika;
 
 use ika::ika::IKA;
@@ -48,11 +48,11 @@ public struct StakedIka has key, store {
     id: UID,
     /// Whether the staked IKA is active or withdrawing.
     state: StakedIkaState,
-    /// ID of the staking pool.
+    /// ID of the validator.
     validator_id: ID,
     /// The staked amount.
     principal: Balance<IKA>,
-    /// The Ikarus epoch when the staked IKA was activated.
+    /// The Ika epoch when the staked IKA was activated.
     activation_epoch: u64,
 }
 

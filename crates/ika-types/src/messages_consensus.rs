@@ -368,7 +368,7 @@ pub enum ConsensusTransactionKind {
     DWalletCheckpointSignature(Box<DWalletCheckpointSignatureMessage>),
     SystemCheckpointSignature(Box<SystemCheckpointSignatureMessage>),
     CapabilityNotificationV1(AuthorityCapabilitiesV1),
-    /// DECODE-ONLY since `MIN_PROTOCOL_VERSION = 5`. No supported binary
+    /// DECODE-ONLY ever since `MIN_PROTOCOL_VERSION` reached 5. No supported binary
     /// emits this — `EndOfPublishV2` is the only form produced, and the
     /// consumer drops any V1 it receives (a peer sending one is
     /// misconfigured). The variant itself must stay: its BCS index is wire

@@ -556,7 +556,6 @@ where
         }
     }
 
-    /// Get the validators' info by their IDs.
     /// The `validator_id`s currently in the on-chain `pending_active_set` — the
     /// staging set for the next epoch, updated continuously as validators
     /// join/leave (so a freshly-registered joiner appears here before it reaches

@@ -166,8 +166,8 @@ fn build_anemo_services(out_dir: &Path) {
         // NOTE: no `get_reference_gas_price` RPC. Gas price is only needed to
         // build transactions, which is notifier-gated to a direct uplink — no
         // read-only mirrored/peer-only node ever needs it, so the relay doesn't
-        // serve it. (It remains a `SuiTransport` method for the direct writer
-        // path; on the mirror client it errors like the other non-relayed reads.)
+        // serve it. (It lives on the `SuiWriter` trait for the direct writer
+        // path; the mirror transport implements no writer surface at all.)
         .method(
             anemo_build::manual::Method::builder()
                 .name("get_latest_checkpoint")
@@ -225,8 +225,8 @@ fn build_anemo_services(out_dir: &Path) {
         // NOTE: no `get_transaction_checkpoint` RPC. It was only ever reached
         // by `get_events_by_tx_digest` (the notifier's removed tx-commit gate);
         // the committee ratchet uses `last_checkpoint_of_epoch` /
-        // `get_current_epoch` / `get_full_checkpoint`, not this. The
-        // `SuiTransport` trait method survives for *direct* proof building
+        // `get_current_epoch` / `get_full_checkpoint`, not this. It survives
+        // as an inherent `SuiGrpcClient` method for *direct* proof building
         // (`LocalProofProvider` over the node's own gRPC), which never relays.
         // Verified-read surface (the hot path for consumers). Each response
         // carries the object, the BLS-signed summary at the checkpoint

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /// The IKA for the Ika Protocol.
-/// Coin<IKA> is the token used to pay for gas in Ika.
+/// Coin<IKA> is the token used to pay for computation fees in Ika.
 /// It has 9 decimals, and the smallest unit (10^-9) is called "INKU".
 module ika::ika;
 

@@ -234,7 +234,7 @@ public(package) fun lock_last_user_initiated_session_to_complete_in_current_epoc
 /// Registers a new session identifier.
 ///
 /// This function is used to register a new session identifier, the bytes length must be 32 bytes.
-/// SessionIdentifier's `identifier_preimage` is an keccak256 hash of the bytes and the sender address,
+/// SessionIdentifier's `identifier_preimage` is a keccak256 hash of the sender address followed by the bytes,
 /// this can be calculated on the client side before even calling this function onchain.
 ///
 /// ### Parameters

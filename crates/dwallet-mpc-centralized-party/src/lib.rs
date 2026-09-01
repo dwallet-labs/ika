@@ -94,7 +94,9 @@ pub fn reconfiguration_public_output_to_protocol_pp_inner(
 
 pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOfSecretKeyShareParty;
 
-/// Executes the second phase of the DKG protocol, part of a three-phase DKG flow.
+/// Executes the centralized party's DKG round from the protocol public
+/// parameters alone (unlike [`create_dkg_output_v1`], it does not consume a
+/// decentralized first-round output).
 ///
 /// This function is invoked by the centralized party to produce:
 /// - A public key share and its proof.
@@ -104,14 +106,15 @@ pub type DWalletDKGFirstParty = twopc_mpc::secp256k1::class_groups::EncryptionOf
 /// and should always be kept private.
 ///
 /// # Parameters
-/// — `decentralized_first_round_output`:
-///    Serialized output of the decentralized party from the first DKG round.
-/// — `session_id`: Unique hexadecimal string identifying the session.
+/// — `dwallet_curve`: The curve identifier (see [`try_into_curve`]).
+/// — `protocol_pp`: Serialized protocol public parameters.
+/// — `session_id`: Session identifier bytes.
 ///
 /// # Returns
-/// A tuple containing:
+/// A [`CentralizedDKGWasmResult`] containing:
 /// - Serialized public key share and proof.
-/// - Serialized centralized DKG output.
+/// - Serialized centralized DKG public output.
+/// - Serialized centralized secret key share.
 ///
 /// # Errors
 /// Return an error if decoding or advancing the protocol fails.
@@ -215,14 +218,16 @@ pub fn centralized_dkg_output_v2_with_rng<P: twopc_mpc::dkg::Protocol, R: group:
 /// and should always be kept private.
 ///
 /// # Parameters
-/// — `decentralized_first_round_output`:
-///    Serialized output of the decentralized party from the first DKG round.
-/// — `session_id`: Unique hexadecimal string identifying the session.
+/// — `protocol_pp`: Serialized protocol public parameters.
+/// — `decentralized_first_round_public_output`:
+///    Serialized output of the decentralized party from the first DKG round
+///    (carries the session identifier).
 ///
 /// # Returns
-/// A tuple containing:
+/// A [`CentralizedDKGWasmResult`] containing:
 /// - Serialized public key share and proof.
-/// - Serialized centralized DKG output.
+/// - Serialized centralized DKG public output.
+/// - Serialized centralized secret key share.
 ///
 /// # Errors
 /// Return an error if decoding or advancing the protocol fails.
@@ -392,8 +397,9 @@ fn centralized_and_decentralized_parties_dkg_output_match_by_protocol<
 /// Executes the centralized phase of the Sign protocol,
 ///  the first part of the protocol.
 ///
-/// The [`advance_centralized_sign_party`] function is
-/// called by the client (the centralized party).
+/// Called by the client (the centralized party); takes the centralized
+/// party's own DKG output (unlike [`advance_centralized_sign_party`], which
+/// takes the decentralized party's).
 pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
     protocol_pp: Vec<u8>,
     centralized_party_dkg_public_output: SerializedWrappedMPCPublicOutput,
@@ -1514,13 +1520,11 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
         bcs::from_bytes(encrypted_user_share_and_proof)?;
     let dwallet_dkg_output = match bcs::from_bytes(dwallet_dkg_output)? {
         VersionedDwalletDKGPublicOutput::V1(output) => {
-            // return Err(anyhow::anyhow!("2.1"));
             let versioned_output: P::DecentralizedPartyDKGOutput =
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(&output)?.into();
             versioned_output
         }
         VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
-            // return Err(anyhow::anyhow!("2.2"));
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(&dkg_output)?
         }
     };

@@ -23,9 +23,9 @@ public struct ProtocolTreasury has store {
     /// Count of the number of times stake subsidies have been distributed.
     stake_subsidy_distribution_counter: u64,
     /// The rate at which the amount per distribution is calculated based on
-    /// period nad total supply. Expressed in basis points.
+    /// period and total supply. Expressed in basis points.
     stake_subsidy_rate: u16,
-    /// The amount of stake subsidy to be destructured per distribution.
+    /// The amount of stake subsidy to be distributed per distribution.
     /// This amount changes based on `stake_subsidy_rate`.
     stake_subsidy_amount_per_distribution: u64,
     /// Number of distributions to occur before the amount per distribution will be recalculated.

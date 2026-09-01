@@ -89,9 +89,8 @@ impl Node {
             .and_then(|c| c.get_node_handle())
     }
 
-    /// Perform a health check on this Node by:
-    /// * Checking that the node is running
-    /// * Calling the Node's gRPC Health service if it's a validator.
+    /// Perform a health check on this Node by checking that the node is
+    /// running.
     pub async fn health_check(&self, _is_validator: bool) -> Result<(), HealthCheckError> {
         {
             let lock = self.container.lock().unwrap();

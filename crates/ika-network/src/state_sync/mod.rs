@@ -74,20 +74,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, instrument, trace, warn};
 
-/// Live feed of the highest checkpoint sequence numbers the chain has already
-/// PROCESSED (the coordinator's / system's `last_processed_checkpoint_sequence_number`),
-/// fed by the node's Sui connector. `None` until the first successful chain
-/// read of a cursor.
-///
-/// Pull-mode state sync (notifiers/fullnodes — nodes that don't build
-/// checkpoints from consensus) uses this as a sync FLOOR: checkpoints at or
-/// below the cursor have already landed on Sui and are useless to a writer,
-/// and on a long-lived network no peer can serve deep history anyway —
-/// validators only ever hold what consensus gave them since their own last
-/// (re)deploy, and there is no backfill. Without the floor, a notifier
-/// deployed on a fresh database chases checkpoint 1 forever ("no peers were
-/// able to help sync checkpoint 1"), synced pinned at 0 while known grows —
-/// the 2026-07 epoch-close outage shape (issue #1892).
 /// Ceiling on peer-pushed checkpoint bodies held per stream.
 ///
 /// Generous relative to any legitimate backlog — sync advances sequentially,
@@ -95,6 +81,20 @@ use tracing::{debug, error, info, instrument, trace, warn};
 /// bounding what an unauthenticated push can pin in memory.
 const MAX_UNPROCESSED_CHECKPOINTS: usize = 10_000;
 
+/// Live feed of the highest checkpoint sequence numbers the chain has
+/// already PROCESSED (the coordinator's / system's
+/// `last_processed_checkpoint_sequence_number`), fed by the node's Sui
+/// connector. `None` until the first successful chain read of a cursor.
+///
+/// Pull-mode state sync (notifiers/fullnodes — nodes that don't build
+/// checkpoints from consensus) uses this as a sync FLOOR: checkpoints at
+/// or below the cursor have already landed on Sui and are useless to a
+/// writer, and on a long-lived network no peer can serve deep history
+/// anyway — validators only ever hold what consensus gave them since their
+/// own last (re)deploy, and there is no backfill. Without the floor, a
+/// notifier deployed on a fresh database chases checkpoint 1 forever ("no
+/// peers were able to help sync checkpoint 1"), synced pinned at 0 while
+/// known grows — the 2026-07 epoch-close outage shape (issue #1892).
 #[derive(Clone)]
 pub struct OnChainCheckpointCursors {
     pub dwallet: watch::Receiver<Option<DWalletCheckpointSequenceNumber>>,

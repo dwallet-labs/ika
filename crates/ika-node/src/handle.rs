@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! IkaNodeHandle wraps IkaNode in a way ikatable for access by test code.
+//! IkaNodeHandle wraps IkaNode in a way suitable for access by test code.
 //!
 //! When starting a IkaNode directly, in a test (as opposed to using Swarm), the node may be
 //! running inside of a simulator node. It is therefore a mistake to do something like:

@@ -49,34 +49,19 @@ public struct PricingInfoCalculationVotes has copy, drop, store {
 
 // === Public Functions ===
 
-/// Creates a new [`PricingInfo`] object.
-///
-/// Initializes the table with the given pricing values for each operation.
-///
-/// # Parameters
-///
-/// - `ctx`: The transaction context.
+/// Creates a new empty [`PricingInfo`] object.
 ///
 /// # Returns
 ///
-/// A newly created instance of `PricingInfo`.
+/// A newly created instance of `PricingInfo` with an empty pricing map.
 public fun empty(): PricingInfo {
     PricingInfo {
         pricing_map: vec_map::empty(),
     }
 }
 
-/// Inserts pricing information for a specific operation into the [`PricingInfo`] table.
-///
-/// # Parameters
-///
-/// - `self`: The [`PricingInfo`] object.
-/// - `key`: The key for the operation.
-/// - `value`: The pricing information for the operation.
-///
-/// # Returns
-///
-/// The [`PricingInfo`] object.
+/// Inserts or updates the pricing information for a specific
+/// (curve, signature algorithm, protocol) operation in the [`PricingInfo`] map.
 public fun insert_or_update_pricing(
     self: &mut PricingInfo,
     curve: u32,

@@ -422,7 +422,7 @@ public fun bls_aggregate_sigs(signatures: &vector<vector<u8>>): vector<u8> {
     *aggregate.bytes()
 }
 
-/// Test committee with one committee member and 100 shards, using
+/// Test committee with one committee member, using
 /// `test_utils::bls_sk_for_testing()` as secret key.
 public fun new_bls_committee_for_testing(): bls_committee::BlsCommittee {
     let validator_id = tx_context::dummy().fresh_object_address().to_id();
@@ -435,8 +435,8 @@ public fun new_bls_committee_for_testing(): bls_committee::BlsCommittee {
     bls_committee::new_bls_committee(vector[member])
 }
 
-/// Test committee with 10 committee member and 100 shards, using
-/// `test_utils::bls_sk_for_testing()` as secret key.
+/// Test committee with `num_members` committee members, using
+/// `test_utils::bls_secret_keys_for_testing()` as secret keys.
 public fun new_bls_committee_with_multiple_members_for_testing(
     num_members: u64,
     tx_context: &mut TxContext,

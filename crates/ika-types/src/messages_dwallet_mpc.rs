@@ -912,7 +912,7 @@ pub enum UserSecretKeyShareEventType {
     },
 }
 
-/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
+/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct DWalletDKGRequestEvent {
     pub dwallet_id: ObjectID,
@@ -979,7 +979,7 @@ pub struct DWalletImportedKeyVerificationRequestEvent {
     pub curve: u32,
 }
 
-/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::DWalletDKGFirstRoundRequestEvent`.
+/// Represents the Rust version of the Move struct `ika_system::dwallet_2pc_mpc_coordinator_inner::MakeDWalletUserSecretKeySharePublicRequestEvent`.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Eq, PartialEq, Hash)]
 pub struct MakeDWalletUserSecretKeySharesPublicRequestEvent {
     pub public_user_secret_key_shares: Vec<u8>,
@@ -991,7 +991,7 @@ pub struct MakeDWalletUserSecretKeySharesPublicRequestEvent {
 
 impl DWalletSessionEventTrait for MakeDWalletUserSecretKeySharesPublicRequestEvent {
     /// This function allows comparing this event with the Move event.
-    /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
+    /// It is used to detect [`MakeDWalletUserSecretKeySharesPublicRequestEvent`] events from the chain and initiate the MPC session.
     fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
             address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,
@@ -1004,7 +1004,7 @@ impl DWalletSessionEventTrait for MakeDWalletUserSecretKeySharesPublicRequestEve
 
 impl DWalletSessionEventTrait for DWalletImportedKeyVerificationRequestEvent {
     /// This function allows comparing this event with the Move event.
-    /// It is used to detect [`DWalletDKGFirstRoundRequestEvent`] events from the chain and initiate the MPC session.
+    /// It is used to detect [`DWalletImportedKeyVerificationRequestEvent`] events from the chain and initiate the MPC session.
     fn type_(packages_config: &IkaNetworkConfig) -> StructTag {
         StructTag {
             address: *packages_config.packages.ika_dwallet_2pc_mpc_package_id,

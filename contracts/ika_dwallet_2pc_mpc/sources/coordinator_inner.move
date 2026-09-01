@@ -93,7 +93,7 @@ const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 /// DKG with sign protocol identifier
 const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
 
-// Message data type constants corresponding to MessageKind enum variants (in ika-types/src/message.rs)
+// Message data type constants corresponding to DWalletCheckpointMessageKind enum variants (in ika-types/src/message.rs)
 #[deprecated, allow(unused)]
 const RESPOND_DWALLET_DKG_FIRST_ROUND_OUTPUT_MESSAGE_TYPE: u32 = 0;
 #[deprecated, allow(unused)]
@@ -205,8 +205,8 @@ public struct DWalletCoordinatorWitness has drop {}
 /// Next, `presign_sessions` holds the outputs of the Presign protocol which are later used for the signing protocol,
 /// and `partial_centralized_signed_messages` holds the partial signatures of users awaiting for a future sign once a `MessageApproval` is presented.
 ///
-/// Additionally, this structure holds management information, like the `previous_committee` and `active_committee` committees,
-/// information regarding `pricing_and_fee_manager`, all the `sessions_manager` and the `next_session_sequence_number` that will be used for the next session,
+/// Additionally, this structure holds management information, like the `active_committee` and `next_epoch_active_committee` committees,
+/// information regarding `pricing_and_fee_manager`, all the `sessions_manager` state,
 /// and various other fields, like the supported and paused curves, signing algorithms and hashes.
 ///
 /// ## Key Components:
@@ -217,7 +217,7 @@ public struct DWalletCoordinatorWitness has drop {}
 /// - `partial_centralized_signed_messages`: Future sign capabilities
 /// - `sessions_manager`: MPC session coordination
 /// - `pricing_and_fee_manager`: Economic incentives and fee collection
-/// - `active_committee`/`previous_committee`: Validator consensus groups
+/// - `active_committee`/`next_epoch_active_committee`: Validator consensus groups
 /// - `support_config`: Cryptographic algorithm support and emergency controls
 public struct DWalletCoordinatorInner has store {
     /// Current epoch number
@@ -383,7 +383,7 @@ public struct EncryptionKey has key, store {
 /// 3. User signs the public output to accept the share
 ///
 /// ## Creation Methods
-/// - **Direct**: Created during DKG second round
+/// - **Direct**: Created during dWallet DKG
 /// - **Re-encryption**: Created when transferring access to another user
 ///
 /// ## Security Properties
@@ -1073,17 +1073,17 @@ public enum UserSecretKeyShareEventType has copy, drop, store {
     },
 }
 
-/// Event requesting the second round of DKG from the validator network.
+/// Event requesting dWallet DKG from the validator network.
 ///
-/// This event initiates the final phase of distributed key generation where
-/// the user's contribution is combined with the network's first round output
-/// to complete the dWallet creation process.
+/// This event initiates the single-round dWallet DKG flow: the user generates
+/// their contribution up front (from the protocol public parameters), and the
+/// network runs its round of DKG and validates the user's contribution to
+/// complete the dWallet creation process.
 ///
 /// ## Process Flow
-/// 1. User processes the first round output from validators
-/// 2. User generates their cryptographic contribution
-/// 3. User encrypts their secret key share
-/// 4. Network validates and completes the DKG process
+/// 1. User generates their cryptographic contribution
+/// 2. User encrypts their secret key share (or makes it public)
+/// 3. Network runs its DKG round, validates the contribution, and completes the process
 ///
 /// ## Security Properties
 /// - User contribution ensures the user controls part of the key
@@ -1108,7 +1108,7 @@ public struct DWalletDKGRequestEvent has copy, drop, store {
     sign_during_dkg_request: Option<SignDuringDKGRequestEvent>,
 }
 
-/// Event emitted when DKG second round completes successfully.
+/// Event emitted when dWallet DKG completes successfully.
 ///
 /// Signals the successful completion of the distributed key generation process.
 /// The dWallet is now ready for user acceptance and can begin signing operations
@@ -1134,7 +1134,7 @@ public struct CompletedDWalletDKGEvent has copy, drop, store {
     sign_id: Option<ID>,
 }
 
-/// Event emitted when DKG second round is rejected by the network.
+/// Event emitted when dWallet DKG is rejected by the network.
 ///
 /// Indicates that the validator network rejected the user's contribution
 /// to the DKG process, typically due to invalid proofs or malformed data.
@@ -1145,7 +1145,7 @@ public struct CompletedDWalletDKGEvent has copy, drop, store {
 /// - Encryption verification failures
 /// - Network consensus issues
 public struct RejectedDWalletDKGEvent has copy, drop, store {
-    /// ID of the dWallet whose DKG second round was rejected
+    /// ID of the dWallet whose DKG was rejected
     dwallet_id: ID,
     /// Public output that was being processed when rejection occurred
     public_output: vector<u8>,
@@ -2646,30 +2646,32 @@ public(package) fun sign_during_dkg_request(
     }
 }
 
-/// Initiates the second round of Distributed Key Generation (DKG) with encrypted user shares.
+/// Initiates the single-round dWallet DKG flow with an encrypted user share.
 ///
-/// This function represents the user's contribution to the DKG second round, where they
-/// provide their encrypted secret share and request validator network verification.
-/// It creates the encrypted share object and transitions the dWallet to network verification.
+/// The user provides their DKG contribution up front (generated from the
+/// protocol public parameters) together with their encrypted secret share,
+/// and requests validator network verification. Creates the dWallet and the
+/// encrypted share object, both pending network verification.
 ///
 /// ### Parameters
 /// - `self`: Mutable reference to the coordinator
-/// - `dwallet_cap`: User's capability proving dWallet ownership
+/// - `dwallet_network_encryption_key_id`: Network encryption key securing the network share
+/// - `curve`: Elliptic curve for the dWallet
 /// - `centralized_public_key_share_and_proof`: User's public key contribution with ZK proof
 /// - `encrypted_centralized_secret_share_and_proof`: User's encrypted secret share with proof
 /// - `encryption_key_address`: Address of the encryption key for securing the share
 /// - `user_public_output`: User's contribution to the final public key
 /// - `signer_public_key`: Ed25519 key for signature verification
+/// - `sign_during_dkg_request`: Optional request to also sign a message in the DKG session
 /// - `payment_ika`: User's IKA payment for computation
 /// - `payment_sui`: User's SUI payment for gas reimbursement
 /// - `ctx`: Transaction context
 ///
-/// ### DKG Second Round Process
-/// 1. **Validation**: Verifies encryption key compatibility and dWallet state
+/// ### DKG Process
+/// 1. **Validation**: Verifies encryption key compatibility and curve support
 /// 2. **Share Creation**: Creates `EncryptedUserSecretKeyShare` with verification pending
 /// 3. **Payment Processing**: Charges user for validator computation and consensus
-/// 4. **Event Emission**: Requests validator network to verify encrypted share
-/// 5. **State Transition**: Updates dWallet to `AwaitingNetworkDKGVerification`
+/// 4. **Event Emission**: Requests validator network to run DKG and verify the encrypted share
 ///
 /// ### Cryptographic Security
 /// - **Zero-Knowledge Proofs**: User provides proofs of correct share encryption
@@ -2678,13 +2680,14 @@ public(package) fun sign_during_dkg_request(
 /// - **Threshold Security**: Maintains distributed key generation properties
 ///
 /// ### Network Integration
-/// Emits `DWalletDKGSecondRoundRequestEvent` for validator processing,
-/// triggering network verification of the encrypted share.
+/// Emits `DWalletDKGRequestEvent` for validator processing,
+/// triggering the network's DKG round and verification of the encrypted share.
+///
+/// ### Returns
+/// The new `DWalletCap` and, if signing during DKG was requested, the sign session ID.
 ///
 /// ### Aborts
-/// - `EImportedKeyDWallet`: If called on imported key dWallet
 /// - `EMismatchCurve`: If encryption key curve doesn't match dWallet curve
-/// - `EWrongState`: If dWallet not in correct state for second round
 /// - Various validation and payment errors
 public(package) fun request_dwallet_dkg(
     self: &mut DWalletCoordinatorInner,
@@ -2931,10 +2934,11 @@ public fun request_dwallet_dkg_impl(
     (dwallet_cap, sign_id)
 }
 
-/// This function is called by the Ika network to respond to the dWallet DKG second round request made by the user.
+/// This function is called by the Ika network to respond to the dWallet DKG request made by the user.
 ///
-/// Completes the second round of the Distributed Key Generation (DKG) process and
-/// advances the [`DWallet`] state to `AwaitingKeyHolderSignature` with the DKG public output registered in it.
+/// Completes the Distributed Key Generation (DKG) process and
+/// advances the [`DWallet`] state to `AwaitingKeyHolderSignature` (or straight to
+/// `Active` when the user secret key share is public) with the DKG public output registered in it.
 ///
 /// Advances the `EncryptedUserSecretKeyShareState` to `NetworkVerificationCompleted`.
 ///

@@ -46,7 +46,7 @@ public struct TestRunner {
     admin: address,
 }
 
-/// Add any parameters to the initialization, such as epoch zero duration and number of shards.
+/// Add any parameters to the initialization, such as the protocol version and epoch duration.
 /// They will be used by the e2e runner admin during the initialization.
 public struct InitBuilder {
     protocol_version: Option<u64>,

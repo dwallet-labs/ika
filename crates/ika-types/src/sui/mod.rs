@@ -226,7 +226,7 @@ pub trait SystemInnerTrait {
         committee: &BlsCommittee,
     ) -> Vec<(ObjectID, (AuthorityPublicKeyBytes, StakeUnit))>;
     /// Like [`read_bls_committee`], but skips (rather than panics on) a member
-    /// whose `protocol_pubkey` bytes don't parse into an `AuthorityName`.
+    /// whose `protocol_pubkey` bytes don't parse into a BLS `AuthorityPublicKey`.
     /// For the PRIOR-committee bootstrap anchor only, where a departed member
     /// may carry a stale/unreadable on-chain record and one bad member must
     /// not crash-loop the reading node. NOTE the consequence of a skip: the

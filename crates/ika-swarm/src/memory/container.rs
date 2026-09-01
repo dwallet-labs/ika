@@ -128,7 +128,7 @@ impl Container {
     /// Check to see that the Node is still alive by checking if the receiving side of the
     /// `cancel_sender` has been dropped.
     ///
-    //TODO When we move to rust 1.61 we should also use
+    //TODO We should also use
     // https://doc.rust-lang.org/stable/std/thread/struct.JoinHandle.html#method.is_finished
     // in order to check if the thread has finished.
     pub fn is_alive(&self) -> bool {

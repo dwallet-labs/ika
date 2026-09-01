@@ -286,17 +286,14 @@ impl Committee {
         )
     }
 
-    // We call this if these have not yet been computed
-    /// Builds the `expanded_keys` (`AuthorityName -> BLS protocol pubkey`,
-    /// for aggregate-cert verification) and `index_map`
-    /// (`AuthorityName -> position`) caches. A BLS-basis name IS the BLS
-    /// key, so `expanded_keys` is decoded directly from `voting_rights`; a
-    /// name that does not decode as a BLS key (a consensus-basis name — a
-    /// zero-padded Ed25519 key is not a valid BLS12-381 point) is skipped,
-    /// NOT an error: committees with consensus-basis names that verify BLS
-    /// certs are built via [`Committee::new_with_protocol_keys`], and one
-    /// built through this path fails closed at `public_key()` (signer not
-    /// found) rather than panicking at construction.
+    /// Builds the `index_map` (`AuthorityName -> position`) cache, and an
+    /// `expanded_keys` (`AuthorityName -> BLS protocol pubkey`) map that is
+    /// always EMPTY: a name is the Ed25519 consensus key, and no BLS key can
+    /// be derived from it. Committees that verify BLS aggregate certificates
+    /// must be built via [`Committee::new_with_protocol_keys`], which carries
+    /// the map from chain; one built through this path fails closed at
+    /// `public_key()` (signer not found) rather than panicking at
+    /// construction.
     pub fn load_inner(
         voting_rights: &[(AuthorityName, StakeUnit)],
     ) -> (

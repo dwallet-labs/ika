@@ -25,17 +25,17 @@ public struct ValidatorCommissionCap has key, store {
     validator_id: ID,
 }
 
-/// A one time witness for the validator capability.
+/// A witness proving the validator capability was verified.
 public struct VerifiedValidatorCap has drop {
     validator_id: ID,
 }
 
-/// A one time witness for the validator operation capability.
+/// A witness proving the validator operation capability was verified.
 public struct VerifiedValidatorOperationCap has drop {
     validator_id: ID,
 }
 
-/// A one time witness for the validator commission capability.
+/// A witness proving the validator commission capability was verified.
 public struct VerifiedValidatorCommissionCap has drop {
     validator_id: ID,
 }

@@ -41,7 +41,7 @@ const EValidatorAlreadyWithdrawing: u64 = 5;
 const EValidatorIsNotActive: u64 = 6;
 /// Trying to stake zero amount.
 const EZeroStake: u64 = 7;
-/// StakedIka is already in `Withdrawing` state.
+/// StakedIka is not in `Staked` state.
 const ENotStaked: u64 = 8;
 /// Trying to withdraw stake from the incorrect validator.
 const EIncorrectValidatorId: u64 = 9;
