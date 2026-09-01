@@ -1367,12 +1367,16 @@ impl DWalletMPCService {
     ///
     /// # The test park hook
     ///
-    /// `IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND` makes this function return
-    /// without consuming anything once the drain has taken that many rounds
-    /// since the boot replay released it; `IKA_TEST_PARK_MPC_DRAIN_UNPARK_FILE`
-    /// names a path whose appearance releases it, permanently. Both are off
-    /// unless explicitly set, and a process that arms them WARNs on boot and
-    /// again on the park. See [`park_drain_test_hook`] for the whole contract.
+    /// `IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND=<n>` (`n >= 1`) makes this function
+    /// return without consuming anything once the drain has taken that many
+    /// rounds since the boot replay released it;
+    /// `IKA_TEST_PARK_MPC_DRAIN_UNPARK_FILE` names a path whose appearance
+    /// releases it, permanently. `0` and empty are OFF, like every
+    /// neighbouring knob in this binary — see [`park_drain_test_hook`], where
+    /// that choice is the one worth reading before touching this. A process
+    /// that arms the hook WARNs on the drain's first live iteration (when the
+    /// hook is lazily resolved — once per boot, though not at boot itself) and
+    /// again on the park.
     ///
     /// It exists because "the drain is alive but stuck" is not reachable any
     /// other way from outside a real validator process, and the composition it

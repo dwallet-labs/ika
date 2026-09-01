@@ -257,11 +257,16 @@ async fn a_wedged_mpc_drain_holds_the_watchdog_and_recovers_without_a_restart() 
         // once `drain_gone` latches), so blocked seconds STOP accruing, and
         // `evaluate_wedged_drain` requires them to climb. This names its cause
         // as well, so a run that got there is diagnosed rather than merely
-        // failed. The "the MPC drain has exited" line is deliberately NOT
-        // asserted on: the fold can legitimately observe a closed channel at an
-        // epoch boundary, and a whole-run log assertion cannot tell that apart
-        // from the failure.
-        .expect_log_line_absent("recognized_self_as_malicious")
+        // failed. Both literals, because the conviction and the service loop
+        // breaking on it are two different emit sites — and the needles are
+        // the MESSAGE text, not the Rust identifier `recognized_self_as_
+        // malicious`, which no binary ever writes to a log (the anomaly kind
+        // it does write is `service_exit_self_malicious`). The "the MPC drain
+        // has exited" line is deliberately NOT asserted on: the fold can
+        // legitimately observe a closed channel at an epoch boundary, and a
+        // whole-run log assertion cannot tell that apart from the failure.
+        .expect_log_line_absent("node recognized itself as malicious")
+        .expect_log_line_absent("the node has identified itself as malicious")
         .run()
         .await
         .expect(

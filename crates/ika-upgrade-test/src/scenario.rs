@@ -54,11 +54,14 @@ const COMMIT_LIVENESS_WATCHDOG_SECS_ENV_VAR: &str = "IKA_COMMIT_LIVENESS_WATCHDO
 /// The unpark sentinel's name inside the parked validator's own data dir.
 const UNPARK_SENTINEL_FILE_NAME: &str = "unpark-mpc-drain";
 
-/// Park the drain the instant the boot replay releases it. The harness has no
-/// way to predict the cluster's commit rate, so any positive threshold would
-/// be a guess about how long the arming restart takes to become a wedge; `0`
-/// makes the park deterministic.
-const PARK_AFTER_ROUNDS: u64 = 0;
+/// Park the drain on its FIRST live round after the boot replay. The harness
+/// has no way to predict the cluster's commit rate, so any larger threshold
+/// would be a guess about how long the arming restart takes to become a wedge;
+/// `1` makes the park deterministic and is the strongest the knob goes. Not
+/// `0` — the hook reads `0` as OFF, deliberately, because that is the value a
+/// deployment template emits for a disabled numeric knob (see `ika-core`'s
+/// `dwallet_mpc::park_drain_test_hook`).
+const PARK_AFTER_ROUNDS: u64 = 1;
 
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]

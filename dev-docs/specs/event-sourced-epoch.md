@@ -903,8 +903,8 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   `ika-upgrade-test`'s `wedged_drain` scenario
   (`crates/ika-upgrade-test/tests/wedged_drain.rs`). One validator of four is
   restarted with the production binary's park hook armed
-  (`IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND`, read in `ika-core`'s
-  `dwallet_mpc::park_drain_test_hook`): its drain stops consuming while its
+  (`IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND=<n>`, `n >= 1`; `0` is off, read in
+  `ika-core`'s `dwallet_mpc::park_drain_test_hook`): its drain stops consuming while its
   service keeps running, so the round channel fills and the fold parks. The
   run then asserts the whole composition from `/metrics` alone —
   `ika_consensus_fold_blocked_seconds_total` climbing against a flat
