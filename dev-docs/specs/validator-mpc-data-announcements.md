@@ -23,8 +23,9 @@ through the pipeline below.
   `ika_sui_client::ika_validator_transactions::deprecated_on_chain_mpc_data_placeholder`;
   its doc comment carries the full rationale, including why it is not a
   zero-chunk `TableVec` (that reads back as zero bytes and does not
-  decode as `VersionedMPCData`, which would trip the chain-read
-  completeness gate in invariant 3 below for every node).
+  decode as `VersionedMPCData`, which would fail
+  `SuiClient::get_epoch_start_system`'s envelope gate — see below — for
+  every node, not just the registrant).
 - **The contract is unchanged.** No Move function was removed or
   altered; the entry keeps accepting `mpc_data_bytes: TableVec<vector<u8>>`.
   Only what the CLI *sends* changed. Move never indexes into the vector
@@ -54,8 +55,38 @@ through the pipeline below.
   and `previous_mpc_data_bytes` `None` on all 115 mainnet and all 111
   testnet validators, and a current record present on every one.
 - **Validators registered before #2119** still hold real bytes in the
-  field. Post-Part-A nothing reads them, so the two populations are
+  field. After #2121 nothing reads them, so the two populations are
   indistinguishable to the protocol; there is no migration.
+
+### Who used to read the field, and the one gate that remains
+
+Before #2121, FOUR sites decoded the on-chain payload. All four were
+removed there. The list is kept as history, because the failure shapes are
+what the placeholder's encoding is designed around — and because it is the
+inventory to check against if anyone proposes reading the field again:
+
+- `ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` — the boot-time seed
+  identity check. Fail-CLOSED: the node did not start MPC.
+- `ika-core/src/sui_connector/sui_syncer.rs` — the bootstrap-window
+  chain-fallback committee build. Fail-CLOSED, and the blast radius was
+  everyone: one member that would not decode failed the whole build for
+  every node on that path, not just the registrant.
+- `ika-types/src/sui/epoch_start_system.rs` — two sites (the committee
+  build and the persisted-state rebuild). Both fail-SOFT: they logged via
+  `error!` / `report_invariant_violation!` and dropped the member, yielding
+  a PARTIAL class-groups map. The more dangerous shape of the two, because
+  it degraded silently instead of failing the read.
+
+**Add no new readers of this field.**
+
+One gate does remain, and it is deliberately about the ENVELOPE only:
+`SuiClient::get_epoch_start_system` (`ika-sui-client`, untouched by #2121)
+still fails the whole epoch-start read if an active committee member's
+record is missing or does not decode as a `VersionedMPCData`. It never
+looks inside. That is precisely why the placeholder is a well-formed
+two-byte `V1` envelope rather than a zero-chunk `TableVec`: the gate keeps
+catching genuine read defects, and stays blind to the fact that the
+payload is now empty.
 
 ### Rollout precondition: register any time, activate LAST
 
@@ -67,7 +98,7 @@ bootstrap-window fallback.
 
 **Activation is the constraint.** A placeholder validator MUST NOT be
 staked into the ACTIVE committee until every node that builds a committee
-containing it runs a binary with the Part A readers — that means all
+containing it runs a binary that includes #2121 — that means all
 committee validators, plus any fullnode or joiner that can still take the
 bootstrap-window chain-fallback path.
 
@@ -482,29 +513,6 @@ validator latched for the whole epoch. Sourcing rules
    post-freeze assembled committee legitimately omits *excluded*
    members, so a type-level "map covers all members" invariant would
    be wrong.
-
-   Since #2119 this clause describes only the *envelope*. A validator
-   registered after #2119 carries a placeholder in the on-chain record,
-   and the placeholder is deliberately shaped so it still decodes as a
-   `VersionedMPCData` — `get_epoch_start_system`'s "present and
-   decodable" gate therefore still holds for every member, old or new,
-   and a gap there is still a read defect. What the record *contains* is
-   no longer class-groups material for new validators. FOUR readers decode
-   the payload, and Part A covers all of them:
-
-   - `ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` — the boot-time seed
-     identity check (fail-closed: the node does not start MPC);
-   - `ika-core/src/sui_connector/sui_syncer.rs` — the bootstrap-window
-     chain-fallback committee build (fail-closed: the whole build errors
-     for retry);
-   - `ika-types/src/sui/epoch_start_system.rs:196` and `:263` — both
-     fail-SOFT: they log via `error!` / `report_invariant_violation!` and
-     drop the member, yielding a PARTIAL class-groups map. That is the more
-     dangerous shape, since it degrades silently rather than failing the
-     read, and it is why invariant 3 puts the completeness gate at the
-     chain-read boundary instead.
-
-   Add no new readers of this field.
 4. Post-freeze, all mpc-data decisions read the frozen set only.
 
 Code anchors: `crates/ika-types/src/validator_metadata.rs` (types),
