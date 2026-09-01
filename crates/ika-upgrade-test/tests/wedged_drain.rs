@@ -251,11 +251,17 @@ async fn a_wedged_mpc_drain_holds_the_watchdog_and_recovers_without_a_restart() 
         // the observation windows.
         .expect_log_line_absent("no consensus commit for longer than the commit-liveness bound")
         // A drain that stopped because the node convicted itself is the OTHER
-        // way this signature can appear, and it is not the one under test —
-        // there the fold DETACHES instead of parking. Name both so a run that
-        // reproduces the metrics for that reason cannot pass as this one.
+        // way a flat consumed round and a pinned channel can appear, and it is
+        // not the one under test. The metric assertions already exclude it —
+        // there the fold DETACHES (`RoundTransportSender::send` returns early
+        // once `drain_gone` latches), so blocked seconds STOP accruing, and
+        // `evaluate_wedged_drain` requires them to climb. This names its cause
+        // as well, so a run that got there is diagnosed rather than merely
+        // failed. The "the MPC drain has exited" line is deliberately NOT
+        // asserted on: the fold can legitimately observe a closed channel at an
+        // epoch boundary, and a whole-run log assertion cannot tell that apart
+        // from the failure.
         .expect_log_line_absent("recognized_self_as_malicious")
-        .expect_log_line_absent("the MPC drain has exited")
         .run()
         .await
         .expect(
