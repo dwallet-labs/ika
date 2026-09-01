@@ -1316,9 +1316,12 @@ mod rpc_vs_response_error_tests {
     }
 
     /// The `must_get_*` wrappers see only the terminal error, and they fire
-    /// once per 30-second retry round — ~120/hour, above the fleet's
-    /// RPC-error alert threshold on their own. Routing them by error variant
-    /// is what keeps a persistent decoding bug off that alert.
+    /// once per exhausted retry round — the backoff runs
+    /// 0.4+0.8+1.6+3.2+6.4+12.8s and the 7th check exceeds the 30s budget, so
+    /// a round is ~25.2s and a persistent failure yields ~143 wrapper
+    /// increments/hour, above the fleet's RPC-error alert threshold on their
+    /// own. Routing them by error variant is what keeps a persistent decoding
+    /// bug off that alert.
     #[test]
     fn the_retry_wrappers_route_by_error_variant() {
         let metrics = SuiClientMetrics::new_for_testing();
@@ -1355,6 +1358,30 @@ mod rpc_vs_response_error_tests {
                 .with_label_values(&[method, "invalid_committee"])
                 .get(),
             1,
+        );
+    }
+
+    /// The stability guarantee `SuiResponseErrorKind::classify` documents: a
+    /// variant it does not list falls through to `sui_rpc_errors`, i.e. the
+    /// behaviour every site had before the split. Without this, adding an
+    /// `IkaError` variant could quietly move traffic off the counter the
+    /// fleet alert reads, and nothing would say so.
+    #[test]
+    fn an_unlisted_error_variant_stays_on_the_rpc_counter() {
+        let metrics = SuiClientMetrics::new_for_testing();
+        let method = "must_get_system_inner_object";
+
+        metrics.record_read_error(method, &IkaError::Unknown("something new".to_string()));
+
+        assert_eq!(
+            metrics.sui_rpc_errors.with_label_values(&[method]).get(),
+            1,
+            "an unclassified variant keeps its historical counter"
+        );
+        assert_eq!(
+            family_total(&metrics.sui_response_errors),
+            0,
+            "classify() must not guess a response kind it was never taught"
         );
     }
 }

@@ -320,7 +320,11 @@ a page.
   is on chain, and neither implies the other. Split the second by `kind` before
   reading it; `invalid_committee` is the coarse re-count the `must_get_*` retry
   wrappers emit once per 30-second round, so expect it alongside whichever
-  precise kind the read below it recorded.
+  precise kind the read below it recorded. Note the split is one-directional:
+  nothing on the response counter is a transport failure, but `sui_rpc_errors`
+  still absorbs backend-level decode failures that the client collapses into
+  `SuiClientInternalError` — so it is "the uplink is unhealthy" in the common
+  case, not always.
 - The five `ika_epoch_*` memory series report what an epoch's fold is holding
   in RAM, which is where the epoch's derived state lives
   ([`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md)). Read

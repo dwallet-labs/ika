@@ -69,6 +69,19 @@ pub enum SuiResponseErrorKind {
     MissingField,
     /// A `StakingPool`'s on-chain validator metadata (keys, addresses) is
     /// present but does not parse.
+    ///
+    /// **Effectively unreachable against the gRPC backend, and pre-existing.**
+    /// `get_epoch_start_system` calls `get_mpc_data_from_validators_pool`
+    /// before its committee-member loop, and that backend method runs
+    /// `verified_validator_info()` over the same validator set
+    /// (`grpc_backend.rs`), short-circuiting on the first failure. So the
+    /// identical defect surfaces one call earlier, collapsed into
+    /// `SuiClientInternalError`, and is counted on `sui_rpc_errors` — the
+    /// residual described on [`SuiClientMetrics::sui_rpc_errors`]. The
+    /// synthetic `epoch_start_invalid_validator_info` label this replaced was
+    /// dead for exactly the same reason. Kept because the site is real, the
+    /// shadowing is a property of one backend, and a kind that exists costs
+    /// nothing until it fires.
     ValidatorInfoParse,
     /// A frozen committee member's BLS protocol public key does not parse.
     /// Kept apart from [`Self::ValidatorInfoParse`] because the two read from
@@ -103,8 +116,10 @@ impl SuiResponseErrorKind {
     /// Used where the only thing in hand is the terminal error — the
     /// `must_get_*` retry wrappers, which sit above a read that may have
     /// failed for either reason and would otherwise re-count every decoding
-    /// bug as an RPC outage once per retry round (at a 30-second budget that
-    /// is ~120/hour, above the fleet's RPC-error alert threshold on its own).
+    /// bug as an RPC outage once per retry round. The backoff runs
+    /// 0.4+0.8+1.6+3.2+6.4+12.8s and the 7th check exceeds the 30s budget, so
+    /// a round is ~25.2s: ~143 wrapper increments/hour while the failure
+    /// persists, above the fleet's RPC-error alert threshold on its own.
     ///
     /// The catch-all arm resolves to "RPC failure", i.e. the historical
     /// behaviour, so a variant added later keeps landing on the counter it
@@ -129,6 +144,24 @@ pub struct SuiClientMetrics {
     /// Failures where Sui *did* answer and the answer was unusable belong on
     /// [`Self::sui_response_errors`]; mixing the two is what made an outage and
     /// a decoding bug indistinguishable here (ika #2116 follow-up).
+    ///
+    /// # Known residual
+    ///
+    /// The split is clean in one direction only: nothing that reaches
+    /// [`Self::sui_response_errors`] is a transport failure. The reverse does
+    /// not hold. Every `self.inner.*` call in [`crate::SuiClient`] collapses
+    /// its backend error into `IkaError::SuiClientInternalError` before the
+    /// counter sees it, and the backend errors it collapses include genuine
+    /// bad-payload cases — `GrpcSuiClientError::Decode` (a fetched object that
+    /// is not a `MoveObject`, a `decode_chain_mirror` failure, an unparsable
+    /// validator record) and `TransportError::Encoding` (a response with no
+    /// `object.bcs`, an `Object` that will not decode). Those still land here.
+    ///
+    /// Left alone deliberately: fixing it means changing error *variants*
+    /// across the backend rather than moving an increment site, and it would
+    /// shift the calibration of the fleet's rate alert on this counter. Read a
+    /// spike here as "the uplink is unhealthy" — usually true, occasionally
+    /// "the uplink answered with something we could not read".
     pub sui_rpc_errors: IntCounterVec,
     /// Failures of reads whose RPC **succeeded** and whose response could not
     /// be used: BCS decode failures, a committee member missing from a fetched
