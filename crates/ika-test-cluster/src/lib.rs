@@ -47,6 +47,7 @@ use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, Sessi
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::time::Duration;
 use sui_keys::key_derive::generate_new_key;
 use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
 use sui_swarm_config::network_config_builder::ConfigBuilder;
@@ -234,6 +235,19 @@ impl IkaTestCluster {
     /// boundary (the same lifecycle the bootstrap path drives for the
     /// initial set). Caller is responsible for `wait_for_epoch` after.
     pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
+        self.add_joiner_validator_withholding_handoff_anchor(None)
+            .await
+    }
+
+    /// Like [`Self::add_joiner_validator`], but the joiner's
+    /// prepare-then-start barrier reports the epoch's handoff certificate as
+    /// unobtainable for `withhold` after it enters the barrier — so a test can
+    /// prove a node promoted from fullnode to validator declines to start its
+    /// epoch components until its handoff data is actually there.
+    pub async fn add_joiner_validator_withholding_handoff_anchor(
+        &mut self,
+        withhold: Option<Duration>,
+    ) -> Result<JoinerHandle> {
         // The joiner's ports are probed when the initialization config is
         // built here, but only bound by `spawn_new_node` after the whole
         // candidate→stake→add transaction sequence — a multi-second window
@@ -333,6 +347,9 @@ impl IkaTestCluster {
         let mut joiner_builder = ValidatorConfigBuilder::new();
         if let Some(path) = &self.ocs_sui_genesis_path {
             joiner_builder = joiner_builder.with_sui_genesis(path.clone());
+        }
+        if let Some(withhold) = withhold {
+            joiner_builder = joiner_builder.with_withhold_handoff_anchor_for_testing(withhold);
         }
         let validator_config = joiner_builder.build(
             &joiner_init,
@@ -1167,6 +1184,12 @@ pub struct IkaTestClusterBuilder {
     /// default (mirrored validators get the direct validators' peer ids
     /// pinned).
     automatic_mirror_peers: bool,
+    /// TESTS ONLY: every validator's prepare-then-start barrier reports the
+    /// epoch's handoff certificate as unobtainable for this long after it
+    /// enters the barrier. Used to prove that entering epoch 0 at genesis
+    /// skips the barrier entirely — there is no predecessor epoch to be
+    /// handed off from — while a later boundary honours the withhold.
+    withhold_handoff_anchor: Option<Duration>,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1225,6 +1248,7 @@ impl IkaTestClusterBuilder {
             sui_state_direct_count: None,
             peer_only_mirrored: false,
             automatic_mirror_peers: false,
+            withhold_handoff_anchor: None,
         }
     }
 
@@ -1308,6 +1332,14 @@ impl IkaTestClusterBuilder {
     /// equal `num_validators`. Use this to model a gradual upgrade scenario
     /// where some validators support a newer max than others. When unset,
     /// every validator gets `SupportedProtocolVersions::SYSTEM_DEFAULT`.
+    /// TESTS ONLY: hold every validator's handoff anchor back for `withhold`
+    /// after it enters the prepare-then-start barrier. See
+    /// `NodeConfig::withhold_handoff_anchor_for_testing`.
+    pub fn with_withhold_handoff_anchor(mut self, withhold: Duration) -> Self {
+        self.withhold_handoff_anchor = Some(withhold);
+        self
+    }
+
     pub fn with_per_validator_supported_protocol_versions(
         mut self,
         per_validator_versions: Vec<SupportedProtocolVersions>,
@@ -1552,6 +1584,9 @@ impl IkaTestClusterBuilder {
                     .with_supported_protocol_versions(supported_versions);
                 if let Some(path) = &ocs_sui_genesis_path {
                     builder = builder.with_sui_genesis(path.clone());
+                }
+                if let Some(withhold) = self.withhold_handoff_anchor {
+                    builder = builder.with_withhold_handoff_anchor_for_testing(withhold);
                 }
                 // Validators at index >= direct_count read through the relay.
                 if let Some(direct_count) = direct_count

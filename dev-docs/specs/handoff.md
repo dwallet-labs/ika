@@ -258,26 +258,87 @@ next epoch inherits.
    blindly — defense against local DB tampering/corruption), then
    re-installs certified outputs (idempotent: locally-present digests
    skip the fetch).
-2. **Prepare-then-start barrier (reconfiguration seam)**: before
-   entering epoch E+1, the validator blocks until the FULL verified
-   handoff data for epoch E is local: the certificate (fetched and
-   verified via the same verifier, anchored once per barrier entry) and
-   every certified network-key output blob — reconfiguration outputs
-   AND the canonical DKG outputs. Holding the certificate
-   does NOT imply holding the outputs (a lagging validator can adopt
-   the certificate from a buffered signature quorum without ever
-   computing the outputs), so the barrier installs missing outputs by
-   digest. This is what prevents stale-share `InvalidParameters`
-   signing failures after the boundary. The DKG items are part of the
-   readiness predicate deliberately: a local mirror whose digest
-   contradicts the certificate (the hydration-clobber shape below) can
-   only be repaired here — the installer fetches the cert-pinned bytes
-   from peers and re-caches them, and it only runs while the gate reads
-   not-ready. When the gate skipped DKG items, a poisoned mirror passed
-   the barrier instantly every epoch and stayed wedged permanently. The
-   DKG digests are read from the NEW epoch store (empty per-epoch table
-   → perpetual mirror), never the outgoing store, whose per-epoch table
+2. **Prepare-then-start barrier (every path that starts a validator's
+   epoch components)**: before entering epoch E+1, the validator blocks
+   until the FULL verified handoff data for epoch E is local: the
+   certificate (fetched and verified via the same verifier, anchored once
+   per barrier entry) and every certified network-key output blob —
+   reconfiguration outputs AND the canonical DKG outputs. Holding the
+   certificate does NOT imply holding the outputs (a lagging validator
+   can adopt the certificate from a buffered signature quorum without
+   ever computing the outputs; a joiner or a freshly-booted process may
+   hold neither), so the barrier installs missing outputs by digest.
+   This is what prevents stale-share `InvalidParameters` signing failures
+   after the boundary. The DKG items are part of the readiness predicate
+   deliberately: a local mirror whose digest contradicts the certificate
+   (the hydration-clobber shape below) can only be repaired here — the
+   installer fetches the cert-pinned bytes from peers and re-caches them,
+   and it only runs while the gate reads not-ready. When the gate skipped
+   DKG items, a poisoned mirror passed the barrier instantly every epoch
+   and stayed wedged permanently.
+
+   THE THREE PATHS. Everything that starts a validator's epoch-specific
+   components blocks here first, and nothing else does:
+   - the CONTINUING validator at the reconfiguration seam, before it
+     restarts consensus and the MPC service for the new epoch;
+   - the FULLNODE PROMOTED into the committee at a boundary, before its
+     validator components are constructed. This is the node with the
+     weakest starting position — it computed none of the epoch's outputs,
+     so it typically enters the barrier holding nothing;
+   - the process BOOTING (or rebooting) straight into an epoch, before
+     the same construction. Consensus startup is spawned from inside
+     that construction, so the barrier is what keeps a restarting
+     validator out of consensus until its key material is verified and
+     local.
+
+   INPUTS (all four, on every path). The anchor epoch — the epoch being
+   entered, minus one. That epoch's committee, which signed the
+   certificate and whose members serve it. Those members' peer ids. And
+   the epoch store for the epoch being ENTERED, which is where both
+   digest sources are read and where fetched outputs are cached. On the
+   two reconfiguration paths the anchor epoch's committee and peers come
+   straight from the outgoing epoch store. A booting process has no store
+   for the anchor epoch, so it resolves that committee from the local
+   committee store, falling back to `validator_set.previous_committee` on
+   chain — the joiner bootstrap's own resolution. A committee that cannot
+   be resolved leaves the barrier not-ready and it retries; that is
+   absence, never a licence to start unanchored.
+
+   Both digest sources are read from the store for the epoch being
+   ENTERED, the only store a booting process has. That costs nothing on
+   the reconfiguration paths: the reconfiguration digests live in the
+   epoch-keyed PERPETUAL slice (keyed by the reconfiguration session's
+   own epoch), which is process-wide and reads identically through any
+   epoch store. For the DKG digests it is load-bearing: read through the
+   entering store, its per-epoch table is empty and the merged view is
+   the perpetual canonical mirror — the value the installer repairs. Read
+   through an outgoing store, that store's per-epoch table wins, and it
    is exactly what the end-of-epoch hydration may have poisoned.
+
+   SKIPS. A node LEAVING the committee does not prepare — it will never
+   use the data. Entering epoch 0 at genesis is skipped: no predecessor
+   epoch exists to be handed off from (the same `epoch >= 1` test the
+   joiner bootstrap uses). Nothing else is exempt.
+
+   FAIL-CLOSED. A contradicted anchor — peers served certificates and
+   none verified, or a locally persisted one that no longer verifies —
+   halts the node on every path, and the caller does not start the
+   epoch's components. On the boot path the shutdown-signal subscriber is
+   not installed until node startup returns, so the barrier also reports
+   the halt to its caller, which fails the startup; the node runner exits
+   the process on a start failure, so the outcome is the same halt.
+
+   The block is indefinite by design and that has not changed — but it
+   now applies to more nodes: an epoch whose certificate was minted on no
+   validator (see
+   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`) wedges
+   a restarting or joining validator too, not only a continuing one. A
+   validator visibly not signing remains the accepted trade against one
+   signing with the wrong shares. The operator-facing signals are the same
+   on all three paths — the `handoff_prepare_waiting` gauge, the
+   `handoff_prepare_retries_total` counter and the every-tenth-retry
+   warn — and they work on the boot path because the metrics server
+   starts before node startup runs.
 3. **Network-key adoption (steady state)**: each epoch, locally-held
    network-key outputs are adopted into the instantiation set only if
    their digests match the prior epoch's certificate
@@ -328,12 +389,17 @@ next epoch inherits.
      (joiner / cold start): an overlay entry with NO blobs at all for a
      key DKG'd in a PRIOR epoch, on a validator that holds nothing for
      it. The producer cache can never fill (this validator never
-     computed the key's outputs) and the cert-pinned blob install
-     (barrier) covers only continuing validators today, so adoption
-     flags the key for the syncer's chain-sourced read instead of
-     skipping it forever. (Until issue #1751 removed the migration
-     chain-read fallback, that fallback covered this shape implicitly;
-     the `v140_churn` scenario's mirrored joiner caught the regression.)
+     computed the key's outputs), and the cert-pinned blob install
+     (barrier) now runs on every start path but still cannot reach THIS
+     key: the certificate names keys by `NetworkKeyId`, the caches are
+     keyed by `ObjectID`, and a key this process has never instantiated
+     that is not one of the compiled-in deployed keys has no translation
+     between the two — the barrier passes it rather than deadlocking on
+     it (see the barrier section). So adoption flags the key for the
+     syncer's chain-sourced read instead of skipping it forever. (Until
+     issue #1751 removed the migration chain-read fallback, that fallback
+     covered this shape implicitly; the `v140_churn` scenario's mirrored
+     joiner caught the regression.)
      A key DKG'd THIS epoch is excluded — the healthy fresh-key
      bootstrap window. Second (mid-epoch restart, issue #1852). Once this
      epoch's reconfiguration completes, the off-chain copy of a key's
@@ -444,20 +510,22 @@ next epoch inherits.
    empty (shrunken) carry-forward map that would diverge this validator's
    frozen set from its peers'. An empty map is returned only for the
    chain-true no-cert epoch (genesis; historically also the v3→v4
-   boundary epochs). CAVEAT: the committee-uniformity of that empty-map case rests
-   on invariant 5 holding on EVERY consensus-start path; today the
-   barrier is wired only into the continuing-validator reconfigure path
-   (joiner-promotion and cold startup are pending — see
-   `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`), so
-   a joiner racing its bootstrap fetch can still freeze absent-cert.
-   The read-error flavor of the fork is closed; the absent-cert flavor
-   closes with the barrier wiring.
+   boundary epochs). The committee-uniformity of that empty-map case rests
+   on invariant 5 holding on EVERY consensus-start path, which it now does:
+   the barrier is wired into all three, so a validator cannot reach the
+   freeze without the prior epoch's certificate — a joiner can no longer
+   race its bootstrap fetch and freeze absent-cert. Both flavors of that
+   fork (read error and absent cert) are closed.
 5. The barrier guarantee: no validator participates in epoch E+1
    sessions without locally holding the verified epoch-E handoff
-   artifacts. Currently enforced on the continuing-validator
-   reconfigure path; extending it to the fullnode→validator promotion
-   and cold-startup consensus-start paths is planned work (see the
-   plan referenced in invariant 4).
+   artifacts. Enforced on all three paths that start a validator's
+   epoch-specific components — the continuing-validator reconfigure
+   seam, fullnode→validator promotion, and process startup into an
+   epoch — with two carve-outs, both stated in the barrier section:
+   entering epoch 0 at genesis (no predecessor epoch to be handed off
+   from), and a certified key with no local `NetworkKeyId → ObjectID`
+   translation, which the barrier cannot check or install and which
+   adoption's own cert-digest gate covers instead.
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),

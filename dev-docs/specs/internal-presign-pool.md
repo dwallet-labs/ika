@@ -103,10 +103,17 @@ measured three independent mechanisms in the current code:
 - **the epoch-start fill window.** Every epoch's manager starts with an empty
   adopted-key set and answers "no signing key" until its first
   blob-complete overlay entry lands. Any stagger between validators — at
-  least one 5s syncer tick at every epoch boundary, longer for a restarting
-  or joining validator — leaves one validator holding a key while a peer
-  holds none. This one needs only a single network key to occur, so it
-  applies to mainnet and testnet as they run today;
+  least one 5s syncer tick at every epoch boundary — leaves one validator
+  holding a key while a peer holds none. This one needs only a single
+  network key to occur, so it applies to mainnet and testnet as they run
+  today. A restarting or joining validator used to lag arbitrarily further,
+  because nothing held it back from starting its epoch components before
+  its handoff data arrived; the prepare-then-start barrier now runs on those
+  paths too (`handoff.md`), so it enters the epoch with the certified key
+  material already local and only the same one-tick overlay stagger remains.
+  What the barrier does NOT bound is a certified key it cannot translate to
+  a local `ObjectID` — the stranded-key shape, which still fills from the
+  syncer's chain read after start;
 - **per-key overlay incompleteness.** The overlay is assembled per validator
   from chain metadata plus locally cached blobs. An entry whose blobs are
   still empty is skipped at adoption, and the recovery path is a chain read
