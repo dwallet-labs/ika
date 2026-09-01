@@ -130,11 +130,11 @@ impl ThroughputProfileRanges {
         }
 
         warn!(
-            "Could not resolve throughput profile for throughput {} - we shouldn't end up here. Fallback to lowest profile as default.",
+            "Could not resolve throughput profile for throughput {} - we shouldn't end up here. Fallback to highest profile as default.",
             current_throughput
         );
 
-        // If not found, then we should return the lowest possible profile as default to stay on safe side.
+        // If not found, then we should return the highest possible profile as default to stay on safe side.
         self.highest_profile()
     }
 }

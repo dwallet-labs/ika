@@ -188,7 +188,7 @@ covers the change; escalate to the full suite before merge):
 
 - `dwallet_mpc/**` → `cargo test --release -p ika-core <nearest integration filter>`
 - Epoch boundaries / reconfiguration / `sui_connector` → cluster suite on CI
-- `sdk/typescript/**` → `./scripts/run-integration-tests-sequential.sh --filter <file-stem>`
+- `sdk/typescript/**` → `./sdk/typescript/scripts/run-integration-tests-sequential.sh --filter <file-stem>`
 - `contracts/**` → `sui move build` per touched package
 - `ika-protocol-config` → `cargo test -p ika-protocol-config` (snapshot tests)
 
@@ -265,7 +265,7 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   `dev-docs/reference/sui-upstream.md`.
 - **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.77.2`;
   sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
-  PR — root `Cargo.toml` (~90 tag pins), excluded wasm workspace locks,
+  PR — root `Cargo.toml` (~45 tag pins), excluded wasm workspace locks,
   the sui-binary downloads in the TS CI workflows, this file, and every
   developer's local `sui` binary (a mismatched localnet binary completes
   DKG but silently stalls reconfiguration). Checklist:

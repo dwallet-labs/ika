@@ -170,7 +170,18 @@ impl CommitteeStore {
     /// Genesis bootstrap: install the supplied `committee[0]`
     /// directly (it has no preceding summary to derive from). The ratchet
     /// picks up `committee[1]` once the chain's first end-of-epoch summary
-    /// appears upstream. Localnet/test only.
+    /// appears upstream.
+    ///
+    /// This is the normal first-boot path on *every* chain, mainnet and
+    /// testnet included — not a test-only one. How much the installed
+    /// committee is worth is decided by the caller, which loads and verifies
+    /// the blob: on Mainnet/Testnet the blob's genesis-checkpoint digest is
+    /// checked against the binary's compiled-in chain identifier and
+    /// `committee[0]` is re-bound to that digest, so the committee is
+    /// digest-anchored. On Devnet/Custom (localnet, private nets) there is no
+    /// compiled-in root to check against, so the blob is only verified for
+    /// internal consistency and the trust sits entirely with whoever supplied
+    /// it. The caller logs which of the two applied.
     fn install_genesis(&self, committee: SuiCommittee) -> IkaResult<()> {
         let epoch = committee.epoch;
         self.tables.install_sui_committee(&committee)?;
@@ -178,7 +189,7 @@ impl CommitteeStore {
         self.cache_committee(epoch, committee);
         info!(
             head_epoch = epoch,
-            "installed UNSAFE genesis committee (no digest anchor; localnet/test path)"
+            "installed genesis-blob committee[0] as the OCS trust root"
         );
         Ok(())
     }

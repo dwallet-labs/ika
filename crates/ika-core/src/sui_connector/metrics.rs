@@ -10,11 +10,6 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct SuiConnectorMetrics {
-    /// Latest Sui checkpoint synced per module. Registered but no longer
-    /// written: the event-listening task that fed it was removed when the OCS
-    /// `BagEventPump` replaced it, and nothing writes it today.
-    pub last_synced_sui_checkpoints: IntGaugeVec,
-
     pub gas_coin_balance: IntGauge,
 
     /// Sequence number of the next dwallet checkpoint to write to Sui.
@@ -180,14 +175,6 @@ impl SuiConnectorMetrics {
             registry
         };
         let this = Self {
-            last_synced_sui_checkpoints: register_int_gauge_vec_with_registry!(
-                "ika_sui_connector_last_synced_sui_checkpoints",
-                "The latest sui checkpoints synced for each module",
-                &["module_name"],
-                registry,
-            )
-            .unwrap(),
-
             gas_coin_balance: register_int_gauge_with_registry!(
                 "ika_sui_connector_gas_coin_balance",
                 "Current balance of gas coin, in mist",
