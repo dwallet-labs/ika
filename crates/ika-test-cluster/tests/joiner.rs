@@ -26,7 +26,7 @@
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
 use ika_swarm_config::validator_initialization_config::OnChainMpcDataShape;
-use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, wait_for_node_epoch};
+use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, JoinerHandle, wait_for_node_epoch};
 use ika_types::crypto::AuthorityName;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -92,10 +92,13 @@ async fn test_joiner_added_at_epoch_2() {
 ///      the whole of what the chain committee contributes to MPC since
 ///      #2119: a `Committee` supplies the reconfiguration public input
 ///      with an access structure (weights + thresholds) and nothing
-///      else. The committee's `class_groups_public_keys_and_proofs` map
-///      is empty on every production path now — the deprecated on-chain
-///      `mpc_data_bytes` field it used to decode is not read anywhere —
-///      so asserting on it would measure nothing.
+///      else. THIS committee's `class_groups_public_keys_and_proofs`
+///      map is empty — it is a CHAIN-derived build, and the deprecated
+///      on-chain `mpc_data_bytes` it used to decode is not read
+///      anywhere — so asserting on it would measure nothing. (The
+///      off-chain assembly in `sui_syncer::new_committee` still fills
+///      that map on the next-epoch committee it builds; nothing reads
+///      it there either.)
 ///
 ///      Historically this half of the test asserted exactly that map,
 ///      and fault injection while fixing the issue-#1772 flake showed
@@ -188,21 +191,7 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     // seat comes from the active-validator set, not from the deprecated
     // on-chain `mpc_data_bytes` field, which nothing decodes any more
     // (#2119).
-    let joiner_in_voting_rights = joiner.node_handle.with(|node| {
-        let epoch_store = node.state().epoch_store_for_testing();
-        let committee = epoch_store.committee();
-        assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
-        committee
-            .voting_rights
-            .iter()
-            .any(|(name, stake)| *name == joiner_name && *stake > 0)
-    });
-    assert!(
-        joiner_in_voting_rights,
-        "joiner {joiner_name:?} is not seated in the epoch-2 committee its own node \
-         built — registration landed after the mid-epoch committee selection, or the \
-         active-validator read is broken"
-    );
+    assert_joiner_seated_with_grace(&mut cluster, &joiner, joiner_name, "real-key joiner").await;
 
     // The seat check above cannot see a freeze miss (see the test doc)
     // — the off-chain frozen set's durable record is the handoff cert's
@@ -359,20 +348,13 @@ async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
 
     // 3. It is SEATED: the chain committee carries its name and stake,
     //    which is all a `Committee` contributes to the reconfiguration MPC.
-    let seated = joiner.node_handle.with(|node| {
-        let epoch_store = node.state().epoch_store_for_testing();
-        let committee = epoch_store.committee();
-        assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
-        committee
-            .voting_rights
-            .iter()
-            .any(|(name, stake)| *name == joiner_name && *stake > 0)
-    });
-    assert!(
-        seated,
-        "joiner {joiner_name:?} registered with {shape:?} is not seated in the \
-         epoch-2 committee"
-    );
+    assert_joiner_seated_with_grace(
+        &mut cluster,
+        &joiner,
+        joiner_name,
+        &format!("registered with {shape:?}"),
+    )
+    .await;
 
     // 4. It JOINED MPC: its real key material reached the consensus-agreed
     //    frozen set through the off-chain announcement pipeline, witnessed
@@ -435,6 +417,72 @@ async fn placeholder_registration_joiner_joins_mpc(shape: OnChainMpcDataShape) {
         ika_types::metrics::invariant_violation_count("mpc_data_frozen_digest_seed_mismatch"),
         Some(0),
         "the frozen mpc_data digest disagreed with some validator's running root seed"
+    );
+}
+
+/// Assert the joiner is SEATED in the committee its own node built, with
+/// the bounded grace issue #1772 established is the only sound shape here.
+///
+/// Whether a mid-epoch registration makes epoch 2 at all is a per-run race:
+/// `request_add_validator` has to land before `process_mid_epoch` selects
+/// `V_{e+1}`, and under CI contention it can miss, in which case the joiner
+/// legitimately activates at epoch 3 instead. A strict epoch-2 assertion is
+/// unsound at any epoch length — it flaked all three joiner tests on their
+/// first attempt when this was written strictly.
+///
+/// So: seated at epoch 2 (normal), or seated at epoch 3 (registration
+/// landed after the mid-epoch selection). Absent at epoch 3 too means the
+/// joiner never activated — a registration/lifecycle bug, not timing.
+async fn assert_joiner_seated_with_grace(
+    cluster: &mut IkaTestCluster,
+    joiner: &JoinerHandle,
+    joiner_name: AuthorityName,
+    context: &str,
+) {
+    fn seated_at(joiner: &JoinerHandle, name: AuthorityName, expected_epoch: u64) -> bool {
+        joiner.node_handle.with(|node| {
+            let epoch_store = node.state().epoch_store_for_testing();
+            let committee = epoch_store.committee();
+            assert_eq!(
+                committee.epoch(),
+                expected_epoch,
+                "joiner node should be at epoch {expected_epoch}"
+            );
+            committee
+                .voting_rights
+                .iter()
+                .any(|(n, stake)| *n == name && *stake > 0)
+        })
+    }
+
+    if seated_at(joiner, joiner_name, 2) {
+        return;
+    }
+    tracing::warn!(
+        ?joiner_name,
+        context,
+        "joiner not seated in the epoch-2 committee — registration landed after the \
+         mid-epoch committee selection, so it activates at epoch 3 (tolerated once); \
+         asserting the epoch-3 seat"
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        cluster.wait_for_epoch(3),
+    )
+    .await
+    .expect("cluster did not reach epoch 3 within 300s during the joiner seat grace window");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for_node_epoch(&joiner.node_handle, 3),
+    )
+    .await
+    .expect("joiner node did not reach epoch 3 within 60s of the cluster during the grace window");
+    assert!(
+        seated_at(joiner, joiner_name, 3),
+        "joiner {joiner_name:?} ({context}) was absent from the epoch-2 committee \
+         (tolerated once — registration can miss the mid-epoch selection) and is STILL \
+         absent at epoch 3: it never activated, which is a registration/lifecycle bug, \
+         not a timing race"
     );
 }
 

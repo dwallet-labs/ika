@@ -12,6 +12,7 @@
 //! rows behind it.
 
 use crate::SuiDataReceivers;
+use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStoreTrait, NoaPresignDemandResolution, PresignAssignmentOutcome,
     PresignDemand,
@@ -71,7 +72,6 @@ use ika_types::noa_checkpoint::{
     CounterpartyChainKind, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
     SuiChainObservation,
 };
-use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
@@ -248,6 +248,93 @@ pub struct DWalletMPCService {
     dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>>,
     /// System checkpoint handler, driven directly by the service.
     system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
+}
+
+/// Verdict of the BOOT-time seed-identity check (#2119) — the FAIL-CLOSED
+/// tier of the guarantee that moved off the deprecated on-chain
+/// `mpc_data_bytes` field.
+///
+/// The question is the one reader 1 asked ("is the seed I am running the
+/// seed the network expects my shares to be encrypted to?"), asked against
+/// the record that actually answers it for THIS epoch: the E-1 -> E handoff
+/// certificate's `ValidatorMpcData` item for this authority. That cert
+/// certifies epoch E's frozen mpc_data set — exactly the keys peers dealt
+/// this epoch's shares to — so a seed rotation announced before E's freeze
+/// is legitimately reflected in it, and a mismatch means this node cannot
+/// decrypt E's shares at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BootSeedIdentity {
+    /// No certified digest for this authority: the genesis epoch, a true
+    /// joiner's first epoch, or the E-1 cert not yet installed at boot.
+    /// Nothing to compare against — defer to the observe-only tier
+    /// (`MpcDataAnnouncementSender::check_seed_identity`) rather than
+    /// blocking boot on cert absence.
+    NoCertifiedDigest,
+    /// The certified digest is the blob this root seed derives.
+    Matches,
+    /// The certificate names a different blob for this authority than the
+    /// running seed derives. Fail closed.
+    Mismatch {
+        certified: [u8; 32],
+        local: [u8; 32],
+    },
+}
+
+/// Pure decision for [`BootSeedIdentity`], split out so the fail-closed
+/// branch is unit-testable without a node.
+pub(crate) fn decide_boot_seed_identity(
+    local_digest: [u8; 32],
+    certified_digest_for_self: Option<[u8; 32]>,
+) -> BootSeedIdentity {
+    match certified_digest_for_self {
+        None => BootSeedIdentity::NoCertifiedDigest,
+        Some(certified) if certified == local_digest => BootSeedIdentity::Matches,
+        Some(certified) => BootSeedIdentity::Mismatch {
+            certified,
+            local: local_digest,
+        },
+    }
+}
+
+/// Turn a [`BootSeedIdentity`] into the boot outcome. `Mismatch` refuses to
+/// start MPC, the same way the removed on-chain check did and through the
+/// same error path — the caller (`ika-node`) treats an `Err` here as fatal.
+pub(crate) fn enforce_boot_seed_identity(
+    verdict: BootSeedIdentity,
+    authority: &AuthorityName,
+    epoch: EpochId,
+) -> DwalletMPCResult<()> {
+    match verdict {
+        BootSeedIdentity::Matches => {
+            debug!(
+                ?authority,
+                epoch, "root seed matches the mpc_data digest certified for this epoch"
+            );
+            Ok(())
+        }
+        BootSeedIdentity::NoCertifiedDigest => {
+            info!(
+                ?authority,
+                epoch,
+                "no certified mpc_data digest for this validator in the prior epoch's \
+                 handoff certificate (genesis, a first-epoch joiner, or the cert not yet \
+                 installed) — starting MPC and leaving seed identity to the per-tick \
+                 off-chain check"
+            );
+            Ok(())
+        }
+        BootSeedIdentity::Mismatch { certified, local } => {
+            Err(DwalletMPCError::MPCManagerError(format!(
+                "root seed mismatch: the prior epoch's handoff certificate certifies \
+                 mpc_data blob {} for this validator, but the configured root seed \
+                 derives {}. Peers dealt this epoch's shares to the certified key, which \
+                 this node does not hold — refusing to start MPC. Restore the root seed \
+                 this validator announced with.",
+                hex::encode(certified),
+                hex::encode(local),
+            )))
+        }
+    }
 }
 
 impl DWalletMPCService {
@@ -3175,10 +3262,32 @@ impl DWalletMPCService {
         slices
     }
 
+    /// Boot gate for a validator's own key material.
+    ///
+    /// Two tiers of seed-identity enforcement since #2119, replacing the
+    /// single on-chain check that used to live here:
+    ///
+    ///  1. **Fail-closed, here at boot**: the running root seed's derived
+    ///     mpc_data blob digest must equal the digest the E-1 -> E handoff
+    ///     certificate certifies for this authority. That cert IS epoch E's
+    ///     frozen set, so this runs BEFORE any share is used and refuses to
+    ///     start MPC on a mismatch. Skipped — observe-only — when no
+    ///     certified digest exists for this authority (genesis, a true
+    ///     joiner's first epoch, or the cert not yet installed at boot):
+    ///     cert absence is not evidence of a wrong seed, and blocking boot
+    ///     on it would wedge exactly the validators that legitimately have
+    ///     no cert yet.
+    ///  2. **Observe-only, every tick**:
+    ///     `MpcDataAnnouncementSender::check_seed_identity` compares the same
+    ///     local digest against the live frozen set and the announcement
+    ///     row, catching a seed swapped mid-epoch after this gate ran, and
+    ///     distinguishing a legitimate pre-freeze rotation from a fatal
+    ///     post-freeze divergence.
     pub fn verify_validator_keys(
-        epoch_start_system: &EpochStartSystem,
+        epoch_store: &AuthorityPerEpochStore,
         config: &NodeConfig,
     ) -> DwalletMPCResult<()> {
+        let epoch_start_system = epoch_store.epoch_start_state();
         // Self-lookup in the raw validator records, whose
         // `EpochStartValidatorInfoTrait::authority_name` is the BLS protocol
         // key — a different name space from the committee identity, which is
@@ -3206,19 +3315,48 @@ impl DWalletMPCService {
         }
 
         // A root seed must be configured — every MPC key this validator holds
-        // is derived from it. The seed-identity guarantee that used to be
-        // enforced here against the on-chain `mpc_data_bytes` field now lives
-        // on the off-chain announcement path; see the note below.
-        config
+        // is derived from it.
+        let root_seed = config
             .root_seed_key_pair
             .as_ref()
-            .ok_or(DwalletMPCError::MissingRootSeed)?;
+            .ok_or(DwalletMPCError::MissingRootSeed)?
+            .root_seed()
+            .clone();
+
+        // Tier 1: fail closed against the epoch's CERTIFIED mpc_data digest.
+        // Derive the same blob the announcement sender would (identical
+        // canonical encoding, so identical digest) and compare.
+        let local_digest = ika_network::mpc_artifacts::mpc_data_blob_hash(
+            &crate::validator_metadata::derive_mpc_data_blob(&root_seed)
+                .map_err(DwalletMPCError::IkaError)?,
+        );
+        // The certificate names validators by their CONSENSUS key, which is
+        // `epoch_store.name` — not the BLS `protocol_pubkey_bytes` used for
+        // the raw-record self-lookup above. A read failure is treated as
+        // "no certified digest": it is a local storage fault, not evidence
+        // about which seed this node is running, and the tick-level check
+        // still covers the epoch.
+        let certified_digest_for_self = match epoch_store.prior_epoch_mpc_data_digests() {
+            Ok(digests) => digests.get(&epoch_store.name).copied(),
+            Err(err) => {
+                warn!(
+                    error = ?err,
+                    "could not read the prior epoch's handoff certificate for the boot \
+                     seed-identity check; continuing on the observe-only tier"
+                );
+                None
+            }
+        };
+        enforce_boot_seed_identity(
+            decide_boot_seed_identity(local_digest, certified_digest_for_self),
+            &epoch_store.name,
+            epoch_store.epoch(),
+        )?;
 
         // NOTE (#2119): the on-chain `mpc_data_bytes` field is DEPRECATED and
         // is no longer read here. It used to be decoded as a bare
         // `ClassGroupsEncryptionKeyAndProof` and compared against the locally
-        // derived key, to assert "the seed I run is the seed I registered
-        // with". Two things make that check wrong rather than merely
+        // derived key. Two things made that check wrong rather than merely
         // redundant:
         //
         //  1. It is fail-closed against a field new validators will register
@@ -3229,20 +3367,74 @@ impl DWalletMPCService {
         //     derived public data to Sui (see
         //     dev-docs/specs/validator-mpc-data-announcements.md, "CLI
         //     updates"). So after a supported rotation the on-chain field is
-        //     stale by construction, and this check would refuse to start MPC
-        //     on a correctly rotated validator.
+        //     stale by construction, and the old check would have refused to
+        //     start MPC on a correctly rotated validator.
         //
-        // The guarantee is re-homed onto the material that actually decides
-        // what peers encrypt to: the per-epoch mpc_data announcement/freeze
-        // record. `MpcDataAnnouncementSender::check_seed_identity`
-        // (crates/ika-core/src/epoch_tasks/mpc_data_announcement_sender.rs)
-        // compares this validator's locally derived blob hash against the
-        // FROZEN digest the network agreed for it, every tick, and reports an
-        // invariant violation on mismatch. That is the point at which running
-        // the wrong seed becomes harmful (peers deal shares to the frozen
-        // key), and unlike the old check it also catches the case the on-chain
-        // field could never see: a seed swapped after the freeze, or a
+        // What replaces it is the two-tier scheme in this function's doc
+        // comment: the fail-closed cert comparison above keeps the ENFORCEMENT
+        // the old check had (refuse to start MPC, before any share is used),
+        // and the per-tick off-chain check extends the COVERAGE to cases the
+        // on-chain field could never see — a seed swapped after boot, and a
         // carry-forward that pinned the previous seed's blob.
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod boot_seed_identity_tests {
+    use super::*;
+
+    fn digest(n: u8) -> [u8; 32] {
+        [n; 32]
+    }
+
+    /// #2119 tier 1: the boot check must FAIL CLOSED on a certified/local
+    /// divergence — that is the enforcement the removed on-chain check had,
+    /// and the reason this runs at boot rather than only per-tick: the E-1
+    /// -> E handoff cert certifies epoch E's frozen set, so a mismatch is
+    /// known before any share of E is used.
+    #[test]
+    fn boot_seed_identity_fails_closed_only_on_a_certified_mismatch() {
+        let authority = AuthorityName([7; 32]);
+
+        // No certified digest: genesis, a true joiner's first epoch, or the
+        // cert not yet installed. Cert ABSENCE is not evidence of a wrong
+        // seed, and blocking boot on it would wedge exactly the validators
+        // that legitimately have none yet.
+        let verdict = decide_boot_seed_identity(digest(1), None);
+        assert_eq!(verdict, BootSeedIdentity::NoCertifiedDigest);
+        assert!(enforce_boot_seed_identity(verdict, &authority, 4).is_ok());
+
+        // Certified digest is our blob — the healthy steady state, and also
+        // what a rotation announced BEFORE the epoch's freeze looks like:
+        // the cert carries the new digest, so the rotation is legitimate.
+        let verdict = decide_boot_seed_identity(digest(1), Some(digest(1)));
+        assert_eq!(verdict, BootSeedIdentity::Matches);
+        assert!(enforce_boot_seed_identity(verdict, &authority, 4).is_ok());
+
+        // Divergence: peers dealt this epoch's shares to the certified key,
+        // which this node cannot decrypt. Refuse to start MPC.
+        let verdict = decide_boot_seed_identity(digest(2), Some(digest(1)));
+        assert_eq!(
+            verdict,
+            BootSeedIdentity::Mismatch {
+                certified: digest(1),
+                local: digest(2),
+            }
+        );
+        let err = enforce_boot_seed_identity(verdict, &authority, 4)
+            .expect_err("a certified seed mismatch must refuse to start MPC");
+        assert!(
+            matches!(err, DwalletMPCError::MPCManagerError(_)),
+            "must fail through the same error path the removed on-chain check used, \
+             which the node treats as fatal; got {err:?}"
+        );
+        // The operator has to be able to act on this: both digests named.
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains(&hex::encode(digest(1)))
+                && rendered.contains(&hex::encode(digest(2))),
+            "the error must name both the certified and the derived digest: {rendered}"
+        );
     }
 }

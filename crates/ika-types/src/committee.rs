@@ -74,13 +74,20 @@ pub struct Committee {
     pub voting_rights: Vec<(AuthorityName, StakeUnit)>,
     /// Per-validator class-groups CRT-decryption-key encryption key + proof.
     ///
-    /// LEGACY / always empty on every production path since #2119.
+    /// LEGACY. Since #2119 no CHAIN-DERIVED path populates this map:
+    /// `EpochStartSystem::get_ika_committee` and the sui_syncer's
+    /// bootstrap-window build both leave it empty, because the on-chain
+    /// `mpc_data_bytes` field they used to decode is deprecated and a
+    /// validator may register with a placeholder. The one remaining writer
+    /// is the OFF-CHAIN assembly path in `sui_syncer::new_committee`, which
+    /// still passes the assembled `bundles.class_groups` here when building
+    /// the next-epoch committee.
     ///
-    /// ALL validator MPC material — class-groups included, alongside the three
-    /// per-curve PVSS HPKE keys and the Fast Schnorr (VSS) HPKE key — travels
-    /// off-chain via validator announcements and is delivered to the MPC
-    /// manager per-epoch (see `ValidatorMpcKeysByPartyId` and the off-chain key
-    /// channels). Nothing reads this map: the reconfiguration public input
+    /// Nothing READS it either way. ALL validator MPC material —
+    /// class-groups included, alongside the three per-curve PVSS HPKE keys
+    /// and the Fast Schnorr (VSS) HPKE key — reaches the MPC manager from
+    /// the off-chain bundles directly (see `ValidatorMpcKeysByPartyId` and
+    /// the off-chain key channels), and the reconfiguration public input
     /// takes only the access structure (voting weights + thresholds) from a
     /// `Committee`.
     ///

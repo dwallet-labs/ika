@@ -632,6 +632,22 @@ impl MpcDataAnnouncementSender {
                 .filter(|announcement| announcement.epoch == self.epoch_id)
                 .map(|announcement| announcement.blob_hash),
         );
+        self.report_seed_identity(verdict, local_digest, frozen.get(&self.authority).copied());
+    }
+
+    /// Reporting half of [`Self::check_seed_identity`], split out so a test
+    /// can drive a non-`Matches` verdict and assert the fleet-visible
+    /// counter actually moves. Without that positive control, an
+    /// `invariant_violation_count(site) == Some(0)` assertion cannot tell a
+    /// silent guard from a dead one: `with_label_values` creates the child
+    /// at zero on first access, so it reads `Some(0)` for a live-and-quiet
+    /// site, a retired site, and a name that never existed alike.
+    fn report_seed_identity(
+        &self,
+        verdict: SeedIdentity,
+        local_digest: [u8; 32],
+        frozen_digest_for_self: Option<[u8; 32]>,
+    ) {
         if matches!(verdict, SeedIdentity::Matches | SeedIdentity::NoRecord) {
             return;
         }
@@ -649,7 +665,7 @@ impl MpcDataAnnouncementSender {
                         "mpc_data_frozen_digest_seed_mismatch",
                         authority = ?self.authority,
                         epoch = self.epoch_id,
-                        frozen_digest = ?frozen.get(&self.authority).map(hex::encode),
+                        frozen_digest = ?frozen_digest_for_self.map(hex::encode),
                         local_digest = %hex::encode(local_digest),
                         "the epoch's FROZEN mpc_data digest for this validator is not the \
                          blob its running root seed derives — peers are dealing this \
@@ -1225,6 +1241,57 @@ mod tests {
 
     fn digest(n: u8) -> [u8; 32] {
         [n; 32]
+    }
+
+    /// LIVENESS (positive control) for the guard the acceptance tests
+    /// assert is silent. `invariant_violation_count` reads `Some(0)` for a
+    /// live-but-quiet site, a retired site, and a name that never existed,
+    /// so a zero-assertion alone cannot prove the guard is wired. Drive a
+    /// `FrozenMismatch` and require the counter to MOVE.
+    #[tokio::test]
+    async fn frozen_seed_mismatch_increments_the_invariant_counter() {
+        ika_types::metrics::init_invariant_violation_metric(&prometheus::Registry::new());
+        const SITE: &str = "mpc_data_frozen_digest_seed_mismatch";
+        let before = ika_types::metrics::invariant_violation_count(SITE)
+            .expect("counter must be registered after init");
+
+        let sender = test_sender();
+        // A frozen digest that is NOT what this sender's root seed derives:
+        // peers dealt this validator's shares to a key it does not hold.
+        sender.report_seed_identity(SeedIdentity::FrozenMismatch, digest(1), Some(digest(2)));
+
+        let after = ika_types::metrics::invariant_violation_count(SITE).unwrap();
+        assert_eq!(
+            after,
+            before + 1,
+            "a frozen-digest seed mismatch must increment the fleet-visible \
+             invariant counter — the acceptance tests' zero-assertion is only \
+             meaningful if this path can move it"
+        );
+
+        // Latched: one incident is one invariant event per epoch, however
+        // many ticks observe it. The sender is per-epoch, so the latch is
+        // per-epoch too.
+        sender.report_seed_identity(SeedIdentity::FrozenMismatch, digest(1), Some(digest(2)));
+        assert_eq!(
+            ika_types::metrics::invariant_violation_count(SITE).unwrap(),
+            after,
+            "the invariant counter must be latched to once per epoch — the sender \
+             ticks on a seconds cadence and a per-tick report would turn one \
+             incident into hundreds of events per host per hour"
+        );
+
+        // A verdict that is not a violation must never touch the counter.
+        let quiet = test_sender();
+        quiet.report_seed_identity(SeedIdentity::Matches, digest(1), Some(digest(1)));
+        quiet.report_seed_identity(SeedIdentity::NoRecord, digest(1), None);
+        quiet.report_seed_identity(SeedIdentity::RotatedBeforeFreeze, digest(2), None);
+        assert_eq!(
+            ika_types::metrics::invariant_violation_count(SITE).unwrap(),
+            after,
+            "only a frozen mismatch is an invariant violation; a pre-freeze rotation \
+             is the supported seed-rotation flow and must stay a warning"
+        );
     }
 
     /// #2119: the seed-identity guarantee the deprecated on-chain

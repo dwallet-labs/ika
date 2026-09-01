@@ -2249,9 +2249,7 @@ impl IkaNode {
         // service it reports on, and on the same signal — but in a task of its
         // own, so a wedged drain cannot take the reporting down with it.
         let transport_metrics_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
-        if let Err(e) =
-            DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
-        {
+        if let Err(e) = DWalletMPCService::verify_validator_keys(&epoch_store, config) {
             error!(error = ?e, "Failed to verify validator keys");
             panic!("Failed to verify validator keys: {e}");
         };
@@ -3041,8 +3039,10 @@ impl IkaNode {
             // `sync_next_committee` builds the next `Committee`'s
             // class_groups_public_keys_and_proofs from validators'
             // own `mpc_data` announcements + the perpetual blob
-            // store instead of refetching from chain. Falls back
-            // to chain when the off-chain set is `Incomplete`.
+            // store. There is NO chain fallback: an `Incomplete`
+            // off-chain set makes the sync loop retry on the next
+            // tick, and since #2119 no chain read contributes
+            // validator key material at all.
             self.sui_connector_service.install_mpc_data_source(Box::new(
                 ika_core::validator_metadata::EpochStoreMpcDataSource::new(
                     Arc::downgrade(&cur_epoch_store),

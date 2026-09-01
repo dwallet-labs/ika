@@ -1022,9 +1022,7 @@ pub struct OffChainCommitteeBundles {
 /// input (`get_validator_mpc_keys_by_party_id` re-keys them to
 /// `PartyID`) and a missing entry silently drops that validator's
 /// share. Since #2119 they are the ONLY source: no chain read
-/// contributes validator key material, and
-/// `Committee.class_groups_public_keys_and_proofs` is empty on every
-/// production path.
+/// contributes validator key material at all.
 #[derive(Debug)]
 pub enum OffChainMpcDataAssembly {
     Complete(Box<OffChainCommitteeBundles>),
