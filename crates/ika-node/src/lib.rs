@@ -9,7 +9,7 @@ use anemo_tower::trace::DefaultOnFailure;
 use anemo_tower::trace::TraceLayer;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
-use prometheus::Registry;
+use prometheus::{IntCounterVec, Registry};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
@@ -64,7 +64,13 @@ use ika_core::dwallet_checkpoints::{
 use ika_core::epoch::committee_store::CommitteeStore;
 use ika_core::epoch::consensus_store_pruner::ConsensusStorePruner;
 use ika_core::epoch::epoch_metrics::EpochMetrics;
+use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
+    BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
+    P2pHandoffCertSource,
+};
 use ika_core::storage::RocksDbStore;
+use ika_core::sui_connector::pubkey_provider_updater::fetch_previous_committee;
+use ika_core::validator_metadata::{next_committee_pubkey_set, verify_joiner_bootstrap_cert};
 use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
@@ -1366,7 +1372,105 @@ impl IkaNode {
                  validator mode; validator duties will not start"
             );
         }
+        // Set up before the boot barrier below so the barrier can signal a
+        // fail-closed halt on it. Nothing subscribes until this function
+        // returns, which is exactly why the barrier ALSO reports the halt to
+        // its caller here (see `HandoffBarrierOutcome::FailedClosed`).
+        let (shutdown_channel, _) = broadcast::channel::<Option<RunWithRange>>(1);
+
+        // Continuously feed the p2p trusted-peer set from the on-chain
+        // {active, next, previous} committee + pending_active_set, refreshed
+        // every few seconds so the pending/next sets stay current mid-epoch.
+        // This is what makes a DIRECT validator dial a registered-but-not-yet-
+        // active joiner (inbound), so a peer-only joiner boots without static
+        // seed peers. Runs on every node for its lifetime.
+        //
+        // Started BEFORE the boot barrier below, not after the node is built:
+        // the barrier fetches the handoff certificate and its key blobs from
+        // committee peers and can block for a long time doing it, and without
+        // this loop running the dial set would stay pinned to the single
+        // trusted-peer publish made at network setup for however long that
+        // takes. It needs nothing from the assembled node.
+        let trusted_peer_change_tx_for_refresh = trusted_peer_change_tx.clone();
+        let trusted_peer_sui_client = sui_client.clone();
+        let trusted_peer_authority_name = config.authority_name();
+        spawn_monitored_task!(async move {
+            ika_core::sui_connector::trusted_peer_updater::refresh_trusted_peers_loop(
+                trusted_peer_sui_client,
+                trusted_peer_change_tx_for_refresh,
+                // Self-exclusion compares against committee identities, which
+                // are consensus keys — passing the BLS protocol key here made
+                // the node never recognise itself and add itself as a trusted
+                // peer. It compiled only while `AuthorityName` was an alias
+                // for the BLS container.
+                trusted_peer_authority_name,
+            )
+            .await;
+        });
+
         let validator_components = if mode.is_validator() && is_committee_member {
+            // Prepare-then-start barrier on the BOOT path: a process starting
+            // (or restarting) straight into an epoch reaches consensus and MPC
+            // through here, not through the reconfiguration seam, so without
+            // this it could enter consensus and take NOA presign demands
+            // naming a network key it holds no verified material for. Blocking
+            // here — before `construct_validator_components`, which is what
+            // spawns consensus — is the boot-path equivalent of blocking
+            // before the seam's `start_epoch_specific_validator_components`.
+            //
+            // The epoch's handoff anchor is the PREVIOUS epoch's certificate,
+            // and this process holds no store for that epoch, so the signing
+            // committee is resolved from the local committee store or from
+            // chain. Entering epoch 0 has no predecessor to be handed off
+            // from — the chain-true no-cert genesis epoch — and is skipped on
+            // the same `>= 1` test the joiner bootstrap uses.
+            if epoch_store.epoch() >= 1 {
+                let barrier = HandoffBarrierContext {
+                    p2p_network: p2p_network.clone(),
+                    perpetual_tables: perpetual_tables.clone(),
+                    shutdown_channel_tx: shutdown_channel.clone(),
+                    bootstrap_outcomes: ika_node_metrics.joiner_bootstrap_outcomes_total.clone(),
+                    telemetry: validator_metrics
+                        .as_ref()
+                        .map(|metrics| metrics.telemetry.clone()),
+                    withhold_anchor_for: config.withhold_handoff_anchor_for_testing,
+                };
+                let anchor_committee = AnchorCommittee::Resolved {
+                    committee_store: state.committee_store().clone(),
+                    sui_client: sui_client.clone(),
+                };
+                let anchor_epoch = epoch_store.epoch() - 1;
+                // Anything but `Ready` means the epoch must not be entered.
+                // The shutdown signal the barrier may have sent has no
+                // subscriber this early, so halt by failing the start instead:
+                // the node runner exits the process on a start error, and a
+                // supervised restart re-reads the chain — which is also the
+                // recovery for an unresolvable anchor committee.
+                match wait_for_handoff_data_ready(
+                    &barrier,
+                    anchor_epoch,
+                    &anchor_committee,
+                    &epoch_peer_ids(&epoch_store),
+                    &epoch_store,
+                )
+                .await
+                {
+                    HandoffBarrierOutcome::Ready => {}
+                    HandoffBarrierOutcome::FailedClosed => {
+                        return Err(anyhow!(
+                            "cross-epoch handoff anchor for epoch {anchor_epoch} is contradicted; \
+                             refusing to start validator components (fail-closed)"
+                        ));
+                    }
+                    HandoffBarrierOutcome::AnchorCommitteeUnresolved => {
+                        return Err(anyhow!(
+                            "could not resolve the epoch-{anchor_epoch} committee that signed \
+                             this epoch's handoff certificate; refusing to start validator \
+                             components without a verifiable cross-epoch anchor"
+                        ));
+                    }
+                }
+            }
             let components = Self::construct_validator_components(
                 config.clone(),
                 state.clone(),
@@ -1395,9 +1499,6 @@ impl IkaNode {
         } else {
             None
         };
-
-        // setup shutdown channel
-        let (shutdown_channel, _) = broadcast::channel::<Option<RunWithRange>>(1);
 
         // Per-epoch authority store directories grow unbounded without
         // pruning, and everything later epochs depend on lives in the
@@ -1454,7 +1555,6 @@ impl IkaNode {
         let node = Arc::new(node);
         let node_copy = node.clone();
         let sui_client_clone = sui_client.clone();
-        let trusted_peer_sui_client = sui_client.clone();
 
         // Joiner-side announcement fan-out: a node selected into the
         // next-epoch committee but not yet in the current one isn't a
@@ -1490,27 +1590,6 @@ impl IkaNode {
             if let Err(error) = result {
                 warn!("Reconfiguration finished with error {:?}", error);
             }
-        });
-
-        // Continuously feed the p2p trusted-peer set from the on-chain
-        // {active, next, previous} committee + pending_active_set, refreshed
-        // every few seconds so the pending/next sets stay current mid-epoch.
-        // This is what makes a DIRECT validator dial a registered-but-not-yet-
-        // active joiner (inbound), so a peer-only joiner boots without static
-        // seed peers. Runs on every node for its lifetime.
-        let trusted_peer_node = node.clone();
-        spawn_monitored_task!(async move {
-            ika_core::sui_connector::trusted_peer_updater::refresh_trusted_peers_loop(
-                trusted_peer_sui_client,
-                trusted_peer_node.trusted_peer_change_tx.clone(),
-                // Self-exclusion compares against committee identities, which
-                // are consensus keys — passing the BLS protocol key here made
-                // the node never recognise itself and add itself as a trusted
-                // peer. It compiled only while `AuthorityName` was an alias
-                // for the BLS container.
-                trusted_peer_node.config.authority_name(),
-            )
-            .await;
         });
 
         Ok(node)
@@ -2723,8 +2802,28 @@ impl IkaNode {
             // the E-1 handoff cert (signed by the E-1 committee, pinning
             // the handoff into E). Fetch it from current-committee peers
             // and verify it (epoch-bound, prior committee, next-committee
-            // pubkey-set hash). Surfaces a tampered/wrong bootstrap; does
-            // not halt on failure.
+            // pubkey-set hash).
+            //
+            // For a VALIDATOR this is now a no-op re-check: every path that
+            // starts a validator's epoch components blocks on the
+            // prepare-then-start barrier first, and the barrier anchors this
+            // same epoch inline, so by the time this task runs the cert is
+            // already persisted and the outputs installed — it re-verifies
+            // and returns. It is kept because it is NOT redundant off the
+            // validator paths: a process that runs this loop without ever
+            // constructing validator components — one whose key is in the
+            // committee while the process is not in validator mode, or a
+            // fullnode following the epoch — never reaches the barrier, and
+            // this is what keeps its handoff cert and off-chain network-key
+            // overlay populated (and, when its key is in the committee,
+            // servable to peers still fetching). The barrier NEVER waits on
+            // this task: it runs from inside the epoch's own run loop, which
+            // is after the barrier by construction.
+            //
+            // A contradicted anchor (peers served certs and none verified, or
+            // a persisted cert that no longer verifies) halts the node
+            // fail-closed, the same as in the barrier; absence alone only
+            // warns.
             let joiner_bootstrap_handle = if cur_epoch_store.epoch() >= 1 {
                 use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
@@ -2756,13 +2855,22 @@ impl IkaNode {
                     // bootstrap already chain-reads consensus pubkeys from) so
                     // bootstrap can still run.
                     None => match fetch_previous_committee(&sui_client, prior_epoch).await {
-                        Ok(committee) => {
+                        Ok(Some(committee)) => {
                             info!(
                                 prior_epoch,
                                 "prior committee absent locally; chain-read it for joiner \
                                  bootstrap from validator_set.previous_committee"
                             );
                             Some(Arc::new(committee))
+                        }
+                        Ok(None) => {
+                            info!(
+                                prior_epoch,
+                                "chain holds no committee for the prior epoch — this network's \
+                                 first off-chain epoch is the current one, so no handoff cert \
+                                 exists for {prior_epoch} and there is nothing to bootstrap"
+                            );
+                            None
                         }
                         Err(error) => {
                             warn!(
@@ -2880,15 +2988,19 @@ impl IkaNode {
                                             prior_epoch,
                                             error = ?e,
                                             "the locally-persisted handoff cert FAILED \
-                                             re-verification at epoch start — the local \
-                                             handoff-cert DB is tampered or corrupted — \
-                                             but for a next_committee_pubkey_set_hash \
-                                             mismatch, suspect first a member that rotated \
-                                             its consensus key at this boundary (v6 names \
-                                             the committee by consensus key), or the \
-                                             one-off v5->v6 identity flip. \
-                                             Halting the node (fail-closed) rather than \
-                                             anchoring the epoch on an unverified cert."
+                                             re-verification at epoch start. Only two \
+                                             things reach this branch: the cert attests a \
+                                             different epoch than the prior epoch \
+                                             {prior_epoch} this joiner expected, or its \
+                                             signatures do not reach a stake quorum in the \
+                                             epoch-{prior_epoch} committee. (A \
+                                             next_committee_pubkey_set_hash mismatch does \
+                                             NOT — that is advisory and verification \
+                                             proceeds past it.) So suspect a tampered or \
+                                             corrupted local handoff-cert DB, or a wrong \
+                                             view of the committee that signed it. Halting \
+                                             the node (fail-closed) rather than anchoring \
+                                             the epoch on an unverified cert."
                                         );
                                         let _ = fail_closed_shutdown.send(None);
                                         return;
@@ -3255,14 +3367,40 @@ impl IkaNode {
                 // so only it prepares. A node leaving the committee
                 // (validator last epoch, not this one) must not block on
                 // handoff data it will never use.
-                if self.state.is_validator(&new_epoch_store) {
-                    self.wait_for_handoff_data_ready(
-                        next_epoch,
-                        cur_epoch_store.epoch(),
-                        &cur_epoch_store,
-                        &new_epoch_store,
+                if self.state.is_validator(&new_epoch_store)
+                    && !matches!(
+                        wait_for_handoff_data_ready(
+                            &HandoffBarrierContext::from_node(&self),
+                            cur_epoch_store.epoch(),
+                            // The epoch we are leaving IS the anchor epoch,
+                            // so its committee is in hand.
+                            &AnchorCommittee::Held(cur_epoch_store.committee().clone()),
+                            &epoch_peer_ids(&cur_epoch_store),
+                            &new_epoch_store,
+                        )
+                        .await,
+                        HandoffBarrierOutcome::Ready
                     )
-                    .await;
+                {
+                    // The cross-epoch anchor is contradicted and the node has
+                    // been signalled to halt (the barrier logged why). Leave
+                    // the reconfiguration loop instead of starting the epoch's
+                    // components on it — consensus is already torn down at
+                    // this point, so the node is deliberately inert from here.
+                    //
+                    // Matched as "not Ready" rather than on the contradicted
+                    // variant alone so no future outcome can start the epoch by
+                    // default. Only that variant is reachable here: the anchor
+                    // committee is HELD (the outgoing store's own), so the
+                    // resolution this arm's sibling reports on cannot fail.
+                    error!(
+                        next_epoch,
+                        "prepare-then-start: the cross-epoch anchor for epoch {next_epoch} is \
+                         CONTRADICTED; refusing to enter the epoch and leaving the \
+                         reconfiguration loop with consensus down. The node has been signalled to \
+                         shut down (the barrier logged which contradiction)."
+                    );
+                    return Ok(());
                 }
 
                 if self.state.is_validator(&new_epoch_store) {
@@ -3327,6 +3465,37 @@ impl IkaNode {
 
                 if self.mode.is_validator() && is_committee_member {
                     info!("Promoting the node from fullnode to validator, starting grpc server");
+
+                    // Prepare-then-start barrier, same contract as the
+                    // continuing-validator seam above: a node promoted INTO
+                    // the committee needs the epoch's verified handoff data
+                    // before its MPC components exist, and it is the node
+                    // LEAST likely to already hold it — it computed none of
+                    // the outputs itself. The epoch it is leaving is the
+                    // anchor epoch even though this node was not in that
+                    // committee: the store still carries the committee the
+                    // cert was signed by and the peers that serve it.
+                    if !matches!(
+                        wait_for_handoff_data_ready(
+                            &HandoffBarrierContext::from_node(&self),
+                            cur_epoch_store.epoch(),
+                            &AnchorCommittee::Held(cur_epoch_store.committee().clone()),
+                            &epoch_peer_ids(&cur_epoch_store),
+                            &new_epoch_store,
+                        )
+                        .await,
+                        HandoffBarrierOutcome::Ready
+                    ) {
+                        error!(
+                            next_epoch,
+                            "prepare-then-start: the cross-epoch anchor for epoch \
+                             {next_epoch} is CONTRADICTED; refusing to promote this node into \
+                             that committee and leaving the reconfiguration loop. The node has \
+                             been signalled to shut down (the barrier logged which \
+                             contradiction)."
+                        );
+                        return Ok(());
+                    }
 
                     Some(
                         Self::construct_validator_components(
@@ -3415,469 +3584,6 @@ impl IkaNode {
         new_epoch_store
     }
 
-    /// Ensures the cross-epoch trust anchor for the epoch we are entering
-    /// is locally present + verified, fetching it inline if it is not.
-    ///
-    /// Every validator anchors the epoch it enters (`anchor_epoch + 1`) on
-    /// the `anchor_epoch` handoff cert — the cert the `anchor_epoch`
-    /// committee produced, pinning the handoff into `anchor_epoch + 1` (it
-    /// certifies the network-key output digests the new epoch inherits and
-    /// binds the hash of the new committee's pubkey set). A continuing
-    /// validator that crossed quorum at `anchor_epoch`'s EndOfPublish has
-    /// already persisted this cert; for anyone missing it (a joiner, or a
-    /// continuing validator that didn't observe quorum) it must be
-    /// fetched + verified + persisted here.
-    ///
-    /// This is the synchronous, inline-awaited sibling of the
-    /// `joiner_bootstrap_handle` task spawned at epoch start: that task
-    /// anchors the *prior* epoch and runs in the *next* loop iteration,
-    /// which is too late for the prepare-then-start barrier at the
-    /// reconfigure seam (the barrier would deadlock waiting on a cert that
-    /// nothing fetches until after the barrier). So the barrier calls this
-    /// directly for `anchor_epoch = cur_epoch`.
-    ///
-    /// `anchor_epoch` here is the *current* epoch, so the committee that
-    /// signed the cert is the one we are still in (`cur_epoch_store`'s
-    /// committee) and whose consensus pubkeys come from the current active
-    /// validator set — no chain read of a departed prior committee is
-    /// needed (unlike the prior-epoch joiner-bootstrap path).
-    ///
-    /// REDUNDANT VERIFICATION (defense in depth): a handoff cert is
-    /// verified TWICE in its lifetime. The first verification is in the
-    /// bootstrap fetch path, before the cert is ever written to the local
-    /// DB. The second is HERE, when the cert is *consumed* to anchor the
-    /// new epoch — a persisted cert is ALWAYS re-verified against the
-    /// signing committee before it is allowed to anchor, so a corrupted or
-    /// tampered local handoff-cert DB cannot silently anchor an epoch on a
-    /// cert that no longer verifies. The same `verify` closure backs both
-    /// the persisted-cert re-check and the fetch path's per-candidate
-    /// verification.
-    ///
-    /// Returns `Some(cert)` — the verified anchor cert — iff one is locally
-    /// present afterward, so the caller can read the output digests it
-    /// certifies without a second DB read. Returns `None` when the anchor
-    /// is not yet confirmed (no peer served a cert within the attempt
-    /// budget — propagation lag, re-attempt) OR after fail-closing (halts
-    /// the node via the shutdown channel) when a persisted cert fails
-    /// re-verification (tampered/corrupted DB), or when peers served certs
-    /// but none verified against the signing committee — a genuine
-    /// cross-epoch trust-anchor mismatch (a possible eclipse), not
-    /// something to limp past.
-    async fn prepare_handoff_anchor(
-        &self,
-        anchor_epoch: EpochId,
-        cur_epoch_store: &AuthorityPerEpochStore,
-        new_epoch_store: &Arc<AuthorityPerEpochStore>,
-    ) -> Option<CertifiedHandoffAttestation> {
-        use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
-            BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
-            P2pHandoffCertSource,
-        };
-        use ika_core::validator_metadata::{
-            next_committee_pubkey_set, verify_joiner_bootstrap_cert,
-        };
-        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
-
-        // Build the verification closure FIRST so it can re-verify a
-        // persisted cert as well as back the fetch path. The signing
-        // committee is the one we are still in: `anchor_epoch` is
-        // `cur_epoch`, and `cur_epoch_store.committee()` is exactly that
-        // committee. Its members' consensus pubkeys are fixed at
-        // registration and are in the current active validator set.
-        let signing_committee = cur_epoch_store.committee().as_ref().clone();
-        // The cert pins the hash of the committee being handed into —
-        // the epoch we are entering, whose committee is `new_epoch_store`'s.
-        let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
-        let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
-            .epoch_start_state()
-            .get_authority_names_to_peer_ids()
-            .into_values()
-            .collect();
-
-        // The signing committee carries its members' consensus keys, so it
-        // serves as the cert verifier's consensus-pubkey provider directly.
-        let verify: CertVerifier = Arc::new(move |cert| {
-            verify_joiner_bootstrap_cert(
-                cert,
-                anchor_epoch,
-                &signing_committee,
-                &signing_committee,
-                expected_next.iter().copied(),
-            )
-        });
-
-        // SECOND verification (the first was before this cert was written
-        // to the DB in the bootstrap path): a persisted cert must NOT
-        // silently anchor an epoch — re-verify it now. A tampered or
-        // corrupted local handoff-cert DB fails here and fail-closes
-        // rather than anchoring the new epoch on a cert that no longer
-        // verifies against the signing committee.
-        if let Some(persisted) = new_epoch_store
-            .get_certified_handoff_attestation(anchor_epoch)
-            .ok()
-            .flatten()
-        {
-            return match verify(&persisted) {
-                Ok(()) => {
-                    // Holding the cert does NOT imply holding the network-key
-                    // outputs it certifies: a lagging validator can adopt the
-                    // cert from a buffered peer-signature quorum (see
-                    // `quorum_attestation_in_buffer`) without ever computing or
-                    // caching those outputs. The barrier's condition 2 requires
-                    // every certified reconfiguration output held locally, so
-                    // fetch + cache them now (idempotent — a no-op when already
-                    // present). Without this a cert-but-no-outputs validator
-                    // blocks at the barrier forever, never enters the epoch, and
-                    // never publishes its mpc_data — wedging the next
-                    // reconfiguration's committee assembly at sub-full coverage.
-                    install_joiner_network_key_outputs(
-                        &persisted,
-                        &self.p2p_network,
-                        &peer_ids,
-                        new_epoch_store,
-                    )
-                    .await;
-                    Some(persisted)
-                }
-                Err(e) => {
-                    error!(
-                        anchor_epoch,
-                        error = ?e,
-                        "prepare-then-start: the locally-persisted handoff cert FAILED \
-                         re-verification. For a next_committee_pubkey_set_hash mismatch the \
-                         likeliest cause is NOT a corrupt DB: at protocol v6 the committee is \
-                         named by consensus key, so any member that ROTATED its consensus key \
-                         at this boundary is named differently by the epoch that signed the \
-                         cert and by this one — check for a recent \
-                         set_next_epoch_consensus_pubkey_bytes. The one-off v5->v6 identity \
-                         flip produces the same mismatch. A tampered or corrupted local \
-                         handoff-cert DB is the remaining explanation. Halting the node \
-                         (fail-closed) rather than anchoring the epoch on an unverified cert."
-                    );
-                    let _ = self.shutdown_channel_tx.send(None);
-                    None
-                }
-            };
-        }
-
-        // Absent from the DB — fetch + verify + persist + install.
-        info!(
-            anchor_epoch,
-            "prepare-then-start: anchor cert for the epoch being entered is not held locally; \
-             fetching + verifying it inline from peers before starting MPC"
-        );
-
-        let source = Arc::new(P2pHandoffCertSource::new(
-            self.p2p_network.clone(),
-            peer_ids.clone(),
-        ));
-        let verifier = JoinerBootstrapVerifier::new(
-            anchor_epoch,
-            source,
-            verify,
-            BootstrapRetryConfig {
-                retry_interval: Duration::from_secs(10),
-                max_attempts: 30,
-            },
-        );
-
-        match verifier.run().await {
-            BootstrapOutcome::Verified(cert) => {
-                self.metrics
-                    .joiner_bootstrap_outcomes_total
-                    .with_label_values(&["verified"])
-                    .inc();
-                // Persist the verified anchor so network-key
-                // instantiation can read it locally and this node can
-                // serve it to peers still fetching.
-                if let Err(e) = self
-                    .state
-                    .perpetual_tables()
-                    .insert_certified_handoff_attestation(anchor_epoch, &cert)
-                {
-                    warn!(error = ?e, anchor_epoch, "failed to persist anchor handoff cert");
-                }
-                install_joiner_network_key_outputs(
-                    &cert,
-                    &self.p2p_network,
-                    &peer_ids,
-                    new_epoch_store,
-                )
-                .await;
-                Some(*cert)
-            }
-            BootstrapOutcome::Rejected => {
-                self.metrics
-                    .joiner_bootstrap_outcomes_total
-                    .with_label_values(&["rejected"])
-                    .inc();
-                // Fail-closed: peers served certs but NONE verified
-                // against the signing committee — a genuine cross-epoch
-                // trust-anchor mismatch (a wrong committee view, or every
-                // reachable peer serving certs for the wrong committee, a
-                // possible eclipse). Refuse to participate on a broken
-                // anchor: halt so an operator investigates rather than
-                // silently entering the epoch on an unverified handoff.
-                error!(
-                    anchor_epoch,
-                    "prepare-then-start: cross-epoch anchor REJECTED — halting the node \
-                     (fail-closed). Investigate a wrong committee view or peers serving certs \
-                     for the wrong committee (possible eclipse)."
-                );
-                let _ = self.shutdown_channel_tx.send(None);
-                None
-            }
-            // No peer served a cert within the attempt budget
-            // (propagation lag) — the anchor is unconfirmed, not
-            // contradicted. The barrier will re-attempt.
-            BootstrapOutcome::Unavailable => {
-                self.metrics
-                    .joiner_bootstrap_outcomes_total
-                    .with_label_values(&["unavailable"])
-                    .inc();
-                None
-            }
-        }
-    }
-
-    /// Prepare-then-start barrier: blocks until the full handoff data for
-    /// the epoch being entered (`next_epoch`) is locally present AND
-    /// verified, then returns so the new epoch's MPC components may start.
-    ///
-    /// WHY THIS EXISTS: without it, the new epoch's MPC components start
-    /// immediately at the reconfigure seam while the network-key handoff
-    /// data still arrives asynchronously. A validator can then begin
-    /// epoch-N signing with STALE (epoch N-1) network-key shares, and
-    /// threshold sign rounds fail with `FailedToAdvanceMPC(InvalidParameters)`.
-    /// Starting the epoch stale is never acceptable, so this blocks
-    /// INDEFINITELY (no timeout): a stuck validator that is visibly not
-    /// signing is strictly safer than one signing with the wrong shares.
-    ///
-    /// The barrier waits on two conditions, both grounded in off-chain data
-    /// (the verified handoff cert + this validator's local outputs) — no
-    /// chain state, and no dependency on the chain-fed `network_keys_receiver`:
-    ///   1. The cross-epoch trust anchor (the `cur_epoch` handoff cert) is
-    ///      locally present + verified — `prepare_handoff_anchor` returns it,
-    ///      fetching it inline if missing.
-    ///   2. Every network-key output item the cert certifies —
-    ///      `NetworkReconfigurationOutput` AND `NetworkDkgOutput` — is held
-    ///      locally with a digest matching the cert. The cert's single
-    ///      `epoch` field scopes the whole handoff, so there is no per-key
-    ///      epoch to check — only per-key presence: reconfiguration outputs
-    ///      in this validator's epoch-keyed digest slice (keyed by
-    ///      `cur_epoch`, the reconfiguration session's epoch), DKG outputs in
-    ///      the NEW epoch store's merged view (empty per-epoch table → the
-    ///      perpetual canonical mirror — the value the installer repairs; the
-    ///      outgoing store's per-epoch table is exactly what the end-of-epoch
-    ///      hydration may have poisoned, issue #1852). A continuing validator
-    ///      caches its own MPC output; `prepare_handoff_anchor` and the
-    ///      per-retry installer fetch + cache missing/mismatching outputs
-    ///      from peers. See `all_cert_network_key_outputs_held_locally`.
-    async fn wait_for_handoff_data_ready(
-        &self,
-        next_epoch: EpochId,
-        cur_epoch: EpochId,
-        cur_epoch_store: &AuthorityPerEpochStore,
-        new_epoch_store: &Arc<AuthorityPerEpochStore>,
-    ) {
-        info!(
-            next_epoch,
-            "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \
-             before starting MPC"
-        );
-        // Present in validator mode, which is the only mode that reaches this
-        // barrier; the families are not registered anywhere else.
-        let telemetry = self.validator_telemetry.clone();
-        if let Some(telemetry) = &telemetry {
-            telemetry.handoff_prepare_waiting.set(1);
-        }
-        let started_at = std::time::Instant::now();
-        let mut retries: u64 = 0;
-
-        // The verified anchor is obtained ONCE and reused across iterations:
-        // the cert is immutable for the epoch, so re-fetching/re-verifying its
-        // committee signatures every second would be pure waste (and on the
-        // fetch path, a per-second P2P hammering of converging peers).
-        let mut anchor_cert: Option<CertifiedHandoffAttestation> = None;
-        loop {
-            // Condition 1: the cross-epoch trust anchor — the `cur_epoch`
-            // handoff cert — is present + verified. `prepare_handoff_anchor`
-            // returns it (re-verified) when already held, fetches + verifies
-            // + persists it inline when missing, and also fetches + caches
-            // the certified outputs this node is missing into the local
-            // digest slice condition 2 reads. `None` means the anchor is not
-            // yet confirmed (propagation lag) — re-attempt next iteration.
-            if anchor_cert.is_none() {
-                anchor_cert = self
-                    .prepare_handoff_anchor(cur_epoch, cur_epoch_store, new_epoch_store)
-                    .await;
-            }
-            let cert = anchor_cert.as_ref();
-
-            // Condition 2: every network-key output the cert certifies —
-            // reconfiguration AND DKG — is held locally with a digest
-            // matching the cert. Grounded entirely in the verified cert (the
-            // off-chain anchor) and this validator's own digest slices — no
-            // chain state, and no per-key epoch (the cert's single epoch
-            // scopes the whole handoff). A read error is treated as
-            // not-ready (empty slice); the periodic WARN below surfaces a
-            // persistent failure.
-            //
-            // The reconfiguration slice is keyed by the reconfiguration
-            // session's epoch (`cur_epoch`) on the outgoing store. The DKG
-            // digests are read from the NEW epoch store deliberately: its
-            // per-epoch table is empty at entry, so the merged view is the
-            // perpetual canonical mirror — the exact value the installer
-            // repairs. Reading them from the outgoing store would consult
-            // its per-epoch table first, which is precisely what the
-            // end-of-epoch hydration pass may have poisoned (the issue
-            // #1852 clobber variant), and the repaired perpetual value
-            // would never win — deadlocking this barrier.
-            let local_reconfiguration_digests = cur_epoch_store
-                .get_network_reconfiguration_output_digests_for_epoch(cur_epoch)
-                .unwrap_or_default();
-            let local_dkg_digests = new_epoch_store
-                .get_network_dkg_output_digests()
-                .unwrap_or_default();
-            let ready = cert.is_some_and(|cert| {
-                all_cert_network_key_outputs_held_locally(
-                    cert,
-                    &local_dkg_digests,
-                    &local_reconfiguration_digests,
-                )
-            });
-
-            if ready {
-                let elapsed = started_at.elapsed();
-                if let Some(telemetry) = &telemetry {
-                    telemetry.handoff_prepare_waiting.set(0);
-                    telemetry
-                        .handoff_prepare_duration_seconds
-                        .observe(elapsed.as_secs_f64());
-                }
-                info!(
-                    next_epoch,
-                    "prepare-then-start: epoch {next_epoch} handoff data ready+verified after \
-                     {}s, {retries} retries; starting MPC",
-                    elapsed.as_secs()
-                );
-                return;
-            }
-
-            retries += 1;
-            if let Some(telemetry) = &telemetry {
-                telemetry.handoff_prepare_retries_total.inc();
-            }
-
-            // Anchor held but some certified output still missing locally:
-            // retry fetching JUST the missing ones (the local-presence
-            // precheck inside skips everything already held, so this is not
-            // a refetch of held blobs).
-            if let Some(cert) = cert {
-                let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
-                    .epoch_start_state()
-                    .get_authority_names_to_peer_ids()
-                    .into_values()
-                    .collect();
-                install_joiner_network_key_outputs(
-                    cert,
-                    &self.p2p_network,
-                    &peer_ids,
-                    new_epoch_store,
-                )
-                .await;
-            }
-
-            // Surface the breakdown roughly every 10s so a hang is never
-            // silent on a dashboard or in the logs.
-            if retries.is_multiple_of(10) {
-                let (cert_network_key_items, missing_key_ids, unmapped_cert_keys) = match &cert {
-                    Some(cert) => {
-                        let total = cert
-                            .attestation
-                            .items
-                            .iter()
-                            .filter(|(item, _)| {
-                                matches!(
-                                    item,
-                                    HandoffItemKey::NetworkReconfigurationOutput { .. }
-                                        | HandoffItemKey::NetworkDkgOutput { .. }
-                                )
-                            })
-                            .count();
-                        let missing: Vec<ObjectID> = cert
-                            .attestation
-                            .items
-                            .iter()
-                            .filter_map(|(item, digest)| {
-                                // Cert keys by NetworkKeyId; local digests by
-                                // ObjectID — translate via the temporary map.
-                                let (key_id, local_digests) = match item {
-                                    HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                                        (key_id, &local_reconfiguration_digests)
-                                    }
-                                    HandoffItemKey::NetworkDkgOutput { key_id } => {
-                                        (key_id, &local_dkg_digests)
-                                    }
-                                    HandoffItemKey::ValidatorMpcData { .. } => return None,
-                                };
-                                let object_id =
-                                    ika_core::network_key_id_mapping::object_id_for(key_id)?;
-                                (local_digests.get(&object_id) != Some(digest)).then_some(object_id)
-                            })
-                            .collect();
-                        // Cert keys with NO ObjectID mapping (this validator
-                        // never instantiated the key and it is not seeded)
-                        // are exactly the keys the gate can never satisfy,
-                        // yet the translation above drops them from
-                        // `missing` — report them separately so an
-                        // unmapped-key wedge no longer reads as
-                        // `missing_locally=0`. The MPC service's adoption
-                        // pass derives and registers the mapping in the
-                        // background; this state should clear on its own.
-                        // A key with both a DKG and a reconfiguration item
-                        // would list twice — dedup via the ordered set.
-                        let unmapped: BTreeSet<NetworkKeyId> = cert
-                            .attestation
-                            .items
-                            .iter()
-                            .filter_map(|(item, _)| match item {
-                                HandoffItemKey::NetworkReconfigurationOutput { key_id }
-                                | HandoffItemKey::NetworkDkgOutput { key_id }
-                                    if ika_core::network_key_id_mapping::object_id_for(key_id)
-                                        .is_none() =>
-                                {
-                                    Some(*key_id)
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let unmapped: Vec<NetworkKeyId> = unmapped.into_iter().collect();
-                        (total, missing, unmapped)
-                    }
-                    None => (0, Vec::new(), Vec::new()),
-                };
-                warn!(
-                    next_epoch,
-                    cur_epoch,
-                    have_cert = cert.is_some(),
-                    cert_network_key_items,
-                    missing_locally = missing_key_ids.len(),
-                    missing_key_ids = ?missing_key_ids,
-                    unmapped_cert_keys = ?unmapped_cert_keys,
-                    retries,
-                    "prepare-then-start: still awaiting full verified handoff data for epoch \
-                     {next_epoch}"
-                );
-            }
-
-            // Re-check after 1s. No timeout — block indefinitely
-            // (safety-first: never start the epoch without the verified
-            // handoff outputs the cert certifies).
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
-
     pub fn get_config(&self) -> &NodeConfig {
         &self.config
     }
@@ -3894,6 +3600,737 @@ impl IkaNode {
         self.sim_state
             .sim_safe_mode_expected
             .store(new_value, Ordering::Relaxed);
+    }
+}
+
+/// The anemo peer ids of an epoch's committee — who the barrier asks for the
+/// handoff certificate and the network-key output blobs it certifies.
+fn epoch_peer_ids(epoch_store: &AuthorityPerEpochStore) -> Vec<PeerId> {
+    epoch_store
+        .epoch_start_state()
+        .get_authority_names_to_peer_ids()
+        .into_values()
+        .collect()
+}
+
+/// The process-level handles the prepare-then-start barrier needs, whichever
+/// path entered it.
+///
+/// Assembled from the live `IkaNode` on the reconfiguration and
+/// fullnode-to-validator promotion paths, and from the locals in
+/// `start_with_mode` on the boot path — there the barrier has to run BEFORE
+/// the validator components are constructed, and constructing them is part of
+/// producing the node, so no `IkaNode` exists yet to hang a method off.
+struct HandoffBarrierContext {
+    p2p_network: Network,
+    perpetual_tables: Arc<AuthorityPerpetualTables>,
+    /// Fail-closed halt signal for a CONTRADICTED anchor. On the boot path it
+    /// has no subscriber yet (the forwarder is installed only once
+    /// `start_with_mode` returns), which is why the barrier also reports the
+    /// halt to its caller — see [`HandoffBarrierOutcome::FailedClosed`].
+    shutdown_channel_tx: broadcast::Sender<Option<RunWithRange>>,
+    bootstrap_outcomes: IntCounterVec,
+    /// `None` outside validator mode, where these families are deliberately
+    /// not registered at all; every barrier caller is in validator mode.
+    telemetry: Option<Arc<ValidatorTelemetryMetrics>>,
+    /// TESTS ONLY — `NodeConfig::withhold_handoff_anchor_for_testing`.
+    withhold_anchor_for: Option<Duration>,
+}
+
+impl HandoffBarrierContext {
+    /// The two paths that run inside `monitor_reconfiguration` build the
+    /// context from the running node.
+    fn from_node(node: &IkaNode) -> Self {
+        Self {
+            p2p_network: node.p2p_network.clone(),
+            perpetual_tables: node.state.perpetual_tables(),
+            shutdown_channel_tx: node.shutdown_channel_tx.clone(),
+            bootstrap_outcomes: node.metrics.joiner_bootstrap_outcomes_total.clone(),
+            telemetry: node.validator_telemetry.clone(),
+            withhold_anchor_for: node.config.withhold_handoff_anchor_for_testing,
+        }
+    }
+
+    /// Halt the node: the cross-epoch anchor is contradicted, so refuse to
+    /// participate rather than limp. A send with no subscriber is not an
+    /// error to log over — the boot path has none by construction and turns
+    /// the returned `FailedClosed` into a startup failure instead.
+    fn signal_fail_closed(&self) {
+        let _ = self.shutdown_channel_tx.send(None);
+    }
+}
+
+/// How the barrier obtains the committee that SIGNED the anchor epoch's
+/// handoff certificate: every signature on the certificate is verified
+/// against it, and its members are the peers asked to serve the certificate.
+enum AnchorCommittee {
+    /// The outgoing epoch store's own committee. Available whenever the node
+    /// is crossing a reconfiguration seam — continuing validator or promoted
+    /// fullnode alike — because the epoch it is leaving IS the anchor epoch.
+    Held(Arc<Committee>),
+    /// Resolved on the boot path, where this process holds no store for the
+    /// anchor epoch: the local committee store if this node followed that
+    /// epoch, else `validator_set.previous_committee` from chain. This is the
+    /// joiner bootstrap's own resolution, reused.
+    ///
+    /// Unlike every other not-ready condition in the barrier, failure here is
+    /// not always transient, so it is the one thing the barrier does NOT wait
+    /// out indefinitely — see `ANCHOR_COMMITTEE_RESOLVE_ATTEMPTS`.
+    Resolved {
+        committee_store: Arc<CommitteeStore>,
+        sui_client: Arc<SuiConnectorClient>,
+    },
+}
+
+/// How many times the boot path re-tries resolving the anchor epoch's
+/// committee before giving up and failing the node's startup, and how long it
+/// waits between attempts.
+///
+/// The chain-read fallback refuses to serve `validator_set.previous_committee`
+/// unless the on-chain epoch is exactly `anchor_epoch + 1` — otherwise it
+/// would hand back a committee for the wrong epoch. The barrier's
+/// `anchor_epoch` is fixed at `entering_epoch - 1`, decided from the chain read
+/// this process booted with, so once the chain crosses the next boundary that
+/// condition is false FOREVER. A node whose local committee store also lacks
+/// the epoch (it was down across all of it) would then spin at the barrier
+/// with nothing that could ever satisfy it, inside `start_with_mode` — before
+/// the reconfiguration loop that would re-read the chain, before the admin
+/// server, and before any watchdog arms. Nothing recovers it but an operator.
+///
+/// So this one condition is bounded. Exhausting the budget fails the startup
+/// rather than starting the epoch: the process exits, and its supervisor
+/// restarts it into whatever epoch the chain has actually reached, where the
+/// anchor resolves. That preserves "never start without the verified handoff
+/// data" — the node still does not enter the epoch — while turning an
+/// unrecoverable spin into a self-healing restart. Every other not-ready
+/// condition (cert absent, outputs missing) stays unbounded, because for those
+/// waiting is what makes them resolvable.
+const ANCHOR_COMMITTEE_RESOLVE_ATTEMPTS: u32 = 24;
+const ANCHOR_COMMITTEE_RESOLVE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often a blocked prepare-then-start barrier re-states what it is still
+/// missing. On the boot path this warn and the `handoff_prepare_waiting` gauge
+/// are the ONLY operator-facing signals: the admin server, the uptime metric
+/// and both watchdogs all come up after node startup returns, which a blocked
+/// boot barrier delays.
+const BARRIER_STALL_WARN_INTERVAL: Duration = Duration::from_secs(10);
+
+/// What resolving the anchor epoch's committee produced.
+enum AnchorCommitteeResolution {
+    /// The committee that signed the anchor epoch's handoff certificate.
+    Resolved(Arc<Committee>),
+    /// The chain says NO committee preceded the epoch being entered: this
+    /// network's first off-chain epoch is the current one, so the anchor epoch
+    /// never ran, no certificate was ever minted for it, and none ever will
+    /// be. Genesis-equivalent — the barrier has nothing to wait for and must
+    /// not block. Distinct from `Unavailable` because it is a chain ANSWER,
+    /// and waiting on it is a permanent wedge rather than a delay.
+    NoPredecessorEpoch,
+    /// Not answerable this attempt — a chain read failed, or the chain has
+    /// moved past the epoch whose predecessor we are asking about.
+    Unavailable,
+}
+
+impl AnchorCommittee {
+    /// Failures log at debug: the barrier's own periodic warn reports
+    /// `have_signing_committee=false`, and the bounded caller reports the
+    /// give-up at error, so a per-attempt warn inside a retry loop would be
+    /// pure noise.
+    async fn resolve(&self, anchor_epoch: EpochId) -> AnchorCommitteeResolution {
+        match self {
+            Self::Held(committee) => AnchorCommitteeResolution::Resolved(committee.clone()),
+            Self::Resolved {
+                committee_store,
+                sui_client,
+            } => {
+                if let Ok(Some(committee)) = committee_store.get_committee(&anchor_epoch) {
+                    return AnchorCommitteeResolution::Resolved(committee);
+                }
+                match fetch_previous_committee(sui_client, anchor_epoch).await {
+                    Ok(Some(committee)) => {
+                        info!(
+                            anchor_epoch,
+                            "prepare-then-start: anchor committee absent locally; chain-read it \
+                             from validator_set.previous_committee"
+                        );
+                        AnchorCommitteeResolution::Resolved(Arc::new(committee))
+                    }
+                    Ok(None) => AnchorCommitteeResolution::NoPredecessorEpoch,
+                    Err(error) => {
+                        debug!(
+                            ?error,
+                            anchor_epoch,
+                            "prepare-then-start: failed to resolve the anchor epoch's committee"
+                        );
+                        AnchorCommitteeResolution::Unavailable
+                    }
+                }
+            }
+        }
+    }
+
+    /// `true` for the boot path's chain-backed resolution, which is the only
+    /// variant that can fail and therefore the only one the attempt budget
+    /// applies to.
+    fn is_bounded(&self) -> bool {
+        matches!(self, Self::Resolved { .. })
+    }
+}
+
+/// What one attempt at obtaining the verified anchor certificate produced.
+enum AnchorOutcome {
+    /// The verified certificate for the anchor epoch, now persisted locally.
+    Anchored(Box<CertifiedHandoffAttestation>),
+    /// Not obtainable this attempt — no peer served one within the attempt
+    /// budget, or the signing committee is not resolvable yet. Absence, not
+    /// contradiction: retry.
+    Unavailable,
+    /// Contradicted: peers served certificates and none verified, or the
+    /// locally persisted one no longer verifies. The node has been signalled
+    /// to halt.
+    FailedClosed,
+}
+
+/// How the prepare-then-start barrier ended. Only `Ready` permits the caller
+/// to start the epoch's components.
+enum HandoffBarrierOutcome {
+    /// The epoch's full verified handoff data is local — start the epoch's
+    /// components.
+    Ready,
+    /// The cross-epoch anchor is contradicted. The node has been signalled to
+    /// halt and the caller MUST NOT start the epoch's components. The boot
+    /// path additionally turns this into a startup error, because the
+    /// shutdown forwarder it would otherwise rely on is not subscribed until
+    /// `start_with_mode` returns and the signal would be dropped.
+    FailedClosed,
+    /// The anchor epoch's committee could not be resolved within the attempt
+    /// budget, so the certificate cannot be verified at all. Boot path only —
+    /// see `ANCHOR_COMMITTEE_RESOLVE_ATTEMPTS` for why this one condition is
+    /// bounded and why the answer is to fail startup rather than keep waiting.
+    AnchorCommitteeUnresolved,
+}
+
+/// Ensures the cross-epoch trust anchor for the epoch being entered is
+/// locally present + verified, fetching it inline if it is not.
+///
+/// Every validator anchors the epoch it enters (`anchor_epoch + 1`) on the
+/// `anchor_epoch` handoff cert — the cert the `anchor_epoch` committee
+/// produced, pinning the handoff into `anchor_epoch + 1` (it certifies the
+/// network-key output digests the new epoch inherits and binds the hash of
+/// the new committee's pubkey set). A continuing validator that crossed
+/// quorum at `anchor_epoch`'s EndOfPublish has already persisted this cert;
+/// for anyone missing it — a joiner, a continuing validator that didn't
+/// observe quorum, or a process that just booted into the epoch — it must be
+/// fetched + verified + persisted here.
+///
+/// This is the synchronous, inline-awaited sibling of the
+/// `joiner_bootstrap_handle` task spawned at epoch start: that task anchors
+/// the same epoch but runs from inside the epoch's own run loop, which is too
+/// late for a barrier that has to finish BEFORE the epoch's components start
+/// (the barrier would deadlock waiting on a cert that nothing fetches until
+/// after the barrier). So the barrier never waits on that task and always
+/// fetches inline.
+///
+/// `signing_committee` is the `anchor_epoch` committee: on a reconfiguration
+/// seam it is the outgoing epoch store's committee, and on the boot path it
+/// is resolved from the local committee store or from chain (see
+/// [`AnchorCommittee`]). It doubles as the cert verifier's consensus-pubkey
+/// provider, because committee members carry their consensus keys.
+///
+/// REDUNDANT VERIFICATION (defense in depth): a handoff cert is verified
+/// TWICE in its lifetime. The first verification is in the fetch path, before
+/// the cert is ever written to the local DB. The second is HERE, when the
+/// cert is *consumed* to anchor the new epoch — a persisted cert is ALWAYS
+/// re-verified against the signing committee before it is allowed to anchor,
+/// so a corrupted or tampered local handoff-cert DB cannot silently anchor an
+/// epoch on a cert that no longer verifies. The same `verify` closure backs
+/// both the persisted-cert re-check and the fetch path's per-candidate
+/// verification.
+async fn prepare_handoff_anchor(
+    ctx: &HandoffBarrierContext,
+    anchor_epoch: EpochId,
+    signing_committee: &Committee,
+    peer_ids: &[PeerId],
+    new_epoch_store: &Arc<AuthorityPerEpochStore>,
+) -> AnchorOutcome {
+    // Build the verification closure FIRST so it can re-verify a persisted
+    // cert as well as back the fetch path.
+    let signing_committee = signing_committee.clone();
+    // The cert pins the hash of the committee being handed into — the epoch
+    // we are entering, whose committee is `new_epoch_store`'s.
+    let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
+    let verify: CertVerifier = Arc::new(move |cert| {
+        verify_joiner_bootstrap_cert(
+            cert,
+            anchor_epoch,
+            &signing_committee,
+            &signing_committee,
+            expected_next.iter().copied(),
+        )
+    });
+
+    // SECOND verification (the first was before this cert was written to the
+    // DB in the fetch path): a persisted cert must NOT silently anchor an
+    // epoch — re-verify it now. A tampered or corrupted local handoff-cert DB
+    // fails here and fail-closes rather than anchoring the new epoch on a
+    // cert that no longer verifies against the signing committee.
+    if let Some(persisted) = new_epoch_store
+        .get_certified_handoff_attestation(anchor_epoch)
+        .ok()
+        .flatten()
+    {
+        return match verify(&persisted) {
+            Ok(()) => {
+                // Holding the cert does NOT imply holding the network-key
+                // outputs it certifies: a lagging validator can adopt the
+                // cert from a buffered peer-signature quorum (see
+                // `quorum_attestation_in_buffer`) without ever computing or
+                // caching those outputs, and a validator that just booted
+                // into the epoch may hold neither. The barrier's condition 2
+                // requires every certified output held locally, so fetch +
+                // cache them now (idempotent — a no-op when already present).
+                // Without this a cert-but-no-outputs validator blocks at the
+                // barrier forever, never enters the epoch, and never
+                // publishes its mpc_data — wedging the next
+                // reconfiguration's committee assembly at sub-full coverage.
+                install_joiner_network_key_outputs(
+                    &persisted,
+                    &ctx.p2p_network,
+                    peer_ids,
+                    new_epoch_store,
+                )
+                .await;
+                AnchorOutcome::Anchored(Box::new(persisted))
+            }
+            Err(e) => {
+                error!(
+                    anchor_epoch,
+                    error = ?e,
+                    "prepare-then-start: the locally-persisted handoff cert FAILED \
+                     re-verification. Only two things reach this branch: the cert attests a \
+                     different epoch than the one being anchored, or its signatures do not \
+                     reach a stake quorum in the epoch-{anchor_epoch} committee. (A \
+                     next_committee_pubkey_set_hash mismatch does NOT — that is advisory and \
+                     verification proceeds past it.) So suspect a tampered or corrupted local \
+                     handoff-cert DB, or a wrong view of the committee that signed it. Halting \
+                     the node (fail-closed) rather than anchoring the epoch on an unverified \
+                     cert."
+                );
+                ctx.signal_fail_closed();
+                AnchorOutcome::FailedClosed
+            }
+        };
+    }
+
+    // Absent from the DB — fetch + verify + persist + install.
+    info!(
+        anchor_epoch,
+        "prepare-then-start: anchor cert for the epoch being entered is not held locally; \
+         fetching + verifying it inline from peers before starting MPC"
+    );
+
+    let source = Arc::new(P2pHandoffCertSource::new(
+        ctx.p2p_network.clone(),
+        peer_ids.to_vec(),
+    ));
+    let verifier = JoinerBootstrapVerifier::new(
+        anchor_epoch,
+        source,
+        verify,
+        BootstrapRetryConfig {
+            retry_interval: Duration::from_secs(10),
+            max_attempts: 30,
+        },
+    );
+
+    match verifier.run().await {
+        BootstrapOutcome::Verified(cert) => {
+            ctx.bootstrap_outcomes
+                .with_label_values(&["verified"])
+                .inc();
+            // Persist the verified anchor so network-key instantiation can
+            // read it locally and this node can serve it to peers still
+            // fetching.
+            if let Err(e) = ctx
+                .perpetual_tables
+                .insert_certified_handoff_attestation(anchor_epoch, &cert)
+            {
+                warn!(error = ?e, anchor_epoch, "failed to persist anchor handoff cert");
+            }
+            install_joiner_network_key_outputs(&cert, &ctx.p2p_network, peer_ids, new_epoch_store)
+                .await;
+            AnchorOutcome::Anchored(cert)
+        }
+        BootstrapOutcome::Rejected => {
+            ctx.bootstrap_outcomes
+                .with_label_values(&["rejected"])
+                .inc();
+            // Fail-closed: peers served certs but NONE verified against the
+            // signing committee — a genuine cross-epoch trust-anchor mismatch
+            // (a wrong committee view, or every reachable peer serving certs
+            // for the wrong committee, a possible eclipse). Refuse to
+            // participate on a broken anchor: halt so an operator
+            // investigates rather than silently entering the epoch on an
+            // unverified handoff.
+            error!(
+                anchor_epoch,
+                "prepare-then-start: cross-epoch anchor REJECTED — halting the node \
+                 (fail-closed). Investigate a wrong committee view or peers serving certs \
+                 for the wrong committee (possible eclipse)."
+            );
+            ctx.signal_fail_closed();
+            AnchorOutcome::FailedClosed
+        }
+        // No peer served a cert within the attempt budget (propagation lag) —
+        // the anchor is unconfirmed, not contradicted. The barrier
+        // re-attempts.
+        BootstrapOutcome::Unavailable => {
+            ctx.bootstrap_outcomes
+                .with_label_values(&["unavailable"])
+                .inc();
+            AnchorOutcome::Unavailable
+        }
+    }
+}
+
+/// Prepare-then-start barrier: blocks until the full handoff data for the
+/// epoch being entered (`new_epoch_store`'s epoch) is locally present AND
+/// verified, then returns so that epoch's MPC components may start.
+///
+/// WHY THIS EXISTS: without it, the new epoch's MPC components start
+/// immediately while the network-key handoff data still arrives
+/// asynchronously. A validator can then begin epoch-N signing with STALE
+/// (epoch N-1) network-key shares, and threshold sign rounds fail with
+/// `FailedToAdvanceMPC(InvalidParameters)`. Starting the epoch stale is never
+/// acceptable, so this blocks INDEFINITELY (no timeout): a stuck validator
+/// that is visibly not signing is strictly safer than one signing with the
+/// wrong shares.
+///
+/// EVERY path that starts a validator's epoch-specific components goes
+/// through here first — the continuing validator at a reconfiguration seam,
+/// a fullnode promoted into the committee at a boundary, and a process
+/// booting (or rebooting) into an epoch. The only skip is the epoch that has
+/// no predecessor to be handed off from: entering epoch 0 at genesis, which
+/// the boot caller filters out the same way the joiner bootstrap does.
+///
+/// The barrier waits on two conditions, both grounded in off-chain data (the
+/// verified handoff cert + this validator's local outputs) — no chain state
+/// beyond resolving the signing committee on the boot path, and no dependency
+/// on the chain-fed `network_keys_receiver`:
+///   1. The cross-epoch trust anchor (the `anchor_epoch` handoff cert) is
+///      locally present + verified — `prepare_handoff_anchor` returns it,
+///      fetching it inline if missing.
+///   2. Every network-key output item the cert certifies —
+///      `NetworkReconfigurationOutput` AND `NetworkDkgOutput` — is held
+///      locally with a digest matching the cert. The cert's single `epoch`
+///      field scopes the whole handoff, so there is no per-key epoch to
+///      check — only per-key presence. BOTH digest sources are read from the
+///      store for the epoch being ENTERED, which is the only store a booting
+///      process has: the reconfiguration digests come from the epoch-keyed
+///      PERPETUAL slice (keyed by `anchor_epoch`, the reconfiguration
+///      session's own epoch), which is shared process-wide and so reads
+///      identically through any epoch store; the DKG digests come from the
+///      merged view, whose per-epoch table is empty at entry so the value is
+///      the perpetual canonical mirror — the exact value the installer
+///      repairs. Reading the DKG digests from an outgoing store instead would
+///      consult ITS per-epoch table first, which is precisely what the
+///      end-of-epoch hydration pass may have poisoned (the issue #1852
+///      clobber variant), and the repaired perpetual value would never win —
+///      deadlocking this barrier. A continuing validator caches its own MPC
+///      output; `prepare_handoff_anchor` and the per-retry installer fetch +
+///      cache missing/mismatching outputs from peers. See
+///      `all_cert_network_key_outputs_held_locally`.
+async fn wait_for_handoff_data_ready(
+    ctx: &HandoffBarrierContext,
+    anchor_epoch: EpochId,
+    anchor_committee: &AnchorCommittee,
+    peer_ids: &[PeerId],
+    new_epoch_store: &Arc<AuthorityPerEpochStore>,
+) -> HandoffBarrierOutcome {
+    let next_epoch = new_epoch_store.epoch();
+    info!(
+        next_epoch,
+        anchor_epoch,
+        "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \
+         before starting MPC"
+    );
+    // Present in validator mode, which is the only mode that reaches this
+    // barrier; the families are not registered anywhere else.
+    let telemetry = ctx.telemetry.clone();
+    if let Some(telemetry) = &telemetry {
+        telemetry.handoff_prepare_waiting.set(1);
+    }
+    let started_at = std::time::Instant::now();
+    let mut retries: u64 = 0;
+    // The stall breakdown is emitted on a WALL-CLOCK cadence, not every Nth
+    // retry. One iteration is a second while the barrier is only waiting on
+    // blobs, but up to the anchor fetch's whole attempt budget (five minutes)
+    // when no peer is serving the cert — which is exactly when an operator
+    // needs the breakdown, and is the case where a per-retry cadence would
+    // stretch the interval to the better part of an hour.
+    let mut last_warn_at = std::time::Instant::now();
+
+    // The verified anchor is obtained ONCE and reused across iterations: the
+    // cert is immutable for the epoch, so re-fetching/re-verifying its
+    // committee signatures every second would be pure waste (and on the fetch
+    // path, a per-second P2P hammering of converging peers). The signing
+    // committee is cached for the same reason — on the boot path resolving it
+    // costs a chain read.
+    let mut anchor_cert: Option<CertifiedHandoffAttestation> = None;
+    let mut signing_committee: Option<Arc<Committee>> = None;
+    let mut committee_resolve_attempts: u32 = 0;
+    let mut last_committee_resolve_at: Option<std::time::Instant> = None;
+    loop {
+        // TESTS ONLY (`NodeConfig::withhold_handoff_anchor_for_testing`):
+        // hold the anchor back so a test can observe a validator declining to
+        // start its epoch components without it. This suppresses only the
+        // ACQUISITION of the handoff data — the readiness predicate below
+        // still evaluates real local state, and reads not-ready because the
+        // anchor is absent, exactly as it would under prolonged propagation
+        // lag.
+        let withheld = ctx
+            .withhold_anchor_for
+            .is_some_and(|withhold| started_at.elapsed() < withhold);
+
+        // Condition 1: the cross-epoch trust anchor — the `anchor_epoch`
+        // handoff cert — is present + verified. `prepare_handoff_anchor`
+        // returns it (re-verified) when already held, fetches + verifies +
+        // persists it inline when missing, and also fetches + caches the
+        // certified outputs this node is missing into the local digest slices
+        // condition 2 reads. `Unavailable` means the anchor is not yet
+        // confirmed (propagation lag) — re-attempt next iteration.
+        if !withheld && anchor_cert.is_none() {
+            // Resolving the signing committee can cost a chain read, so space
+            // the attempts rather than issuing one per barrier iteration, and
+            // give up after the budget when the resolution is the chain-backed
+            // one — the only failure the barrier cannot wait out.
+            if signing_committee.is_none()
+                && last_committee_resolve_at
+                    .is_none_or(|at| at.elapsed() >= ANCHOR_COMMITTEE_RESOLVE_INTERVAL)
+            {
+                last_committee_resolve_at = Some(std::time::Instant::now());
+                committee_resolve_attempts += 1;
+                match anchor_committee.resolve(anchor_epoch).await {
+                    AnchorCommitteeResolution::Resolved(committee) => {
+                        signing_committee = Some(committee);
+                    }
+                    // No epoch preceded this one off-chain, so no certificate
+                    // was ever minted for `anchor_epoch` and none ever will
+                    // be. This is the genesis case one epoch along: a network
+                    // whose validators come up for the first time already at
+                    // epoch 1 has exactly this shape. Blocking would wedge
+                    // every validator on the network's own first epoch, so
+                    // pass — loudly, because on an established network this
+                    // would mean the chain lost its previous committee.
+                    AnchorCommitteeResolution::NoPredecessorEpoch => {
+                        if let Some(telemetry) = &telemetry {
+                            telemetry.handoff_prepare_waiting.set(0);
+                        }
+                        info!(
+                            next_epoch,
+                            anchor_epoch,
+                            "prepare-then-start: the chain holds no committee for epoch \
+                             {anchor_epoch}, so no handoff certificate exists for it and none \
+                             ever will — this network's first off-chain epoch is \
+                             {next_epoch}. Entering it without a cross-epoch anchor, the same \
+                             as entering epoch 0 at genesis."
+                        );
+                        return HandoffBarrierOutcome::Ready;
+                    }
+                    AnchorCommitteeResolution::Unavailable => {}
+                }
+                if signing_committee.is_none()
+                    && anchor_committee.is_bounded()
+                    && committee_resolve_attempts >= ANCHOR_COMMITTEE_RESOLVE_ATTEMPTS
+                {
+                    error!(
+                        next_epoch,
+                        anchor_epoch,
+                        attempts = committee_resolve_attempts,
+                        "prepare-then-start: could not resolve the epoch-{anchor_epoch} committee \
+                         from the local committee store or from chain, so the handoff certificate \
+                         cannot be verified at all. The likeliest cause is that the chain has \
+                         advanced past epoch {next_epoch} since this process read it at boot — \
+                         the chain-read fallback only serves the previous committee while the \
+                         on-chain epoch is exactly {anchor_epoch}+1. Failing startup rather than \
+                         entering the epoch unanchored; a restart will boot into the epoch the \
+                         chain has actually reached."
+                    );
+                    if let Some(telemetry) = &telemetry {
+                        telemetry.handoff_prepare_waiting.set(0);
+                    }
+                    return HandoffBarrierOutcome::AnchorCommitteeUnresolved;
+                }
+            }
+            if let Some(committee) = &signing_committee {
+                match prepare_handoff_anchor(
+                    ctx,
+                    anchor_epoch,
+                    committee,
+                    peer_ids,
+                    new_epoch_store,
+                )
+                .await
+                {
+                    AnchorOutcome::Anchored(cert) => anchor_cert = Some(*cert),
+                    AnchorOutcome::Unavailable => {}
+                    AnchorOutcome::FailedClosed => {
+                        if let Some(telemetry) = &telemetry {
+                            telemetry.handoff_prepare_waiting.set(0);
+                        }
+                        return HandoffBarrierOutcome::FailedClosed;
+                    }
+                }
+            }
+        }
+        let cert = anchor_cert.as_ref();
+
+        // Condition 2: every network-key output the cert certifies —
+        // reconfiguration AND DKG — is held locally with a digest matching
+        // the cert. Grounded entirely in the verified cert (the off-chain
+        // anchor) and this validator's own digest slices — no chain state,
+        // and no per-key epoch (the cert's single epoch scopes the whole
+        // handoff). A read error is treated as not-ready (empty slice); the
+        // periodic WARN below surfaces a persistent failure.
+        //
+        // Both slices are read from the store for the epoch being entered —
+        // see this function's doc for why the DKG digests in particular must
+        // not come from an outgoing store.
+        let local_reconfiguration_digests = new_epoch_store
+            .get_network_reconfiguration_output_digests_for_epoch(anchor_epoch)
+            .unwrap_or_default();
+        let local_dkg_digests = new_epoch_store
+            .get_network_dkg_output_digests()
+            .unwrap_or_default();
+        let ready = cert.is_some_and(|cert| {
+            all_cert_network_key_outputs_held_locally(
+                cert,
+                &local_dkg_digests,
+                &local_reconfiguration_digests,
+            )
+        });
+
+        if ready {
+            let elapsed = started_at.elapsed();
+            if let Some(telemetry) = &telemetry {
+                telemetry.handoff_prepare_waiting.set(0);
+                telemetry
+                    .handoff_prepare_duration_seconds
+                    .observe(elapsed.as_secs_f64());
+            }
+            info!(
+                next_epoch,
+                "prepare-then-start: epoch {next_epoch} handoff data ready+verified after \
+                 {}s, {retries} retries; starting MPC",
+                elapsed.as_secs()
+            );
+            return HandoffBarrierOutcome::Ready;
+        }
+
+        retries += 1;
+        if let Some(telemetry) = &telemetry {
+            telemetry.handoff_prepare_retries_total.inc();
+        }
+
+        // Anchor held but some certified output still missing locally: retry
+        // fetching JUST the missing ones (the local-presence precheck inside
+        // skips everything already held, so this is not a refetch of held
+        // blobs).
+        if let Some(cert) = cert.filter(|_| !withheld) {
+            install_joiner_network_key_outputs(cert, &ctx.p2p_network, peer_ids, new_epoch_store)
+                .await;
+        }
+
+        // Surface the breakdown at least every 10 SECONDS so a hang is never
+        // silent on a dashboard or in the logs. Wall-clock rather than every
+        // Nth retry: see `last_warn_at`.
+        if last_warn_at.elapsed() >= BARRIER_STALL_WARN_INTERVAL {
+            last_warn_at = std::time::Instant::now();
+            let (cert_network_key_items, missing_key_ids, unmapped_cert_keys) = match &cert {
+                Some(cert) => {
+                    let total = cert
+                        .attestation
+                        .items
+                        .iter()
+                        .filter(|(item, _)| {
+                            matches!(
+                                item,
+                                HandoffItemKey::NetworkReconfigurationOutput { .. }
+                                    | HandoffItemKey::NetworkDkgOutput { .. }
+                            )
+                        })
+                        .count();
+                    let missing: Vec<ObjectID> = cert
+                        .attestation
+                        .items
+                        .iter()
+                        .filter_map(|(item, digest)| {
+                            // Cert keys by NetworkKeyId; local digests by
+                            // ObjectID — translate via the temporary map.
+                            let (key_id, local_digests) = match item {
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                                    (key_id, &local_reconfiguration_digests)
+                                }
+                                HandoffItemKey::NetworkDkgOutput { key_id } => {
+                                    (key_id, &local_dkg_digests)
+                                }
+                                HandoffItemKey::ValidatorMpcData { .. } => return None,
+                            };
+                            let object_id =
+                                ika_core::network_key_id_mapping::object_id_for(key_id)?;
+                            (local_digests.get(&object_id) != Some(digest)).then_some(object_id)
+                        })
+                        .collect();
+                    // Cert keys with NO ObjectID mapping (this validator
+                    // never instantiated the key and it is not one of the
+                    // compiled-in deployed keys) are keys the barrier can
+                    // neither check nor install, so they do NOT hold the gate
+                    // closed — see `all_cert_network_key_outputs_held_locally`
+                    // for why that is safe. Report them anyway: they are the
+                    // keys whose sessions will park after start until the
+                    // stranded-key recovery fills them. A key with both a DKG
+                    // and a reconfiguration item would list twice — dedup via
+                    // the ordered set.
+                    let unmapped: BTreeSet<NetworkKeyId> = cert
+                        .attestation
+                        .items
+                        .iter()
+                        .filter_map(|(item, _)| match item {
+                            HandoffItemKey::NetworkReconfigurationOutput { key_id }
+                            | HandoffItemKey::NetworkDkgOutput { key_id }
+                                if ika_core::network_key_id_mapping::object_id_for(key_id)
+                                    .is_none() =>
+                            {
+                                Some(*key_id)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let unmapped: Vec<NetworkKeyId> = unmapped.into_iter().collect();
+                    (total, missing, unmapped)
+                }
+                None => (0, Vec::new(), Vec::new()),
+            };
+            warn!(
+                next_epoch,
+                anchor_epoch,
+                have_cert = cert.is_some(),
+                have_signing_committee = signing_committee.is_some(),
+                cert_network_key_items,
+                missing_locally = missing_key_ids.len(),
+                missing_key_ids = ?missing_key_ids,
+                unmapped_cert_keys = ?unmapped_cert_keys,
+                retries,
+                withheld_for_testing = withheld,
+                "prepare-then-start: still awaiting full verified handoff data for epoch \
+                 {next_epoch}"
+            );
+        }
+
+        // Re-check after 1s. No timeout — block indefinitely (safety-first:
+        // never start the epoch without the verified handoff outputs the cert
+        // certifies).
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -4094,6 +4531,32 @@ fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
 /// permanent. `ValidatorMpcData` items are not gated (they feed the mpc_data
 /// freeze, a separate plane). A cert with no network-key items is trivially
 /// ready on this condition.
+///
+/// UNMAPPED CERT KEYS DO NOT BLOCK. The certificate names keys by
+/// `NetworkKeyId` while every local slice and cache is keyed by `ObjectID`,
+/// and the translation between them is a process-global map holding the
+/// deployed keys as compiled-in constants plus whatever this PROCESS has
+/// instantiated or derived. A key outside the constants that this process has
+/// not touched — every fresh localnet/CI DKG, seen by a joiner or by a
+/// just-restarted validator — has no entry, and the barrier can do nothing
+/// about it: the installer cannot cache bytes under an unknown `ObjectID`,
+/// and the derivation that would register one runs from the MPC manager's
+/// adoption pass, which does not exist until this barrier releases. Blocking
+/// would be a guaranteed deadlock, so an unmapped item is passed and reported
+/// (`unmapped_cert_keys` on the barrier's periodic warn).
+///
+/// That is safe, because the hazard this barrier exists to prevent is
+/// entering an epoch holding STALE key material, and the guard against it for
+/// an unmapped key sits downstream and stays armed: adoption DEFERS an
+/// unmapped key rather than installing anything for it, and once the
+/// background derivation registers the mapping, adoption re-applies the same
+/// cert-digest gate and refuses a local output that contradicts the
+/// certificate. And where the barrier did not manage to persist the
+/// certificate at all (the insert only warns on failure), adoption REJECTS a
+/// reconfigured key outright rather than adopting it cert-less. The cost of
+/// passing is liveness, not safety — the key's sessions park until the
+/// stranded-key recovery fills it (see `specs/handoff.md`), which is exactly
+/// what happens today.
 fn all_cert_network_key_outputs_held_locally(
     cert: &CertifiedHandoffAttestation,
     local_dkg_digests: &BTreeMap<ObjectID, [u8; 32]>,
@@ -4104,8 +4567,9 @@ fn all_cert_network_key_outputs_held_locally(
         .iter()
         .all(|(item, cert_digest)| match item {
             HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                // Cert keys by NetworkKeyId; local digests by ObjectID.
-                ika_core::network_key_id_mapping::object_id_for(key_id).is_some_and(|object_id| {
+                // Cert keys by NetworkKeyId; local digests by ObjectID. An
+                // unmapped key passes — see the doc above.
+                ika_core::network_key_id_mapping::object_id_for(key_id).is_none_or(|object_id| {
                     local_reconfiguration_digests.get(&object_id) == Some(cert_digest)
                 })
             }
@@ -4122,7 +4586,7 @@ fn all_cert_network_key_outputs_held_locally(
             // leaving a poisoned validator wedged permanently.
             HandoffItemKey::NetworkDkgOutput { key_id } => {
                 ika_core::network_key_id_mapping::object_id_for(key_id)
-                    .is_some_and(|object_id| local_dkg_digests.get(&object_id) == Some(cert_digest))
+                    .is_none_or(|object_id| local_dkg_digests.get(&object_id) == Some(cert_digest))
             }
             HandoffItemKey::ValidatorMpcData { .. } => true,
         })
@@ -4248,6 +4712,31 @@ mod tests {
         assert!(all_cert_network_key_outputs_held_locally(
             &dkg_only,
             &canonical,
+            &BTreeMap::new()
+        ));
+
+        // A cert key with NO ObjectID mapping — never instantiated in this
+        // process and not one of the compiled-in deployed keys — reads READY
+        // even with nothing held locally. The barrier can neither check nor
+        // install such a key (the installer has no ObjectID to cache under,
+        // and the derivation that would register one runs from the adoption
+        // pass, which does not exist until the barrier releases), so blocking
+        // on it would deadlock every joiner and every restart on a network
+        // whose keys are outside the seed. Adoption's own cert-digest gate is
+        // what keeps this safe: it defers an unmapped key and, once the
+        // mapping lands, refuses any local output contradicting the cert.
+        let unmapped = cert_with_reconfiguration_items(vec![(network_key_id(200), [3u8; 32])]);
+        assert!(all_cert_network_key_outputs_held_locally(
+            &unmapped,
+            &BTreeMap::new(),
+            &BTreeMap::new()
+        ));
+        // Registering the mapping arms the gate for that same key: now the
+        // missing local output DOES hold the barrier closed.
+        ika_core::network_key_id_mapping::register(key_id(200), network_key_id(200));
+        assert!(!all_cert_network_key_outputs_held_locally(
+            &unmapped,
+            &BTreeMap::new(),
             &BTreeMap::new()
         ));
     }

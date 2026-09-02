@@ -991,6 +991,21 @@ pub struct NodeConfig {
     /// each unbounded validator's class-groups crypto otherwise starves the pod.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_mpc_computation_cores: Option<usize>,
+
+    /// TESTS ONLY — not readable from or writable to a config file
+    /// (`serde(skip)`, like `supported_protocol_versions` above), so no
+    /// deployment can set it by accident.
+    ///
+    /// For this long after the prepare-then-start barrier is entered, the
+    /// barrier reports the epoch's handoff certificate as not obtainable and
+    /// fetches nothing, exactly as if no peer were serving it yet
+    /// (the benign propagation-lag outcome the barrier already retries on).
+    /// It exists so a cluster test can hold a validator's handoff data back
+    /// long enough to prove the validator does NOT start its epoch's
+    /// consensus and MPC components without it. Setting it on a real
+    /// validator would keep a healthy node out of consensus for the window.
+    #[serde(skip)]
+    pub withhold_handoff_anchor_for_testing: Option<Duration>,
 }
 
 /// Keep the current epoch plus this many prior per-epoch authority store
@@ -1547,6 +1562,7 @@ mod tests {
             authority_db_retention_epochs: None,
             authority_db_pruner_period_secs: None,
             max_mpc_computation_cores: None,
+            withhold_handoff_anchor_for_testing: None,
         }
     }
 
