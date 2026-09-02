@@ -1,10 +1,19 @@
 name: Setup SSH for private dependencies
-description: Configure SSH key and rewrite HTTPS to SSH for private repos
+description: >-
+  Configure the SSH deploy key and rewrite HTTPS to SSH for private repos;
+  authenticate every other GitHub HTTPS fetch with the job token.
 
 inputs:
   deploy-key:
     description: The SSH deploy key
     required: true
+  github-token:
+    description: >-
+      Token used to authenticate HTTPS git fetches of public GitHub
+      dependencies (cargo git deps and Move package deps). Defaults to the
+      job's GITHUB_TOKEN.
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -23,3 +32,37 @@ runs:
       shell: bash
       run: |
         git config --global url."git@github.com:dwallet-labs/inkrypto".insteadOf "https://github.com/dwallet-labs/inkrypto"
+
+    - name: Authenticate public GitHub HTTPS fetches with the job token
+      # The self-hosted runners share one egress address. Cargo (with
+      # CARGO_NET_GIT_FETCH_WITH_CLI) and the Move package resolver fetch a
+      # dozen public git dependencies per fresh build, anonymously, and
+      # GitHub rate-limits anonymous git-over-HTTPS per source address: the
+      # symptom is `fatal: could not read Username for 'https://github.com'`
+      # (a 401 to an anonymous clone) followed by `the remote end hung up`,
+      # killing an 80-minute gate before any test body runs, on main as much
+      # as on a branch. Authenticated fetches are limited per token, not per
+      # address, so every git fetch of github.com goes out with the job
+      # token. The private-repo SSH rewrite above is a longer prefix, and git
+      # applies the longest matching insteadOf, so it still wins for inkrypto.
+      #
+      # Two channels, because the Move package resolver (move_package_alt)
+      # runs git with GIT_CONFIG_GLOBAL="" and so never reads ~/.gitconfig:
+      # the global config covers cargo and hand-written git, and the same
+      # rewrite goes into the job environment as GIT_CONFIG_COUNT/KEY/VALUE,
+      # which git reads on every invocation regardless of config files and
+      # which the resolver does not strip (it unsets only the repo-locating
+      # GIT_* variables). Verified on Test Cluster run 33655947764: with the
+      # global config alone the cargo build step passed but the Move
+      # dependency clone inside the test still failed anonymously.
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        rewrite="https://x-access-token:${GITHUB_TOKEN}@github.com/"
+        git config --global url."${rewrite}".insteadOf "https://github.com/"
+        {
+          echo "GIT_CONFIG_COUNT=1"
+          echo "GIT_CONFIG_KEY_0=url.${rewrite}.insteadOf"
+          echo "GIT_CONFIG_VALUE_0=https://github.com/"
+        } >> "$GITHUB_ENV"
