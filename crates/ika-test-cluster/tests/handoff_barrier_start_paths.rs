@@ -230,24 +230,52 @@ async fn test_promoted_joiner_waits_for_handoff_data() {
         .expect("failed to add the joiner validator");
     let joiner_name = joiner.authority_name();
 
-    // The promotion branch runs the barrier before it constructs the
-    // joiner's validator components, so the gauge going to 1 IS the promotion
-    // reaching the barrier. Without the barrier on that path it never moves,
-    // and this poll is what fails.
+    // The epoch the joiner is promoted INTO: `request_add_validator` takes
+    // effect at the next boundary, so it is one past the chain's epoch now.
+    // Every barrier observation below is pinned to it, and that pinning is
+    // the whole point of this test. The joiner keeps its hold-back
+    // configured for its whole life, so one boundary later it produces a
+    // byte-identical 30s barrier signature as an ORDINARY CONTINUING
+    // validator on the reconfigure seam — a path that was already covered
+    // before this change. Without the epoch pin the test passes on that
+    // signature and says nothing at all about the promotion path.
+    let promotion_epoch = cluster
+        .current_epoch_from_chain()
+        .await
+        .expect("chain epoch is readable")
+        + 1;
+    let joiner_epoch =
+        |handle: &IkaNodeHandle| handle.with(|node| node.current_epoch_for_testing());
+    assert!(
+        joiner_epoch(&node_handle(&cluster, &joiner_name)) < promotion_epoch,
+        "the epoch boundary passed while the joiner was being added, so the epoch it is \
+         promoted into is not the one this test pinned",
+    );
+
+    // The promotion branch runs the barrier before it constructs the joiner's
+    // validator components, so the gauge reading 1 AT THE PROMOTION EPOCH is
+    // the promotion reaching the barrier. Without the barrier on that path it
+    // never moves at that epoch, and this poll is what fails.
     poll_until(
         Duration::from_secs(300),
-        "the promoted joiner to enter the prepare-then-start barrier",
+        "the promoted joiner to enter the prepare-then-start barrier for the epoch it is \
+         promoted into",
         || {
             cluster
                 .swarm
                 .node(&joiner_name)
                 .and_then(|node| node.get_node_handle())
-                .filter(|handle| barrier_waiting(handle) == 1.0)
+                .filter(|handle| {
+                    barrier_waiting(handle) == 1.0 && joiner_epoch(handle) == promotion_epoch
+                })
                 .map(|_| ())
         },
     )
     .await;
-    tracing::info!("promoted joiner is blocked in the prepare-then-start barrier");
+    tracing::info!(
+        promotion_epoch,
+        "promoted joiner is blocked in the prepare-then-start barrier",
+    );
 
     poll_until(
         Duration::from_secs(300),
@@ -257,7 +285,9 @@ async fn test_promoted_joiner_waits_for_handoff_data() {
                 .swarm
                 .node(&joiner_name)
                 .and_then(|node| node.get_node_handle())
-                .filter(|handle| barrier_waiting(handle) == 0.0)
+                .filter(|handle| {
+                    barrier_waiting(handle) == 0.0 && joiner_epoch(handle) == promotion_epoch
+                })
                 .map(|_| ())
         },
     )
