@@ -144,6 +144,15 @@ a protocol upgrade), so it must not be routed through
 `report_invariant_violation!`, which means "should never happen" and would both
 mislabel the condition and pollute that counter during a rollout.
 
+Its children are PRE-MATERIALIZED at registration over the closed label domain
+(`LocalAuthorityMaliciousReason::ALL_METRIC_LABELS` x session types, including
+the increment site's `unspecified` fallback). Without that, `gather()` omits a
+`*Vec` family with no children, so a test or alert asserting "this validator
+never convicted itself" reads identically on a live-and-quiet guard and on one
+whose increment site has been deleted — the same trap
+`invariant_violation_count` has, for the same reason. The #2119 seed-rotation
+cluster test asserts the series is PRESENT and zero, never absent-or-zero.
+
 Its labels are the whole reason it can be exported: `reason` is the fixed
 `LocalAuthorityMaliciousReason` set (plus `unspecified`) and `session_type` is
 the fixed session kind — at most a handful of series. Session ids, authority
@@ -276,6 +285,14 @@ ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed
 `rotation_complete` is not an alert but is worth a dashboard panel: it means
 the operator's `previous-root-seed-key-pair` did its job and should now be
 removed, and leaving it in place makes the NEXT rotation ambiguous.
+
+It is CLEARED (every child zeroed, none removed) on the reconfiguration path
+that produces no validator components: the gauge is written only by the
+per-epoch validator start, so without that a node leaving the committee would
+export its last state — possibly `awaiting_certification` — for the life of
+the process, and the alert above would fire forever against a node with no
+epoch to participate in. The same argument applies to any one-hot set from a
+per-role startup path: whoever tears the role down owns zeroing it.
 
 It is set from the per-epoch component start in `ika-node`, deliberately not
 from inside the MPC service — the service is the thing sitting idle in the

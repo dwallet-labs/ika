@@ -294,7 +294,15 @@ Once the rotation has landed the node logs, at `WARN`:
 seed rotation COMPLETE — the certificate now names the current root seed's mpc_data bundle. Remove `previous-root-seed-key-pair` from the node config
 ```
 
-Remove the field at the next convenient restart, and delete the old seed file. Nothing breaks if you leave it — the node keeps resolving onto the current seed — but every epoch then re-derives the old seed's bundle, on the boot path, for a comparison that can no longer match; and a *later* rotation that swaps only `root-seed-key-pair` would leave this field pointing two seeds back, which is the `previous_seed_mismatch` state below. The same state is on the metric `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}`.
+Then, **in this order**:
+
+1. Remove `previous-root-seed-key-pair` from the node config.
+2. Restart the validator.
+3. Only now delete the old seed file.
+
+Nothing breaks if you leave the field in place — the node keeps resolving onto the current seed — but every epoch then re-derives the old seed's bundle, on the boot path, for a comparison that can no longer match; and a *later* rotation that swaps only `root-seed-key-pair` would leave this field pointing two seeds back, which is the `previous_seed_mismatch` state below. The same state is on the metric `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}`.
+
+Deleting the file first is not fatal — a `previous-root-seed-key-pair` that names a file the node cannot read is treated exactly as if the field were absent, with a `WARN` naming the path and the read error. If the rotation had already completed (the usual case when you are tidying up) that changes nothing at all. If a rotation were still in flight, the validator would fall into the sit-out state below instead: visible on the metric and in the log, and self-healing at the next boundary — never a boot failure.
 
 #### Rotating without the previous-seed field
 
@@ -307,6 +315,8 @@ ika_dwallet_mpc_seed_identity_state{state="awaiting_certification"} 1
 ```
 
 To rejoin the **current** epoch instead of waiting for the boundary, set `previous-root-seed-key-pair` to the seed that is currently certified — the one you rotated away from — and restart. The resolution runs at every start, so the repair takes effect immediately.
+
+The field name is exactly `previous-root-seed-key-pair`, and it takes the same form as `root-seed-key-pair`. A misspelling is **silently ignored** — the node config deliberately does not reject unknown keys, because a hard parse failure on a fleet upgrade is worse than a typo. The tell is in the same `ERROR` line: it prints `previous = "not configured"` whenever the node saw no usable previous seed, whether the field was absent, misspelled, or unreadable.
 
 #### One rotation per epoch
 

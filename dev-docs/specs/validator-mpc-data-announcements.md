@@ -106,7 +106,20 @@ Invariants:
    are written by the previous epoch's committee running the previous
    binary, so accept-before-emit is what stops the whole fleet from
    resolving to "neither seed matches" on the same upgrade.
-4. **One rotation per epoch.** Rotating twice before the first is certified
+4. **An unreadable previous seed is treated as an absent one.** The
+   descriptor is resolved through a FALLIBLE accessor
+   (`RootSeedWithPath::try_root_seed`); `root_seed()` panics on an unreadable
+   file, which is right for the current seed and wrong for this one. The
+   documented rotation ends with the operator deleting the old seed file, and
+   nothing forces them to remove the config field first, so an unreadable
+   previous seed is an expected operator state rather than a corrupt config.
+   It resolves to "no previous seed" with a `WARN` naming the path and the
+   error — so the failure is visible rather than fatal, and a node whose
+   CURRENT seed is already certified is unaffected. The failure is not
+   cached, so a restored file resolves at the next epoch without a restart.
+   The documented order is nonetheless: remove the field, restart, then
+   delete the file.
+5. **One rotation per epoch.** Rotating twice before the first is certified
    leaves neither seed matching; the validator sits out MPC until the
    certificate catches up, which is at most one extra epoch because it keeps
    announcing the current seed. This is also the shape of a wrong seed
