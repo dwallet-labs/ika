@@ -184,8 +184,9 @@ accepting mocks.
 # comma-separated subset to run several, or a single name to run one. Every
 # scenario runs --test-threads=1 (each binds the fixed Sui localnet ports and
 # chdirs during publish, so only one can run per job). smoke, workload and
-# restart_spectator need only the current build; the three v140 gates also
-# build `old_ref` in an isolated git worktree at that ref's own toolchain.
+# restart_spectator and wedged_drain need only the current build; the three
+# v140 gates also build `old_ref` in an isolated git worktree at that ref's
+# own toolchain.
 
 # Everything in parallel (default), or a subset:
 gh workflow run upgrade-test.yaml --ref <branch>                       # = test=all
@@ -234,6 +235,18 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v140_churn
 # production presign-pool sizing, so it is not a cheap scenario.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=restart_spectator
 
+# The wedged-but-alive MPC drain gate (#2102). Current build only. One
+# validator's drain is parked with a production-binary env hook while its
+# service keeps running: the round channel fills, the consensus fold parks,
+# and the commit-liveness watchdog must HOLD rather than exit. Asserted from
+# /metrics only, with the peers as the two-sided control, then unparked and
+# required to recover with no restart. LONG — the park has to run inside the
+# first half of one deliberately long epoch, before that epoch's reshare
+# (~50 min of cluster time), which is why it is not in the pull-request
+# default. It rejects an `epoch_duration_ms` below 1680000 rather than run in
+# a window it cannot fit.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=wedged_drain
+
 # NOTE: there is no rollback gate any more, and no backward direction in the
 # matrix. `mid_epoch_rollback` proved a v1.4.0 -> v1.3.1 mid-epoch rollback
 # safe for the v1.4.0 release commit (#2077, #2064) and was deleted once
@@ -261,6 +274,7 @@ notifier + a validator committee:
 | `v140_rollout` | **one current + three literal v1.4.0**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
 | `v140_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.4.0-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `malicious_v140` | three literal v1.4.0 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
+| `wedged_drain` | current only, ONE validator's MPC drain parked by env hook | the #2102 wedged-but-alive drain gate: with the drain stuck but the service alive, the fold parks on the full round channel and the commit-liveness watchdog HOLDS rather than exiting — blocked seconds climbing against a flat consumed round, depth pinned at capacity, silence held, committed-leader round still advancing, peers untouched; on release the drain resumes with no restart |
 | `restart_spectator` | current only, production presign-pool sizing | the #1952 mid-epoch-restart gate: a validator restarted far from a boundary, in an epoch with an established network key and ongoing internal-presign volume, resumes LIVE registry-driven top-up instantiation within the epoch — not merely staying consensus-healthy while peers absorb its sessions |
 
 ### CI runner resources

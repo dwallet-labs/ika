@@ -9,6 +9,7 @@
 //! is persistent and survives `swap_binary`, which is what makes the on-disk
 //! compatibility assertion real.
 
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -50,7 +51,6 @@ pub struct ValidatorProcess {
     /// YAML node config passed via `--config-path`.
     config_path: PathBuf,
     /// Persistent data dir (RocksDB lives under here); survives binary swaps.
-    #[allow(dead_code)]
     data_dir: PathBuf,
     /// `127.0.0.1:<admin_interface_port>` from the node config.
     admin_addr: SocketAddr,
@@ -69,6 +69,22 @@ pub struct ValidatorProcess {
     /// starve the async runtimes — on CI hard enough to kill the runner
     /// agent. Bounded to a fair per-node slice at construction.
     rayon_threads: usize,
+    /// Extra environment handed to the child on every subsequent
+    /// [`Self::start`], on top of `RAYON_NUM_THREADS`.
+    ///
+    /// This is how a scenario reaches a knob that only the PRODUCTION binary
+    /// reads — the harness spawns separately-compiled child processes, so
+    /// there is no `cfg(test)` seam and no in-process constructor to pass a
+    /// flag to. It is deliberately per-validator: the failures worth building
+    /// this for are one-node failures (a wedged MPC drain, a short
+    /// commit-liveness bound), and setting them cluster-wide via the harness's
+    /// own environment would remove the healthy peers that make the assertion
+    /// two-sided.
+    ///
+    /// Sticky across restarts and binary swaps, because the process it
+    /// describes is the same validator throughout a scenario. Applied AFTER
+    /// `RAYON_NUM_THREADS`, so a key of that name would win — don't.
+    extra_env: BTreeMap<String, String>,
     child: Option<Child>,
     http: reqwest::Client,
 }
@@ -93,6 +109,7 @@ impl ValidatorProcess {
             metrics_port,
             log_path,
             rayon_threads,
+            extra_env: BTreeMap::new(),
             child: None,
             http: reqwest::Client::new(),
         }
@@ -100,6 +117,29 @@ impl ValidatorProcess {
 
     pub fn metrics_port(&self) -> u16 {
         self.metrics_port
+    }
+
+    /// Persistent data dir. Scenarios use it to place files the child reads
+    /// (e.g. the MPC-drain unpark sentinel) beside that validator's own state,
+    /// so nothing is shared between co-located validators by accident.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Add environment for every subsequent [`Self::start`]. Takes effect at
+    /// the next start — a running child's environment cannot be changed — so
+    /// callers pair it with a restart. See [`Self::extra_env`].
+    pub fn set_extra_env<K, V>(&mut self, vars: impl IntoIterator<Item = (K, V)>)
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.extra_env
+            .extend(vars.into_iter().map(|(k, v)| (k.into(), v.into())));
+    }
+
+    pub fn extra_env(&self) -> &BTreeMap<String, String> {
+        &self.extra_env
     }
 
     pub fn admin_endpoint(&self) -> String {
@@ -130,10 +170,15 @@ impl ValidatorProcess {
             .open(&self.log_path)
             .with_context(|| format!("open log file {}", self.log_path.display()))?;
         let stderr = log.try_clone()?;
+        // Log the extra environment in full, every start. It is the one input
+        // to a child that lives nowhere in its on-disk config, so a scenario
+        // failure reconstructed from logs alone would otherwise not say which
+        // validator was running with which knob armed.
         tracing::info!(
             index = self.index,
             binary = %self.binary.display(),
             admin = %self.admin_addr,
+            extra_env = ?self.extra_env,
             "spawning ika-validator",
         );
         let child = Command::new(&self.binary)
@@ -142,6 +187,9 @@ impl ValidatorProcess {
             // Bound this child's crypto rayon pool so co-located validator
             // processes don't oversubscribe the host (see `rayon_threads`).
             .env("RAYON_NUM_THREADS", self.rayon_threads.to_string())
+            // Per-validator test knobs the production binary reads; empty
+            // unless a scenario set them (see `extra_env`).
+            .envs(&self.extra_env)
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true)
@@ -186,6 +234,21 @@ impl ValidatorProcess {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Stop and start again on the SAME binary and data dir — a planned
+    /// restart, not an upgrade. The restart primitive for scenarios whose
+    /// event under test is a reboot (or, as in the wedged-drain scenario, the
+    /// only way to hand a running validator new environment).
+    pub async fn restart(&mut self) -> Result<()> {
+        tracing::info!(
+            index = self.index,
+            binary = %self.binary.display(),
+            "restarting ika-validator on the same binary",
+        );
+        self.stop().await?;
+        self.start().await?;
         Ok(())
     }
 

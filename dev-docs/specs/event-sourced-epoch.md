@@ -899,11 +899,30 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
   got wrong — synthetic commits understate the per-commit byte cost, and a
   producer that never pauses overstates the deep-lag case that
   `commit_syncer` actually bounds at ~3,200 commits.
-- **A wedged drain end to end** (REQUIRED): stop the drain consuming on a
-  live validator and confirm the watchdog does NOT exit the node (the hold is
-  correct) while blocked time and channel depth climb. The hold and the
-  signal are separately tested in-process; that they behave that way together
-  on a real node is not.
+- **A wedged drain end to end** — **DONE** (ika #2102), demonstrated by
+  upgrade-test run
+  [33557843070](https://github.com/dwallet-labs/ika/actions/runs/33557843070)
+  (47.5 min of cluster time, green), and it is `ika-upgrade-test`'s
+  `wedged_drain` scenario
+  (`crates/ika-upgrade-test/tests/wedged_drain.rs`). One validator of four is
+  restarted with the production binary's park hook armed
+  (`IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND=<n>`, `n >= 1`; `0` is off, read in
+  `ika-core`'s `dwallet_mpc::park_drain_test_hook`): its drain stops consuming while its
+  service keeps running, so the round channel fills and the fold parks. The
+  run then asserts the whole composition from `/metrics` alone —
+  `ika_consensus_fold_blocked_seconds_total` climbing against a flat
+  `ika_last_process_mpc_consensus_round`, `ika_consensus_round_channel_depth`
+  pinned at capacity, `ika_consensus_commit_silence_seconds` held rather than
+  climbing toward the bound, `consensus_ika_last_committed_leader_round` still
+  advancing, no restart, and the three peers showing none of it — then
+  releases the park and requires the drain to resume with no restart.
+  The hold is made a claim with teeth by lowering only that validator's
+  `IKA_COMMIT_LIVENESS_WATCHDOG_SECS` and observing the wedge for longer than
+  the watchdog's `2x`-bound uptime floor: drop the `fold_blocked` term from
+  `CommitLivenessWatchdog::tick` and the node exits inside the window and the
+  scenario fails. It is long — the park must fit inside the first half of one
+  deliberately long epoch, before that epoch's reshare — and so is dispatched
+  rather than run on every pull request.
 
 ## What must never be reintroduced
 
