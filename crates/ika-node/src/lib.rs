@@ -2249,10 +2249,23 @@ impl IkaNode {
         // service it reports on, and on the same signal — but in a task of its
         // own, so a wedged drain cannot take the reporting down with it.
         let transport_metrics_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
-        if let Err(e) = DWalletMPCService::verify_validator_keys(&epoch_store, config) {
-            error!(error = ?e, "Failed to verify validator keys");
-            panic!("Failed to verify validator keys: {e}");
+        // Per-epoch key verification AND root-seed resolution (#2119). Only a
+        // genuine local misconfiguration (wrong network/consensus key, no root
+        // seed at all) is fatal here; a seed the network's certificate does
+        // not name resolves to a non-participating epoch rather than an abort,
+        // because the abort made the documented rotation flow a crashloop.
+        let seed_resolution = match DWalletMPCService::verify_validator_keys(&epoch_store, config) {
+            Ok(resolution) => resolution,
+            Err(e) => {
+                error!(error = ?e, "Failed to verify validator keys");
+                panic!("Failed to verify validator keys: {e}");
+            }
         };
+        // Publishes `ika_dwallet_mpc_seed_identity_state` and the epoch's one
+        // operator-facing line. Deliberately here, at the per-epoch component
+        // start, rather than inside the MPC service: the state has to stay
+        // readable when that service is the thing sitting idle.
+        seed_resolution.report(&dwallet_mpc_metrics, &epoch_store.name, epoch_store.epoch());
 
         let dwallet_checkpoint_service_notify: Option<
             Arc<dyn ika_core::dwallet_checkpoints::DWalletCheckpointServiceNotify + Send + Sync>,
@@ -2305,6 +2318,7 @@ impl IkaNode {
             dwallet_checkpoint_handler,
             system_checkpoint_handler,
             stranded_network_keys,
+            &seed_resolution,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -2673,6 +2687,15 @@ impl IkaNode {
                         Arc::new(components.consensus_adapter.clone()),
                         blob_cache,
                         root_seed_kp.root_seed().clone(),
+                        // The previous seed is never announced from — the
+                        // sender always announces the CURRENT seed's bundle,
+                        // which is exactly what gets the rotation certified at
+                        // the next boundary. It only lets the per-tick check
+                        // tell a post-freeze rotation from a lost seed (#2119).
+                        self.config
+                            .previous_root_seed_key_pair
+                            .as_ref()
+                            .map(|previous| previous.root_seed().clone()),
                         // Chain next-epoch committee (pre-assembly) for
                         // the freeze emit-gate — so the freeze waits for
                         // joiners that the assembled committee can't yet

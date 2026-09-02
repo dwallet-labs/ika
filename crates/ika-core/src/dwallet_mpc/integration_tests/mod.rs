@@ -18,6 +18,7 @@ mod noa_checkpoint;
 mod noa_signing_key_skew;
 mod presign_consensus;
 mod replay_drain;
+mod seed_rotation_store;
 mod session;
 mod sign;
 mod threshold_not_reached;

@@ -543,6 +543,7 @@ mod per_mode_registration {
         "ika_dwallet_mpc_network_key_instantiations_in_flight",
         "ika_dwallet_mpc_number_of_expected_sign_sessions",
         "ika_dwallet_mpc_number_of_unexpected_sign_sessions",
+        "ika_dwallet_mpc_seed_identity_state",
         "ika_dwallet_mpc_prior_cert_blobs_missing",
         "ika_dwallet_mpc_requests_pending_for_frozen_mpc_data",
         "ika_dwallet_mpc_requests_pending_for_next_active_committee",
