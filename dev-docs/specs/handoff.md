@@ -390,9 +390,13 @@ next epoch inherits.
    validator visibly not signing remains the accepted trade against one
    signing with the wrong shares. The operator-facing signals are the same
    on all three paths — the `handoff_prepare_waiting` gauge, the
-   `handoff_prepare_retries_total` counter and the every-tenth-retry
-   warn — and they work on the boot path because the metrics server
-   starts before node startup runs.
+   `handoff_prepare_retries_total` counter, and a warn that re-states what
+   is still missing every ten SECONDS of wall clock (not every Nth retry:
+   one retry is a second while only blobs are missing, but as long as the
+   anchor fetch's whole attempt budget when no peer is serving the
+   certificate, which is exactly when the breakdown is needed) — and they
+   work on the boot path because the metrics server starts before node
+   startup runs.
 3. **Network-key adoption (steady state)**: each epoch, locally-held
    network-key outputs are adopted into the instantiation set only if
    their digests match the prior epoch's certificate

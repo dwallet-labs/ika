@@ -3383,11 +3383,18 @@ impl IkaNode {
                     // the reconfiguration loop instead of starting the epoch's
                     // components on it — consensus is already torn down at
                     // this point, so the node is deliberately inert from here.
+                    //
+                    // Matched as "not Ready" rather than on the contradicted
+                    // variant alone so no future outcome can start the epoch by
+                    // default. Only that variant is reachable here: the anchor
+                    // committee is HELD (the outgoing store's own), so the
+                    // resolution this arm's sibling reports on cannot fail.
                     error!(
                         next_epoch,
-                        "prepare-then-start: refusing to enter epoch {next_epoch}; leaving the \
+                        "prepare-then-start: the cross-epoch anchor for epoch {next_epoch} is \
+                         CONTRADICTED; refusing to enter the epoch and leaving the \
                          reconfiguration loop with consensus down. The node has been signalled to \
-                         shut down."
+                         shut down (the barrier logged which contradiction)."
                     );
                     return Ok(());
                 }
@@ -3477,9 +3484,11 @@ impl IkaNode {
                     ) {
                         error!(
                             next_epoch,
-                            "prepare-then-start: refusing to promote this node into the epoch \
-                             {next_epoch} committee; leaving the reconfiguration loop. The node \
-                             has been signalled to shut down."
+                            "prepare-then-start: the cross-epoch anchor for epoch \
+                             {next_epoch} is CONTRADICTED; refusing to promote this node into \
+                             that committee and leaving the reconfiguration loop. The node has \
+                             been signalled to shut down (the barrier logged which \
+                             contradiction)."
                         );
                         return Ok(());
                     }
