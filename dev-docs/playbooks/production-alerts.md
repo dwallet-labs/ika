@@ -204,7 +204,15 @@ safe and self-healing here — the epoch's derived state is rebuilt by replay
 from the consensus store on boot (`../specs/event-sourced-epoch.md`), and no
 MPC work is lost that the committee has not already agreed. Capture the MPC
 service's logs first; a drain that stops without dying is not a failure mode
-with a known cause yet, and ika #2064 tracks the end-to-end coverage for it.
+with a known cause yet, so the restart above stands as the operator action.
+The SHAPE is now reproduced end to end on a real cluster by
+`ika-upgrade-test`'s `wedged_drain` scenario (ika #2102) — a run of it is the
+reference for what these series look like during a wedge, and for the fact
+that the commit-liveness watchdog correctly does NOT exit the node. What that
+scenario adds beyond the shape does not transfer to production: it releases
+the wedge through a test-only hook and the drain then resumes without a
+restart, and NO such release mechanism exists on a real validator. Read it as
+evidence about the signals, not as a reason to wait one out.
 Look for an earlier fatal in the dWallet MPC service on that host too — the
 deliberate `break` on self-recognised maliciousness ends the service loop for
 the life of the process, and Alert 2 fires for that one. Recovery logs
@@ -306,6 +314,25 @@ a page.
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)'s interpretation rules
   plus
   [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
+- `rate(ika_sui_client_sui_rpc_errors[30m])` is the Sui-uplink health signal, and
+  the lead indicator for the epoch-boundary boot wedge — a validator's fullnode
+  erroring at hundreds/hour against a fleet baseline of 0–6 gives hours of
+  warning ([`../conventions/metrics.md`](../conventions/metrics.md)). It counts
+  **only transport failures**. Reads whose RPC succeeded and whose response was
+  unusable — BCS decode failures, a committee member missing from a fetched
+  validator set, unparsable on-chain key material, an absent `mpc_data` record —
+  land on `ika_sui_client_sui_response_errors_total{method,kind}` instead.
+  **Any rate alert on `sui_rpc_errors` wants a companion rule on
+  `sui_response_errors_total`**, because the two have opposite owners: the first
+  is the operator's fullnode, the second is a bug in ika's decoding or in what
+  is on chain, and neither implies the other. Split the second by `kind` before
+  reading it; `invalid_committee` is the coarse re-count the `must_get_*` retry
+  wrappers emit once per 30-second round, so expect it alongside whichever
+  precise kind the read below it recorded. Note the split is one-directional:
+  nothing on the response counter is a transport failure, but `sui_rpc_errors`
+  still absorbs backend-level decode failures that the client collapses into
+  `SuiClientInternalError` — so it is "the uplink is unhealthy" in the common
+  case, not always.
 - The five `ika_epoch_*` memory series report what an epoch's fold is holding
   in RAM, which is where the epoch's derived state lives
   ([`../specs/event-sourced-epoch.md`](../specs/event-sourced-epoch.md)). Read

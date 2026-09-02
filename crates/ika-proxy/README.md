@@ -202,7 +202,11 @@ The proxy exposes comprehensive metrics about its operation:
 
 - **`ika_proxy_http_handler_hits`**: Request count by handler and peer
 - **`ika_proxy_http_handler_duration_seconds`**: Request latency by handler and peer
-- **`ika_sui_client_sui_rpc_errors`**: Sui gRPC call errors by method
+- **`ika_sui_client_sui_rpc_errors`**: Sui gRPC calls that did not come back
+  with an answer, by method
+- **`ika_sui_client_sui_response_errors_total`**: Sui gRPC calls that answered
+  but whose response could not be used (decode failures, missing records,
+  unparsable key material), by method and kind
 - **`ika_proxy_uptime`**: Proxy uptime information
 
 ### Log Output
