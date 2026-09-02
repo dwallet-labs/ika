@@ -2988,15 +2988,19 @@ impl IkaNode {
                                             prior_epoch,
                                             error = ?e,
                                             "the locally-persisted handoff cert FAILED \
-                                             re-verification at epoch start — the local \
-                                             handoff-cert DB is tampered or corrupted — \
-                                             but for a next_committee_pubkey_set_hash \
-                                             mismatch, suspect first a member that rotated \
-                                             its consensus key at this boundary (v6 names \
-                                             the committee by consensus key), or the \
-                                             one-off v5->v6 identity flip. \
-                                             Halting the node (fail-closed) rather than \
-                                             anchoring the epoch on an unverified cert."
+                                             re-verification at epoch start. Only two \
+                                             things reach this branch: the cert attests a \
+                                             different epoch than the prior epoch \
+                                             {prior_epoch} this joiner expected, or its \
+                                             signatures do not reach a stake quorum in the \
+                                             epoch-{prior_epoch} committee. (A \
+                                             next_committee_pubkey_set_hash mismatch does \
+                                             NOT — that is advisory and verification \
+                                             proceeds past it.) So suspect a tampered or \
+                                             corrupted local handoff-cert DB, or a wrong \
+                                             view of the committee that signed it. Halting \
+                                             the node (fail-closed) rather than anchoring \
+                                             the epoch on an unverified cert."
                                         );
                                         let _ = fail_closed_shutdown.send(None);
                                         return;
