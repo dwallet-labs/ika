@@ -3175,6 +3175,7 @@ impl DWalletMPCManager {
     /// Parks one synthetic internal presign request, so a test can drive the
     /// structure an MPC-inactive epoch must not accumulate (#2119).
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn park_internal_presign_request_for_testing(&mut self) {
         use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
         self.internal_presign_requests_pending_for_network_key_data

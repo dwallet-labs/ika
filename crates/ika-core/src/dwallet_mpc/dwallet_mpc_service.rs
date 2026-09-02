@@ -427,6 +427,7 @@ impl DWalletMPCService {
     /// Test seam for the intake path: production calls this from
     /// `run_service_loop_iteration`, which needs a full running service.
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn process_network_owned_address_sign_requests_for_testing(&mut self) {
         self.process_network_owned_address_sign_requests();
     }
@@ -434,12 +435,14 @@ impl DWalletMPCService {
     /// Parks one internal presign request on missing network-key data, so a
     /// test can drive the structure the inactive state must not accumulate.
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn park_internal_presign_request_for_testing(&mut self) {
         self.dwallet_mpc_manager
             .park_internal_presign_request_for_testing();
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn parked_internal_presign_request_count(&self) -> usize {
         self.dwallet_mpc_manager
             .internal_presign_requests_pending_for_network_key_data
@@ -449,6 +452,7 @@ impl DWalletMPCService {
     /// Drives the MPC-inactive state (#2119) in tests. Production sets this
     /// once, at construction, from the epoch's seed resolution.
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn set_mpc_active_for_testing(&mut self, active: bool) {
         self.mpc_active = active;
     }
