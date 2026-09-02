@@ -140,8 +140,30 @@ fn mpc_ready_advances(handle: &IkaNodeHandle) -> u64 {
 /// at zero: a node that computes with key material the network never dealt to
 /// it lands here, and "sit the epoch out" is chosen over "try anyway" to
 /// avoid exactly that.
-fn self_malicious_total(handle: &IkaNodeHandle) -> u64 {
-    counter_total(handle, "ika_dwallet_mpc_self_malicious_total", |_| true)
+///
+/// `None` when the family is NOT EXPORTED, which the caller must treat as a
+/// failure rather than as zero. It is an `IntCounterVec`, and `gather()` omits
+/// a vec family with no children — so before the children were
+/// pre-materialized at registration, "the guard is live and quiet" and "the
+/// increment site was deleted" produced the identical observation. The
+/// assertion is therefore PRESENT-AND-ZERO, never absent-or-zero.
+fn self_malicious_total(handle: &IkaNodeHandle) -> Option<u64> {
+    handle.with(|node| {
+        let families = node
+            .registry_service_for_testing()
+            .default_registry()
+            .gather();
+        let family = families
+            .iter()
+            .find(|family| family.name() == "ika_dwallet_mpc_self_malicious_total")?;
+        Some(
+            family
+                .get_metric()
+                .iter()
+                .map(|metric| metric.get_counter().value() as u64)
+                .sum(),
+        )
+    })
 }
 
 /// `ika_dwallet_mpc_malicious_actors_count` on this node — the size of the
@@ -553,9 +575,11 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
         // node that tried and diverged would land here instead.
         assert_eq!(
             self_malicious_total(&handle),
-            0,
+            Some(0),
             "the sat-out validator must never conclude it is itself malicious; \
-             that is the outcome 'sit out' is chosen over 'try anyway' to avoid"
+             that is the outcome 'sit out' is chosen over 'try anyway' to \
+             avoid. `None` here means the family is not exported at all — a \
+             dead guard, not a quiet one"
         );
         samples_inside_the_epoch += 1;
         peer_delta = mpc_ready_advances(&cluster.validator_handle(1)).saturating_sub(peer_baseline);

@@ -1047,6 +1047,25 @@ impl DWalletMPCMetrics {
         for state in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
             metrics.seed_identity_state.with_label_values(&[state]);
         }
+        // Same reasoning for `self_malicious_total` (#2119 review): an
+        // `IntCounterVec` with no children is OMITTED from `gather()`, so a
+        // test or alert asserting "this validator never convicted itself"
+        // would read the same on a live-and-quiet guard as on one whose
+        // increment site had been deleted. Materializing the whole closed
+        // label domain makes the zero mean something.
+        for reason in
+            crate::dwallet_mpc::mpc_diagnostics::LocalAuthorityMaliciousReason::ALL_METRIC_LABELS
+        {
+            for session_type in ALL_SESSION_TYPES
+                .iter()
+                .copied()
+                .chain(iter::once(SESSION_TYPE_UNKNOWN))
+            {
+                metrics
+                    .self_malicious_total
+                    .with_label_values(&[reason, session_type]);
+            }
+        }
         for terminal_status in ["completed", "failed"] {
             for session_type in ALL_SESSION_TYPES
                 .iter()

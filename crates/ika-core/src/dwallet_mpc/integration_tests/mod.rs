@@ -11,6 +11,7 @@ mod malicious_behavior;
 mod message_before_event;
 mod mid_epoch_restart_keys;
 mod missing_network_key;
+mod mpc_inactive_retention;
 mod network_dkg;
 mod network_key_adoption;
 mod network_owned_address_sign;

@@ -424,6 +424,35 @@ impl DWalletMPCService {
         }
     }
 
+    /// Test seam for the intake path: production calls this from
+    /// `run_service_loop_iteration`, which needs a full running service.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn process_network_owned_address_sign_requests_for_testing(&mut self) {
+        self.process_network_owned_address_sign_requests();
+    }
+
+    /// Parks one internal presign request on missing network-key data, so a
+    /// test can drive the structure the inactive state must not accumulate.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn park_internal_presign_request_for_testing(&mut self) {
+        self.dwallet_mpc_manager
+            .park_internal_presign_request_for_testing();
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn parked_internal_presign_request_count(&self) -> usize {
+        self.dwallet_mpc_manager
+            .internal_presign_requests_pending_for_network_key_data
+            .len()
+    }
+
+    /// Drives the MPC-inactive state (#2119) in tests. Production sets this
+    /// once, at construction, from the epoch's seed resolution.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn set_mpc_active_for_testing(&mut self, active: bool) {
+        self.mpc_active = active;
+    }
+
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
@@ -976,6 +1005,54 @@ impl DWalletMPCService {
             );
             self.pending_network_owned_address_sign_requests
                 .push(request);
+        }
+
+        // MPC-INACTIVE epoch (#2119): the channel above still has to be
+        // drained — it is bounded, and a blocked sender would back-pressure
+        // the checkpoint handlers that feed it — but NOTHING may be retained.
+        //
+        // This validator will not process any of these requests this epoch:
+        // the signing network key is never adopted (instantiation is gated on
+        // `mpc_active`), so a retained request can only wait forever. On a 24h
+        // mainnet epoch that is an unbounded buffer plus a starvation `warn!`
+        // every 30s about a wait that is by design. Peers complete these
+        // demands without this validator, exactly as they would if it were
+        // down. The same reasoning retires the manager's presign requests
+        // parked on missing network-key data: their retry is gated on
+        // `mpc_active` too, so they are parked on something that cannot
+        // arrive this epoch.
+        if !self.mpc_active {
+            let dropped_sign_requests = self.pending_network_owned_address_sign_requests.len();
+            let dropped_parked_presigns = self
+                .dwallet_mpc_manager
+                .internal_presign_requests_pending_for_network_key_data
+                .len();
+            self.pending_network_owned_address_sign_requests.clear();
+            self.dwallet_mpc_manager
+                .internal_presign_requests_pending_for_network_key_data
+                .clear();
+            // Reuses the starvation throttle: this replaces that warn for the
+            // epoch, and at `info` because it is a designed consequence of the
+            // seed state, not a fault. The state itself is loud elsewhere —
+            // `ika_dwallet_mpc_seed_identity_state` plus the once-per-epoch
+            // `error!` from the resolution.
+            if (dropped_sign_requests > 0 || dropped_parked_presigns > 0)
+                && self
+                    .last_noa_starvation_log
+                    .is_none_or(|last| last.elapsed() >= Duration::from_secs(30))
+            {
+                self.last_noa_starvation_log = Some(Instant::now());
+                info!(
+                    dropped_sign_requests,
+                    dropped_parked_presigns,
+                    "MPC is inactive this epoch (this validator's root seed is not the one \
+                     the handoff certificate deals its shares to): dropping \
+                     network-owned-address sign requests and parked internal presign \
+                     requests rather than retaining them for an epoch that will never \
+                     process them. Peers complete these without this validator."
+                );
+            }
+            return;
         }
 
         if self.pending_network_owned_address_sign_requests.is_empty() {
