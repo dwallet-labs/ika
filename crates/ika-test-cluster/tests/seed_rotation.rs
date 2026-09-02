@@ -233,14 +233,42 @@ async fn poll_state(
     .await;
 }
 
+/// Wait until THIS validator (not merely the fastest one in the swarm) is at
+/// or past `epoch` AND has resolved its own seed against a certificate.
+///
+/// Both halves matter. `wait_for_epoch` returns on the first node to report
+/// the epoch, so validator 0 can still be an epoch behind; and until a
+/// certificate exists for the prior epoch the resolution reads
+/// `no_certified_digest`, against which a rotation would prove nothing at all.
+async fn wait_until_certified_at_epoch(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    epoch: u64,
+) -> u64 {
+    poll_node(
+        cluster,
+        validator_index,
+        Duration::from_secs(360),
+        "this validator to reach the epoch with its own seed certified",
+        |handle| {
+            let at = current_epoch(handle);
+            (at >= epoch && seed_identity_state(handle).as_deref() == Some(STATE_MATCHES))
+                .then_some(at)
+        },
+    )
+    .await
+}
+
 async fn build_cluster(num_validators: usize) -> IkaTestCluster {
     IkaTestClusterBuilder::new()
         .with_num_validators(num_validators)
         // Long enough that a rotation restart plus the assertions that follow
         // fit comfortably inside one epoch — the whole point of flows (a) and
         // (c) is that they take effect WITHOUT a boundary, so an epoch that
-        // rolls over mid-assertion would mask the property under test.
-        .with_epoch_duration_ms(60_000)
+        // rolls over mid-assertion would mask the property under test. Every
+        // in-epoch assertion below re-reads the epoch and says so explicitly
+        // if it escaped, rather than silently passing on the wrong epoch.
+        .with_epoch_duration_ms(90_000)
         .with_protocol_version(ProtocolVersion::MAX)
         .build()
         .await
@@ -257,9 +285,7 @@ async fn rotation_with_the_previous_seed_keeps_the_validator_in_mpc() {
     // resolution has nothing to resolve against and every rotation would
     // trivially read as `no_certified_digest`.
     cluster.wait_for_epoch(2).await;
-    poll_state(&cluster, 0, STATE_MATCHES, Duration::from_secs(120)).await;
-
-    let rotation_epoch = current_epoch(&cluster.validator_handle(0));
+    let rotation_epoch = wait_until_certified_at_epoch(&cluster, 0, 2).await;
     let self_name = own_authority_name(&cluster.validator_handle(0));
     let digest_before = poll_node(
         &cluster,
@@ -348,10 +374,8 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
     let cluster = build_cluster(5).await;
 
     cluster.wait_for_epoch(2).await;
-    poll_state(&cluster, 0, STATE_MATCHES, Duration::from_secs(120)).await;
-
+    let rotation_epoch = wait_until_certified_at_epoch(&cluster, 0, 2).await;
     let self_name = own_authority_name(&cluster.validator_handle(0));
-    let rotation_epoch = current_epoch(&cluster.validator_handle(0));
     let digest_before = poll_node(
         &cluster,
         0,
@@ -392,9 +416,16 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
     // work done since the rotation. Sampled over a window rather than once:
     // a single read right after the restart would pass even if the gate were
     // missing entirely.
+    let mut samples_inside_the_epoch = 0;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let handle = cluster.validator_handle(0);
+        // Stop sampling if the epoch rolled over: past the boundary the
+        // validator legitimately rejoins, and continuing would assert the
+        // opposite of the contract.
+        if current_epoch(&handle) != rotation_epoch {
+            break;
+        }
         assert_eq!(
             mpc_advance_attempts(&handle),
             0,
@@ -402,13 +433,14 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
              MPC traffic — computing with key material the network never dealt \
              to it is how a node convicts itself as malicious (#1978)"
         );
-        // Consensus and the rest of its duties keep running: it is a
-        // committee member, not a stopped node.
-        assert!(
-            current_epoch(&handle) >= rotation_epoch,
-            "the non-participating validator must stay in consensus"
-        );
+        samples_inside_the_epoch += 1;
     }
+    assert!(
+        samples_inside_the_epoch >= 5,
+        "only {samples_inside_the_epoch} samples landed inside the rotation \
+         epoch; the window escaped the epoch and this run proved nothing — \
+         raise the epoch duration"
+    );
     // A peer, by contrast, is doing MPC work throughout — the positive
     // control that keeps the assertion above from passing on a dead cluster.
     let peer = cluster.validator_handle(1);
