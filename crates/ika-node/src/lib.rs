@@ -2771,10 +2771,25 @@ impl IkaNode {
                         // which is exactly what gets the rotation certified at
                         // the next boundary. It only lets the per-tick check
                         // tell a post-freeze rotation from a lost seed (#2119).
+                        // Read fallibly, like the resolution does: an
+                        // unreadable previous seed must never be fatal.
                         self.config
                             .previous_root_seed_key_pair
                             .as_ref()
-                            .map(|previous| previous.root_seed().clone()),
+                            .and_then(|previous| match previous.try_root_seed() {
+                                Ok(seed) => Some(seed.clone()),
+                                Err(error) => {
+                                    warn!(
+                                        ?error,
+                                        path = ?previous.path(),
+                                        "`previous-root-seed-key-pair` could not be read; \
+                                         the announcement sender runs without it (it never \
+                                         announces from it — only classifies a post-freeze \
+                                         rotation)"
+                                    );
+                                    None
+                                }
+                            }),
                         // Chain next-epoch committee (pre-assembly) for
                         // the freeze emit-gate — so the freeze waits for
                         // joiners that the assembled committee can't yet

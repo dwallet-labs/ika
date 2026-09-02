@@ -3392,10 +3392,32 @@ impl DWalletMPCService {
         // The PREVIOUS root seed is optional and only read when configured:
         // deriving a bundle is the epoch's single most expensive computation,
         // so a node that is not mid-rotation pays nothing for this.
+        //
+        // Read FALLIBLY. The documented rotation ends with the operator
+        // deleting the old seed file, and nothing forces them to remove the
+        // config field first — so an unreadable previous seed is an expected
+        // operator state, not a corrupt config. It resolves to "no previous
+        // seed": the node still starts, and if its current seed is already
+        // certified (the overwhelmingly likely case for someone tidying up
+        // after a completed rotation) nothing changes at all. Panicking here
+        // would make a completed rotation's cleanup step an outage.
         let previous_root_seed = config
             .previous_root_seed_key_pair
             .as_ref()
-            .map(|previous| previous.root_seed().clone());
+            .and_then(|previous| match previous.try_root_seed() {
+                Ok(seed) => Some(seed.clone()),
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        path = ?previous.path(),
+                        "`previous-root-seed-key-pair` is configured but could not be read; \
+                         treating this epoch as having NO previous seed. If a rotation is \
+                         still in flight this validator will sit the epoch out — restore \
+                         the file, or remove the field if the rotation already completed."
+                    );
+                    None
+                }
+            });
 
         // The certificate names validators by their CONSENSUS key, which is
         // `epoch_store.name` — not the BLS `protocol_pubkey_bytes` used for

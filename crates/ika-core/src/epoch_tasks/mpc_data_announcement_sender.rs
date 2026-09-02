@@ -1475,6 +1475,53 @@ mod tests {
         );
     }
 
+    /// #2119 fix: an unreadable `previous-root-seed-key-pair` must reach the
+    /// sender as "no previous seed", never as a panic.
+    ///
+    /// The sender takes an already-resolved `Option<RootSeed>`, so the
+    /// resolution happens at the node seam — this pins BOTH halves: that the
+    /// descriptor's fallible accessor reports the failure instead of
+    /// panicking, and that a sender constructed from the resulting `None`
+    /// still works and still treats a frozen mismatch as the invariant
+    /// violation (an unreadable previous seed must not silently downgrade a
+    /// genuinely lost seed to a benign rotation).
+    // `test_sender` opens a real perpetual-tables DB, which needs a reactor.
+    #[tokio::test]
+    async fn an_unreadable_previous_seed_reaches_the_sender_as_none() {
+        let descriptor =
+            ika_config::node::RootSeedWithPath::new_from_path_lazy("no-such-seed-file".into());
+        // Exactly the conversion `ika-node` performs when building the sender.
+        let resolved: Option<RootSeed> = match descriptor.try_root_seed() {
+            Ok(seed) => Some(seed.clone()),
+            Err(_) => None,
+        };
+        assert!(
+            resolved.is_none(),
+            "an unreadable descriptor must resolve to None, not panic"
+        );
+
+        let sender = test_sender();
+        assert!(
+            sender.previous_root_seed.is_none(),
+            "the test sender stands in for the resolved-to-None case"
+        );
+        assert!(
+            sender.previous_seed_digests().is_none(),
+            "with no previous seed there is nothing to derive, and nothing to \
+             rescue a frozen mismatch with"
+        );
+        // And the verdict is unchanged: still the invariant violation.
+        assert_eq!(
+            decide_seed_identity(
+                digest(2),
+                Some(digest(1)),
+                Some(digest(2)),
+                sender.previous_seed_digests().as_ref(),
+            ),
+            SeedIdentity::FrozenMismatch
+        );
+    }
+
     /// Expected `NotYet` with its wait reason spelled out. The reason
     /// is what the operator log prints (#2080), so the gate tests pin
     /// it rather than accepting any old "not yet".
