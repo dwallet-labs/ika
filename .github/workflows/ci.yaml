@@ -209,7 +209,7 @@ jobs:
           # prefix as the simtest workflow, which shares the dep graph).
           prefix-key: "simtest"
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2.87.1
+        uses: taiki-e/install-action@v2.87.2
         with:
           tool: cargo-nextest
       - name: Install cargo-simtest shim
@@ -239,6 +239,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (ika-core tests)
         run: cargo check -p ika-core --features test-utils --tests --target x86_64-unknown-linux-gnu
+      - name: Sui RPC vs. response error split pins
+        # `ika_sui_client_sui_rpc_errors` is what the fleet's Sui-uplink alert
+        # fires on, and the split that keeps a decoding defect off it is
+        # enforced by nothing but these tests: which counter a failure reaches
+        # is invisible to the type checker, so a regression compiles clean and
+        # only shows up as an on-call page against a healthy fullnode. This
+        # job is otherwise compile-only and nothing else on PR CI executes
+        # ika-sui-client's tests, so they must be named here or they never
+        # run. The crate is already compiled by the ika-core check above, and
+        # no MPC crypto is involved, so the debug profile is fine.
+        run: |
+          set -o pipefail
+          cargo test -p ika-sui-client --lib -- \
+            a_decode_failure_on_a_successful_rpc_is_not_an_rpc_error \
+            a_transport_failure_is_an_rpc_error_only \
+            the_retry_wrappers_route_by_error_variant \
+            an_unlisted_error_variant_stays_on_the_rpc_counter \
+            | tee "$RUNNER_TEMP/rpc-response-split-pins.log"
+          # cargo exits 0 when a name filter matches nothing, so a renamed
+          # test would silently disable this gate. Require the exact count:
+          # unlike a `[1-9][0-9]*` floor, this also catches renaming SOME of
+          # the pins. Bump the number when adding one.
+          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/rpc-response-split-pins.log"
       - name: Deprecated on-chain mpc_data placeholder pins
         # What a candidate registers in the deprecated on-chain
         # `mpc_data_bytes` field is a byte-format contract (#2119): exactly

@@ -185,7 +185,7 @@ async fn v140_full_swap_then_committee_churn() {
         // The removed validator's process keeps running until stopped.
         .stop_validator(3)
         .expect_log_line_absent("node recognized itself as malicious")
-        .expect_log_line_absent("recognized_self_as_malicious")
+        .expect_log_line_absent("the node has identified itself as malicious")
         .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
         .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()

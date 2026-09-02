@@ -46,6 +46,20 @@ name: Upgrade Test
 #                  validators must convict it and reshare without it
 #                  (committee dips to 3). Green = the v140 gates are not
 #                  vacuous. Same OLD defaults as v140_rollout.
+#   wedged_drain — the #2102 wedged-but-alive drain gate: one validator's
+#                  MPC drain is parked (production-binary env hook) without
+#                  stopping its service, so its round channel fills, its
+#                  consensus fold parks and the commit-liveness watchdog must
+#                  HOLD rather than exit. Asserts the whole signature from
+#                  /metrics only — blocked seconds climbing against a flat
+#                  consumed round, depth pinned at capacity, silence held,
+#                  committed-leader round still advancing, peers untouched —
+#                  then unparks and requires recovery with no restart. Current
+#                  build only. LONG (~50 min of cluster time: the park has to
+#                  run inside the first half of one deliberately long epoch,
+#                  before that epoch's reshare), so it is NOT in the
+#                  pull-request default and is dispatched on demand or as part
+#                  of `all`.
 #   restart_spectator — the #1952 mid-epoch-restart gate: one validator is
 #                  restarted (same binary) far from an epoch boundary, in an
 #                  epoch with an established network key and ongoing
@@ -225,7 +239,7 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (v140_rollout requires >=480000; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (v140_rollout requires >=480000, wedged_drain >=1680000; empty = scenario default)"
         type: string
         required: false
         default: ""
@@ -292,7 +306,7 @@ jobs:
           TEST: ${{ inputs.test || 'v140_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v140_rollout v140_churn malicious_v140 restart_spectator"
+          ALL="smoke workload v140_rollout v140_churn malicious_v140 restart_spectator wedged_drain"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -408,6 +422,7 @@ jobs:
             v140_churn)   RUN_FLAG=RUN_V140_CHURN ;;
             malicious_v140) RUN_FLAG=RUN_MALICIOUS_V140 ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
+            wedged_drain) RUN_FLAG=RUN_WEDGED_DRAIN ;;
             v140_rollout)   RUN_FLAG=RUN_V140_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac

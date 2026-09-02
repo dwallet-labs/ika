@@ -33,6 +33,7 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
 };
+use crate::dwallet_mpc::park_drain_test_hook::park_mpc_drain_hook;
 use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
@@ -182,6 +183,21 @@ pub struct DWalletMPCService {
     /// The number of consensus rounds since epoch started.
     /// Needed because the consensus rounds themselves might not be consecutive.
     number_of_consensus_rounds: u64,
+    /// Whether the boot replay has released this drain, i.e. whether it is on
+    /// the live path rather than inside [`Self::drain_while_replaying`].
+    ///
+    /// Only the test park hook reads it, and only so that the hook cannot park
+    /// a drain the boot replay is still parked behind — see
+    /// [`park_drain_test_hook`]. Production behaviour is identical either way.
+    ///
+    /// [`park_drain_test_hook`]: crate::dwallet_mpc::park_drain_test_hook
+    drain_released_by_replay: bool,
+    /// Rounds consumed since the boot replay released the drain. The park
+    /// hook's threshold is measured in these, NOT in
+    /// [`Self::number_of_consensus_rounds`], which counts the replay's rounds
+    /// too and so cannot express "park once you are live" without knowing how
+    /// deep the replay was.
+    rounds_consumed_since_replay: u64,
     /// Is the network considered in an idle state?
     /// If so, we can process more internal presign sessions to make use of resources.
     network_is_idle: bool,
@@ -351,6 +367,8 @@ impl DWalletMPCService {
             committee,
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
+            drain_released_by_replay: false,
+            rounds_consumed_since_replay: 0,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
@@ -442,6 +460,8 @@ impl DWalletMPCService {
             committee: Arc::new(committee),
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
+            drain_released_by_replay: false,
+            rounds_consumed_since_replay: 0,
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
@@ -624,6 +644,9 @@ impl DWalletMPCService {
         info!("Waiting for consensus commits to replay ...");
         self.drain_while_replaying(replay_waiter).await;
         info!("Consensus commits finished replaying");
+        // From here on the drain is on the live path. Only the test park hook
+        // reads this; see the field's docs.
+        self.drain_released_by_replay = true;
 
         info!(
             validator=?self.name,
@@ -1341,6 +1364,33 @@ impl DWalletMPCService {
     /// work belongs in `run_service_loop_iteration`, which runs only after the
     /// replay signal. `a_replay_longer_than_the_channel_still_finishes` fails
     /// if a submission does creep in.
+    ///
+    /// # The test park hook
+    ///
+    /// `IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND=<n>` (`n >= 1`) makes this function
+    /// return without consuming anything once the drain has taken that many
+    /// rounds since the boot replay released it;
+    /// `IKA_TEST_PARK_MPC_DRAIN_UNPARK_FILE` names a path whose appearance
+    /// releases it, permanently. `0` and empty are OFF, like every
+    /// neighbouring knob in this binary — see [`park_drain_test_hook`], where
+    /// that choice is the one worth reading before touching this. A process
+    /// that arms the hook WARNs on the drain's first live iteration (when the
+    /// hook is lazily resolved — once per boot, though not at boot itself) and
+    /// again on the park.
+    ///
+    /// It exists because "the drain is alive but stuck" is not reachable any
+    /// other way from outside a real validator process, and the composition it
+    /// produces — the channel fills, the fold parks, the commit-liveness
+    /// watchdog holds, and the counters are the only evidence — had only ever
+    /// been tested piecewise in-process (ika #2102).
+    ///
+    /// The park is deliberately at the TOP of the drain rather than inside the
+    /// receive loop: everything downstream of consumption then stops together
+    /// — the catch-up gate's observation included — which is what a wedged
+    /// drain does. A half-running loop that kept feeding the gate would be a
+    /// shape no real failure has.
+    ///
+    /// [`park_drain_test_hook`]: crate::dwallet_mpc::park_drain_test_hook
     async fn drain_consensus_rounds(&mut self) {
         // Rounds arrive over the bounded channel the commit boundary feeds;
         // there is no per-round table to poll, and no round-equality check to
@@ -1355,6 +1405,15 @@ impl DWalletMPCService {
         if self.round_receiver.is_none() {
             // No transport installed: this process folds commits but runs no
             // drain. Nothing to do.
+            return;
+        }
+
+        // Test-only wedge hook; off on every production validator. See the
+        // "test park hook" section of this function's docs.
+        if self.drain_released_by_replay
+            && let Some(hook) = park_mpc_drain_hook()
+            && hook.should_park(self.rounds_consumed_since_replay)
+        {
             return;
         }
 
@@ -1396,6 +1455,10 @@ impl DWalletMPCService {
             };
 
             self.number_of_consensus_rounds += 1;
+            if self.drain_released_by_replay {
+                // Only the test park hook reads this; see the field's docs.
+                self.rounds_consumed_since_replay += 1;
+            }
 
             let ConsensusRoundPayload {
                 round: consensus_round,

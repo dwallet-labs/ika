@@ -28,11 +28,40 @@ use tokio::time::sleep;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
-use crate::cluster::{ClusterBuilder, ClusterOfProcesses, NetworkKeyBoundaryEvidence};
+use crate::cluster::{
+    ClusterBuilder, ClusterOfProcesses, DrainWedgeSample, NetworkKeyBoundaryEvidence,
+    evaluate_healthy_drain, evaluate_wedged_drain,
+};
 use crate::mpc_timings::{self, TimingSnapshot};
 use crate::workload::WorkloadDriver;
 
 const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Arms the production binary's MPC-drain park hook. Mirrored from
+/// `ika-core`'s `dwallet_mpc::park_drain_test_hook`, which this crate
+/// deliberately does not link: the harness drives separately-compiled child
+/// processes, so an env var is the whole interface. A rename there without one
+/// here shows up as the park never taking effect, which
+/// [`Step::WaitForRoundChannelAtCapacity`] fails on with the observed depth.
+const PARK_MPC_DRAIN_AFTER_ROUND_ENV_VAR: &str = "IKA_TEST_PARK_MPC_DRAIN_AFTER_ROUND";
+
+/// Names the file whose appearance releases the park. See above.
+const PARK_MPC_DRAIN_UNPARK_FILE_ENV_VAR: &str = "IKA_TEST_PARK_MPC_DRAIN_UNPARK_FILE";
+
+/// Overrides `ika-node`'s commit-liveness bound, in seconds (`0` disables it).
+const COMMIT_LIVENESS_WATCHDOG_SECS_ENV_VAR: &str = "IKA_COMMIT_LIVENESS_WATCHDOG_SECS";
+
+/// The unpark sentinel's name inside the parked validator's own data dir.
+const UNPARK_SENTINEL_FILE_NAME: &str = "unpark-mpc-drain";
+
+/// Park the drain on its FIRST live round after the boot replay. The harness
+/// has no way to predict the cluster's commit rate, so any larger threshold
+/// would be a guess about how long the arming restart takes to become a wedge;
+/// `1` makes the park deterministic and is the strongest the knob goes. Not
+/// `0` — the hook reads `0` as OFF, deliberately, because that is the value a
+/// deployment template emits for a disabled numeric knob (see `ika-core`'s
+/// `dwallet_mpc::park_drain_test_hook`).
+const PARK_AFTER_ROUNDS: u64 = 1;
 
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
@@ -147,6 +176,61 @@ pub enum Step {
         index: usize,
         needle: String,
     },
+    /// Restart ONE validator with the production binary's MPC-drain park hook
+    /// armed: from the moment its boot replay finishes, its drain consumes no
+    /// further consensus rounds while the rest of the service keeps running.
+    /// The bounded round channel then fills and the consensus fold parks on
+    /// it — a drain that is alive but stuck (ika #2102).
+    ///
+    /// `watchdog_bound_secs` overrides that validator's commit-liveness bound
+    /// for the same restart, and is what makes the "the watchdog HOLDS"
+    /// assertion mean anything. At the 900s default no test-length park can
+    /// reach a breach, so a broken hold would pass unnoticed; with a bound of
+    /// `b` the watchdog exits at `b` seconds of counted silence once the
+    /// process is older than `2b` (its floor), so a park observed for longer
+    /// than `2b` of process uptime FAILS if the fold-parked hold is ever
+    /// dropped. Pick `b` well above the cluster's healthy commit gap and keep
+    /// the park longer than `2b`.
+    ParkMpcDrain {
+        index: usize,
+        watchdog_bound_secs: u64,
+    },
+    /// Poll ONE validator until its round channel pins at capacity — the wedge
+    /// has formed and the fold is parked. Bounded by the scenario's epoch
+    /// timeout, because the fill time is the cluster's commit rate.
+    WaitForRoundChannelAtCapacity {
+        index: usize,
+    },
+    /// The two-sided wedge assertion, evaluated over `window` from OUTSIDE:
+    /// `parked` shows blocked seconds climbing while its consumed round stays
+    /// flat, its channel pinned at capacity, its commit-liveness clock held
+    /// and its committed-leader round still advancing; every validator in
+    /// `peers` shows none of it. The parked validator's final sample is kept
+    /// for [`Step::ExpectDrainResumed`], so the recovery is compared against
+    /// the wedge itself rather than against a fresh baseline that could hide a
+    /// restart in between.
+    ExpectDrainWedged {
+        parked: usize,
+        peers: Vec<usize>,
+        window: Duration,
+        silence_ceiling_seconds: i64,
+    },
+    /// Create the parked validator's unpark sentinel. The hook is one-shot:
+    /// the process resumes and never parks again.
+    UnparkMpcDrain {
+        index: usize,
+    },
+    /// Assert the unparked validator recovers WITHOUT a restart: its drain
+    /// consumes past the round it was stuck on, and it then satisfies the same
+    /// healthy-drain predicate as the peers over `window`. `peers` are checked
+    /// again over the same window, so the recovery is not read off a cluster
+    /// that has meanwhile gone quiet.
+    ExpectDrainResumed {
+        index: usize,
+        peers: Vec<usize>,
+        window: Duration,
+        silence_ceiling_seconds: i64,
+    },
     /// Poll ONE validator's `node.log` until `needle` appears (or the
     /// epoch timeout elapses). The immediate [`Step::ExpectLogLineOnValidator`]
     /// asserts a decision that already happened; this is the variant for a
@@ -243,6 +327,39 @@ impl std::fmt::Display for Step {
             Step::WaitForLogLineOnValidator { index, needle } => {
                 write!(f, "wait_for_log_line_on_validator({index}, {needle:?})")
             }
+            Step::ParkMpcDrain {
+                index,
+                watchdog_bound_secs,
+            } => write!(
+                f,
+                "park_mpc_drain({index}, watchdog={watchdog_bound_secs}s)"
+            ),
+            Step::WaitForRoundChannelAtCapacity { index } => {
+                write!(f, "wait_for_round_channel_at_capacity({index})")
+            }
+            Step::ExpectDrainWedged {
+                parked,
+                peers,
+                window,
+                silence_ceiling_seconds,
+            } => write!(
+                f,
+                "expect_drain_wedged(parked={parked}, peers={peers:?}, window={}s, \
+                 silence_ceiling={silence_ceiling_seconds})",
+                window.as_secs()
+            ),
+            Step::UnparkMpcDrain { index } => write!(f, "unpark_mpc_drain({index})"),
+            Step::ExpectDrainResumed {
+                index,
+                peers,
+                window,
+                silence_ceiling_seconds,
+            } => write!(
+                f,
+                "expect_drain_resumed({index}, peers={peers:?}, window={}s, \
+                 silence_ceiling={silence_ceiling_seconds})",
+                window.as_secs()
+            ),
         }
     }
 }
@@ -606,6 +723,66 @@ impl Scenario {
         self
     }
 
+    /// Restart validator `index` with the MPC-drain park hook armed and its
+    /// commit-liveness bound lowered to `watchdog_bound_secs`. See
+    /// [`Step::ParkMpcDrain`] — in particular why the bound override is what
+    /// makes the hold assertion non-vacuous.
+    pub fn park_mpc_drain(mut self, index: usize, watchdog_bound_secs: u64) -> Self {
+        self.steps.push(Step::ParkMpcDrain {
+            index,
+            watchdog_bound_secs,
+        });
+        self
+    }
+
+    /// Wait until validator `index`'s round channel pins at capacity.
+    pub fn wait_for_round_channel_at_capacity(mut self, index: usize) -> Self {
+        self.steps
+            .push(Step::WaitForRoundChannelAtCapacity { index });
+        self
+    }
+
+    /// The two-sided wedge assertion. See [`Step::ExpectDrainWedged`].
+    pub fn expect_drain_wedged(
+        mut self,
+        parked: usize,
+        peers: &[usize],
+        window: Duration,
+        silence_ceiling_seconds: i64,
+    ) -> Self {
+        self.steps.push(Step::ExpectDrainWedged {
+            parked,
+            peers: peers.to_vec(),
+            window,
+            silence_ceiling_seconds,
+        });
+        self
+    }
+
+    /// Release the park on validator `index`. See [`Step::UnparkMpcDrain`].
+    pub fn unpark_mpc_drain(mut self, index: usize) -> Self {
+        self.steps.push(Step::UnparkMpcDrain { index });
+        self
+    }
+
+    /// Assert the unparked validator recovers without a restart. See
+    /// [`Step::ExpectDrainResumed`].
+    pub fn expect_drain_resumed(
+        mut self,
+        index: usize,
+        peers: &[usize],
+        window: Duration,
+        silence_ceiling_seconds: i64,
+    ) -> Self {
+        self.steps.push(Step::ExpectDrainResumed {
+            index,
+            peers: peers.to_vec(),
+            window,
+            silence_ceiling_seconds,
+        });
+        self
+    }
+
     /// Genesis `min_validator_count` override, for scenarios that shrink the
     /// committee below the protocol default of 4.
     pub fn with_min_validator_count(mut self, n: u64) -> Self {
@@ -649,6 +826,12 @@ impl Scenario {
         // between EVERY validator under test and a finalizing quorum on at
         // least one boundary each, enforced after the step loop.
         let mut network_key_evidence: Vec<NetworkKeyBoundaryEvidence> = Vec::new();
+        // The parked validator's LAST wedge sample, carried to the recovery
+        // step. Comparing the recovery against this rather than against a
+        // fresh baseline is what closes the gap between the two steps: a
+        // restart there would reset the process uptime, and only a comparison
+        // that straddles both windows can see it.
+        let mut wedged_sample: Option<DrainWedgeSample> = None;
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -1054,6 +1237,179 @@ impl Scenario {
                         );
                         sleep(Duration::from_secs(2)).await;
                     }
+                }
+                Step::ParkMpcDrain {
+                    index,
+                    watchdog_bound_secs,
+                } => {
+                    let c = cluster.as_mut().context("ParkMpcDrain before StartAll")?;
+                    let sentinel = c.validator_data_path(*index, UNPARK_SENTINEL_FILE_NAME)?;
+                    // A previous run's sentinel would unpark the drain the
+                    // instant it parked, and the scenario would then time out
+                    // waiting for a wedge that had already been released.
+                    if sentinel.exists() {
+                        std::fs::remove_file(&sentinel).with_context(|| {
+                            format!("remove stale unpark sentinel {}", sentinel.display())
+                        })?;
+                    }
+                    c.restart_validator_with_env(
+                        *index,
+                        [
+                            (
+                                PARK_MPC_DRAIN_AFTER_ROUND_ENV_VAR.to_string(),
+                                PARK_AFTER_ROUNDS.to_string(),
+                            ),
+                            (
+                                PARK_MPC_DRAIN_UNPARK_FILE_ENV_VAR.to_string(),
+                                sentinel.display().to_string(),
+                            ),
+                            (
+                                COMMIT_LIVENESS_WATCHDOG_SECS_ENV_VAR.to_string(),
+                                watchdog_bound_secs.to_string(),
+                            ),
+                        ],
+                    )
+                    .await?;
+                    tracing::info!(
+                        index = *index,
+                        watchdog_bound_secs,
+                        sentinel = %sentinel.display(),
+                        "MPC drain park hook armed; this validator stops consuming rounds once \
+                         its boot replay finishes"
+                    );
+                }
+                Step::WaitForRoundChannelAtCapacity { index } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("WaitForRoundChannelAtCapacity before StartAll")?;
+                    c.wait_for_round_channel_at_capacity(*index, self.epoch_timeout)
+                        .await?;
+                }
+                Step::ExpectDrainWedged {
+                    parked,
+                    peers,
+                    window,
+                    silence_ceiling_seconds,
+                } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectDrainWedged before StartAll")?;
+                    let mut before = vec![c.scrape_drain_wedge(*parked).await?];
+                    for peer in peers {
+                        before.push(c.scrape_drain_wedge(*peer).await?);
+                    }
+                    tracing::info!(
+                        parked = *parked,
+                        ?before,
+                        window_secs = window.as_secs(),
+                        "wedge observation window opened"
+                    );
+                    sleep(*window).await;
+                    let after_parked = c.scrape_drain_wedge(*parked).await?;
+                    evaluate_wedged_drain(
+                        &before[0],
+                        &after_parked,
+                        *window,
+                        *silence_ceiling_seconds,
+                    )
+                    .with_context(|| {
+                        format!("validator {parked} is not showing the wedged-drain signature")
+                    })?;
+                    for (offset, peer) in peers.iter().enumerate() {
+                        let after_peer = c.scrape_drain_wedge(*peer).await?;
+                        evaluate_healthy_drain(
+                            &before[offset + 1],
+                            &after_peer,
+                            *window,
+                            *silence_ceiling_seconds,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "peer validator {peer} tripped a wedged-drain signal while only \
+                                 validator {parked} was parked"
+                            )
+                        })?;
+                    }
+                    tracing::info!(
+                        parked = *parked,
+                        ?after_parked,
+                        "wedged-drain assertion passed: one validator's fold is parked behind its \
+                         own drain, the watchdog is holding, and the peers are unaffected"
+                    );
+                    wedged_sample = Some(after_parked);
+                }
+                Step::UnparkMpcDrain { index } => {
+                    let c = cluster.as_ref().context("UnparkMpcDrain before StartAll")?;
+                    let sentinel = c.validator_data_path(*index, UNPARK_SENTINEL_FILE_NAME)?;
+                    std::fs::write(&sentinel, b"unpark\n")
+                        .with_context(|| format!("write unpark sentinel {}", sentinel.display()))?;
+                    tracing::info!(
+                        index = *index,
+                        sentinel = %sentinel.display(),
+                        "unpark sentinel written; the drain must resume without a restart"
+                    );
+                }
+                Step::ExpectDrainResumed {
+                    index,
+                    peers,
+                    window,
+                    silence_ceiling_seconds,
+                } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectDrainResumed before StartAll")?;
+                    let wedged = wedged_sample
+                        .as_ref()
+                        .context("ExpectDrainResumed before ExpectDrainWedged")?;
+                    // Resumption first, then health: the drain has to
+                    // consume past the round it was stuck on AND clear the
+                    // backlog the fold was parked on before a healthy-drain
+                    // window means anything. How long that takes is the
+                    // machine's business, not the scenario's.
+                    let resumed = c
+                        .wait_for_drain_recovered(
+                            *index,
+                            wedged.last_process_mpc_consensus_round,
+                            self.epoch_timeout,
+                        )
+                        .await?;
+                    ensure!(
+                        resumed.process_uptime_seconds >= wedged.process_uptime_seconds,
+                        "validator {index} RESTARTED across the park: \
+                         ika_validator_process_uptime_seconds went {} -> {}. The whole claim is \
+                         that a wedged drain needs no restart to recover — a supervisor bounce \
+                         would make the recovery evidence worthless",
+                        wedged.process_uptime_seconds,
+                        resumed.process_uptime_seconds
+                    );
+                    let mut before = vec![c.scrape_drain_wedge(*index).await?];
+                    for peer in peers {
+                        before.push(c.scrape_drain_wedge(*peer).await?);
+                    }
+                    sleep(*window).await;
+                    for (offset, validator) in
+                        std::iter::once(index).chain(peers.iter()).enumerate()
+                    {
+                        let after = c.scrape_drain_wedge(*validator).await?;
+                        evaluate_healthy_drain(
+                            &before[offset],
+                            &after,
+                            *window,
+                            *silence_ceiling_seconds,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "validator {validator} is not draining normally after the park \
+                                 was released"
+                            )
+                        })?;
+                    }
+                    tracing::info!(
+                        index = *index,
+                        was_stuck_at = wedged.last_process_mpc_consensus_round,
+                        "drain-resumed assertion passed: the unparked validator drained its \
+                         backlog and now looks exactly like its peers, with no restart"
+                    );
                 }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;
