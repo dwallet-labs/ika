@@ -39,7 +39,7 @@ use ika_swarm_config::sui_client::{
     request_remove_validator, stake_ika,
 };
 use ika_swarm_config::validator_initialization_config::{
-    ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
+    OnChainMpcDataShape, ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
 use ika_types::crypto::AuthorityName;
 use ika_types::handoff::HandoffItemKey;
@@ -235,8 +235,23 @@ impl IkaTestCluster {
     /// boundary (the same lifecycle the bootstrap path drives for the
     /// initial set). Caller is responsible for `wait_for_epoch` after.
     pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
-        self.add_joiner_validator_withholding_handoff_anchor(None)
+        self.add_joiner_validator_inner(OnChainMpcDataShape::RealKey, None)
             .await
+    }
+
+    /// Add a joiner that registers on chain with the given
+    /// [`OnChainMpcDataShape`] instead of a real class-groups key.
+    ///
+    /// A placeholder is what a new validator registers with once the
+    /// on-chain field is retired (#2119). Such a joiner must still boot,
+    /// announce its real key material off-chain, and take part in MPC —
+    /// the binary reads key material from the off-chain announcement
+    /// pipeline and decodes the chain field nowhere.
+    pub async fn add_joiner_validator_with_onchain_mpc_data_shape(
+        &mut self,
+        shape: OnChainMpcDataShape,
+    ) -> Result<JoinerHandle> {
+        self.add_joiner_validator_inner(shape, None).await
     }
 
     /// Like [`Self::add_joiner_validator`], but the joiner's
@@ -246,6 +261,19 @@ impl IkaTestCluster {
     /// epoch components until its handoff data is actually there.
     pub async fn add_joiner_validator_withholding_handoff_anchor(
         &mut self,
+        withhold: Option<Duration>,
+    ) -> Result<JoinerHandle> {
+        self.add_joiner_validator_inner(OnChainMpcDataShape::RealKey, withhold)
+            .await
+    }
+
+    /// The one joiner-spawn body. Both knobs above are orthogonal — the
+    /// on-chain registration SHAPE (#2119) and the handoff-anchor WITHHOLD
+    /// (#2123) — so each public wrapper passes the other's default rather
+    /// than the two paths being duplicated.
+    async fn add_joiner_validator_inner(
+        &mut self,
+        onchain_mpc_data_shape: OnChainMpcDataShape,
         withhold: Option<Duration>,
     ) -> Result<JoinerHandle> {
         // The joiner's ports are probed when the initialization config is
@@ -270,6 +298,7 @@ impl IkaTestCluster {
             "joiner-{}",
             self.swarm.validator_node_handles().len()
         ));
+        joiner_init.onchain_mpc_data_shape = onchain_mpc_data_shape;
         let joiner_address: SuiAddress = (&joiner_init.account_key_pair.public()).into();
 
         // Add the joiner's account key to the wallet so the publisher's
@@ -294,9 +323,9 @@ impl IkaTestCluster {
             .sign_and_execute_transaction(&tx_data)
             .await;
 
-        // On this branch the on-chain `mpc_data` is always the bare class-groups
-        // shape (the bundle travels off-chain), so the joiner publish shape is
-        // fixed regardless of protocol version.
+        // The on-chain `mpc_data` is the bare class-groups shape (the bundle
+        // travels off-chain), fixed regardless of protocol version — or the
+        // deprecated-field PLACEHOLDER when the caller asked for one.
         let metadata = joiner_init.to_validator_info();
         let (validator_id, validator_cap_id) = retry_on_object_contention!(
             "request_add_validator_candidate",

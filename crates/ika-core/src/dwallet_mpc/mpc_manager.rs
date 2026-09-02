@@ -3172,6 +3172,33 @@ impl DWalletMPCManager {
     /// per service iteration — the inputs it waits on (network-key install,
     /// off-chain validator key ingest) complete on wall-clock time,
     /// independently of consensus rounds.
+    /// Parks one synthetic internal presign request, so a test can drive the
+    /// structure an MPC-inactive epoch must not accumulate (#2119).
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn park_internal_presign_request_for_testing(&mut self) {
+        use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+        self.internal_presign_requests_pending_for_network_key_data
+            .push(ParkedInternalPresignRequest(Box::new(
+                crate::dwallet_session_request::DWalletSessionRequest {
+                    counterparty_chain: None,
+                    session_type: SessionType::System,
+                    session_identifier: SessionIdentifier::new(SessionType::System, [9; 32]),
+                    session_sequence_number: Some(1),
+                    protocol_data:
+                        crate::request_protocol_data::ProtocolData::NetworkEncryptionKeyDkg {
+                            data: crate::request_protocol_data::NetworkEncryptionKeyDkgData {},
+                            dwallet_network_encryption_key_id:
+                                sui_types::base_types::ObjectID::random(),
+                        },
+                    epoch: 1,
+                    requires_network_key_data: true,
+                    requires_next_active_committee: false,
+                    pulled: false,
+                },
+            )));
+    }
+
     pub(crate) fn retry_internal_presign_requests_pending_for_network_key_data(&mut self) {
         if self
             .internal_presign_requests_pending_for_network_key_data

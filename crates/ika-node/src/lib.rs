@@ -2328,12 +2328,23 @@ impl IkaNode {
         // service it reports on, and on the same signal — but in a task of its
         // own, so a wedged drain cannot take the reporting down with it.
         let transport_metrics_exit_receiver = dwallet_mpc_service_exit_receiver.clone();
-        if let Err(e) =
-            DWalletMPCService::verify_validator_keys(epoch_store.epoch_start_state(), config)
-        {
-            error!(error = ?e, "Failed to verify validator keys");
-            panic!("Failed to verify validator keys: {e}");
+        // Per-epoch key verification AND root-seed resolution (#2119). Only a
+        // genuine local misconfiguration (wrong network/consensus key, no root
+        // seed at all) is fatal here; a seed the network's certificate does
+        // not name resolves to a non-participating epoch rather than an abort,
+        // because the abort made the documented rotation flow a crashloop.
+        let seed_resolution = match DWalletMPCService::verify_validator_keys(&epoch_store, config) {
+            Ok(resolution) => resolution,
+            Err(e) => {
+                error!(error = ?e, "Failed to verify validator keys");
+                panic!("Failed to verify validator keys: {e}");
+            }
         };
+        // Publishes `ika_dwallet_mpc_seed_identity_state` and the epoch's one
+        // operator-facing line. Deliberately here, at the per-epoch component
+        // start, rather than inside the MPC service: the state has to stay
+        // readable when that service is the thing sitting idle.
+        seed_resolution.report(&dwallet_mpc_metrics, &epoch_store.name, epoch_store.epoch());
 
         let dwallet_checkpoint_service_notify: Option<
             Arc<dyn ika_core::dwallet_checkpoints::DWalletCheckpointServiceNotify + Send + Sync>,
@@ -2386,6 +2397,7 @@ impl IkaNode {
             dwallet_checkpoint_handler,
             system_checkpoint_handler,
             stranded_network_keys,
+            &seed_resolution,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -2754,6 +2766,30 @@ impl IkaNode {
                         Arc::new(components.consensus_adapter.clone()),
                         blob_cache,
                         root_seed_kp.root_seed().clone(),
+                        // The previous seed is never announced from — the
+                        // sender always announces the CURRENT seed's bundle,
+                        // which is exactly what gets the rotation certified at
+                        // the next boundary. It only lets the per-tick check
+                        // tell a post-freeze rotation from a lost seed (#2119).
+                        // Read fallibly, like the resolution does: an
+                        // unreadable previous seed must never be fatal.
+                        self.config
+                            .previous_root_seed_key_pair
+                            .as_ref()
+                            .and_then(|previous| match previous.try_root_seed() {
+                                Ok(seed) => Some(seed.clone()),
+                                Err(error) => {
+                                    warn!(
+                                        ?error,
+                                        path = ?previous.path(),
+                                        "`previous-root-seed-key-pair` could not be read; \
+                                         the announcement sender runs without it (it never \
+                                         announces from it — only classifies a post-freeze \
+                                         rotation)"
+                                    );
+                                    None
+                                }
+                            }),
                         // Chain next-epoch committee (pre-assembly) for
                         // the freeze emit-gate — so the freeze waits for
                         // joiners that the assembled committee can't yet
@@ -3153,8 +3189,10 @@ impl IkaNode {
             // `sync_next_committee` builds the next `Committee`'s
             // class_groups_public_keys_and_proofs from validators'
             // own `mpc_data` announcements + the perpetual blob
-            // store instead of refetching from chain. Falls back
-            // to chain when the off-chain set is `Incomplete`.
+            // store. There is NO chain fallback: an `Incomplete`
+            // off-chain set makes the sync loop retry on the next
+            // tick, and since #2119 no chain read contributes
+            // validator key material at all.
             self.sui_connector_service.install_mpc_data_source(Box::new(
                 ika_core::validator_metadata::EpochStoreMpcDataSource::new(
                     Arc::downgrade(&cur_epoch_store),
@@ -3526,7 +3564,24 @@ impl IkaNode {
                     None
                 }
             };
-            *self.validator_components.lock().await = new_validator_components;
+            {
+                let mut components = self.validator_components.lock().await;
+                // Leaving the committee (or never in it): zero the
+                // seed-identity state gauge. It is a one-hot SET once per
+                // epoch from the per-epoch validator start and written
+                // nowhere else, so without this a departing validator keeps
+                // exporting its last state for the life of the process — and
+                // an `awaiting_certification == 1` alert would fire forever
+                // against a node that no longer has an epoch to participate
+                // in. The children stay present at 0 so "healthy" remains
+                // distinguishable from "not scraped".
+                if new_validator_components.is_none()
+                    && let Some(outgoing) = components.as_ref()
+                {
+                    outgoing.dwallet_mpc_metrics.clear_seed_identity_state();
+                }
+                *components = new_validator_components;
+            }
             // Force releasing the current epoch store DB handle, because the
             // Arc<AuthorityPerEpochStore> may linger.
             cur_epoch_store.release_db_handles();

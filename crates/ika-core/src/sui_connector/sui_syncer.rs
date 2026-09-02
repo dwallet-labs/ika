@@ -5,12 +5,9 @@
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::validator_metadata::OffChainAssemblyMissingReason;
-use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_sui_client::{SuiClient, SuiClientInner};
-use ika_types::committee::{
-    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
-};
+use ika_types::committee::{Committee, CommitteeMembership, EpochId, StakeUnit};
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, NetworkPublicKey};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
@@ -179,6 +176,212 @@ fn set_assembly_missing_metrics(
             .with_label_values(&[reason.label()])
             .set(count);
     }
+}
+
+/// Build the next epoch's [`Committee`] plus, when the off-chain source
+/// resolved it, the epoch's off-chain key bundles.
+///
+/// A free function, not an associated one: since #2119 it reads NOTHING
+/// from chain — every byte it needs comes from its arguments — which is
+/// what lets it be unit-tested without a Sui client.
+#[allow(clippy::too_many_arguments)]
+fn new_committee(
+    committee: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
+    epoch: u64,
+    quorum_threshold: u64,
+    validity_threshold: u64,
+    off_chain_mpc_data_source: Option<
+        Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
+    >,
+    frozen_at_assembly: bool,
+    log_state: &mut AssemblyLogState,
+    metrics: &SuiConnectorMetrics,
+) -> DwalletMPCResult<(
+    Committee,
+    Option<crate::validator_metadata::OffChainCommitteeBundles>,
+)> {
+    // Try the off-chain assembly first. The strict
+    // `Complete`/`Incomplete` gate inside the source means we
+    // only use the off-chain map when every (non-excluded)
+    // committee member resolved successfully. An `Incomplete`
+    // result returns `OffChainAssemblyIncomplete` and the outer
+    // sync loop retries on the next tick — there is no chain
+    // fallback for validator mpc_data; chain is write-only. The
+    // path below serves only the bootstrap window before the
+    // off-chain source is installed (`source == None`), and it
+    // reads NO validator key material from chain (#2119).
+    if let Some(source) = off_chain_mpc_data_source {
+        let authorities: Vec<AuthorityName> =
+            committee.iter().map(|(_, (name, _))| *name).collect();
+        match source.try_assemble_mpc_data(&authorities) {
+            crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
+                log_state.last_incomplete = None;
+                metrics.off_chain_assembly_wedged.set(0);
+                // Pre-freeze, the assembly re-runs (and re-succeeds)
+                // every sync tick; log at info only when the assembled
+                // membership/counts change or on the final (frozen)
+                // assembly, debug otherwise.
+                let assembly_summary = (
+                    epoch,
+                    frozen_at_assembly,
+                    bundles.class_groups.len(),
+                    bundles.secp256k1_pvss.len(),
+                    bundles.secp256r1_pvss.len(),
+                    bundles.ristretto_pvss.len(),
+                    bundles.vss_hpke.len(),
+                );
+                if log_state.last_logged_assembly != Some(assembly_summary) {
+                    info!(
+                        epoch,
+                        members = bundles.class_groups.len(),
+                        secp256k1_pvss = bundles.secp256k1_pvss.len(),
+                        secp256r1_pvss = bundles.secp256r1_pvss.len(),
+                        ristretto_pvss = bundles.ristretto_pvss.len(),
+                        frozen = frozen_at_assembly,
+                        "assembled committee mpc_data off-chain"
+                    );
+                    log_state.last_logged_assembly = Some(assembly_summary);
+                } else {
+                    debug!(
+                        epoch,
+                        members = bundles.class_groups.len(),
+                        frozen = frozen_at_assembly,
+                        "re-assembled identical committee mpc_data off-chain"
+                    );
+                }
+                // class_groups stays on `Committee` (the bare on-chain key).
+                // The PVSS + VSS HPKE keys travel out-of-band: return the
+                // full bundle so the caller delivers them to the MPC manager
+                // via the off-chain key channels, never on `Committee`.
+                let committee = Committee::new(
+                    epoch,
+                    committee
+                        .iter()
+                        .map(|(_, (name, stake))| (*name, *stake))
+                        .collect(),
+                    bundles.class_groups.clone(),
+                    // Empty: this assembled committee feeds only the
+                    // reconfiguration MPC input, which never reads consensus
+                    // keys. Handoff verification uses the epoch store's
+                    // committee (`get_ika_committee`), which carries them.
+                    HashMap::new(),
+                    quorum_threshold,
+                    validity_threshold,
+                );
+                return Ok((committee, Some(*bundles)));
+            }
+            crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing, reason } => {
+                log_state.last_incomplete = Some((missing.len(), reason));
+                // There is NO chain fallback. The off-chain pipeline
+                // (consensus announcements + P2P blob delivery +
+                // attestation-tally freeze) is the only path; missing
+                // entries here are transient (P2P hasn't converged yet)
+                // and the outer sync loop should retry on the next
+                // tick — expected every epoch during the convergence
+                // window, so the per-tick log is debug (the caller
+                // escalates a persistent stall).
+                debug!(
+                    epoch,
+                    missing = missing.len(),
+                    reason = reason.label(),
+                    "off-chain validator-mpc_data assembly incomplete; \
+                     no chain fallback — retrying on next sync tick"
+                );
+                return Err(DwalletMPCError::OffChainAssemblyIncomplete {
+                    epoch,
+                    missing: missing.len(),
+                });
+            }
+            crate::validator_metadata::OffChainMpcDataAssembly::EverythingExcluded => {
+                {
+                    // PERMANENT, not transient: the freeze excluded
+                    // EVERY requested committee member, so there is no
+                    // attested mpc_data to assemble from — the off-chain
+                    // assembly can never converge this epoch and
+                    // reconfiguration into it is WEDGED. Escalate to
+                    // `error!` (vs the transient `Incomplete` retry) so
+                    // an operator is alerted; the likely cause is no
+                    // next-committee member's announcement landing
+                    // before the freeze (joiner relay / propagation
+                    // failure, or a misfrozen set). The state is a fixed
+                    // point for the rest of the epoch, so the error is
+                    // latched once per epoch (repeats at debug); the
+                    // `off_chain_assembly_wedged` gauge carries the
+                    // ongoing state for alerting.
+                    metrics.off_chain_assembly_wedged.set(1);
+                    log_state.last_incomplete = Some((
+                        authorities.len(),
+                        OffChainAssemblyMissingReason::EverythingExcluded,
+                    ));
+                    if log_state.wedge_logged_for_epoch != Some(epoch) {
+                        error!(
+                            epoch,
+                            members = authorities.len(),
+                            "off_chain mode: off-chain validator-mpc_data assembly is \
+                             PERMANENTLY incomplete — the freeze excluded EVERY committee \
+                             member, so reconfiguration into this epoch is WEDGED (no attested \
+                             mpc_data). Investigate next-committee announcement propagation."
+                        );
+                        log_state.wedge_logged_for_epoch = Some(epoch);
+                    } else {
+                        debug!(
+                            epoch,
+                            members = authorities.len(),
+                            "off-chain validator-mpc_data assembly still wedged \
+                             (EverythingExcluded)"
+                        );
+                    }
+                    return Err(DwalletMPCError::OffChainAssemblyIncomplete {
+                        epoch,
+                        missing: authorities.len(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Bootstrap window (the off-chain source is not installed yet):
+    // membership + stake ONLY, with an EMPTY class-groups map.
+    //
+    // The on-chain `mpc_data_bytes` field is deprecated (#2119) — a
+    // validator may register with placeholder bytes — so nothing here
+    // reads it. That costs this path nothing, because the map it used to
+    // fill has no production reader: the MPC manager starts from
+    // `ValidatorMpcKeysByPartyId::empty()` and takes ALL validator key
+    // material (class-groups included) from the off-chain bundles
+    // (`mpc_manager.rs`, `get_validator_mpc_keys_by_party_id`), and the
+    // reconfiguration public input reads a `Committee` only for its
+    // ACCESS STRUCTURE — voting weights and thresholds
+    // (`mpc_computations/reconfiguration.rs::generate_public_input`).
+    // `Committee::class_groups_public_key_and_proof` has no caller at all.
+    //
+    // What this committee is actually for: the manager latches it as
+    // `next_active_committee` so requests gated on
+    // `requires_next_active_committee` can proceed; the keys it needs
+    // arrive separately on the next-epoch off-chain key channel (the
+    // `None` returned below), and a reconfiguration that starts before
+    // those land errors with `MissingNextActiveCommittee` and retries.
+    // Membership and stake are chain-true either way, so the bootstrap
+    // committee and the later off-chain-assembled one agree on everything
+    // any reader looks at.
+    Ok((
+        Committee::new(
+            epoch,
+            committee
+                .iter()
+                .map(|(_, (name, stake))| (*name, *stake))
+                .collect(),
+            // Empty: the deprecated on-chain class-groups field is never
+            // decoded (see above); the real keys travel off-chain.
+            HashMap::new(),
+            // Empty: the assembled committee feeds only the reconfiguration
+            // MPC input, which never reads consensus keys.
+            HashMap::new(),
+            quorum_threshold,
+            validity_threshold,
+        ),
+        None,
+    ))
 }
 
 impl<C> SuiSyncer<C>
@@ -525,20 +728,16 @@ where
                 .unwrap_or_default()
                 .as_millis()
                 >= u128::from(assembly_backstop_ms);
-            let (committee, next_epoch_bundles) = match Self::new_committee(
-                sui_client.clone(),
+            let (committee, next_epoch_bundles) = match new_committee(
                 new_next_committee.clone(),
                 next_epoch,
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
-                true,
                 off_chain_mpc_data_snapshot,
                 frozen_at_assembly,
                 &mut assembly_log_state,
                 &metrics,
-            )
-            .await
-            {
+            ) {
                 Ok(committee_and_bundles) => {
                     let now = time::Instant::now();
                     metrics.off_chain_assembly_incomplete.set(0);
@@ -720,249 +919,6 @@ where
                 ))
             })
             .collect()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn new_committee(
-        sui_client: Arc<SuiClient<C>>,
-        committee: Vec<(ObjectID, (AuthorityName, StakeUnit))>,
-        epoch: u64,
-        quorum_threshold: u64,
-        validity_threshold: u64,
-        read_next_epoch_class_groups_keys: bool,
-        off_chain_mpc_data_source: Option<
-            Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
-        >,
-        frozen_at_assembly: bool,
-        log_state: &mut AssemblyLogState,
-        metrics: &SuiConnectorMetrics,
-    ) -> DwalletMPCResult<(
-        Committee,
-        Option<crate::validator_metadata::OffChainCommitteeBundles>,
-    )> {
-        // Try the off-chain assembly first. The strict
-        // `Complete`/`Incomplete` gate inside the source means we
-        // only use the off-chain map when every (non-excluded)
-        // committee member resolved successfully. An `Incomplete`
-        // result returns `OffChainAssemblyIncomplete` and the outer
-        // sync loop retries on the next tick — there is no chain
-        // fallback for validator mpc_data; chain is write-only. The
-        // chain read below serves only the bootstrap window before
-        // the off-chain source is installed (`source == None`).
-        if let Some(source) = off_chain_mpc_data_source {
-            let authorities: Vec<AuthorityName> =
-                committee.iter().map(|(_, (name, _))| *name).collect();
-            match source.try_assemble_mpc_data(&authorities) {
-                crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
-                    log_state.last_incomplete = None;
-                    metrics.off_chain_assembly_wedged.set(0);
-                    // Pre-freeze, the assembly re-runs (and re-succeeds)
-                    // every sync tick; log at info only when the assembled
-                    // membership/counts change or on the final (frozen)
-                    // assembly, debug otherwise.
-                    let assembly_summary = (
-                        epoch,
-                        frozen_at_assembly,
-                        bundles.class_groups.len(),
-                        bundles.secp256k1_pvss.len(),
-                        bundles.secp256r1_pvss.len(),
-                        bundles.ristretto_pvss.len(),
-                        bundles.vss_hpke.len(),
-                    );
-                    if log_state.last_logged_assembly != Some(assembly_summary) {
-                        info!(
-                            epoch,
-                            members = bundles.class_groups.len(),
-                            secp256k1_pvss = bundles.secp256k1_pvss.len(),
-                            secp256r1_pvss = bundles.secp256r1_pvss.len(),
-                            ristretto_pvss = bundles.ristretto_pvss.len(),
-                            frozen = frozen_at_assembly,
-                            "assembled committee mpc_data off-chain"
-                        );
-                        log_state.last_logged_assembly = Some(assembly_summary);
-                    } else {
-                        debug!(
-                            epoch,
-                            members = bundles.class_groups.len(),
-                            frozen = frozen_at_assembly,
-                            "re-assembled identical committee mpc_data off-chain"
-                        );
-                    }
-                    // class_groups stays on `Committee` (the bare on-chain key).
-                    // The PVSS + VSS HPKE keys travel out-of-band: return the
-                    // full bundle so the caller delivers them to the MPC manager
-                    // via the off-chain key channels, never on `Committee`.
-                    let committee = Committee::new(
-                        epoch,
-                        committee
-                            .iter()
-                            .map(|(_, (name, stake))| (*name, *stake))
-                            .collect(),
-                        bundles.class_groups.clone(),
-                        // Empty: this assembled committee feeds only the
-                        // reconfiguration MPC input, which never reads consensus
-                        // keys. Handoff verification uses the epoch store's
-                        // committee (`get_ika_committee`), which carries them.
-                        HashMap::new(),
-                        quorum_threshold,
-                        validity_threshold,
-                    );
-                    return Ok((committee, Some(*bundles)));
-                }
-                crate::validator_metadata::OffChainMpcDataAssembly::Incomplete {
-                    missing,
-                    reason,
-                } => {
-                    log_state.last_incomplete = Some((missing.len(), reason));
-                    // There is NO chain fallback. The off-chain pipeline
-                    // (consensus announcements + P2P blob delivery +
-                    // attestation-tally freeze) is the only path; missing
-                    // entries here are transient (P2P hasn't converged yet)
-                    // and the outer sync loop should retry on the next
-                    // tick — expected every epoch during the convergence
-                    // window, so the per-tick log is debug (the caller
-                    // escalates a persistent stall).
-                    debug!(
-                        epoch,
-                        missing = missing.len(),
-                        reason = reason.label(),
-                        "off-chain validator-mpc_data assembly incomplete; \
-                         no chain fallback — retrying on next sync tick"
-                    );
-                    return Err(DwalletMPCError::OffChainAssemblyIncomplete {
-                        epoch,
-                        missing: missing.len(),
-                    });
-                }
-                crate::validator_metadata::OffChainMpcDataAssembly::EverythingExcluded => {
-                    {
-                        // PERMANENT, not transient: the freeze excluded
-                        // EVERY requested committee member, so there is no
-                        // attested mpc_data to assemble from — the off-chain
-                        // assembly can never converge this epoch and
-                        // reconfiguration into it is WEDGED. Escalate to
-                        // `error!` (vs the transient `Incomplete` retry) so
-                        // an operator is alerted; the likely cause is no
-                        // next-committee member's announcement landing
-                        // before the freeze (joiner relay / propagation
-                        // failure, or a misfrozen set). The state is a fixed
-                        // point for the rest of the epoch, so the error is
-                        // latched once per epoch (repeats at debug); the
-                        // `off_chain_assembly_wedged` gauge carries the
-                        // ongoing state for alerting.
-                        metrics.off_chain_assembly_wedged.set(1);
-                        log_state.last_incomplete = Some((
-                            authorities.len(),
-                            OffChainAssemblyMissingReason::EverythingExcluded,
-                        ));
-                        if log_state.wedge_logged_for_epoch != Some(epoch) {
-                            error!(
-                                epoch,
-                                members = authorities.len(),
-                                "off_chain mode: off-chain validator-mpc_data assembly is \
-                                 PERMANENTLY incomplete — the freeze excluded EVERY committee \
-                                 member, so reconfiguration into this epoch is WEDGED (no attested \
-                                 mpc_data). Investigate next-committee announcement propagation."
-                            );
-                            log_state.wedge_logged_for_epoch = Some(epoch);
-                        } else {
-                            debug!(
-                                epoch,
-                                members = authorities.len(),
-                                "off-chain validator-mpc_data assembly still wedged \
-                                 (EverythingExcluded)"
-                            );
-                        }
-                        return Err(DwalletMPCError::OffChainAssemblyIncomplete {
-                            epoch,
-                            missing: authorities.len(),
-                        });
-                    }
-                }
-            }
-        }
-
-        let validator_ids: Vec<_> = committee.iter().map(|(id, _)| *id).collect();
-
-        let validators = sui_client
-            .get_validators_info_by_ids(validator_ids)
-            .await
-            .map_err(DwalletMPCError::IkaError)?;
-
-        let committee_mpc_data = sui_client
-            .get_mpc_data_from_validators_pool(&validators, read_next_epoch_class_groups_keys)
-            .await
-            .map_err(DwalletMPCError::IkaError)?;
-
-        // Chain reads are the mainnet-v1.1.8 shape always: the Move-side
-        // `MPCDataV1::mpc_data_bytes` field stores bare
-        // `ClassGroupsEncryptionKeyAndProof`. The full bundle (PVSS + VSS HPKE)
-        // arrives via the off-chain validator-metadata pipeline (see PR #1721)
-        // and is overlaid onto Committee through a separate path. No
-        // try-then-fallback decode — one shape per path.
-        //
-        // A member's record is written at candidate registration and never
-        // emptied on chain, so a missing or undecodable record is always a
-        // read defect. Dropping the member would hand the reconfiguration MPC
-        // a locally-shrunken party set that peers with healthier reads don't
-        // agree on — divergent public inputs; exclusion decisions belong to
-        // the consensus-agreed freeze, never to a local read. Error instead;
-        // the sync loop retries on the next tick.
-        let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
-            .iter()
-            .map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id).ok_or_else(|| {
-                    ika_types::report_invariant_violation!(
-                        "chain_fallback_mpc_data_missing",
-                        authority = ?name,
-                        validator_id = ?id,
-                        "committee member has no decodable on-chain mpc_data record; \
-                         failing the chain-fallback committee build for retry"
-                    );
-                    DwalletMPCError::MissingOnChainMpcData {
-                        epoch,
-                        authority: *name,
-                    }
-                })?;
-                let key_and_proof =
-                    bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&mpc_data.mpc_data_bytes())
-                        .map_err(|e| {
-                            ika_types::report_invariant_violation!(
-                                "chain_fallback_mpc_data_decode",
-                                authority = ?name,
-                                validator_id = ?id,
-                                error = ?e,
-                                "failed to decode on-chain class-groups encryption key and proof; \
-                                 failing the chain-fallback committee build for retry"
-                            );
-                            DwalletMPCError::MissingOnChainMpcData {
-                                epoch,
-                                authority: *name,
-                            }
-                        })?;
-                Ok((*name, key_and_proof))
-            })
-            .collect::<DwalletMPCResult<HashMap<_, _>>>()?;
-
-        // Bootstrap-window chain read (off-chain source not yet installed):
-        // only the bare class-groups key is on chain, so there are no
-        // off-chain PVSS/VSS bundles to deliver.
-        Ok((
-            Committee::new(
-                epoch,
-                committee
-                    .iter()
-                    .map(|(_, (name, stake))| (*name, *stake))
-                    .collect(),
-                class_group_encryption_keys_and_proofs,
-                // Empty: the assembled committee feeds only the reconfiguration
-                // MPC input, which never reads consensus keys.
-                HashMap::new(),
-                quorum_threshold,
-                validity_threshold,
-            ),
-            None,
-        ))
     }
 
     /// Sync the DwalletMPC network keys from the Sui client to the local store.
@@ -1668,6 +1624,67 @@ fn overlay_network_key_data(
 mod tests {
     use super::*;
     use crate::validator_metadata::StaticNetworkKeyBlobSource;
+
+    /// #2119: the bootstrap-window committee build (no off-chain source
+    /// installed yet) must not read the deprecated on-chain
+    /// `mpc_data_bytes` field. It is now a pure function of membership +
+    /// stake — this test can call it with no Sui client at all, which is
+    /// itself the proof that no chain read remains on the path.
+    ///
+    /// Before this change the same call fetched every member's on-chain
+    /// record and failed the whole build (`MissingOnChainMpcData`, firing
+    /// the `chain_fallback_mpc_data_missing` / `..._decode` invariants) if
+    /// ANY member's bytes did not decode — so one validator registered with
+    /// a placeholder broke this path for every node that needed it.
+    #[test]
+    fn bootstrap_window_committee_needs_no_on_chain_mpc_data() {
+        let members: Vec<(ObjectID, (AuthorityName, StakeUnit))> = (0u8..4)
+            .map(|i| {
+                (
+                    ObjectID::random(),
+                    (AuthorityName([i + 1; 32]), 2_500 as StakeUnit),
+                )
+            })
+            .collect();
+        let mut log_state = AssemblyLogState::default();
+        let metrics = SuiConnectorMetrics::new_for_testing();
+
+        let (committee, bundles) = new_committee(
+            members.clone(),
+            /* epoch */ 9,
+            /* quorum_threshold */ 6_667,
+            /* validity_threshold */ 3_334,
+            /* off_chain_mpc_data_source */ None,
+            /* frozen_at_assembly */ false,
+            &mut log_state,
+            &metrics,
+        )
+        .expect("bootstrap-window committee build must not fail");
+
+        assert_eq!(committee.epoch, 9);
+        assert_eq!(committee.voting_rights.len(), members.len());
+        for (_, (name, stake)) in &members {
+            assert!(
+                committee
+                    .voting_rights
+                    .iter()
+                    .any(|(n, s)| n == name && s == stake),
+                "membership and stake must be chain-true"
+            );
+        }
+        assert_eq!(committee.quorum_threshold, 6_667);
+        assert_eq!(committee.validity_threshold, 3_334);
+        // No validator key material is sourced from chain any more. The
+        // real keys reach the MPC manager on the off-chain key channels;
+        // this map has no production reader.
+        assert!(
+            committee.class_groups_public_keys_and_proofs.is_empty(),
+            "the bootstrap-window committee must carry no chain-sourced key material"
+        );
+        // No off-chain bundles on this path — a reconfiguration that starts
+        // before they land errors and retries, as it always did.
+        assert!(bundles.is_none());
+    }
 
     #[test]
     fn persistent_condition_reports_once_per_episode_and_recovers_once() {

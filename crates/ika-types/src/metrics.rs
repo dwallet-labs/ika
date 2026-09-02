@@ -24,6 +24,20 @@ pub fn record_invariant_violation(site: &'static str) {
     }
 }
 
+/// Current value of the invariant-violation counter for `site`, or `None`
+/// when [`init_invariant_violation_metric`] has not run in this process.
+///
+/// Read-back for tests and diagnostics only — nothing in production reads
+/// the counter. Integration tests use it to assert that a retired
+/// invariant site stays retired: naming a site that never fires keeps the
+/// assertion pinned to that site instead of to whatever else the run
+/// happened to report.
+pub fn invariant_violation_count(site: &str) -> Option<u64> {
+    INVARIANT_VIOLATIONS_TOTAL
+        .get()
+        .map(|metric| metric.with_label_values(&[site]).get())
+}
+
 /// Records a broken invariant in both Prometheus and the structured logs.
 ///
 /// The site must be a literal so the `site` label's cardinality is bounded by

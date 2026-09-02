@@ -7317,6 +7317,7 @@ dependencies = [
  "bcs 0.2.1",
  "cargo_metadata",
  "dwallet-mpc-centralized-party",
+ "dwallet-rng",
  "fastcrypto",
  "futures",
  "hex",

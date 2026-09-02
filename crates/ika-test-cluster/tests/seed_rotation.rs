@@ -1,0 +1,706 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+//! Root-seed rotation on a live cluster (issue #2119).
+//!
+//! A validator rotates by writing a new `root-seed.key` and restarting. The
+//! epoch it restarts into was already dealt its MPC shares under the OLD
+//! bundle — that is what the `E-1 -> E` handoff certificate records — so the
+//! freshly derived digest cannot match. Two supported flows follow from that,
+//! and both are exercised here against a real cluster rather than a unit
+//! fixture, because what makes them work is the interaction between three
+//! things a unit test cannot stand up: the per-epoch seed resolution, the
+//! announcement sender (which always announces the CURRENT seed), and the
+//! freeze that turns an announcement into the next epoch's certificate.
+//!
+//! `rotation_with_the_previous_seed_keeps_the_validator_in_mpc` is the
+//! no-gap flow: the previous-seed field is set, so the validator runs the
+//! rest of epoch `E` on the certified (previous) seed while announcing the
+//! new one, and the next certificate names the new bundle.
+//!
+//! `rotation_without_the_previous_seed_sits_out_then_rejoins` is the
+//! degraded flow and the operator escape hatch, in one run:
+//!   (b) rotate with NO previous seed -> the validator starts, keeps
+//!       consensus, and takes no part in MPC. The metric says so, its
+//!       advance counter stays at zero, and the rest of the committee still
+//!       freezes and certifies the epoch — including this validator's NEW
+//!       digest, which is what lets it rejoin by itself at `E+1`.
+//!   (c) rotate again with NO previous seed, then restart with the field
+//!       pointed at the seed that is actually certified -> it rejoins the
+//!       SAME epoch, no boundary needed.
+//!
+//! What is deliberately NOT asserted: that a rotation is a crash-free no-op
+//! for the network. Losing one validator's MPC stake for an epoch is the
+//! documented cost of flow (b), and the assertion that the committee still
+//! certifies epoch `E` is exactly the claim that the cost is bounded to that.
+//!
+//! `#[tokio::test(flavor = "multi_thread")]` per CLAUDE.md: coordination
+//! tests, real parallel crypto, no msim slowdown.
+
+use std::collections::HashMap;
+use std::time::Duration;
+
+use dwallet_rng::RootSeed;
+use ika_config::node::RootSeedWithPath;
+use ika_node::IkaNodeHandle;
+use ika_protocol_config::ProtocolVersion;
+use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder};
+use ika_types::crypto::AuthorityName;
+use ika_types::handoff::HandoffItemKey;
+
+/// Label values of `ika_dwallet_mpc_seed_identity_state`. Kept as literals
+/// rather than imported from `ika-core` (not a dependency of this crate): if
+/// the production label set is renamed, this test must fail, because an alert
+/// written against the old names would have silently stopped matching.
+const STATE_MATCHES: &str = "matches";
+const STATE_ROTATION_COMPLETE: &str = "rotation_complete";
+const STATE_ROTATING_ON_PREVIOUS: &str = "rotating_on_previous_seed";
+const STATE_AWAITING_CERTIFICATION: &str = "awaiting_certification";
+
+/// The `state` label carrying `1` on this node, if any. The gauge is a
+/// one-hot over a closed set, so at most one value is ever `1`.
+fn seed_identity_state(handle: &IkaNodeHandle) -> Option<String> {
+    handle.with(|node| {
+        node.registry_service_for_testing()
+            .default_registry()
+            .gather()
+            .iter()
+            .filter(|family| family.name() == "ika_dwallet_mpc_seed_identity_state")
+            .flat_map(|family| family.get_metric())
+            .find(|metric| metric.get_gauge().value() >= 1.0)
+            .and_then(|metric| {
+                metric
+                    .get_label()
+                    .iter()
+                    .find(|label| label.name() == "state")
+                    .map(|label| label.value().to_string())
+            })
+    })
+}
+
+/// Sum of one `ika_dwallet_mpc_*` counter family on this node, over the
+/// children whose labels satisfy `keep`.
+fn counter_total(
+    handle: &IkaNodeHandle,
+    family_name: &str,
+    keep: impl Fn(&[(&str, &str)]) -> bool,
+) -> u64 {
+    handle.with(|node| {
+        node.registry_service_for_testing()
+            .default_registry()
+            .gather()
+            .iter()
+            .filter(|family| family.name() == family_name)
+            .flat_map(|family| family.get_metric())
+            .filter(|metric| {
+                let labels: Vec<(&str, &str)> = metric
+                    .get_label()
+                    .iter()
+                    .map(|label| (label.name(), label.value()))
+                    .collect();
+                keep(&labels)
+            })
+            .map(|metric| metric.get_counter().value() as u64)
+            .sum()
+    })
+}
+
+/// `ika_dwallet_mpc_ready_to_advance_result_total{result="ready"}` on this node.
+///
+/// **The `result` filter is load-bearing.** That family is incremented once
+/// per advanceable session per tick with `result` in
+/// {`ready`, `not_ready`, `err`}, so summing every child counts a validator
+/// that is looking at sessions and concluding it can advance NONE of them —
+/// which is what an MPC-inactive node's peers look like, and would make
+/// "> 0" pass for a node doing no useful MPC at all. `ready` is emitted only
+/// where `generate_protocol_cryptographic_data` returned `Some`, i.e. the
+/// session has its inputs and is being advanced this tick.
+///
+/// Always compared as a DELTA over the assertion window, never as a
+/// cumulative `> 0`: the counter lives on a per-process registry, so after a
+/// restart a cumulative read is trivially satisfied by work the node did
+/// before the state under test began.
+fn mpc_ready_advances(handle: &IkaNodeHandle) -> u64 {
+    counter_total(
+        handle,
+        "ika_dwallet_mpc_ready_to_advance_result_total",
+        |labels| {
+            labels
+                .iter()
+                .any(|(name, value)| *name == "result" && *value == "ready")
+        },
+    )
+}
+
+/// `ika_dwallet_mpc_self_malicious_total` on this node — sessions for which
+/// this validator concluded that IT ITSELF is malicious (its output diverged
+/// from the peers' quorum, or the majority output named it).
+///
+/// The #1978 safety claim for the sat-out state is precisely that this stays
+/// at zero: a node that computes with key material the network never dealt to
+/// it lands here, and "sit the epoch out" is chosen over "try anyway" to
+/// avoid exactly that.
+///
+/// `None` when the family is NOT EXPORTED, which the caller must treat as a
+/// failure rather than as zero. It is an `IntCounterVec`, and `gather()` omits
+/// a vec family with no children — so before the children were
+/// pre-materialized at registration, "the guard is live and quiet" and "the
+/// increment site was deleted" produced the identical observation. The
+/// assertion is therefore PRESENT-AND-ZERO, never absent-or-zero.
+fn self_malicious_total(handle: &IkaNodeHandle) -> Option<u64> {
+    handle.with(|node| {
+        let families = node
+            .registry_service_for_testing()
+            .default_registry()
+            .gather();
+        let family = families
+            .iter()
+            .find(|family| family.name() == "ika_dwallet_mpc_self_malicious_total")?;
+        Some(
+            family
+                .get_metric()
+                .iter()
+                .map(|metric| metric.get_counter().value() as u64)
+                .sum(),
+        )
+    })
+}
+
+/// `ika_dwallet_mpc_malicious_actors_count` on this node — the size of the
+/// epoch's convicted set as THIS validator sees it. Read on the PEERS of a
+/// sat-out validator: if sitting out looked malicious rather than absent,
+/// some peer would have convicted it and this would be non-zero.
+fn malicious_actors_count(handle: &IkaNodeHandle) -> i64 {
+    handle.with(|node| {
+        node.registry_service_for_testing()
+            .default_registry()
+            .gather()
+            .iter()
+            .filter(|family| family.name() == "ika_dwallet_mpc_malicious_actors_count")
+            .flat_map(|family| family.get_metric())
+            .map(|metric| metric.get_gauge().value() as i64)
+            .fold(0, i64::max)
+    })
+}
+
+/// The `validator -> mpc_data digest` map of the node's persisted handoff
+/// certificate for `source_epoch`, or `None` while it has no such cert
+/// (persistence trails the epoch switch by the quorum aggregation of
+/// consensus-ordered handoff signatures, so callers poll).
+///
+/// Read straight off the node's perpetual tables — the raw certified bytes,
+/// with no seed derivation of this test's own. That is what makes the digest
+/// assertions independent of the code under test: they compare the cert
+/// before a rotation with the cert after it.
+fn cert_mpc_data_digests(
+    handle: &IkaNodeHandle,
+    source_epoch: u64,
+) -> Option<HashMap<AuthorityName, [u8; 32]>> {
+    handle.with(|node| {
+        node.state()
+            .perpetual_tables()
+            .get_certified_handoff_attestation(source_epoch)
+            .expect("read the certified handoff attestation")
+            .map(|cert| {
+                cert.attestation
+                    .items
+                    .into_iter()
+                    .filter_map(|(key, digest)| match key {
+                        HandoffItemKey::ValidatorMpcData { validator } => Some((validator, digest)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+    })
+}
+
+/// This node's own committee identity — the basis the handoff certificate
+/// names validators by, which below protocol v6 is NOT the BLS protocol key
+/// `IkaTestCluster::validator_names` carries.
+fn own_authority_name(handle: &IkaNodeHandle) -> AuthorityName {
+    handle.with(|node| node.state().epoch_store_for_testing().name)
+}
+
+fn current_epoch(handle: &IkaNodeHandle) -> u64 {
+    handle.with(|node| node.state().epoch_store_for_testing().epoch())
+}
+
+/// Stop the validator, swap in a fresh root seed, optionally record the seed
+/// it was running as the previous one, and start it again. This is the
+/// operator procedure from `docs/content/docs/cli/validator-commands.mdx`,
+/// with the config edit done in memory instead of on a YAML file.
+async fn rotate_root_seed(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    keep_previous: bool,
+) -> RootSeed {
+    let name = cluster.validator_names[validator_index];
+    let node = cluster
+        .swarm
+        .node(&name)
+        .expect("validator node exists for the configured name");
+    node.stop();
+    let new_seed = RootSeed::random_seed();
+    {
+        let mut config = node.config();
+        let running = config.root_seed_key_pair.clone();
+        config.root_seed_key_pair = Some(RootSeedWithPath::new(new_seed.clone()));
+        config.previous_root_seed_key_pair = if keep_previous { running } else { None };
+    }
+    start_within_budget(node, "the rotated validator").await;
+    new_seed
+}
+
+/// Every restart in this file crosses the prepare-then-start handoff barrier
+/// (#2123), which runs on the boot path and holds `IkaNode::start` until the
+/// epoch's verified handoff data is local. `Node::start` awaits that, so a
+/// barrier that never released would hang this test until the harness killed
+/// it — an outcome indistinguishable from an unrelated infrastructure stall.
+///
+/// The barrier gates only on the certificate's network-key items and ignores
+/// its `ValidatorMpcData` ones, so a node resolving onto its previous seed —
+/// or sitting the epoch out — has nothing to wedge on. This bound is what
+/// turns that reasoning into an assertion: exceed it and the test says which
+/// restart hung and why that is the interesting failure.
+async fn start_within_budget(node: &ika_swarm::memory::Node, what: &str) {
+    match tokio::time::timeout(Duration::from_secs(180), node.start()).await {
+        Ok(result) => result.unwrap_or_else(|e| panic!("failed to restart {what}: {e}")),
+        Err(_) => panic!(
+            "restarting {what} did not complete within 180s — the node is stuck before its \
+             epoch components start. The prepare-then-start handoff barrier is the only \
+             thing on that path that waits indefinitely; a rotating or sat-out validator \
+             must not wedge there, because the barrier does not gate on the certificate's \
+             ValidatorMpcData items."
+        ),
+    }
+}
+
+/// Restart the validator with `previous_root_seed_key_pair` set to the seed it
+/// was running before its last rotation — the in-epoch repair an operator
+/// performs after seeing the non-participating alert.
+async fn set_previous_seed_and_restart(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    previous: RootSeed,
+) {
+    let name = cluster.validator_names[validator_index];
+    let node = cluster
+        .swarm
+        .node(&name)
+        .expect("validator node exists for the configured name");
+    node.stop();
+    node.config().previous_root_seed_key_pair = Some(RootSeedWithPath::new(previous));
+    start_within_budget(node, "the repaired validator").await;
+}
+
+/// Poll a fresh node handle every 500ms until `probe` holds.
+///
+/// A fresh handle per poll on purpose: an `IkaNodeHandle` is a strong
+/// `Arc<IkaNode>`, and holding one across a stop/start pair keeps the old
+/// instance's RocksDB open so the respawn dies on the store lock.
+async fn poll_node<T>(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    deadline: Duration,
+    what: &str,
+    mut probe: impl FnMut(&IkaNodeHandle) -> Option<T>,
+) -> T {
+    let started = tokio::time::Instant::now();
+    loop {
+        {
+            let handle = cluster.validator_handle(validator_index);
+            if let Some(value) = probe(&handle) {
+                return value;
+            }
+        }
+        assert!(
+            started.elapsed() < deadline,
+            "timed out after {deadline:?} waiting for: {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+async fn poll_state(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    expected: &str,
+    deadline: Duration,
+) {
+    poll_node(
+        cluster,
+        validator_index,
+        deadline,
+        &format!("seed-identity state {expected}"),
+        |handle| {
+            seed_identity_state(handle)
+                .filter(|state| state == expected)
+                .map(|_| ())
+        },
+    )
+    .await;
+}
+
+/// Wait until THIS validator (not merely the fastest one in the swarm) is at
+/// or past `epoch` AND has resolved its own seed against a certificate.
+///
+/// Both halves matter. `wait_for_epoch` returns on the first node to report
+/// the epoch, so validator 0 can still be an epoch behind; and until a
+/// certificate exists for the prior epoch the resolution reads
+/// `no_certified_digest`, against which a rotation would prove nothing at all.
+async fn wait_until_certified_at_epoch(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    epoch: u64,
+) -> u64 {
+    poll_node(
+        cluster,
+        validator_index,
+        Duration::from_secs(360),
+        "this validator to reach the epoch with its own seed certified",
+        |handle| {
+            let at = current_epoch(handle);
+            (at >= epoch && seed_identity_state(handle).as_deref() == Some(STATE_MATCHES))
+                .then_some(at)
+        },
+    )
+    .await
+}
+
+/// Waits for this validator's `result="ready"` advance counter to move past
+/// `baseline` — a DELTA over the window, so a cumulative value carried in
+/// from before the state under test cannot satisfy it.
+async fn poll_ready_advances_past(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    baseline: u64,
+    what: &str,
+    deadline: Duration,
+) {
+    poll_node(cluster, validator_index, deadline, what, |handle| {
+        (mpc_ready_advances(handle) > baseline).then_some(())
+    })
+    .await;
+}
+
+async fn build_cluster(num_validators: usize) -> IkaTestCluster {
+    IkaTestClusterBuilder::new()
+        .with_num_validators(num_validators)
+        // Long enough that a rotation restart plus the assertions that follow
+        // fit comfortably inside one epoch — the whole point of flows (a) and
+        // (c) is that they take effect WITHOUT a boundary, so an epoch that
+        // rolls over mid-assertion would mask the property under test. Every
+        // in-epoch assertion below re-reads the epoch and says so explicitly
+        // if it escaped, rather than silently passing on the wrong epoch.
+        .with_epoch_duration_ms(90_000)
+        .with_protocol_version(ProtocolVersion::MAX)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed")
+}
+
+/// Flow (a): the previous-seed field is set, so the rotation costs nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn rotation_with_the_previous_seed_keeps_the_validator_in_mpc() {
+    telemetry_subscribers::init_for_testing();
+    let cluster = build_cluster(4).await;
+
+    // Epoch 2 so a `1 -> 2` handoff certificate exists: without one the
+    // resolution has nothing to resolve against and every rotation would
+    // trivially read as `no_certified_digest`.
+    cluster.wait_for_epoch(2).await;
+    let rotation_epoch = wait_until_certified_at_epoch(&cluster, 0, 2).await;
+    let self_name = own_authority_name(&cluster.validator_handle(0));
+    let digest_before = poll_node(
+        &cluster,
+        0,
+        Duration::from_secs(180),
+        "the handoff cert for the epoch before the rotation",
+        |handle| {
+            cert_mpc_data_digests(handle, rotation_epoch - 1)
+                .and_then(|digests| digests.get(&self_name).copied())
+        },
+    )
+    .await;
+
+    rotate_root_seed(&cluster, 0, true).await;
+
+    // The certificate still deals this epoch's shares to the previous seed's
+    // bundle, so the epoch runs on the previous seed — and MPC keeps running.
+    poll_state(
+        &cluster,
+        0,
+        STATE_ROTATING_ON_PREVIOUS,
+        Duration::from_secs(180),
+    )
+    .await;
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
+        &cluster,
+        0,
+        baseline,
+        "the rotated validator to keep ADVANCING MPC sessions on the previous seed",
+        Duration::from_secs(180),
+    )
+    .await;
+
+    // Meanwhile the sender announces the CURRENT seed, so the freeze captures
+    // the new bundle and the next certificate names it. Allow two boundaries:
+    // a rotation that lands after this epoch's freeze legitimately takes one
+    // extra epoch, and that self-healing is part of the contract.
+    let certified_after = poll_node(
+        &cluster,
+        0,
+        Duration::from_secs(300),
+        "a handoff cert naming a NEW mpc_data digest for the rotated validator",
+        |handle| {
+            let epoch = current_epoch(handle);
+            (rotation_epoch..=epoch).rev().find_map(|source_epoch| {
+                cert_mpc_data_digests(handle, source_epoch)
+                    .and_then(|digests| digests.get(&self_name).copied())
+                    .filter(|digest| *digest != digest_before)
+            })
+        },
+    )
+    .await;
+    assert_ne!(
+        certified_after, digest_before,
+        "the certificate must move to the rotated validator's new bundle"
+    );
+
+    // And on the far side of that boundary the validator is back on its
+    // CURRENT seed, with the rotation-complete signal telling the operator to
+    // drop the previous-seed field.
+    poll_state(
+        &cluster,
+        0,
+        STATE_ROTATION_COMPLETE,
+        Duration::from_secs(300),
+    )
+    .await;
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
+        &cluster,
+        0,
+        baseline,
+        "MPC to keep advancing after the rotation completed",
+        Duration::from_secs(180),
+    )
+    .await;
+}
+
+/// Flows (b) and (c): rotating without the previous-seed field, and repairing
+/// it inside the epoch.
+#[tokio::test(flavor = "multi_thread")]
+async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
+    telemetry_subscribers::init_for_testing();
+    // Five validators so the committee keeps a comfortable quorum with one
+    // member out of MPC; four would leave 3/4, which is above threshold but
+    // gives the test no margin for an unrelated slow node.
+    let cluster = build_cluster(5).await;
+
+    cluster.wait_for_epoch(2).await;
+    let rotation_epoch = wait_until_certified_at_epoch(&cluster, 0, 2).await;
+    let self_name = own_authority_name(&cluster.validator_handle(0));
+    let digest_before = poll_node(
+        &cluster,
+        0,
+        Duration::from_secs(180),
+        "the handoff cert for the epoch before the rotation",
+        |handle| {
+            cert_mpc_data_digests(handle, rotation_epoch - 1)
+                .and_then(|digests| digests.get(&self_name).copied())
+        },
+    )
+    .await;
+    // The seed this validator is running now, which is the one the cert
+    // names — flow (c) repairs by pointing the previous-seed field at it.
+    let certified_seed = cluster
+        .swarm
+        .node(&cluster.validator_names[0])
+        .expect("validator node")
+        .config()
+        .root_seed_key_pair
+        .as_ref()
+        .expect("a validator always has a root seed")
+        .root_seed()
+        .clone();
+
+    // ---- (b) rotate with NO previous seed ----
+    rotate_root_seed(&cluster, 0, false).await;
+
+    poll_state(
+        &cluster,
+        0,
+        STATE_AWAITING_CERTIFICATION,
+        Duration::from_secs(180),
+    )
+    .await;
+
+    // It must take NO part in MPC while in that state, and — the #1978 claim —
+    // must look ABSENT rather than malicious while doing so.
+    //
+    // Everything here is scoped to the window. The peer control is a DELTA
+    // from a baseline snapshotted at window start, not the peer's cumulative
+    // count since process start: a cluster that had done MPC earlier and then
+    // gone quiet would satisfy a cumulative read and make the sat-out node's
+    // zero meaningless, which is the exact vacuity the control exists to rule
+    // out.
+    let peer_baseline = mpc_ready_advances(&cluster.validator_handle(1));
+    let sat_out_baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    assert_eq!(
+        sat_out_baseline, 0,
+        "the restart reset this process's registry; a nonzero baseline would \
+         mean the gate let work through before the window even opened"
+    );
+    let mut samples_inside_the_epoch = 0;
+    let mut peer_delta = 0;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let handle = cluster.validator_handle(0);
+        // Stop sampling if the epoch rolled over: past the boundary the
+        // validator legitimately rejoins, and continuing would assert the
+        // opposite of the contract.
+        if current_epoch(&handle) != rotation_epoch {
+            break;
+        }
+        assert_eq!(
+            mpc_ready_advances(&handle),
+            0,
+            "a validator whose seed the certificate does not name must advance \
+             NO MPC session — computing with key material the network never \
+             dealt to it is how a node convicts itself as malicious (#1978)"
+        );
+        // #1978: sitting out must not read as self-maliciousness either. A
+        // node that tried and diverged would land here instead.
+        assert_eq!(
+            self_malicious_total(&handle),
+            Some(0),
+            "the sat-out validator must never conclude it is itself malicious; \
+             that is the outcome 'sit out' is chosen over 'try anyway' to \
+             avoid. `None` here means the family is not exported at all — a \
+             dead guard, not a quiet one"
+        );
+        samples_inside_the_epoch += 1;
+        peer_delta = mpc_ready_advances(&cluster.validator_handle(1)).saturating_sub(peer_baseline);
+    }
+    assert!(
+        samples_inside_the_epoch >= 5,
+        "only {samples_inside_the_epoch} samples landed inside the rotation \
+         epoch; the window escaped the epoch and this run proved nothing — \
+         raise the epoch duration"
+    );
+    assert!(
+        peer_delta > 0,
+        "a peer must have ADVANCED MPC sessions during the same window ({}s of \
+         samples); without that the sat-out validator's zero could just be a \
+         quiet cluster",
+        samples_inside_the_epoch
+    );
+
+    // ...and no peer convicted it. Toward MPC the sat-out node must be
+    // indistinguishable from a member that is simply not there; a peer that
+    // had convicted anyone this epoch would carry a non-zero convicted-set
+    // gauge.
+    for peer_index in 1..5 {
+        let peer = cluster.validator_handle(peer_index);
+        assert_eq!(
+            malicious_actors_count(&peer),
+            0,
+            "validator {peer_index} convicted someone while validator 0 was \
+             sitting out; an absent member must never be read as a malicious one"
+        );
+    }
+
+    // The committee still freezes and certifies the epoch WITHOUT this
+    // validator's MPC — and the certificate carries its NEW digest, because
+    // the announcement sender keeps announcing the current seed even while
+    // the node is out of MPC. That is what lets it rejoin unaided at E+1.
+    let certified_after = poll_node(
+        &cluster,
+        0,
+        Duration::from_secs(300),
+        "a handoff cert naming the NEW mpc_data digest of the sat-out validator",
+        |handle| {
+            let epoch = current_epoch(handle);
+            (rotation_epoch..=epoch).rev().find_map(|source_epoch| {
+                cert_mpc_data_digests(handle, source_epoch)
+                    .and_then(|digests| digests.get(&self_name).copied())
+                    .filter(|digest| *digest != digest_before)
+            })
+        },
+    )
+    .await;
+    assert_ne!(certified_after, digest_before);
+
+    // Once that certificate is the one its epoch resolves against, it is back
+    // in MPC with no operator action at all.
+    poll_state(&cluster, 0, STATE_MATCHES, Duration::from_secs(300)).await;
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
+        &cluster,
+        0,
+        baseline,
+        "the sat-out validator to rejoin MPC by itself at the next epoch",
+        Duration::from_secs(180),
+    )
+    .await;
+
+    // ---- (c) the in-epoch repair ----
+    // Rotate again with no previous seed to re-enter the non-participating
+    // state, then hand it the seed that IS certified and restart. It must
+    // rejoin the SAME epoch — the resolution runs at every construction, so
+    // no boundary is involved.
+    //
+    // `certified_seed` is the seed the run started on; the cert has moved on
+    // to the seed installed by (b), so that is the one to point at.
+    let seed_certified_now = cluster
+        .swarm
+        .node(&cluster.validator_names[0])
+        .expect("validator node")
+        .config()
+        .root_seed_key_pair
+        .as_ref()
+        .expect("a validator always has a root seed")
+        .root_seed()
+        .clone();
+    assert_ne!(
+        seed_certified_now, certified_seed,
+        "flow (b) must have left the validator running the rotated-to seed"
+    );
+
+    let repair_epoch = current_epoch(&cluster.validator_handle(0));
+    rotate_root_seed(&cluster, 0, false).await;
+    poll_state(
+        &cluster,
+        0,
+        STATE_AWAITING_CERTIFICATION,
+        Duration::from_secs(180),
+    )
+    .await;
+
+    set_previous_seed_and_restart(&cluster, 0, seed_certified_now).await;
+    poll_state(
+        &cluster,
+        0,
+        STATE_ROTATING_ON_PREVIOUS,
+        Duration::from_secs(180),
+    )
+    .await;
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
+        &cluster,
+        0,
+        baseline,
+        "the repaired validator to rejoin MPC inside the same epoch",
+        Duration::from_secs(180),
+    )
+    .await;
+    assert_eq!(
+        current_epoch(&cluster.validator_handle(0)),
+        repair_epoch,
+        "the repair must take effect WITHOUT an epoch boundary; if the epoch \
+         rolled over during the repair this run proved nothing and the epoch \
+         duration needs raising"
+    );
+}

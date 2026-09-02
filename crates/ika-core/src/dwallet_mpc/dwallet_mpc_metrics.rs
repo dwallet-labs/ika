@@ -494,6 +494,28 @@ pub struct DWalletMPCMetrics {
     /// its own output and 2/3 quorum being reached. Wide tails ≡ slow consensus, lots of
     /// retries. Observed once per session at the moment quorum is reached.
     pub(crate) self_output_to_quorum_consensus_rounds: Histogram,
+
+    /// Which root seed this epoch's MPC resolved onto, against the digest the
+    /// `E-1 -> E` handoff certificate deals this validator's shares to
+    /// (issue #2119). Exactly one `state` label carries `1`; every other
+    /// declared state carries `0`, so the series exist before anything
+    /// interesting happens and a missing scrape is distinguishable from a
+    /// healthy node.
+    ///
+    /// Label values are the closed set
+    /// [`crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES`]. Two of
+    /// them mean this validator contributes NOTHING to MPC for the epoch, so
+    /// one alert expression covers the condition:
+    ///
+    /// ```text
+    /// ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1
+    /// ```
+    ///
+    /// Set once per epoch from the per-epoch component start, NOT from inside
+    /// the MPC service: it reports a configuration/identity fact, and a
+    /// subsystem cannot report its own stall
+    /// (`dev-docs/conventions/metrics.md`).
+    pub(crate) seed_identity_state: IntGaugeVec,
 }
 
 impl DWalletMPCMetrics {
@@ -1009,7 +1031,41 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
+            seed_identity_state: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_seed_identity_state",
+                "Which root seed this epoch's MPC resolved onto against the certified \
+                 mpc_data digest; 1 on the active state, 0 on every other. Alert on \
+                 state=~\"awaiting_certification|previous_seed_mismatch\" == 1.",
+                &["state"],
+                registry,
+            )
+            .unwrap(),
         });
+        // Materialize every declared seed-identity state at 0 so the family is
+        // always exported and an alert can distinguish "healthy" from
+        // "not scraped". The active state is set to 1 once per epoch.
+        for state in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
+            metrics.seed_identity_state.with_label_values(&[state]);
+        }
+        // Same reasoning for `self_malicious_total` (#2119 review): an
+        // `IntCounterVec` with no children is OMITTED from `gather()`, so a
+        // test or alert asserting "this validator never convicted itself"
+        // would read the same on a live-and-quiet guard as on one whose
+        // increment site had been deleted. Materializing the whole closed
+        // label domain makes the zero mean something.
+        for reason in
+            crate::dwallet_mpc::mpc_diagnostics::LocalAuthorityMaliciousReason::ALL_METRIC_LABELS
+        {
+            for session_type in ALL_SESSION_TYPES
+                .iter()
+                .copied()
+                .chain(iter::once(SESSION_TYPE_UNKNOWN))
+            {
+                metrics
+                    .self_malicious_total
+                    .with_label_values(&[reason, session_type]);
+            }
+        }
         for terminal_status in ["completed", "failed"] {
             for session_type in ALL_SESSION_TYPES
                 .iter()
@@ -1022,6 +1078,38 @@ impl DWalletMPCMetrics {
             }
         }
         metrics
+    }
+
+    /// Publishes this epoch's seed-identity state: `1` on `state`, `0` on
+    /// every other declared state, so the gauge is a one-hot over a closed
+    /// label set and a stale state from the previous epoch can never linger
+    /// alongside the current one.
+    pub(crate) fn set_seed_identity_state(&self, state: &str) {
+        for declared in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
+            self.seed_identity_state
+                .with_label_values(&[declared])
+                .set(i64::from(*declared == state));
+        }
+    }
+
+    /// Zeroes every `ika_dwallet_mpc_seed_identity_state` child.
+    ///
+    /// The gauge is a one-hot SET once per epoch from the per-epoch validator
+    /// start, and nothing else ever writes it — so a node that leaves the
+    /// committee would keep exporting its last state for the life of the
+    /// process. If that state were `awaiting_certification`, the alert built
+    /// on it would fire forever against a node that is no longer a validator
+    /// and no longer has an epoch to participate in. Called on the
+    /// reconfiguration path that produces no validator components.
+    ///
+    /// Zero on every child rather than removing them: the series must keep
+    /// existing so "healthy" stays distinguishable from "not scraped".
+    pub fn clear_seed_identity_state(&self) {
+        for declared in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
+            self.seed_identity_state
+                .with_label_values(&[declared])
+                .set(0);
+        }
     }
 
     /// Clears every per-session-sequence-number series. Called at

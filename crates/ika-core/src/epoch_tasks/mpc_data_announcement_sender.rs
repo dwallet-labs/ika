@@ -36,6 +36,7 @@ use crate::authority::authority_per_epoch_store::{
 use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::consensus_handler::SequencedConsensusTransactionKey;
+use crate::dwallet_mpc::seed_rotation::DerivableDigests;
 use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, derive_mpc_data_blob, now_ms,
 };
@@ -48,7 +49,7 @@ use ika_types::error::IkaError;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
@@ -200,6 +201,16 @@ const POST_PUBLICATION_GRACE_MAX_MS: u64 = 3_600_000;
 /// costs ~150 lines rather than ~4,000.
 const READY_SIGNAL_DEFERRAL_LOG_EVERY: u64 = 150;
 
+/// Cadence of the seed-identity re-log (see [`SeedIdentity`]): the
+/// first check of the epoch and every 150th afterwards. The condition
+/// is a fixed point for the epoch once it holds, so the point of
+/// repeating is that the state stays visible from anywhere in the log
+/// rather than only from whoever caught the first line. The invariant
+/// COUNTER is latched separately (once per epoch) — the sender ticks on
+/// a seconds cadence and a per-tick `report_invariant_violation!` would
+/// turn one incident into hundreds of invariant events per host per hour.
+const SEED_IDENTITY_LOG_EVERY: u64 = 150;
+
 /// The deadline after which the emit gate stops waiting for uncovered
 /// next-epoch members, denominated in the epoch's CONSENSUS clock (max
 /// processed `commit_timestamp_ms`) — never machine wall-clock. Pure
@@ -243,6 +254,87 @@ pub(crate) fn ready_signal_deadline_ms(
     Some(backstop.min(first_seen_ms.saturating_add(grace)))
 }
 
+/// Verdict of the off-chain seed-identity check (issue #2119).
+///
+/// This is the re-homed form of the boot-time check that used to
+/// decode the deprecated on-chain `mpc_data_bytes` field and compare
+/// it to the locally derived class-groups key
+/// (`DWalletMPCService::verify_validator_keys`). The question is the
+/// same — "is the seed I am running the seed the network expects my
+/// shares to be encrypted to?" — but it is asked against the record
+/// that actually decides that, the per-epoch announcement/freeze,
+/// rather than a chain field that is never updated and is now a
+/// placeholder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedIdentity {
+    /// Nothing recorded for this validator this epoch yet — no
+    /// commitment exists to compare the running seed against. The
+    /// normal state on the first ticks of an epoch.
+    NoRecord,
+    /// The recorded digest is the blob this root seed derives.
+    Matches,
+    /// This validator announced one blob earlier this epoch and now
+    /// derives a different one, and the freeze has NOT fired. That is
+    /// exactly the supported mid-epoch seed rotation
+    /// (`ika validator set-next-epoch-mpc-data` replaces `root-seed.key`
+    /// and the node restarts): the sender re-announces under a newer
+    /// timestamp and the freeze picks up the new digest. Visible, not
+    /// fatal.
+    RotatedBeforeFreeze,
+    /// The FROZEN digest — the consensus-agreed set peers encrypt
+    /// this validator's shares to — is not the blob this root seed
+    /// derives, and it is not one the configured PREVIOUS seed derives
+    /// either. Unrecoverable for the epoch: the frozen set is
+    /// immutable, so every share dealt to this validator lands under a
+    /// key it does not hold. The old on-chain check could not see this
+    /// case at all (a post-freeze seed swap, or a carry-forward that
+    /// pinned the previous seed's blob).
+    FrozenMismatch,
+    /// The frozen digest is the PREVIOUS root seed's blob: this
+    /// validator rotated its seed AFTER the epoch's freeze had already
+    /// captured the old bundle. Expected, and self-healing — not an
+    /// invariant violation (#2119).
+    ///
+    /// The freeze is immutable, so `E+1`'s shares are dealt to the
+    /// previous seed's key; the node runs `E+1` on the previous seed
+    /// (the `E -> E+1` cert names it, so the per-epoch resolution picks
+    /// it) while THIS sender, rebuilt for `E+1`, announces the current
+    /// seed again. `E+1`'s freeze then captures the new bundle and the
+    /// rotation completes one epoch later than a pre-freeze rotation
+    /// would have. Costs an epoch, loses nothing.
+    RotatedAfterFreeze,
+}
+
+/// Pure decision for the seed-identity check. Frozen record wins: once
+/// the freeze has fired it, not the announcement table, is what peers
+/// encrypt to.
+///
+/// `previous_seed_digests` is the digest set of the configured PREVIOUS
+/// root seed, empty when no rotation is configured. A frozen digest the
+/// previous seed derives is a rotation that landed after the freeze —
+/// visible and self-healing, never an invariant violation (#2119).
+pub(crate) fn decide_seed_identity(
+    local_digest: [u8; 32],
+    frozen_digest_for_self: Option<[u8; 32]>,
+    announced_digest_for_self: Option<[u8; 32]>,
+    previous_seed_digests: Option<&DerivableDigests>,
+) -> SeedIdentity {
+    if let Some(frozen) = frozen_digest_for_self {
+        return if frozen == local_digest {
+            SeedIdentity::Matches
+        } else if previous_seed_digests.is_some_and(|previous| previous.contains(&frozen)) {
+            SeedIdentity::RotatedAfterFreeze
+        } else {
+            SeedIdentity::FrozenMismatch
+        };
+    }
+    match announced_digest_for_self {
+        Some(announced) if announced == local_digest => SeedIdentity::Matches,
+        Some(_) => SeedIdentity::RotatedBeforeFreeze,
+        None => SeedIdentity::NoRecord,
+    }
+}
+
 /// Per-epoch producer task that broadcasts this validator's
 /// mpc_data announcement and the corresponding ready signals.
 pub struct MpcDataAnnouncementSender {
@@ -256,6 +348,19 @@ pub struct MpcDataAnnouncementSender {
     /// server, so peers can fetch it over P2P without a restart.
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
+    /// The configured PREVIOUS root seed, when a rotation is in flight
+    /// (#2119). The sender NEVER announces from it — the whole point of
+    /// a rotation is that the current seed's bundle gets certified — it
+    /// only uses it to tell a post-freeze rotation (expected, self-heals
+    /// next epoch) from a genuinely lost seed (an invariant violation).
+    previous_root_seed: Option<RootSeed>,
+    /// `previous_root_seed`'s derivable digest set, derived at most once
+    /// per epoch and only when the seed-identity check actually needs it
+    /// — deriving a bundle is the epoch's single most expensive
+    /// computation, and a node that is not mid-rotation must never pay
+    /// it. `None` until first needed, or when no previous seed is
+    /// configured.
+    previous_seed_digests: Mutex<Option<DerivableDigests>>,
     /// CHAIN view of the next-epoch committee (members + stake),
     /// published as soon as Sui selects it — *before* the off-chain
     /// class-groups assembly. The ready-signal emit gate waits until
@@ -329,6 +434,14 @@ pub struct MpcDataAnnouncementSender {
     /// restart) is harmless. Making this anchor fleet-identical
     /// (consensus-sequenced publication attestations) is issue #1869.
     next_committee_first_seen_ms: AtomicU64,
+    /// Number of seed-identity checks run this epoch. Bounds the
+    /// re-log to [`SEED_IDENTITY_LOG_EVERY`].
+    seed_identity_checks: AtomicU64,
+    /// Whether the epoch's `report_invariant_violation!` for a frozen
+    /// seed mismatch has already fired. Latched so the fleet-visible
+    /// invariant counter records the incident once per epoch instead of
+    /// once per tick.
+    seed_identity_violation_reported: AtomicBool,
 }
 
 impl MpcDataAnnouncementSender {
@@ -340,6 +453,9 @@ impl MpcDataAnnouncementSender {
         consensus_adapter: Arc<dyn SubmitToConsensus>,
         blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
+        // The configured previous root seed, if any (#2119). Used only to
+        // classify a post-freeze rotation; never announced from.
+        previous_root_seed: Option<RootSeed>,
         next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     ) -> Self {
         // Seed the re-emit gates from our own recorded signal, so a
@@ -384,6 +500,8 @@ impl MpcDataAnnouncementSender {
             consensus_adapter,
             blob_cache,
             root_seed,
+            previous_root_seed,
+            previous_seed_digests: Mutex::new(None),
             next_epoch_committee_receiver,
             cached_announcement: Mutex::new(None),
             last_emitted_validated_peers_count: AtomicUsize::new(
@@ -393,6 +511,8 @@ impl MpcDataAnnouncementSender {
             announcement_submit_attempts: AtomicU64::new(0),
             ready_signal_deferrals: AtomicU64::new(0),
             next_committee_first_seen_ms: AtomicU64::new(0),
+            seed_identity_checks: AtomicU64::new(0),
+            seed_identity_violation_reported: AtomicBool::new(false),
         }
     }
 
@@ -414,6 +534,11 @@ impl MpcDataAnnouncementSender {
             if let Err(err) = self.send_announcement().await {
                 warn!(error=?err, "failed to send validator mpc data announcement; will retry");
             }
+
+            // Seed-identity guard (#2119). Runs after `send_announcement`
+            // so the derived blob is already cached and this is a map
+            // lookup, not a re-derivation.
+            self.check_seed_identity();
 
             if let Err(err) = self.send_epoch_ready_signal().await {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
@@ -497,6 +622,184 @@ impl MpcDataAnnouncementSender {
         Ok(recorded
             .map(|r| r.timestamp_ms == cached.timestamp_ms && r.blob_hash == cached.blob_hash)
             .unwrap_or(false))
+    }
+
+    /// Off-chain seed-identity guard (issue #2119) — the re-homed form
+    /// of the boot check that used to decode the deprecated on-chain
+    /// `mpc_data_bytes` field in
+    /// `DWalletMPCService::verify_validator_keys`.
+    ///
+    /// Compares the blob hash this validator's running root seed
+    /// derives against the digest the network has on record for it:
+    /// the FROZEN digest once the freeze has fired, otherwise its own
+    /// announcement row. A frozen mismatch is the state the old check
+    /// existed to prevent — peers deal this validator's shares to a
+    /// class-groups key it does not hold — and it is reported as a
+    /// fleet-visible invariant violation. A pre-freeze divergence is
+    /// the supported seed rotation and is only surfaced, because the
+    /// sender re-announces and the freeze then picks up the new digest.
+    ///
+    /// Best-effort by construction: an unreadable store or a
+    /// not-yet-derived blob yields no opinion and the next tick tries
+    /// again. It never blocks announcing — withholding the announcement
+    /// on a mismatch would remove the very thing that repairs a
+    /// pre-freeze rotation.
+    fn check_seed_identity(&self) {
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return;
+        };
+        // Read the cache only — `send_announcement` (which ran first)
+        // owns deriving and persisting the blob, and a derivation here
+        // would duplicate the epoch's single most expensive computation.
+        let Some(local_digest) = self
+            .cached_announcement
+            .lock()
+            .expect("mutex poisoned")
+            .as_ref()
+            .map(|announcement| announcement.blob_hash)
+        else {
+            return;
+        };
+        let Ok(frozen) = epoch_store.get_frozen_validator_mpc_data_input_set() else {
+            return;
+        };
+        let Ok(announced) = epoch_store.get_validator_mpc_data_announcement(&self.authority) else {
+            return;
+        };
+        let frozen_for_self = frozen.get(&self.authority).copied();
+        // Only derive the previous seed's digests when the frozen record
+        // actually disagrees with the running seed — the common case reaches
+        // no further than the comparison above.
+        let previous_digests = match frozen_for_self {
+            Some(frozen) if frozen != local_digest => self.previous_seed_digests(),
+            _ => None,
+        };
+        let verdict = decide_seed_identity(
+            local_digest,
+            frozen_for_self,
+            announced
+                .filter(|announcement| announcement.epoch == self.epoch_id)
+                .map(|announcement| announcement.blob_hash),
+            previous_digests.as_ref(),
+        );
+        self.report_seed_identity(verdict, local_digest, frozen_for_self);
+    }
+
+    /// The configured previous seed's derivable digest set, derived on first
+    /// use and cached for the epoch. `None` when no previous seed is
+    /// configured, or when its derivation failed (which is reported and then
+    /// treated as "no previous seed" — a derivation fault must not silence
+    /// the invariant violation it would otherwise suppress).
+    ///
+    /// This is a multi-second blocking derivation on the sender's task,
+    /// deliberately: it happens at most once per epoch, and only on a
+    /// validator that BOTH configured a previous seed and found the frozen
+    /// digest disagreeing with its current one — i.e. only during a rotation
+    /// that landed after the freeze. It is the same shape as the derivation
+    /// `cached_or_build_announcement` already does on this task every epoch,
+    /// and it runs strictly after the announcement has been submitted, so it
+    /// cannot delay the thing the epoch depends on.
+    fn previous_seed_digests(&self) -> Option<DerivableDigests> {
+        let previous_root_seed = self.previous_root_seed.as_ref()?;
+        let mut cached = self.previous_seed_digests.lock().expect("mutex poisoned");
+        if cached.is_none() {
+            match DerivableDigests::derive(previous_root_seed) {
+                Ok(digests) => *cached = Some(digests),
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "failed to derive the configured previous root seed's mpc_data \
+                         bundle; treating this epoch as having no previous seed"
+                    );
+                    return None;
+                }
+            }
+        }
+        cached.clone()
+    }
+
+    /// Reporting half of [`Self::check_seed_identity`], split out so a test
+    /// can drive a non-`Matches` verdict and assert the fleet-visible
+    /// counter actually moves. Without that positive control, an
+    /// `invariant_violation_count(site) == Some(0)` assertion cannot tell a
+    /// silent guard from a dead one: `with_label_values` creates the child
+    /// at zero on first access, so it reads `Some(0)` for a live-and-quiet
+    /// site, a retired site, and a name that never existed alike.
+    fn report_seed_identity(
+        &self,
+        verdict: SeedIdentity,
+        local_digest: [u8; 32],
+        frozen_digest_for_self: Option<[u8; 32]>,
+    ) {
+        if matches!(verdict, SeedIdentity::Matches | SeedIdentity::NoRecord) {
+            return;
+        }
+        let checks = self.seed_identity_checks.fetch_add(1, Ordering::Relaxed);
+        let should_log = checks.is_multiple_of(SEED_IDENTITY_LOG_EVERY);
+        match verdict {
+            SeedIdentity::FrozenMismatch => {
+                // Latch the counter: one incident, one invariant event
+                // per epoch, however many ticks observe it.
+                if !self
+                    .seed_identity_violation_reported
+                    .swap(true, Ordering::Relaxed)
+                {
+                    ika_types::report_invariant_violation!(
+                        "mpc_data_frozen_digest_seed_mismatch",
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        frozen_digest = ?frozen_digest_for_self.map(hex::encode),
+                        local_digest = %hex::encode(local_digest),
+                        "the epoch's FROZEN mpc_data digest for this validator is not the \
+                         blob its running root seed derives — peers are dealing this \
+                         validator's shares to a class-groups key it does not hold. The \
+                         frozen set is immutable for the epoch, so this cannot self-heal: \
+                         restore the root seed this validator announced with, or expect \
+                         its MPC participation to fail for the epoch."
+                    );
+                } else if should_log {
+                    warn!(
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        local_digest = %hex::encode(local_digest),
+                        "frozen mpc_data digest still disagrees with the running root \
+                         seed (already reported once this epoch)"
+                    );
+                }
+            }
+            SeedIdentity::RotatedBeforeFreeze => {
+                if should_log {
+                    warn!(
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        local_digest = %hex::encode(local_digest),
+                        "this validator's recorded mpc_data announcement is for a \
+                         different blob than its running root seed derives — a seed \
+                         rotation. The freeze has not fired, so the re-announcement \
+                         under a newer timestamp repairs this; if the freeze fires \
+                         first, the epoch's shares go to the old key."
+                    );
+                }
+            }
+            SeedIdentity::RotatedAfterFreeze => {
+                if should_log {
+                    warn!(
+                        authority = ?self.authority,
+                        epoch = self.epoch_id,
+                        local_digest = %hex::encode(local_digest),
+                        frozen_digest = ?frozen_digest_for_self.map(hex::encode),
+                        "this epoch's FROZEN mpc_data digest for this validator is the \
+                         PREVIOUS root seed's bundle: the seed rotation landed after the \
+                         freeze. Expected and self-healing — the next epoch's shares go \
+                         to the previous seed's key, which this node still holds and \
+                         resolves onto, while this sender re-announces the current seed \
+                         so the next freeze captures it. Keep \
+                         `previous-root-seed-key-pair` in place for one more epoch."
+                    );
+                }
+            }
+            SeedIdentity::Matches | SeedIdentity::NoRecord => unreachable!("returned above"),
+        }
     }
 
     /// Runs `log` on the first emit-gate deferral of the epoch and
@@ -1024,6 +1327,7 @@ mod tests {
             Arc::new(NoopAdapter),
             blob_cache,
             RootSeed::new([4; 32]),
+            None,
             next_rx,
         )
     }
@@ -1034,6 +1338,188 @@ mod tests {
     /// instead of stacking duplicate table entries.
     fn name(n: u8) -> AuthorityName {
         AuthorityName([n; 32])
+    }
+
+    fn digest(n: u8) -> [u8; 32] {
+        [n; 32]
+    }
+
+    /// LIVENESS (positive control) for the guard the acceptance tests
+    /// assert is silent. `invariant_violation_count` reads `Some(0)` for a
+    /// live-but-quiet site, a retired site, and a name that never existed,
+    /// so a zero-assertion alone cannot prove the guard is wired. Drive a
+    /// `FrozenMismatch` and require the counter to MOVE.
+    #[tokio::test]
+    async fn frozen_seed_mismatch_increments_the_invariant_counter() {
+        ika_types::metrics::init_invariant_violation_metric(&prometheus::Registry::new());
+        const SITE: &str = "mpc_data_frozen_digest_seed_mismatch";
+        let before = ika_types::metrics::invariant_violation_count(SITE)
+            .expect("counter must be registered after init");
+
+        let sender = test_sender();
+        // A frozen digest that is NOT what this sender's root seed derives:
+        // peers dealt this validator's shares to a key it does not hold.
+        sender.report_seed_identity(SeedIdentity::FrozenMismatch, digest(1), Some(digest(2)));
+
+        let after = ika_types::metrics::invariant_violation_count(SITE).unwrap();
+        assert_eq!(
+            after,
+            before + 1,
+            "a frozen-digest seed mismatch must increment the fleet-visible \
+             invariant counter — the acceptance tests' zero-assertion is only \
+             meaningful if this path can move it"
+        );
+
+        // Latched: one incident is one invariant event per epoch, however
+        // many ticks observe it. The sender is per-epoch, so the latch is
+        // per-epoch too.
+        sender.report_seed_identity(SeedIdentity::FrozenMismatch, digest(1), Some(digest(2)));
+        assert_eq!(
+            ika_types::metrics::invariant_violation_count(SITE).unwrap(),
+            after,
+            "the invariant counter must be latched to once per epoch — the sender \
+             ticks on a seconds cadence and a per-tick report would turn one \
+             incident into hundreds of events per host per hour"
+        );
+
+        // A verdict that is not a violation must never touch the counter.
+        let quiet = test_sender();
+        quiet.report_seed_identity(SeedIdentity::Matches, digest(1), Some(digest(1)));
+        quiet.report_seed_identity(SeedIdentity::NoRecord, digest(1), None);
+        quiet.report_seed_identity(SeedIdentity::RotatedBeforeFreeze, digest(2), None);
+        assert_eq!(
+            ika_types::metrics::invariant_violation_count(SITE).unwrap(),
+            after,
+            "only a frozen mismatch is an invariant violation; a pre-freeze rotation \
+             is the supported seed-rotation flow and must stay a warning"
+        );
+    }
+
+    /// #2119: the seed-identity guarantee the deprecated on-chain
+    /// `mpc_data_bytes` check used to provide, re-homed onto the record
+    /// that actually decides what peers encrypt to.
+    ///
+    /// The frozen digest wins over the announcement row: once the freeze
+    /// has fired it, not the table, is the set the network deals to, and
+    /// it is immutable for the epoch.
+    #[test]
+    fn seed_identity_reports_a_frozen_mismatch_over_the_announcement() {
+        // Nothing recorded yet — the normal state on an epoch's first
+        // ticks. No commitment exists, so no opinion.
+        assert_eq!(
+            decide_seed_identity(digest(1), None, None, None),
+            SeedIdentity::NoRecord
+        );
+        // Announced, not yet frozen, and it is our blob.
+        assert_eq!(
+            decide_seed_identity(digest(1), None, Some(digest(1)), None),
+            SeedIdentity::Matches
+        );
+        // Frozen at our blob — the healthy steady state.
+        assert_eq!(
+            decide_seed_identity(digest(1), Some(digest(1)), Some(digest(1)), None),
+            SeedIdentity::Matches
+        );
+        // Announced one blob, now deriving another, freeze not fired: the
+        // supported mid-epoch seed rotation. The sender re-announces under
+        // a newer timestamp and the freeze picks the new digest up, so this
+        // is surfaced, not fatal.
+        assert_eq!(
+            decide_seed_identity(digest(2), None, Some(digest(1)), None),
+            SeedIdentity::RotatedBeforeFreeze
+        );
+        // The frozen digest is NOT our blob: peers are dealing our shares
+        // to a class-groups key we do not hold, and the frozen set cannot
+        // change this epoch. This is the case the old on-chain check
+        // existed for — and, unlike it, this one also sees a swap that
+        // happened AFTER the announcement landed.
+        assert_eq!(
+            decide_seed_identity(digest(2), Some(digest(1)), Some(digest(1)), None),
+            SeedIdentity::FrozenMismatch
+        );
+        // Even a freshly re-announced blob does not rescue a frozen
+        // mismatch — the frozen record is what peers encrypt to.
+        assert_eq!(
+            decide_seed_identity(digest(2), Some(digest(1)), Some(digest(2)), None),
+            SeedIdentity::FrozenMismatch
+        );
+
+        // #2119, rotation: the SAME inputs, but with a configured previous
+        // seed that derives the frozen blob, are a post-freeze rotation —
+        // expected and self-healing, so NOT an invariant violation. This is
+        // the one input that separates "the operator rotated late" from "the
+        // seed this validator announced with is gone".
+        let previous = DerivableDigests::from_digests([digest(1)]);
+        assert_eq!(
+            decide_seed_identity(digest(2), Some(digest(1)), Some(digest(2)), Some(&previous)),
+            SeedIdentity::RotatedAfterFreeze
+        );
+        // A previous seed that derives something else entirely rescues
+        // nothing: a double rotation past the freeze is still a lost seed
+        // for the frozen set's purposes.
+        let unrelated = DerivableDigests::from_digests([digest(7)]);
+        assert_eq!(
+            decide_seed_identity(
+                digest(2),
+                Some(digest(1)),
+                Some(digest(2)),
+                Some(&unrelated)
+            ),
+            SeedIdentity::FrozenMismatch
+        );
+        // And a matching CURRENT seed still wins over the previous one, so a
+        // completed rotation never reports as rotating.
+        assert_eq!(
+            decide_seed_identity(digest(1), Some(digest(1)), Some(digest(1)), Some(&previous)),
+            SeedIdentity::Matches
+        );
+    }
+
+    /// #2119 fix: an unreadable `previous-root-seed-key-pair` must reach the
+    /// sender as "no previous seed", never as a panic.
+    ///
+    /// The sender takes an already-resolved `Option<RootSeed>`, so the
+    /// resolution happens at the node seam — this pins BOTH halves: that the
+    /// descriptor's fallible accessor reports the failure instead of
+    /// panicking, and that a sender constructed from the resulting `None`
+    /// still works and still treats a frozen mismatch as the invariant
+    /// violation (an unreadable previous seed must not silently downgrade a
+    /// genuinely lost seed to a benign rotation).
+    // `test_sender` opens a real perpetual-tables DB, which needs a reactor.
+    #[tokio::test]
+    async fn an_unreadable_previous_seed_reaches_the_sender_as_none() {
+        let descriptor =
+            ika_config::node::RootSeedWithPath::new_from_path_lazy("no-such-seed-file".into());
+        // Exactly the conversion `ika-node` performs when building the sender.
+        let resolved: Option<RootSeed> = match descriptor.try_root_seed() {
+            Ok(seed) => Some(seed.clone()),
+            Err(_) => None,
+        };
+        assert!(
+            resolved.is_none(),
+            "an unreadable descriptor must resolve to None, not panic"
+        );
+
+        let sender = test_sender();
+        assert!(
+            sender.previous_root_seed.is_none(),
+            "the test sender stands in for the resolved-to-None case"
+        );
+        assert!(
+            sender.previous_seed_digests().is_none(),
+            "with no previous seed there is nothing to derive, and nothing to \
+             rescue a frozen mismatch with"
+        );
+        // And the verdict is unchanged: still the invariant violation.
+        assert_eq!(
+            decide_seed_identity(
+                digest(2),
+                Some(digest(1)),
+                Some(digest(2)),
+                sender.previous_seed_digests().as_ref(),
+            ),
+            SeedIdentity::FrozenMismatch
+        );
     }
 
     /// Expected `NotYet` with its wait reason spelled out. The reason
@@ -1520,6 +2006,7 @@ mod tests {
             Arc::new(NoopAdapter),
             BlobCache::new(InMemoryBlobStore::new(), perpetual),
             RootSeed::new([4; 32]),
+            None,
             next_committee_receiver,
         );
 
@@ -1635,6 +2122,7 @@ mod tests {
                 Arc::new(NoopAdapter),
                 BlobCache::new(InMemoryBlobStore::new(), perpetual),
                 RootSeed::new([4; 32]),
+                None,
                 next_committee_receiver,
             )
         };
@@ -1791,6 +2279,7 @@ mod tests {
             Arc::new(NoopAdapter),
             BlobCache::new(InMemoryBlobStore::new(), perpetual),
             RootSeed::new([4; 32]),
+            None,
             next_committee_receiver,
         );
         assert_eq!(sender.next_sequence_number.load(Ordering::Acquire), 1);

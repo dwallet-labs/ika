@@ -200,6 +200,17 @@ impl LocalAuthorityMaliciousReason {
     /// A bounded, fixed label for `ika_dwallet_mpc_self_malicious_total`. The
     /// variants are the whole label domain — never derive this from anything
     /// operator- or session-specific.
+    /// Every label this enum can produce, for pre-materializing the
+    /// `ika_dwallet_mpc_self_malicious_total` children at registration —
+    /// plus `"unspecified"`, which the increment site uses when the reason
+    /// is absent. Keep in step with `metric_label`.
+    pub(crate) const ALL_METRIC_LABELS: &'static [&'static str] = &[
+        "malicious_voter",
+        "reported_by_majority_output",
+        "malicious_voter_and_reported_by_majority_output",
+        "unspecified",
+    ];
+
     pub(crate) fn metric_label(self) -> &'static str {
         match self {
             Self::MaliciousVoter => "malicious_voter",
@@ -208,6 +219,33 @@ impl LocalAuthorityMaliciousReason {
                 "malicious_voter_and_reported_by_majority_output"
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod local_authority_malicious_reason_tests {
+    use super::LocalAuthorityMaliciousReason as Reason;
+
+    /// `ALL_METRIC_LABELS` drives the pre-materialization of the
+    /// `ika_dwallet_mpc_self_malicious_total` children, which is what makes a
+    /// zero on that series mean "the guard is live and quiet" rather than
+    /// "the family is not exported". A variant whose label is missing from
+    /// the list would export no series until it first fired — exactly the
+    /// hole the pre-materialization closes.
+    #[test]
+    fn every_reason_label_is_pre_materialized() {
+        for reason in [
+            Reason::MaliciousVoter,
+            Reason::ReportedByMajorityOutput,
+            Reason::MaliciousVoterAndReportedByMajorityOutput,
+        ] {
+            assert!(
+                Reason::ALL_METRIC_LABELS.contains(&reason.metric_label()),
+                "{reason:?} produces a label absent from ALL_METRIC_LABELS"
+            );
+        }
+        // The increment site's fallback when no reason is recorded.
+        assert!(Reason::ALL_METRIC_LABELS.contains(&"unspecified"));
     }
 }
 
