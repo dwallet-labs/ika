@@ -338,6 +338,19 @@ next epoch inherits.
    epoch exists to be handed off from (the same `epoch >= 1` test the
    joiner bootstrap uses).
 
+   Genesis is not always epoch 0, though, and the boot path has to handle
+   that. A network can bring its validators up for the first time already
+   at epoch 1 — the on-chain initialization advances the system before any
+   validator process exists — and then epoch 0 never ran off-chain, minted
+   no certificate, and never will. The chain says so directly:
+   `validator_set.previous_committee` is EMPTY while the on-chain epoch
+   matches. That is an ANSWER, not a failed read, and the barrier treats it
+   as the genesis skip one epoch along — enter without a cross-epoch
+   anchor, logged loudly, because on an established network the same
+   reading would mean the chain lost its previous committee. Conflating it
+   with a failed read wedges every validator on the network's own first
+   epoch.
+
    One certified ITEM is also exempt, and it has to be. The certificate
    names keys by `NetworkKeyId`; every local digest slice and blob cache
    is keyed by `ObjectID`. The translation is a process-global map holding

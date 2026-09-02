@@ -2855,13 +2855,22 @@ impl IkaNode {
                     // bootstrap already chain-reads consensus pubkeys from) so
                     // bootstrap can still run.
                     None => match fetch_previous_committee(&sui_client, prior_epoch).await {
-                        Ok(committee) => {
+                        Ok(Some(committee)) => {
                             info!(
                                 prior_epoch,
                                 "prior committee absent locally; chain-read it for joiner \
                                  bootstrap from validator_set.previous_committee"
                             );
                             Some(Arc::new(committee))
+                        }
+                        Ok(None) => {
+                            info!(
+                                prior_epoch,
+                                "chain holds no committee for the prior epoch — this network's \
+                                 first off-chain epoch is the current one, so no handoff cert \
+                                 exists for {prior_epoch} and there is nothing to bootstrap"
+                            );
+                            None
                         }
                         Err(error) => {
                             warn!(
@@ -3693,37 +3702,54 @@ const ANCHOR_COMMITTEE_RESOLVE_INTERVAL: Duration = Duration::from_secs(5);
 /// boot barrier delays.
 const BARRIER_STALL_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
+/// What resolving the anchor epoch's committee produced.
+enum AnchorCommitteeResolution {
+    /// The committee that signed the anchor epoch's handoff certificate.
+    Resolved(Arc<Committee>),
+    /// The chain says NO committee preceded the epoch being entered: this
+    /// network's first off-chain epoch is the current one, so the anchor epoch
+    /// never ran, no certificate was ever minted for it, and none ever will
+    /// be. Genesis-equivalent — the barrier has nothing to wait for and must
+    /// not block. Distinct from `Unavailable` because it is a chain ANSWER,
+    /// and waiting on it is a permanent wedge rather than a delay.
+    NoPredecessorEpoch,
+    /// Not answerable this attempt — a chain read failed, or the chain has
+    /// moved past the epoch whose predecessor we are asking about.
+    Unavailable,
+}
+
 impl AnchorCommittee {
     /// Failures log at debug: the barrier's own periodic warn reports
     /// `have_signing_committee=false`, and the bounded caller reports the
     /// give-up at error, so a per-attempt warn inside a retry loop would be
     /// pure noise.
-    async fn resolve(&self, anchor_epoch: EpochId) -> Option<Arc<Committee>> {
+    async fn resolve(&self, anchor_epoch: EpochId) -> AnchorCommitteeResolution {
         match self {
-            Self::Held(committee) => Some(committee.clone()),
+            Self::Held(committee) => AnchorCommitteeResolution::Resolved(committee.clone()),
             Self::Resolved {
                 committee_store,
                 sui_client,
             } => {
                 if let Ok(Some(committee)) = committee_store.get_committee(&anchor_epoch) {
-                    return Some(committee);
+                    return AnchorCommitteeResolution::Resolved(committee);
                 }
                 match fetch_previous_committee(sui_client, anchor_epoch).await {
-                    Ok(committee) => {
+                    Ok(Some(committee)) => {
                         info!(
                             anchor_epoch,
                             "prepare-then-start: anchor committee absent locally; chain-read it \
                              from validator_set.previous_committee"
                         );
-                        Some(Arc::new(committee))
+                        AnchorCommitteeResolution::Resolved(Arc::new(committee))
                     }
+                    Ok(None) => AnchorCommitteeResolution::NoPredecessorEpoch,
                     Err(error) => {
                         debug!(
                             ?error,
                             anchor_epoch,
                             "prepare-then-start: failed to resolve the anchor epoch's committee"
                         );
-                        None
+                        AnchorCommitteeResolution::Unavailable
                     }
                 }
             }
@@ -4071,7 +4097,35 @@ async fn wait_for_handoff_data_ready(
             {
                 last_committee_resolve_at = Some(std::time::Instant::now());
                 committee_resolve_attempts += 1;
-                signing_committee = anchor_committee.resolve(anchor_epoch).await;
+                match anchor_committee.resolve(anchor_epoch).await {
+                    AnchorCommitteeResolution::Resolved(committee) => {
+                        signing_committee = Some(committee);
+                    }
+                    // No epoch preceded this one off-chain, so no certificate
+                    // was ever minted for `anchor_epoch` and none ever will
+                    // be. This is the genesis case one epoch along: a network
+                    // whose validators come up for the first time already at
+                    // epoch 1 has exactly this shape. Blocking would wedge
+                    // every validator on the network's own first epoch, so
+                    // pass — loudly, because on an established network this
+                    // would mean the chain lost its previous committee.
+                    AnchorCommitteeResolution::NoPredecessorEpoch => {
+                        if let Some(telemetry) = &telemetry {
+                            telemetry.handoff_prepare_waiting.set(0);
+                        }
+                        info!(
+                            next_epoch,
+                            anchor_epoch,
+                            "prepare-then-start: the chain holds no committee for epoch \
+                             {anchor_epoch}, so no handoff certificate exists for it and none \
+                             ever will — this network's first off-chain epoch is \
+                             {next_epoch}. Entering it without a cross-epoch anchor, the same \
+                             as entering epoch 0 at genesis."
+                        );
+                        return HandoffBarrierOutcome::Ready;
+                    }
+                    AnchorCommitteeResolution::Unavailable => {}
+                }
                 if signing_committee.is_none()
                     && anchor_committee.is_bounded()
                     && committee_resolve_attempts >= ANCHOR_COMMITTEE_RESOLVE_ATTEMPTS
