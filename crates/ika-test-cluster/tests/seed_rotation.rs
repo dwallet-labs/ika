@@ -78,24 +78,86 @@ fn seed_identity_state(handle: &IkaNodeHandle) -> Option<String> {
     })
 }
 
-/// Total `ika_dwallet_mpc_ready_to_advance_result_total` on this node.
-///
-/// Incremented once per advanceable session per tick, inside
-/// `perform_cryptographic_computation` — which is exactly the call the
-/// MPC-inactive state skips. So it is the direct observable for "this
-/// validator is (not) doing MPC work", and being a COUNTER on a per-process
-/// registry it starts from zero on every restart: "climbed since the restart"
-/// is a clean signal with no baseline bookkeeping.
-fn mpc_advance_attempts(handle: &IkaNodeHandle) -> u64 {
+/// Sum of one `ika_dwallet_mpc_*` counter family on this node, over the
+/// children whose labels satisfy `keep`.
+fn counter_total(
+    handle: &IkaNodeHandle,
+    family_name: &str,
+    keep: impl Fn(&[(&str, &str)]) -> bool,
+) -> u64 {
     handle.with(|node| {
         node.registry_service_for_testing()
             .default_registry()
             .gather()
             .iter()
-            .filter(|family| family.name() == "ika_dwallet_mpc_ready_to_advance_result_total")
+            .filter(|family| family.name() == family_name)
             .flat_map(|family| family.get_metric())
+            .filter(|metric| {
+                let labels: Vec<(&str, &str)> = metric
+                    .get_label()
+                    .iter()
+                    .map(|label| (label.name(), label.value()))
+                    .collect();
+                keep(&labels)
+            })
             .map(|metric| metric.get_counter().value() as u64)
             .sum()
+    })
+}
+
+/// `ika_dwallet_mpc_ready_to_advance_result_total{result="ready"}` on this node.
+///
+/// **The `result` filter is load-bearing.** That family is incremented once
+/// per advanceable session per tick with `result` in
+/// {`ready`, `not_ready`, `err`}, so summing every child counts a validator
+/// that is looking at sessions and concluding it can advance NONE of them —
+/// which is what an MPC-inactive node's peers look like, and would make
+/// "> 0" pass for a node doing no useful MPC at all. `ready` is emitted only
+/// where `generate_protocol_cryptographic_data` returned `Some`, i.e. the
+/// session has its inputs and is being advanced this tick.
+///
+/// Always compared as a DELTA over the assertion window, never as a
+/// cumulative `> 0`: the counter lives on a per-process registry, so after a
+/// restart a cumulative read is trivially satisfied by work the node did
+/// before the state under test began.
+fn mpc_ready_advances(handle: &IkaNodeHandle) -> u64 {
+    counter_total(
+        handle,
+        "ika_dwallet_mpc_ready_to_advance_result_total",
+        |labels| {
+            labels
+                .iter()
+                .any(|(name, value)| *name == "result" && *value == "ready")
+        },
+    )
+}
+
+/// `ika_dwallet_mpc_self_malicious_total` on this node — sessions for which
+/// this validator concluded that IT ITSELF is malicious (its output diverged
+/// from the peers' quorum, or the majority output named it).
+///
+/// The #1978 safety claim for the sat-out state is precisely that this stays
+/// at zero: a node that computes with key material the network never dealt to
+/// it lands here, and "sit the epoch out" is chosen over "try anyway" to
+/// avoid exactly that.
+fn self_malicious_total(handle: &IkaNodeHandle) -> u64 {
+    counter_total(handle, "ika_dwallet_mpc_self_malicious_total", |_| true)
+}
+
+/// `ika_dwallet_mpc_malicious_actors_count` on this node — the size of the
+/// epoch's convicted set as THIS validator sees it. Read on the PEERS of a
+/// sat-out validator: if sitting out looked malicious rather than absent,
+/// some peer would have convicted it and this would be non-zero.
+fn malicious_actors_count(handle: &IkaNodeHandle) -> i64 {
+    handle.with(|node| {
+        node.registry_service_for_testing()
+            .default_registry()
+            .gather()
+            .iter()
+            .filter(|family| family.name() == "ika_dwallet_mpc_malicious_actors_count")
+            .flat_map(|family| family.get_metric())
+            .map(|metric| metric.get_gauge().value() as i64)
+            .fold(0, i64::max)
     })
 }
 
@@ -283,6 +345,22 @@ async fn wait_until_certified_at_epoch(
     .await
 }
 
+/// Waits for this validator's `result="ready"` advance counter to move past
+/// `baseline` — a DELTA over the window, so a cumulative value carried in
+/// from before the state under test cannot satisfy it.
+async fn poll_ready_advances_past(
+    cluster: &IkaTestCluster,
+    validator_index: usize,
+    baseline: u64,
+    what: &str,
+    deadline: Duration,
+) {
+    poll_node(cluster, validator_index, deadline, what, |handle| {
+        (mpc_ready_advances(handle) > baseline).then_some(())
+    })
+    .await;
+}
+
 async fn build_cluster(num_validators: usize) -> IkaTestCluster {
     IkaTestClusterBuilder::new()
         .with_num_validators(num_validators)
@@ -334,12 +412,13 @@ async fn rotation_with_the_previous_seed_keeps_the_validator_in_mpc() {
         Duration::from_secs(180),
     )
     .await;
-    poll_node(
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
         &cluster,
         0,
+        baseline,
+        "the rotated validator to keep ADVANCING MPC sessions on the previous seed",
         Duration::from_secs(180),
-        "the rotated validator to keep advancing MPC sessions on the previous seed",
-        |handle| (mpc_advance_attempts(handle) > 0).then_some(()),
     )
     .await;
 
@@ -377,12 +456,13 @@ async fn rotation_with_the_previous_seed_keeps_the_validator_in_mpc() {
         Duration::from_secs(300),
     )
     .await;
-    poll_node(
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
         &cluster,
         0,
-        Duration::from_secs(180),
+        baseline,
         "MPC to keep advancing after the rotation completed",
-        |handle| (mpc_advance_attempts(handle) > 0).then_some(()),
+        Duration::from_secs(180),
     )
     .await;
 }
@@ -435,12 +515,24 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
     )
     .await;
 
-    // It must take NO part in MPC while in that state. The counter is on a
-    // per-process registry the restart just reset, so any nonzero value is
-    // work done since the rotation. Sampled over a window rather than once:
-    // a single read right after the restart would pass even if the gate were
-    // missing entirely.
+    // It must take NO part in MPC while in that state, and — the #1978 claim —
+    // must look ABSENT rather than malicious while doing so.
+    //
+    // Everything here is scoped to the window. The peer control is a DELTA
+    // from a baseline snapshotted at window start, not the peer's cumulative
+    // count since process start: a cluster that had done MPC earlier and then
+    // gone quiet would satisfy a cumulative read and make the sat-out node's
+    // zero meaningless, which is the exact vacuity the control exists to rule
+    // out.
+    let peer_baseline = mpc_ready_advances(&cluster.validator_handle(1));
+    let sat_out_baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    assert_eq!(
+        sat_out_baseline, 0,
+        "the restart reset this process's registry; a nonzero baseline would \
+         mean the gate let work through before the window even opened"
+    );
     let mut samples_inside_the_epoch = 0;
+    let mut peer_delta = 0;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let handle = cluster.validator_handle(0);
@@ -451,13 +543,22 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
             break;
         }
         assert_eq!(
-            mpc_advance_attempts(&handle),
+            mpc_ready_advances(&handle),
             0,
-            "a validator whose seed the certificate does not name must send NO \
-             MPC traffic — computing with key material the network never dealt \
-             to it is how a node convicts itself as malicious (#1978)"
+            "a validator whose seed the certificate does not name must advance \
+             NO MPC session — computing with key material the network never \
+             dealt to it is how a node convicts itself as malicious (#1978)"
+        );
+        // #1978: sitting out must not read as self-maliciousness either. A
+        // node that tried and diverged would land here instead.
+        assert_eq!(
+            self_malicious_total(&handle),
+            0,
+            "the sat-out validator must never conclude it is itself malicious; \
+             that is the outcome 'sit out' is chosen over 'try anyway' to avoid"
         );
         samples_inside_the_epoch += 1;
+        peer_delta = mpc_ready_advances(&cluster.validator_handle(1)).saturating_sub(peer_baseline);
     }
     assert!(
         samples_inside_the_epoch >= 5,
@@ -465,14 +566,27 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
          epoch; the window escaped the epoch and this run proved nothing — \
          raise the epoch duration"
     );
-    // A peer, by contrast, is doing MPC work throughout — the positive
-    // control that keeps the assertion above from passing on a dead cluster.
-    let peer = cluster.validator_handle(1);
     assert!(
-        mpc_advance_attempts(&peer) > 0,
-        "the rest of the committee must still be running MPC; a quiet cluster \
-         would make the zero above meaningless"
+        peer_delta > 0,
+        "a peer must have ADVANCED MPC sessions during the same window ({}s of \
+         samples); without that the sat-out validator's zero could just be a \
+         quiet cluster",
+        samples_inside_the_epoch
     );
+
+    // ...and no peer convicted it. Toward MPC the sat-out node must be
+    // indistinguishable from a member that is simply not there; a peer that
+    // had convicted anyone this epoch would carry a non-zero convicted-set
+    // gauge.
+    for peer_index in 1..5 {
+        let peer = cluster.validator_handle(peer_index);
+        assert_eq!(
+            malicious_actors_count(&peer),
+            0,
+            "validator {peer_index} convicted someone while validator 0 was \
+             sitting out; an absent member must never be read as a malicious one"
+        );
+    }
 
     // The committee still freezes and certifies the epoch WITHOUT this
     // validator's MPC — and the certificate carries its NEW digest, because
@@ -498,12 +612,13 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
     // Once that certificate is the one its epoch resolves against, it is back
     // in MPC with no operator action at all.
     poll_state(&cluster, 0, STATE_MATCHES, Duration::from_secs(300)).await;
-    poll_node(
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
         &cluster,
         0,
-        Duration::from_secs(180),
+        baseline,
         "the sat-out validator to rejoin MPC by itself at the next epoch",
-        |handle| (mpc_advance_attempts(handle) > 0).then_some(()),
+        Duration::from_secs(180),
     )
     .await;
 
@@ -548,12 +663,13 @@ async fn rotation_without_the_previous_seed_sits_out_then_rejoins() {
         Duration::from_secs(180),
     )
     .await;
-    poll_node(
+    let baseline = mpc_ready_advances(&cluster.validator_handle(0));
+    poll_ready_advances_past(
         &cluster,
         0,
-        Duration::from_secs(180),
+        baseline,
         "the repaired validator to rejoin MPC inside the same epoch",
-        |handle| (mpc_advance_attempts(handle) > 0).then_some(()),
+        Duration::from_secs(180),
     )
     .await;
     assert_eq!(
