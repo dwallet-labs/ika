@@ -37,7 +37,102 @@ which bytes* deterministic in consensus order.
   local `root-seed.key` only. It MUST NOT submit the derived public data
   to Sui. After the validator installs the new file and restarts, the
   announcement sender derives the full blob and distributes it through
-  consensus and P2P using the paths below.
+  consensus and P2P using the paths below. The restart also re-runs the
+  per-epoch seed resolution below, which is what keeps the rotating
+  validator in the epoch it restarts into.
+
+## Seed rotation and per-epoch seed resolution (#2119)
+
+A validator's blob is a pure function of its root seed, and the network
+deals epoch `E`'s shares to the bundle recorded in the `E-1 -> E` handoff
+certificate's `ValidatorMpcData` item for that validator. Rotating the seed
+therefore always lands the validator in an epoch whose shares were dealt to
+the seed it just replaced. **Rotating "at an epoch boundary" does not avoid
+this**: the boundary is precisely where the certificate that pins the old
+bundle is written.
+
+`NodeConfig.previous_root_seed_key_pair` is an OPTIONAL second root-seed
+descriptor — same type, same lazy unreadable-path semantics as
+`root_seed_key_pair`, discarded unread by notifier/fullnode preparation —
+that names the seed the validator was running before the rotation.
+
+**Resolution** (`dwallet_mpc::seed_rotation::resolve_epoch_seed`, called
+once per epoch from `DWalletMPCService::verify_validator_keys`, which is
+itself called at every per-epoch component start):
+
+| certified digest for this authority | decision | state label |
+|---|---|---|
+| absent (genesis / first-epoch joiner / cert not installed) | run the current seed | `no_certified_digest` |
+| derivable from the CURRENT seed, no previous configured | run the current seed | `matches` |
+| derivable from the CURRENT seed, previous still configured | run the current seed | `rotation_complete` |
+| derivable only from the PREVIOUS seed | run epoch `E`'s MPC on the PREVIOUS seed | `rotating_on_previous_seed` |
+| derivable from neither, no previous configured | **no MPC this epoch** | `awaiting_certification` |
+| derivable from neither, previous configured | **no MPC this epoch** | `previous_seed_mismatch` |
+
+Current is tested first, so pointing both fields at the same seed reads as
+"no rotation" rather than as a rotation.
+
+Invariants:
+
+1. **The announcement sender ALWAYS announces the CURRENT seed's bundle**,
+   including while the epoch's MPC runs on the previous seed and while the
+   node is out of MPC entirely. That is the whole mechanism: it is what
+   makes `E`'s freeze capture the new bundle, so `E -> E+1` deals the next
+   epoch's shares to the new key and the rotation completes. The sender is
+   per-epoch and re-derives from the configured current seed at every
+   construction, so re-announcement across a boundary is structural, not a
+   special case. A rotation that lands AFTER `E`'s freeze is therefore
+   self-healing one epoch later, not lost: `E+1` resolves onto the previous
+   seed again and `E+1`'s freeze captures the new bundle.
+2. **There is no abort path.** A seed the certificate does not name makes
+   the validator a full consensus member that takes no part in MPC: it
+   decrypts nothing (no off-chain key ingestion, no network-key
+   instantiation) and submits no MPC message, output or rejection. That is
+   deliberately the profile of an unresponsive member. Computing with key
+   material the network never dealt to it would produce divergent outputs
+   and get it convicted as self-malicious (#1978), which is strictly worse
+   than being absent; aborting would be worse still, because the only way
+   to get a new bundle certified is to REACH the reconfiguration the abort
+   refuses to boot into — the fail-closed version of this check made the
+   documented rotation flow a crashloop.
+3. **The comparison is set membership, not equality.** The certified digest
+   covers the whole encoded bundle, so it is a function of the seed AND of
+   the bundle encoding. `DerivableDigests` is the set of digests this binary
+   can derive from one seed, and the certified digest is accepted if it is
+   in the set for either seed. Today the set has exactly one member
+   (`VersionedMPCData::V1`) and the tolerance is structural rather than
+   load-bearing. A future encoding bump MUST add the new digest to the set a
+   release BEFORE `derive_mpc_data_blob` starts emitting it — certificates
+   are written by the previous epoch's committee running the previous
+   binary, so accept-before-emit is what stops the whole fleet from
+   resolving to "neither seed matches" on the same upgrade.
+4. **One rotation per epoch.** Rotating twice before the first is certified
+   leaves neither seed matching; the validator sits out MPC until the
+   certificate catches up, which is at most one extra epoch because it keeps
+   announcing the current seed. This is also the shape of a wrong seed
+   restored from a backup, and the repair is the same: point the
+   previous-seed field at the certified seed (or restore it as the current
+   seed) and restart — no boundary is involved, because resolution runs at
+   every construction.
+
+Observability: `ika_dwallet_mpc_seed_identity_state{state}` is a one-hot
+gauge over the six labels above, published once per epoch from the
+per-epoch component start (NOT from inside the MPC service, which is the
+subsystem sitting idle in the states that matter). One alert expression
+covers the non-participating condition:
+
+```
+ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1
+```
+
+paired with a once-per-epoch `error!` naming both local digests, the
+certified one, and the in-epoch repair.
+
+The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
+is unchanged in purpose and gains one verdict: a frozen digest that the
+CONFIGURED PREVIOUS seed derives is `RotatedAfterFreeze` — a warning, not
+the `mpc_data_frozen_digest_seed_mismatch` invariant violation, because it
+is the expected shape of a late rotation and self-heals.
 
 ## Announcement paths
 

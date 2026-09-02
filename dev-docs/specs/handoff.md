@@ -55,6 +55,16 @@ next epoch inherits.
     signature aggregates as nothing, while a divergent one pollutes the
     aggregation bucket. A quorum-less epoch legitimately emits none,
     uniformly with peers.
+
+    Second consumer since #2119: this item is also the record each
+    validator resolves its OWN root seed against at the start of the
+    epoch the cert opens. The `E-1 -> E` cert says which bundle `E`'s
+    shares were dealt to, so it says which seed can decrypt them — which
+    is what makes a seed rotation survivable (run `E` on the previous
+    seed, announce the current one) and what makes a validator whose
+    seed the cert does not name sit `E`'s MPC out rather than abort or
+    compute wrongly. See "Seed rotation and per-epoch seed resolution"
+    in the announcements spec.
 - The attestation is built once per epoch when the validator's local
   view is complete (snapshot-ready), and it must be DETERMINISTIC
   across validators: every digest source above is consensus-anchored.

@@ -251,6 +251,37 @@ consuming both hold it flat near capacity, and the pair that separates those is
 `ika_consensus_fold_blocked_{seconds,sends}_total` with
 `ika_consensus_round_channel_depth`.
 
+### A validator can be present and still be contributing no MPC
+
+`ika_dwallet_mpc_seed_identity_state{state}` is the other half of the rule
+above, for a stop that is not a stall: since #2119 a validator whose root
+seed the network's handoff certificate does not name does not abort and does
+not compute — it stays in consensus and takes no part in MPC for the epoch.
+Every liveness signal a node exports keeps looking healthy in that state
+(it follows consensus, folds commits, serves checkpoints, exports every
+family), so the condition needs a metric of its own or it is invisible.
+
+One-hot over a closed six-value label set — `matches`,
+`rotation_complete`, `no_certified_digest`, `rotating_on_previous_seed`,
+`awaiting_certification`, `previous_seed_mismatch` — pinned by
+`state_labels_are_a_closed_pinned_set`, so a seventh state cannot be added
+without the alert being revisited. All six series exist from registration,
+at `0`, so "healthy" and "not scraped" are distinguishable. The two
+non-participating values are one alert:
+
+```
+ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1
+```
+
+`rotation_complete` is not an alert but is worth a dashboard panel: it means
+the operator's `previous-root-seed-key-pair` did its job and should now be
+removed, and leaving it in place makes the NEXT rotation ambiguous.
+
+It is set from the per-epoch component start in `ika-node`, deliberately not
+from inside the MPC service — the service is the thing sitting idle in the
+states the metric exists to report, and a subsystem cannot report its own
+stall.
+
 ### Process-wide wire settings need a gauge, not just a log
 
 `ika_authority_name_encoding_width_bytes` and
@@ -581,6 +612,7 @@ ika_dwallet_mpc_received_requests_start_count
 ika_dwallet_mpc_requests_pending_for_frozen_mpc_data
 ika_dwallet_mpc_requests_pending_for_network_key
 ika_dwallet_mpc_requests_pending_for_next_active_committee
+ika_dwallet_mpc_seed_identity_state
 ika_dwallet_mpc_self_malicious_total
 ika_dwallet_mpc_self_output_to_quorum_consensus_rounds
 ika_dwallet_mpc_service_end_of_publish_local
