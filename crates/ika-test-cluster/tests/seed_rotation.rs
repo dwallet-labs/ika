@@ -163,8 +163,32 @@ async fn rotate_root_seed(
         config.root_seed_key_pair = Some(RootSeedWithPath::new(new_seed.clone()));
         config.previous_root_seed_key_pair = if keep_previous { running } else { None };
     }
-    node.start().await.expect("restart the rotated validator");
+    start_within_budget(node, "the rotated validator").await;
     new_seed
+}
+
+/// Every restart in this file crosses the prepare-then-start handoff barrier
+/// (#2123), which runs on the boot path and holds `IkaNode::start` until the
+/// epoch's verified handoff data is local. `Node::start` awaits that, so a
+/// barrier that never released would hang this test until the harness killed
+/// it — an outcome indistinguishable from an unrelated infrastructure stall.
+///
+/// The barrier gates only on the certificate's network-key items and ignores
+/// its `ValidatorMpcData` ones, so a node resolving onto its previous seed —
+/// or sitting the epoch out — has nothing to wedge on. This bound is what
+/// turns that reasoning into an assertion: exceed it and the test says which
+/// restart hung and why that is the interesting failure.
+async fn start_within_budget(node: &ika_swarm::memory::Node, what: &str) {
+    match tokio::time::timeout(Duration::from_secs(180), node.start()).await {
+        Ok(result) => result.unwrap_or_else(|e| panic!("failed to restart {what}: {e}")),
+        Err(_) => panic!(
+            "restarting {what} did not complete within 180s — the node is stuck before its \
+             epoch components start. The prepare-then-start handoff barrier is the only \
+             thing on that path that waits indefinitely; a rotating or sat-out validator \
+             must not wedge there, because the barrier does not gate on the certificate's \
+             ValidatorMpcData items."
+        ),
+    }
 }
 
 /// Restart the validator with `previous_root_seed_key_pair` set to the seed it
@@ -182,7 +206,7 @@ async fn set_previous_seed_and_restart(
         .expect("validator node exists for the configured name");
     node.stop();
     node.config().previous_root_seed_key_pair = Some(RootSeedWithPath::new(previous));
-    node.start().await.expect("restart with the previous seed");
+    start_within_budget(node, "the repaired validator").await;
 }
 
 /// Poll a fresh node handle every 500ms until `probe` holds.
