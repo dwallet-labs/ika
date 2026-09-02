@@ -151,6 +151,9 @@ impl NodeMode {
             .resolve_ika_on_chain_identity()?;
         if !self.is_validator() {
             config.root_seed_key_pair = None;
+            // Same policy as the current seed: discard the descriptor without
+            // resolving it, so no non-validator path can open the file.
+            config.previous_root_seed_key_pair = None;
         }
         Ok(())
     }
@@ -911,6 +914,23 @@ pub struct NodeConfig {
     /// initialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_seed_key_pair: Option<RootSeedWithPath>,
+    /// Validator-only PREVIOUS root seed, set only while a seed rotation is in
+    /// flight (issue #2119). Same descriptor type and the same lazy
+    /// unreadable-path semantics as `root_seed_key_pair`; non-validator
+    /// processes discard it without resolving it.
+    ///
+    /// A rotation replaces `root-seed.key` with a new seed, but the epoch the
+    /// node restarts into was dealt its MPC shares under the OLD seed's
+    /// mpc_data bundle — that is what the `E-1 -> E` handoff certificate
+    /// certifies. Pointing this field at the old seed lets the node run epoch
+    /// `E`'s MPC on the certified (previous) seed while it announces the new
+    /// one, so the `E -> E+1` reconfiguration deals the next epoch's shares to
+    /// the new key and there is no gap in participation. Absent (the normal
+    /// steady state) nothing changes; a node that rotated without it simply
+    /// sits out `E`'s MPC. Remove it once
+    /// `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}` is 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_root_seed_key_pair: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
     pub protocol_key_pair: AuthorityKeyPairWithPath,
     #[serde(default = "default_key_pair")]
@@ -1524,6 +1544,7 @@ mod tests {
             root_seed_key_pair: mode
                 .is_validator()
                 .then(|| RootSeedWithPath::new(RootSeed::random_seed())),
+            previous_root_seed_key_pair: None,
             protocol_key_pair: default_authority_key_pair(),
             consensus_key_pair: default_key_pair(),
             account_key_pair: default_key_pair(),
@@ -1658,6 +1679,77 @@ mod tests {
             .validate_and_prepare_config(&mut config)
             .expect("an unreadable root-seed path must not affect fullnode initialization");
         assert!(config.root_seed_key_pair.is_none());
+    }
+
+    /// The rotation field (#2119) is OPTIONAL: every validator config
+    /// deployed before it existed must keep parsing, and must keep starting.
+    /// This is the compatibility case that matters most — the field is added
+    /// to a struct every production validator already has a YAML for.
+    #[test]
+    fn validator_config_without_a_previous_root_seed_is_accepted() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        let yaml = serde_yaml::to_string(&config).expect("validator config must serialize");
+        assert!(
+            !yaml.contains("previous-root-seed-key-pair"),
+            "an unset previous seed must not be serialized: {yaml}"
+        );
+        let mut parsed: NodeConfig = serde_yaml::from_str(&yaml)
+            .expect("a validator config without the previous-seed field must parse");
+        assert!(parsed.previous_root_seed_key_pair.is_none());
+        NodeMode::Validator
+            .validate_and_prepare_config(&mut parsed)
+            .expect("the previous-seed field must not be required");
+
+        // Same for the in-memory default: no rotation configured.
+        assert!(config.previous_root_seed_key_pair.is_none());
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+        NodeMode::Validator
+            .validate_and_prepare_config(&mut config)
+            .expect("a validator may carry a previous seed");
+        assert!(
+            config.previous_root_seed_key_pair.is_some(),
+            "a validator must KEEP the previous seed — it is what lets it run \
+             the certified epoch during a rotation"
+        );
+    }
+
+    /// Present-and-parsed: the field round-trips as a path descriptor, and
+    /// like `root_seed_key_pair` the path is NOT resolved at parse time (the
+    /// descriptor below names a file that does not exist).
+    #[test]
+    fn validator_config_with_a_previous_root_seed_round_trips() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+        let yaml = serde_yaml::to_string(&config).expect("must serialize");
+        assert!(
+            yaml.contains("previous-root-seed-key-pair"),
+            "a set previous seed must serialize under its kebab-case name: {yaml}"
+        );
+        let parsed: NodeConfig =
+            serde_yaml::from_str(&yaml).expect("a config with the previous-seed field must parse");
+        assert!(parsed.previous_root_seed_key_pair.is_some());
+    }
+
+    #[test]
+    fn notifier_preparation_discards_previous_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Notifier);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Notifier
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable previous-seed path must not affect notifier initialization");
+        assert!(config.previous_root_seed_key_pair.is_none());
+    }
+
+    #[test]
+    fn fullnode_preparation_discards_previous_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Fullnode);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Fullnode
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable previous-seed path must not affect fullnode initialization");
+        assert!(config.previous_root_seed_key_pair.is_none());
     }
 
     #[test]

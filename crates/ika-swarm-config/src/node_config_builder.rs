@@ -179,6 +179,9 @@ impl ValidatorConfigBuilder {
         };
         NodeConfig {
             root_seed_key_pair: Some(RootSeedWithPath::new(validator.root_seed.clone())),
+            // Swarm validators never start mid-rotation; the cluster test that
+            // exercises rotation sets this explicitly after the config is built.
+            previous_root_seed_key_pair: None,
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator.key_pair.copy()),
             network_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(
                 validator.network_key_pair.copy(),
@@ -440,6 +443,7 @@ impl FullnodeConfigBuilder {
 
         NodeConfig {
             root_seed_key_pair: None,
+            previous_root_seed_key_pair: None,
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator_config.key_pair),
             account_key_pair: KeyPairWithPath::new(validator_config.account_key_pair),
             consensus_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(
