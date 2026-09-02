@@ -574,6 +574,9 @@ Code anchors: `crates/ika-types/src/handoff.rs` (types),
 (EndOfPublish V2 processing, deferred close, epoch-keyed digest slice),
 `crates/ika-core/src/epoch_tasks/handoff_signature_sender.rs`,
 `crates/ika-core/src/epoch_tasks/joiner_bootstrap_verifier.rs`,
-`crates/ika-node/src/lib.rs` (bootstrap at epoch start +
-prepare-then-start barrier), `crates/ika-core/src/dwallet_mpc/mpc_manager.rs`
+`crates/ika-node/src/lib.rs` (bootstrap at epoch start, and the
+prepare-then-start barrier — `wait_for_handoff_data_ready`,
+`prepare_handoff_anchor`, `all_cert_network_key_outputs_held_locally`,
+`AnchorCommittee`, and its three call sites),
+`crates/ika-core/src/dwallet_mpc/mpc_manager.rs`
 (`adopt_cert_verified_keys`).
