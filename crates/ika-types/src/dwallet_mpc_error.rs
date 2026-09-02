@@ -49,16 +49,6 @@ pub enum DwalletMPCError {
     )]
     OffChainAssemblyIncomplete { epoch: EpochId, missing: usize },
 
-    #[error(
-        "on-chain mpc_data record for committee member `{authority}` at epoch {epoch} is \
-         missing or undecodable — the record is written at candidate registration and never \
-         emptied, so this is a chain-read defect; retry the read"
-    )]
-    MissingOnChainMpcData {
-        epoch: EpochId,
-        authority: crate::crypto::AuthorityName,
-    },
-
     #[error("missing MPC class groups decryption shares in config")]
     MissingDwalletMPCClassGroupsDecryptionShares,
 
@@ -366,7 +356,6 @@ impl DwalletMPCError {
                 "invalid_centralized_party_imported_dwallet_public_output_version"
             }
             DwalletMPCError::OffChainAssemblyIncomplete { .. } => "off_chain_assembly_incomplete",
-            DwalletMPCError::MissingOnChainMpcData { .. } => "missing_on_chain_mpc_data",
             DwalletMPCError::PresignAlreadyUsed(_) => "presign_already_used",
         }
     }

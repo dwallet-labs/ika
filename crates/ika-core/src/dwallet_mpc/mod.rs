@@ -52,6 +52,7 @@ mod mpc_diagnostics;
 pub mod mpc_manager;
 pub mod mpc_session;
 mod park_drain_test_hook;
+pub mod seed_rotation;
 
 mod crytographic_computation;
 pub mod dwallet_mpc_metrics;

@@ -70,10 +70,18 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
 /// so an advanced on-chain view can't hand back a wrong-epoch committee —
 /// which would make a valid handoff cert fail to verify and (via
 /// `BootstrapOutcome::Rejected`) fail-closed-halt the node.
+///
+/// `Ok(None)` is a definitive chain ANSWER, not a failure: the on-chain
+/// epoch matches, and the chain says no committee preceded it. That is the
+/// state of a network whose first off-chain epoch is the one being entered —
+/// nothing ever ran as `expected_prior_epoch`, so no handoff certificate can
+/// exist for it and none ever will. Callers must not wait for one. Every
+/// other outcome (`Err`) is "cannot answer right now", which is worth
+/// retrying.
 pub async fn fetch_previous_committee<C: SuiClientInner>(
     sui_client: &SuiClient<C>,
     expected_prior_epoch: EpochId,
-) -> anyhow::Result<Committee> {
+) -> anyhow::Result<Option<Committee>> {
     let (_, system_inner) = sui_client
         .get_system_inner()
         .await
@@ -89,7 +97,8 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     }
     let bls_committee = &system_inner.validator_set.previous_committee;
     if bls_committee.members.is_empty() {
-        anyhow::bail!("validator_set.previous_committee is empty");
+        // An answer, not an error — see this function's doc.
+        return Ok(None);
     }
     // Resolving by object id is what lets this recover signers that have
     // *departed* the active set since they signed the handoff cert: their
@@ -142,13 +151,13 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
              means a corrupt prior-committee record, not wrong peers"
         );
     }
-    Ok(build_prior_committee(
+    Ok(Some(build_prior_committee(
         expected_prior_epoch,
         &bls_members,
         &staking_pools,
         bls_committee.quorum_threshold,
         bls_committee.validity_threshold,
-    ))
+    )))
 }
 
 /// The prior committee named by consensus key. Both name-keyed maps use that

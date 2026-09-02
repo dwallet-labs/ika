@@ -152,7 +152,115 @@ which bytes* deterministic in consensus order.
   MUST NOT submit the derived public data to Sui — since #2119 there is
   no builder left that could. After the validator installs the new file
   and restarts, the announcement sender derives the full blob and
-  distributes it through consensus and P2P using the paths below.
+  distributes it through consensus and P2P using the paths below. The
+  restart also re-runs the per-epoch seed resolution below, which is what
+  keeps the rotating validator in the epoch it restarts into.
+
+## Seed rotation and per-epoch seed resolution (#2119)
+
+A validator's blob is a pure function of its root seed, and the network
+deals epoch `E`'s shares to the bundle recorded in the `E-1 -> E` handoff
+certificate's `ValidatorMpcData` item for that validator. Rotating the seed
+therefore always lands the validator in an epoch whose shares were dealt to
+the seed it just replaced. **Rotating "at an epoch boundary" does not avoid
+this**: the boundary is precisely where the certificate that pins the old
+bundle is written.
+
+`NodeConfig.previous_root_seed_key_pair` is an OPTIONAL second root-seed
+descriptor — same type, same lazy unreadable-path semantics as
+`root_seed_key_pair`, discarded unread by notifier/fullnode preparation —
+that names the seed the validator was running before the rotation.
+
+**Resolution** (`dwallet_mpc::seed_rotation::resolve_epoch_seed`, called
+once per epoch from `DWalletMPCService::verify_validator_keys`, which is
+itself called at every per-epoch component start):
+
+| certified digest for this authority | decision | state label |
+|---|---|---|
+| absent (genesis / first-epoch joiner / cert not installed) | run the current seed | `no_certified_digest` |
+| derivable from the CURRENT seed, no previous configured | run the current seed | `matches` |
+| derivable from the CURRENT seed, previous still configured | run the current seed | `rotation_complete` |
+| derivable only from the PREVIOUS seed | run epoch `E`'s MPC on the PREVIOUS seed | `rotating_on_previous_seed` |
+| derivable from neither, no previous configured | **no MPC this epoch** | `awaiting_certification` |
+| derivable from neither, previous configured | **no MPC this epoch** | `previous_seed_mismatch` |
+
+Current is tested first, so pointing both fields at the same seed reads as
+"no rotation" rather than as a rotation.
+
+Invariants:
+
+1. **The announcement sender ALWAYS announces the CURRENT seed's bundle**,
+   including while the epoch's MPC runs on the previous seed and while the
+   node is out of MPC entirely. That is the whole mechanism: it is what
+   makes `E`'s freeze capture the new bundle, so `E -> E+1` deals the next
+   epoch's shares to the new key and the rotation completes. The sender is
+   per-epoch and re-derives from the configured current seed at every
+   construction, so re-announcement across a boundary is structural, not a
+   special case. A rotation that lands AFTER `E`'s freeze is therefore
+   self-healing one epoch later, not lost: `E+1` resolves onto the previous
+   seed again and `E+1`'s freeze captures the new bundle.
+2. **There is no abort path.** A seed the certificate does not name makes
+   the validator a full consensus member that takes no part in MPC: it
+   decrypts nothing (no off-chain key ingestion, no network-key
+   instantiation) and submits no MPC message, output or rejection. That is
+   deliberately the profile of an unresponsive member. Computing with key
+   material the network never dealt to it would produce divergent outputs
+   and get it convicted as self-malicious (#1978), which is strictly worse
+   than being absent; aborting would be worse still, because the only way
+   to get a new bundle certified is to REACH the reconfiguration the abort
+   refuses to boot into — the fail-closed version of this check made the
+   documented rotation flow a crashloop.
+3. **The comparison is set membership, not equality.** The certified digest
+   covers the whole encoded bundle, so it is a function of the seed AND of
+   the bundle encoding. `DerivableDigests` is the set of digests this binary
+   can derive from one seed, and the certified digest is accepted if it is
+   in the set for either seed. Today the set has exactly one member
+   (`VersionedMPCData::V1`) and the tolerance is structural rather than
+   load-bearing. A future encoding bump MUST add the new digest to the set a
+   release BEFORE `derive_mpc_data_blob` starts emitting it — certificates
+   are written by the previous epoch's committee running the previous
+   binary, so accept-before-emit is what stops the whole fleet from
+   resolving to "neither seed matches" on the same upgrade.
+4. **An unreadable previous seed is treated as an absent one.** The
+   descriptor is resolved through a FALLIBLE accessor
+   (`RootSeedWithPath::try_root_seed`); `root_seed()` panics on an unreadable
+   file, which is right for the current seed and wrong for this one. The
+   documented rotation ends with the operator deleting the old seed file, and
+   nothing forces them to remove the config field first, so an unreadable
+   previous seed is an expected operator state rather than a corrupt config.
+   It resolves to "no previous seed" with a `WARN` naming the path and the
+   error — so the failure is visible rather than fatal, and a node whose
+   CURRENT seed is already certified is unaffected. The failure is not
+   cached, so a restored file resolves at the next epoch without a restart.
+   The documented order is nonetheless: remove the field, restart, then
+   delete the file.
+5. **One rotation per epoch.** Rotating twice before the first is certified
+   leaves neither seed matching; the validator sits out MPC until the
+   certificate catches up, which is at most one extra epoch because it keeps
+   announcing the current seed. This is also the shape of a wrong seed
+   restored from a backup, and the repair is the same: point the
+   previous-seed field at the certified seed (or restore it as the current
+   seed) and restart — no boundary is involved, because resolution runs at
+   every construction.
+
+Observability: `ika_dwallet_mpc_seed_identity_state{state}` is a one-hot
+gauge over the six labels above, published once per epoch from the
+per-epoch component start (NOT from inside the MPC service, which is the
+subsystem sitting idle in the states that matter). One alert expression
+covers the non-participating condition:
+
+```
+ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1
+```
+
+paired with a once-per-epoch `error!` naming both local digests, the
+certified one, and the in-epoch repair.
+
+The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
+is unchanged in purpose and gains one verdict: a frozen digest that the
+CONFIGURED PREVIOUS seed derives is `RotatedAfterFreeze` — a warning, not
+the `mpc_data_frozen_digest_seed_mismatch` invariant violation, because it
+is the expected shape of a late rotation and self-heals.
 
 ## Announcement paths
 
@@ -439,9 +547,10 @@ validator latched for the whole epoch. Sourcing rules
 - `assemble_committee_mpc_data_off_chain` resolves each `(authority,
   digest)` pair through the blob store and decodes; the gate is strict —
   one missing or undecodable blob fails the whole assembly with
-  `Incomplete`. Partial maps are never returned, because the
-  reconfiguration MPC reads `Committee.class_groups_public_keys_and_proofs`
-  directly and a silent gap drops that validator's share.
+  `Incomplete`. Partial maps are never returned, because the assembled
+  bundles ARE the reconfiguration MPC's key input
+  (`get_validator_mpc_keys_by_party_id` re-keys them to `PartyID`) and a
+  silent gap drops that validator's share.
 - Assembly output is a pure function of the input pairs (blobs are
   content-addressed), so identical pairs are served from a cache and a
   post-freeze `Complete` assembly is final for the epoch: the sync loop
@@ -489,25 +598,25 @@ validator latched for the whole epoch. Sourcing rules
 2. Every blob reference is content-addressed; bytes are verified
    against their digest at every trust boundary (store insert, P2P
    fetch, assembly decode).
-3. `Committee.class_groups_public_keys_and_proofs` is load-bearing for
-   the reconfiguration MPC: it is never populated partially and never
-   left empty for a non-excluded member. This binds every builder of
-   the map, not only the off-chain assembly. The chain-view builders —
-   `get_epoch_start_system` in `ika-sui-client` (feeding
-   `EpochStartSystem::get_ika_committee`, the epoch store's committee)
-   and the sui_syncer's bootstrap chain read inside `new_committee`
-   (which serves only the window before the off-chain source is
-   installed — there is NO chain fallback for validator mpc_data once it
-   is, and chain is write-only from then on) — enforce it at
-   the read boundary: an active member whose on-chain `mpc_data`
-   record is missing or undecodable fails the WHOLE read (retried by
-   `must_get_epoch_start_system` / the next sync tick), never a silent
-   member skip. Chain state cannot legitimately lack the record (it is
-   written at candidate registration and never emptied; operational
-   updates use the off-chain path), so absence is always a read defect —
-   and each validator reads through its own fullnode, so a tolerated
-   local gap would be an unagreed party-set exclusion: divergent MPC public
-   inputs across honest validators. Exclusion decisions belong
+3. The off-chain assembly's key maps are load-bearing for the
+   reconfiguration MPC: they are never populated partially and never
+   left empty for a non-excluded member. A silent gap would be an
+   unagreed party-set exclusion — divergent MPC public inputs across
+   honest validators — so the assembly fails whole and retries.
+
+   Since #2119 this binds ONLY the off-chain assembly. No chain read
+   contributes validator key material any more:
+   `EpochStartSystem::get_ika_committee` and the sui_syncer's
+   bootstrap-window path inside `new_committee` (which serves only the
+   window before the off-chain source is installed — there is NO chain
+   fallback for validator mpc_data once it is, and chain is write-only
+   from then on) build committees with an EMPTY
+   `Committee.class_groups_public_keys_and_proofs`. That map has no
+   production reader: a `Committee` supplies the reconfiguration public
+   input with an access structure (voting weights + thresholds) and
+   nothing else. The on-chain `mpc_data_bytes` field it used to be
+   decoded from is deprecated, and a new validator registers with a
+   placeholder. Exclusion decisions belong
    exclusively to the consensus-agreed freeze. The completeness check
    lives at the read boundary, NOT on `Committee` construction — a
    post-freeze assembled committee legitimately omits *excluded*

@@ -391,6 +391,14 @@ rule, not the instance.
   excluded the joiner and the assertion still passed. Two same-shaped
   committee objects with different provenance (chain read vs off-chain
   assembly) is exactly the setup for this trap.
+  Resolution (#2119): the trap is now structurally gone. The chain-view
+  committee's `class_groups_public_keys_and_proofs` is EMPTY on every
+  production path — the deprecated on-chain `mpc_data_bytes` it was
+  decoded from is read nowhere — so the two committee objects no longer
+  have the same shape's worth of content to confuse. The test asserts
+  the chain committee's SEAT (voting rights) and asserts capture by the
+  freeze against the handoff cert's `ValidatorMpcData` items, which is
+  what it always meant to measure.
 - **Adding a field to a public config struct breaks struct-literal sites
   in crates a targeted `cargo check` never builds.** Literals that
   construct the config with all fields explicit (no `..Default::default()`)

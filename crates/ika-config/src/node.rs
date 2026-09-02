@@ -25,6 +25,7 @@ use dwallet_rng::RootSeed;
 use ika_types::crypto::KeypairTraits;
 use ika_types::crypto::NetworkKeyPair;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 pub use sui_config::node::KeyPairWithPath;
@@ -151,6 +152,9 @@ impl NodeMode {
             .resolve_ika_on_chain_identity()?;
         if !self.is_validator() {
             config.root_seed_key_pair = None;
+            // Same policy as the current seed: discard the descriptor without
+            // resolving it, so no non-validator path can open the file.
+            config.previous_root_seed_key_pair = None;
         }
         Ok(())
     }
@@ -911,6 +915,23 @@ pub struct NodeConfig {
     /// initialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_seed_key_pair: Option<RootSeedWithPath>,
+    /// Validator-only PREVIOUS root seed, set only while a seed rotation is in
+    /// flight (issue #2119). Same descriptor type and the same lazy
+    /// unreadable-path semantics as `root_seed_key_pair`; non-validator
+    /// processes discard it without resolving it.
+    ///
+    /// A rotation replaces `root-seed.key` with a new seed, but the epoch the
+    /// node restarts into was dealt its MPC shares under the OLD seed's
+    /// mpc_data bundle — that is what the `E-1 -> E` handoff certificate
+    /// certifies. Pointing this field at the old seed lets the node run epoch
+    /// `E`'s MPC on the certified (previous) seed while it announces the new
+    /// one, so the `E -> E+1` reconfiguration deals the next epoch's shares to
+    /// the new key and there is no gap in participation. Absent (the normal
+    /// steady state) nothing changes; a node that rotated without it simply
+    /// sits out `E`'s MPC. Remove it once
+    /// `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}` is 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_root_seed_key_pair: Option<RootSeedWithPath>,
     #[serde(default = "default_authority_key_pair")]
     pub protocol_key_pair: AuthorityKeyPairWithPath,
     #[serde(default = "default_key_pair")]
@@ -991,6 +1012,21 @@ pub struct NodeConfig {
     /// each unbounded validator's class-groups crypto otherwise starves the pod.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_mpc_computation_cores: Option<usize>,
+
+    /// TESTS ONLY — not readable from or writable to a config file
+    /// (`serde(skip)`, like `supported_protocol_versions` above), so no
+    /// deployment can set it by accident.
+    ///
+    /// For this long after the prepare-then-start barrier is entered, the
+    /// barrier reports the epoch's handoff certificate as not obtainable and
+    /// fetches nothing, exactly as if no peer were serving it yet
+    /// (the benign propagation-lag outcome the barrier already retries on).
+    /// It exists so a cluster test can hold a validator's handoff data back
+    /// long enough to prove the validator does NOT start its epoch's
+    /// consensus and MPC components without it. Setting it on a real
+    /// validator would keep a healthy node out of consensus for the window.
+    #[serde(skip)]
+    pub withhold_handoff_anchor_for_testing: Option<Duration>,
 }
 
 /// Keep the current epoch plus this many prior per-epoch authority store
@@ -1446,6 +1482,21 @@ impl RootSeedWithPath {
         }
     }
 
+    /// A path descriptor that does NOT resolve the file at construction.
+    ///
+    /// [`Self::new_from_path`] reads (and panics) eagerly; this is the shape
+    /// DESERIALIZATION produces — the shape every deployed config actually
+    /// has — where the file is opened on first access and an unreadable one
+    /// is a runtime condition rather than a constructor panic. Needed to
+    /// build the "configured but currently unreadable" previous-seed state
+    /// that #2119 must survive, which is otherwise unconstructible in code.
+    pub fn new_from_path_lazy(path: PathBuf) -> Self {
+        Self {
+            location: RootSeedLocation::File { path },
+            seed: OnceCell::new(),
+        }
+    }
+
     pub fn root_seed(&self) -> &RootSeed {
         self.seed.get_or_init(|| match &self.location {
             RootSeedLocation::InPlace { value } => value.clone(),
@@ -1455,6 +1506,41 @@ impl RootSeedWithPath {
                 RootSeed::from_file(path.clone()).unwrap()
             }
         })
+    }
+
+    /// Fallible twin of [`Self::root_seed`], for descriptors whose
+    /// unreadability must NOT be fatal.
+    ///
+    /// `root_seed` panics on an unreadable file, which is the right answer
+    /// for the CURRENT seed: a validator that cannot load the seed every one
+    /// of its MPC keys derives from has nothing to do. It is the wrong answer
+    /// for the OPTIONAL previous seed (#2119). The documented rotation
+    /// procedure ends with the operator deleting the old seed file, and if
+    /// that happens before the config field is removed, a panic here would
+    /// crashloop a validator whose CURRENT seed is perfectly good — turning
+    /// the tidy-up step of a completed rotation into an outage, and
+    /// reintroducing exactly the class of boot-fatal seed handling the
+    /// rotation design exists to remove. Callers treat `Err` as "no previous
+    /// seed configured".
+    ///
+    /// A failed read is NOT cached: `get_or_try_init` fills the cell only on
+    /// success, so a restored file is picked up at the next resolution
+    /// without a restart.
+    pub fn try_root_seed(&self) -> DwalletMPCResult<&RootSeed> {
+        self.seed.get_or_try_init(|| match &self.location {
+            RootSeedLocation::InPlace { value } => Ok(value.clone()),
+            RootSeedLocation::File { path } => RootSeed::from_file(path.clone()),
+        })
+    }
+
+    /// The path this descriptor names, or `None` when the seed is inline.
+    /// For operator-facing diagnostics on a failed read — an inline seed has
+    /// no path, and its bytes must never be logged.
+    pub fn path(&self) -> Option<&Path> {
+        match &self.location {
+            RootSeedLocation::InPlace { .. } => None,
+            RootSeedLocation::File { path } => Some(path.as_path()),
+        }
     }
 }
 
@@ -1524,6 +1610,7 @@ mod tests {
             root_seed_key_pair: mode
                 .is_validator()
                 .then(|| RootSeedWithPath::new(RootSeed::random_seed())),
+            previous_root_seed_key_pair: None,
             protocol_key_pair: default_authority_key_pair(),
             consensus_key_pair: default_key_pair(),
             account_key_pair: default_key_pair(),
@@ -1547,6 +1634,7 @@ mod tests {
             authority_db_retention_epochs: None,
             authority_db_pruner_period_secs: None,
             max_mpc_computation_cores: None,
+            withhold_handoff_anchor_for_testing: None,
         }
     }
 
@@ -1658,6 +1746,142 @@ mod tests {
             .validate_and_prepare_config(&mut config)
             .expect("an unreadable root-seed path must not affect fullnode initialization");
         assert!(config.root_seed_key_pair.is_none());
+    }
+
+    /// The rotation field (#2119) is OPTIONAL: every validator config
+    /// deployed before it existed must keep parsing, and must keep starting.
+    /// This is the compatibility case that matters most — the field is added
+    /// to a struct every production validator already has a YAML for.
+    #[test]
+    fn validator_config_without_a_previous_root_seed_is_accepted() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        let yaml = serde_yaml::to_string(&config).expect("validator config must serialize");
+        assert!(
+            !yaml.contains("previous-root-seed-key-pair"),
+            "an unset previous seed must not be serialized: {yaml}"
+        );
+        let mut parsed: NodeConfig = serde_yaml::from_str(&yaml)
+            .expect("a validator config without the previous-seed field must parse");
+        assert!(parsed.previous_root_seed_key_pair.is_none());
+        NodeMode::Validator
+            .validate_and_prepare_config(&mut parsed)
+            .expect("the previous-seed field must not be required");
+
+        // Same for the in-memory default: no rotation configured.
+        assert!(config.previous_root_seed_key_pair.is_none());
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+        NodeMode::Validator
+            .validate_and_prepare_config(&mut config)
+            .expect("a validator may carry a previous seed");
+        assert!(
+            config.previous_root_seed_key_pair.is_some(),
+            "a validator must KEEP the previous seed — it is what lets it run \
+             the certified epoch during a rotation"
+        );
+    }
+
+    /// Present-and-parsed: the field round-trips as a path descriptor, and
+    /// like `root_seed_key_pair` the path is NOT resolved at parse time (the
+    /// descriptor below names a file that does not exist).
+    #[test]
+    fn validator_config_with_a_previous_root_seed_round_trips() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+        let yaml = serde_yaml::to_string(&config).expect("must serialize");
+        assert!(
+            yaml.contains("previous-root-seed-key-pair"),
+            "a set previous seed must serialize under its kebab-case name: {yaml}"
+        );
+        let parsed: NodeConfig =
+            serde_yaml::from_str(&yaml).expect("a config with the previous-seed field must parse");
+        assert!(parsed.previous_root_seed_key_pair.is_some());
+    }
+
+    /// #2119 fix: an unreadable previous-seed descriptor must be a
+    /// recoverable `Err`, never the panic `root_seed()` raises. The
+    /// documented rotation ends with the operator deleting the old seed
+    /// file, so this state is reached by following the docs — and it must
+    /// not take the validator down.
+    #[test]
+    fn an_unreadable_previous_root_seed_is_an_error_not_a_panic() {
+        let descriptor = unreadable_root_seed();
+        assert_eq!(
+            descriptor.path().expect("a path descriptor names a path"),
+            std::path::Path::new("notifier-root-seed-must-not-be-read"),
+        );
+        let error = descriptor
+            .try_root_seed()
+            .expect_err("a descriptor naming a nonexistent file must not resolve");
+        assert!(
+            matches!(
+                error,
+                ika_types::dwallet_mpc_error::DwalletMPCError::FailedToReadSeed(_)
+            ),
+            "unexpected error: {error:?}"
+        );
+        // A failed read must not be cached: the cell stays empty so a
+        // restored file resolves at the next epoch without a restart.
+        assert!(
+            descriptor.try_root_seed().is_err(),
+            "a second attempt must re-read rather than serve a cached failure"
+        );
+
+        // An in-place seed resolves through the same accessor, so the
+        // fallible path is not a second, diverging implementation.
+        let inline = RootSeedWithPath::new(RootSeed::new([3u8; 32]));
+        assert_eq!(inline.path(), None, "an inline seed has no path to log");
+        assert_eq!(
+            inline
+                .try_root_seed()
+                .expect("an inline seed always resolves"),
+            &RootSeed::new([3u8; 32])
+        );
+    }
+
+    /// The whole point of fix 1: a VALIDATOR carrying an unreadable previous
+    /// seed still prepares and starts. `validate_and_prepare_config` keeps
+    /// the descriptor (a validator must keep it — it is what carries a
+    /// rotation), and nothing on this path resolves it, so no panic is
+    /// reachable before the per-epoch resolution decides to treat it as
+    /// absent.
+    #[test]
+    fn a_validator_with_an_unreadable_previous_root_seed_still_prepares() {
+        let mut config = config_for_mode(NodeMode::Validator);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Validator
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable previous seed must not block validator startup");
+        let kept = config
+            .previous_root_seed_key_pair
+            .as_ref()
+            .expect("a validator keeps its previous-seed descriptor");
+        assert!(
+            kept.try_root_seed().is_err(),
+            "the descriptor is still unreadable; the resolution is what treats it as absent"
+        );
+    }
+
+    #[test]
+    fn notifier_preparation_discards_previous_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Notifier);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Notifier
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable previous-seed path must not affect notifier initialization");
+        assert!(config.previous_root_seed_key_pair.is_none());
+    }
+
+    #[test]
+    fn fullnode_preparation_discards_previous_root_seed_without_reading_it() {
+        let mut config = config_for_mode(NodeMode::Fullnode);
+        config.previous_root_seed_key_pair = Some(unreadable_root_seed());
+
+        NodeMode::Fullnode
+            .validate_and_prepare_config(&mut config)
+            .expect("an unreadable previous-seed path must not affect fullnode initialization");
+        assert!(config.previous_root_seed_key_pair.is_none());
     }
 
     #[test]

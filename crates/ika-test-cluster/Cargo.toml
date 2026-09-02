@@ -34,6 +34,8 @@ tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
 dwallet-mpc-centralized-party.workspace = true
+# `RootSeed` construction for the seed-rotation cluster test.
+dwallet-rng.workspace = true
 ika-config.workspace = true
 ika-node = { path = "../ika-node", default-features = false }
 ika-protocol-config.workspace = true

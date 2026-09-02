@@ -46,7 +46,52 @@ pub struct ValidatorInitializationConfig {
     pub next_epoch_consensus_address: Multiaddr,
     #[serde(default = "default_stake")]
     pub stake: u64,
+    /// What to write into the DEPRECATED on-chain `mpc_data_bytes` field
+    /// at candidate registration.
+    ///
+    /// Defaults to [`OnChainMpcDataShape::RealKey`], and genesis must keep
+    /// it that way: the cross-binary upgrade rehearsals boot RELEASED
+    /// validator binaries — which still decode this field — against a
+    /// genesis produced by this code. Set it per-config on a joiner.
+    #[serde(default)]
+    pub onchain_mpc_data_shape: OnChainMpcDataShape,
 }
+
+/// What a validator writes into the deprecated on-chain `mpc_data_bytes`
+/// field (#2119). The current binary decodes that field NOWHERE, so all
+/// three shapes must behave identically; this exists so integration tests
+/// can prove it.
+///
+/// Every shape is a well-formed `VersionedMPCData` — the outer wrapper is
+/// NOT deprecated. `SuiClient::get_epoch_start_system` fails the whole
+/// epoch-start read if any active member's record does not decode as
+/// `VersionedMPCData`, so a registration that broke the wrapper would break
+/// the network rather than test anything. What varies is the INNER
+/// `mpc_data_bytes`, the part that used to be decoded as a
+/// `ClassGroupsEncryptionKeyAndProof`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OnChainMpcDataShape {
+    /// The bare class-groups key derived from the root seed. What every
+    /// validator registered with before #2119, what released binaries in
+    /// the upgrade rehearsals still expect, and what pre-#2119 validators
+    /// keep on chain forever (there is no migration).
+    #[default]
+    RealKey,
+    /// The post-#2119 placeholder: inner `mpc_data_bytes` EMPTY. Chosen
+    /// over an empty `TableVec` because a zero-chunk table reads back as
+    /// `[]`, which is not valid BCS for `VersionedMPCData`; one chunk
+    /// holding the two-byte encoding of `V1 { mpc_data_bytes: [] }` keeps
+    /// the wrapper decodable.
+    EmptyPlaceholder,
+    /// Inner bytes that are non-empty and NOT a decodable
+    /// `ClassGroupsEncryptionKeyAndProof` — the "assume anything" case: a
+    /// registration that put arbitrary content in a field nobody reads.
+    GarbageBytes,
+}
+
+/// The non-empty, undecodable inner payload [`OnChainMpcDataShape::GarbageBytes`]
+/// registers with.
+pub const GARBAGE_ONCHAIN_MPC_DATA_BYTES: &[u8] = b"ika-placeholder-mpc-data";
 
 impl ValidatorInitializationConfig {
     pub fn to_validator_info(&self) -> ValidatorInfo {
@@ -66,15 +111,23 @@ impl ValidatorInitializationConfig {
         // same shape deployed release binaries decode from chain state (the
         // cross-binary upgrade rehearsals rely on this). The richer `ValidatorEncryptionKeysAndProofs`
         // bundle (class groups + per-curve PVSS + the Fast Schnorr VSS HPKE key)
-        // travels off-chain via validator P2P; chain reads decode the bare shape.
-        let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-            mpc_data_bytes: bcs::to_bytes(
+        // travels off-chain via validator P2P.
+        //
+        // The current binary decodes this field NOWHERE (#2119) — it is kept
+        // at the real shape by default only for the released binaries the
+        // upgrade rehearsals run. The other [`OnChainMpcDataShape`] variants
+        // are what the tests that prove the field is dead register with.
+        let mpc_data_bytes = match self.onchain_mpc_data_shape {
+            OnChainMpcDataShape::RealKey => bcs::to_bytes(
                 &ValidatorMPCSecrets::from_seed(&self.root_seed)
                     .1
                     .class_groups,
             )
             .unwrap(),
-        });
+            OnChainMpcDataShape::EmptyPlaceholder => Vec::new(),
+            OnChainMpcDataShape::GarbageBytes => GARBAGE_ONCHAIN_MPC_DATA_BYTES.to_vec(),
+        };
+        let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
 
         ValidatorInfo {
             name,
@@ -219,6 +272,7 @@ impl ValidatorInitializationConfigBuilder {
             next_epoch_consensus_address,
             stake: MIN_VALIDATOR_JOINING_STAKE_INKU,
             name: None,
+            onchain_mpc_data_shape: OnChainMpcDataShape::RealKey,
         }
     }
 }

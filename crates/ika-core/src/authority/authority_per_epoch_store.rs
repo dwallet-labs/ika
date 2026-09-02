@@ -4592,17 +4592,7 @@ impl AuthorityPerEpochStore {
         // map, so every carry-forward consumer is keyed consistently. Both the
         // cert and this epoch name validators by their consensus key, so the
         // keys carry over as-is.
-        Ok(cert
-            .attestation
-            .items
-            .iter()
-            .filter_map(|(key, digest)| match key {
-                ika_types::handoff::HandoffItemKey::ValidatorMpcData { validator } => {
-                    Some((*validator, *digest))
-                }
-                _ => None,
-            })
-            .collect())
+        Ok(crate::dwallet_mpc::seed_rotation::certified_mpc_data_digests(&cert))
     }
 
     fn freeze_mpc_data_if_first(&self, output: &mut ConsensusCommitOutput) -> IkaResult {

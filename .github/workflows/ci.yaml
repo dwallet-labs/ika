@@ -262,6 +262,58 @@ jobs:
           # unlike a `[1-9][0-9]*` floor, this also catches renaming SOME of
           # the pins. Bump the number when adding one.
           grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/rpc-response-split-pins.log"
+      - name: Seed-rotation pins (#2119)
+        # Same reason as the step above: this job is otherwise compile-only,
+        # and NOTHING else on PR CI executes these crates' tests — the
+        # seed-rotation suite would ship with no PR gate at all. The exact
+        # counts are the gate: `cargo test` exits 0 when a name filter matches
+        # nothing, so a renamed test would silently disable this. Bump a number
+        # when adding a test to that filter.
+        #
+        # DEBUG PROFILE ONLY — every test named here is pure decision logic,
+        # config parsing, or a metric-registry read. The seed-rotation tests
+        # that DERIVE an mpc_data bundle are deliberately absent:
+        # `derivable_digest_set_has_exactly_the_encodings_this_binary_emits`
+        # (~1090s) and the two `seed_rotation_store` tests (~1770s together)
+        # run real class-groups derivation at opt-level 0. They execute in the
+        # release-profile suites instead — `test-cluster.yaml` and
+        # `upgrade-test.yaml` build `-p ika-core` in release — and locally via
+        # `cargo test --release -p ika-core --lib seed_rotation`.
+        run: |
+          set -o pipefail
+          # The pure resolution rule: all four outcomes, the closed state-label
+          # set the alert expression is written against, and which decisions
+          # run MPC at all.
+          cargo test -p ika-core --lib -- --exact \
+            dwallet_mpc::seed_rotation::tests::resolution_covers_current_previous_neither_and_both \
+            dwallet_mpc::seed_rotation::tests::only_the_rotation_case_runs_on_the_previous_seed \
+            dwallet_mpc::seed_rotation::tests::state_labels_are_a_closed_pinned_set \
+            dwallet_mpc::mpc_diagnostics::local_authority_malicious_reason_tests::every_reason_label_is_pre_materialized \
+            epoch_tasks::mpc_data_announcement_sender::tests::seed_identity_reports_a_frozen_mismatch_over_the_announcement \
+            epoch_tasks::mpc_data_announcement_sender::tests::an_unreadable_previous_seed_reaches_the_sender_as_none \
+            | tee "$RUNNER_TEMP/seed-rotation-core-pins.log"
+          grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/seed-rotation-core-pins.log"
+          # The optional previous-seed config field: accepted absent (every
+          # deployed validator config), parsed present, discarded unread by
+          # non-validator preparation, and — the one that must never regress —
+          # unreadable is an error rather than a panic.
+          cargo test -p ika-config --lib -- --exact \
+            node::tests::validator_config_without_a_previous_root_seed_is_accepted \
+            node::tests::validator_config_with_a_previous_root_seed_round_trips \
+            node::tests::notifier_preparation_discards_previous_root_seed_without_reading_it \
+            node::tests::fullnode_preparation_discards_previous_root_seed_without_reading_it \
+            node::tests::an_unreadable_previous_root_seed_is_an_error_not_a_panic \
+            node::tests::a_validator_with_an_unreadable_previous_root_seed_still_prepares \
+            | tee "$RUNNER_TEMP/seed-rotation-config-pins.log"
+          grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/seed-rotation-config-pins.log"
+          # The exported-metric-family set: catches both a family that stops
+          # being exported (`ika_dwallet_mpc_seed_identity_state`, whose alert
+          # would go silent; `ika_dwallet_mpc_self_malicious_total`, whose
+          # zero would stop meaning anything) and one added unnoticed.
+          cargo test -p ika-node --lib -- --exact \
+            metrics::per_mode_registration::a_validator_exports_every_family \
+            | tee "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
       - name: Deprecated on-chain mpc_data placeholder pins
         # What a candidate registers in the deprecated on-chain
         # `mpc_data_bytes` field is a byte-format contract (#2119): exactly

@@ -15,6 +15,7 @@ use ika_config::node::{
     default_end_of_epoch_broadcast_channel_capacity,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 use sui_types::base_types::ObjectID;
 
 use ika_config::p2p::{P2pConfig, SeedPeer, StateSyncConfig};
@@ -62,6 +63,11 @@ pub struct ValidatorConfigBuilder {
     /// dir (`file://…`) gives the pusher the same verified fallback the
     /// public chains get from their public checkpoint stores.
     sui_checkpoint_archive_url: Option<String>,
+    /// Override for `NodeConfig.withhold_handoff_anchor_for_testing` — makes
+    /// this validator's prepare-then-start barrier report the epoch's handoff
+    /// certificate as unobtainable for the given duration, so a test can prove
+    /// the validator declines to start its epoch components without it.
+    withhold_handoff_anchor_for_testing: Option<Duration>,
 }
 
 impl ValidatorConfigBuilder {
@@ -129,6 +135,14 @@ impl ValidatorConfigBuilder {
         self
     }
 
+    /// TESTS ONLY: hold this validator's handoff anchor back for `withhold`
+    /// after it enters the prepare-then-start barrier. See
+    /// `NodeConfig::withhold_handoff_anchor_for_testing`.
+    pub fn with_withhold_handoff_anchor_for_testing(mut self, withhold: Duration) -> Self {
+        self.withhold_handoff_anchor_for_testing = Some(withhold);
+        self
+    }
+
     pub fn build(
         self,
         validator: &ValidatorInitializationConfig,
@@ -179,6 +193,9 @@ impl ValidatorConfigBuilder {
         };
         NodeConfig {
             root_seed_key_pair: Some(RootSeedWithPath::new(validator.root_seed.clone())),
+            // Swarm validators never start mid-rotation; the cluster test that
+            // exercises rotation sets this explicitly after the config is built.
+            previous_root_seed_key_pair: None,
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator.key_pair.copy()),
             network_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(
                 validator.network_key_pair.copy(),
@@ -258,6 +275,7 @@ impl ValidatorConfigBuilder {
             authority_db_retention_epochs: None,
             authority_db_pruner_period_secs: None,
             max_mpc_computation_cores: self.max_mpc_computation_cores,
+            withhold_handoff_anchor_for_testing: self.withhold_handoff_anchor_for_testing,
         }
     }
 
@@ -440,6 +458,7 @@ impl FullnodeConfigBuilder {
 
         NodeConfig {
             root_seed_key_pair: None,
+            previous_root_seed_key_pair: None,
             protocol_key_pair: AuthorityKeyPairWithPath::new(validator_config.key_pair),
             account_key_pair: KeyPairWithPath::new(validator_config.account_key_pair),
             consensus_key_pair: KeyPairWithPath::new(SuiKeyPair::Ed25519(
@@ -510,6 +529,7 @@ impl FullnodeConfigBuilder {
             authority_db_pruner_period_secs: None,
             // Fullnodes/notifiers don't run validator MPC computations.
             max_mpc_computation_cores: None,
+            withhold_handoff_anchor_for_testing: None,
         }
     }
 }

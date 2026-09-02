@@ -293,4 +293,50 @@ ika validator set-next-epoch-mpc-data
 
 Generates a new `root-seed.key` in the current directory. This command does not submit a Sui transaction — there is no on-chain MPC-data rotation, and the on-chain `mpc_data_bytes` field is deprecated ([ika#2119](https://github.com/dwallet-labs/ika/issues/2119)). Install the new file at the validator's configured root-seed path and restart the validator; the node derives and announces its MPC data through consensus and P2P.
 
-It refuses to run if `root-seed.key` already exists in the current directory. A root seed cannot be recovered once replaced, so move the old file aside deliberately if you really intend to rotate.
+It refuses to run if `root-seed.key` already exists in the current directory. A root seed cannot be recovered once replaced, so move the old file aside deliberately if you really intend to rotate. To rotate a running validator without a gap in participation, follow *Rotating the root seed* below.
+
+#### Rotating the root seed
+
+Every MPC key the validator holds is derived from its root seed, and the network deals a validator's shares of each epoch's key material to the bundle it announced *in the previous epoch*. So the epoch you restart into still expects the OLD seed, whichever moment you restart in. Rotating at an epoch boundary does not avoid this — the boundary is exactly where the record that expects the old seed is written.
+
+Keep participating through the rotation by telling the node which seed it was running:
+
+1. Generate the new seed in an empty directory (the command refuses to overwrite an existing `root-seed.key`), then install it at the validator's configured `root-seed-key-pair` path. Keep the old file — do not delete it yet.
+2. Add `previous-root-seed-key-pair` to the node config, pointing at the OLD seed file. It takes exactly the same form as `root-seed-key-pair`.
+3. Restart the validator.
+
+The node then runs the current epoch's MPC on the previous seed (the one the network dealt its shares to) while announcing the new seed's bundle, so the next reconfiguration deals the following epoch's shares to the new key. There is no gap in participation.
+
+Once the rotation has landed the node logs, at `WARN`:
+
+```
+seed rotation COMPLETE — the certificate now names the current root seed's mpc_data bundle. Remove `previous-root-seed-key-pair` from the node config
+```
+
+Then, **in this order**:
+
+1. Remove `previous-root-seed-key-pair` from the node config.
+2. Restart the validator.
+3. Only now delete the old seed file.
+
+Nothing breaks if you leave the field in place — the node keeps resolving onto the current seed — but every epoch then re-derives the old seed's bundle, on the boot path, for a comparison that can no longer match; and a *later* rotation that swaps only `root-seed-key-pair` would leave this field pointing two seeds back, which is the `previous_seed_mismatch` state below. The same state is on the metric `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}`.
+
+Deleting the file first is not fatal — a `previous-root-seed-key-pair` that names a file the node cannot read is treated exactly as if the field were absent, with a `WARN` naming the path and the read error. If the rotation had already completed (the usual case when you are tidying up) that changes nothing at all. If a rotation were still in flight, the validator would fall into the sit-out state below instead: visible on the metric and in the log, and self-healing at the next boundary — never a boot failure.
+
+#### Rotating without the previous-seed field
+
+The field is optional. If you rotate without it, the validator still starts and still runs consensus, checkpoints and every other duty — but it takes **no part in MPC for the rest of the current epoch**, because it cannot decrypt shares that were dealt to a key it no longer holds. It announces the new seed as usual, so it rejoins MPC by itself at the next epoch boundary.
+
+While it is in that state it logs once at `ERROR` (naming the digests involved) and exports:
+
+```
+ika_dwallet_mpc_seed_identity_state{state="awaiting_certification"} 1
+```
+
+To rejoin the **current** epoch instead of waiting for the boundary, set `previous-root-seed-key-pair` to the seed that is currently certified — the one you rotated away from — and restart. The resolution runs at every start, so the repair takes effect immediately.
+
+The field name is exactly `previous-root-seed-key-pair`, and it takes the same form as `root-seed-key-pair`. A misspelling is **silently ignored** — the node config deliberately does not reject unknown keys, because a hard parse failure on a fleet upgrade is worse than a typo. The tell is in the same `ERROR` line: it prints `previous = "not configured"` whenever the node saw no usable previous seed, whether the field was absent, misspelled, or unreadable.
+
+#### One rotation per epoch
+
+Rotate at most once per epoch. A second rotation before the first has been certified leaves neither the current nor the previous seed matching what the network expects, and the validator sits out MPC (state `previous_seed_mismatch`) until the certificate catches up — at most one extra epoch, since it keeps announcing the current seed throughout. The same state covers a wrong seed restored from a backup; the repair is identical: point `previous-root-seed-key-pair` at the certified seed, or restore that seed as `root-seed-key-pair`, and restart.
