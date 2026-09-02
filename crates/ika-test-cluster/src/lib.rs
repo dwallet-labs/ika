@@ -1184,12 +1184,6 @@ pub struct IkaTestClusterBuilder {
     /// default (mirrored validators get the direct validators' peer ids
     /// pinned).
     automatic_mirror_peers: bool,
-    /// TESTS ONLY: every validator's prepare-then-start barrier reports the
-    /// epoch's handoff certificate as unobtainable for this long after it
-    /// enters the barrier. Used to prove that entering epoch 0 at genesis
-    /// skips the barrier entirely — there is no predecessor epoch to be
-    /// handed off from — while a later boundary honours the withhold.
-    withhold_handoff_anchor: Option<Duration>,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1248,7 +1242,6 @@ impl IkaTestClusterBuilder {
             sui_state_direct_count: None,
             peer_only_mirrored: false,
             automatic_mirror_peers: false,
-            withhold_handoff_anchor: None,
         }
     }
 
@@ -1325,14 +1318,6 @@ impl IkaTestClusterBuilder {
     /// version (e.g. v4) supported by `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     pub fn with_protocol_version(mut self, protocol_version: ProtocolVersion) -> Self {
         self.protocol_version = Some(protocol_version);
-        self
-    }
-
-    /// TESTS ONLY: hold every validator's handoff anchor back for `withhold`
-    /// after it enters the prepare-then-start barrier. See
-    /// `NodeConfig::withhold_handoff_anchor_for_testing`.
-    pub fn with_withhold_handoff_anchor(mut self, withhold: Duration) -> Self {
-        self.withhold_handoff_anchor = Some(withhold);
         self
     }
 
@@ -1584,9 +1569,6 @@ impl IkaTestClusterBuilder {
                     .with_supported_protocol_versions(supported_versions);
                 if let Some(path) = &ocs_sui_genesis_path {
                     builder = builder.with_sui_genesis(path.clone());
-                }
-                if let Some(withhold) = self.withhold_handoff_anchor {
-                    builder = builder.with_withhold_handoff_anchor_for_testing(withhold);
                 }
                 // Validators at index >= direct_count read through the relay.
                 if let Some(direct_count) = direct_count

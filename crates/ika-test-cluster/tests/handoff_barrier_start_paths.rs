@@ -23,12 +23,15 @@
 //!   This is the node with the strongest claim on the barrier: it computed
 //!   none of the epoch's outputs itself, so it starts holding nothing.
 //!
-//! - `test_genesis_boot_does_not_wait_for_handoff_data`: entering epoch 0 has
-//!   no predecessor epoch to be handed off from, so the barrier is skipped
-//!   there. Every validator boots with the anchor held back for ten minutes
-//!   and the cluster still comes up.
+//! - `test_boot_without_a_predecessor_epoch_does_not_wait`: a network whose
+//!   validators come up for the first time already at epoch 1 has no epoch-0
+//!   committee and no epoch-0 certificate — the anchor cannot exist. The
+//!   barrier must read that off the chain and enter anyway rather than wait
+//!   for something that will never arrive, which would keep the whole
+//!   committee from starting.
 //!
-//! The hold-back is `NodeConfig::withhold_handoff_anchor_for_testing`: for
+//! The hold-back the first two use is
+//! `NodeConfig::withhold_handoff_anchor_for_testing`: for
 //! that long after the barrier is entered, the barrier reports the anchor as
 //! not obtainable and fetches nothing — the same benign propagation-lag
 //! outcome it already retries on. It suppresses only the ACQUISITION of the
@@ -286,44 +289,51 @@ async fn test_promoted_joiner_waits_for_handoff_data() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_genesis_boot_does_not_wait_for_handoff_data() {
+async fn test_boot_without_a_predecessor_epoch_does_not_wait() {
     telemetry_subscribers::init_for_testing();
 
-    // Entering epoch 0 has no predecessor epoch to be handed off from — the
-    // chain-true no-cert genesis epoch — so the boot barrier is skipped
-    // there. Every validator is configured to hold its anchor back for ten
-    // minutes: if the skip were missing, boot would block in the barrier for
-    // the whole window (with nothing to anchor on even after it, since no
-    // epoch precedes 0) and the cluster would never come up.
+    // A network's validators come up for the first time already at epoch 1:
+    // the on-chain initialization advances the system before any validator
+    // process exists. So epoch 0 never ran off-chain, minted no handoff
+    // certificate, and never will — the barrier's anchor for the epoch these
+    // validators are entering does not and cannot exist.
+    //
+    // The barrier has to read that off the chain (`validator_set
+    // .previous_committee` empty while the on-chain epoch matches) and enter
+    // anyway. Treating it as a failed read instead blocks the barrier on
+    // something that can never arrive, and — because the boot barrier runs
+    // inside node startup — every validator fails to start. That is not
+    // hypothetical: it is what the `restart_spectator` upgrade-test scenario
+    // caught on this branch, with the whole committee refusing to boot.
+    //
+    // The assertion is that the barrier did not spin AT ALL. A cluster that
+    // boots is necessary but not sufficient — the counters are what say the
+    // barrier answered immediately rather than waiting something out.
     let cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        // Long enough that the first boundary — where the barrier legitimately
-        // engages and WOULD honour the hold-back — cannot fire while the
-        // genesis-boot assertions below run.
         .with_epoch_duration_ms(600_000)
-        .with_withhold_handoff_anchor(Duration::from_secs(600))
         .build()
         .await
-        .expect("ika test cluster failed to boot at genesis with the handoff anchor withheld");
+        .expect(
+            "the cluster must boot when the epoch being entered has no predecessor epoch to be \
+             handed off from",
+        );
 
     for name in &cluster.validator_names {
         let handle = node_handle(&cluster, name);
         assert_eq!(
-            handle.with(|node| node.current_epoch_for_testing()),
-            0,
-            "the cluster left the genesis epoch before the genesis-skip assertions ran",
-        );
-        assert_eq!(
             barrier_waiting(&handle),
             0.0,
-            "a validator booting into the genesis epoch is blocked in the prepare-then-start \
-             barrier — epoch 0 has no predecessor to be handed off from and must skip it",
+            "a validator entering an epoch with no predecessor is blocked in the \
+             prepare-then-start barrier, waiting for a handoff certificate that no epoch \
+             could have produced",
         );
         assert_eq!(
             barrier_retries(&handle),
             0.0,
-            "a validator booting into the genesis epoch spent barrier retries waiting for a \
-             handoff certificate that no epoch could have produced",
+            "a validator entering an epoch with no predecessor spent barrier retries before \
+             starting — the chain says outright that no committee preceded this epoch, so the \
+             barrier had nothing to wait for and should not have polled once",
         );
     }
 }
