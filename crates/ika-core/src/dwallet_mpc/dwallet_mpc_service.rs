@@ -951,11 +951,16 @@ impl DWalletMPCService {
         } else {
             // The MPC-inactive epoch still owes the network its NON-MPC
             // traffic, and `send_status_update_to_consensus` is what flushes
-            // it (idle status, NOA checkpoint messages and observations). It
-            // is normally reached through `process_cryptographic_computations`
-            // — which is skipped here precisely because it is the only
-            // producer of MPC messages and outputs. `is_idle = true` is the
-            // truth: nothing is computing.
+            // it (the NOA checkpoint messages and observations that carry this
+            // validator's finalize/fail votes). It is normally reached through
+            // `process_cryptographic_computations` — skipped here precisely
+            // because that is the only producer of MPC messages and outputs.
+            //
+            // The `is_idle` argument is IGNORED while inactive: the idle vote
+            // is stake-weighted and network-wide, so this state abstains from
+            // it entirely rather than voting either way (see
+            // `send_status_update_to_consensus`). `true` is passed only
+            // because the signature demands a value.
             self.send_status_update_to_consensus(true).await;
         }
         self.handle_noa_sign_outputs().await;
@@ -1239,8 +1244,7 @@ impl DWalletMPCService {
         // network would serve to a validator that cannot use the answer, and
         // "no MPC traffic at all" is the property that makes this state
         // indistinguishable from an absent member. What it still owes — the
-        // idle status the network's idleness accounting reads, and the NOA
-        // checkpoint observations carrying this validator's finalize/fail
+        // NOA checkpoint observations carrying this validator's finalize/fail
         // votes — is NOT MPC traffic and keeps flowing.
         let unsent_presign_requests = if self.mpc_active {
             self.dwallet_mpc_manager.get_unsent_presign_requests()
@@ -1255,7 +1259,19 @@ impl DWalletMPCService {
 
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
-        let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
+        // An MPC-INACTIVE epoch ABSTAINS from the idle vote rather than voting
+        // either way. `is_idle` is not a local diagnostic: peers accumulate it
+        // in `idle_status_by_party` and take a STAKE-WEIGHTED MAJORITY
+        // (`compute_idle_status_majority_vote`) that gates how much internal
+        // presign work the network generates. Voting "idle" would contribute
+        // this validator's stake to "there is spare capacity" — capacity it
+        // will not contribute, since it computes nothing this epoch — and
+        // voting "busy" would hold the network out of idle mode over work it
+        // is not doing. A member that is simply not there sends no update at
+        // all and is absent from the tally, which is exactly the profile this
+        // state targets. `last_sent_idle_status` is left untouched so the
+        // first update after the node rejoins is sent normally.
+        let idle_status_changed = self.mpc_active && self.last_sent_idle_status != Some(is_idle);
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
         let has_noa_presign_demands =

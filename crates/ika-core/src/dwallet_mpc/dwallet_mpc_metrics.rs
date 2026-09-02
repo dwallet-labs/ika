@@ -1092,6 +1092,26 @@ impl DWalletMPCMetrics {
         }
     }
 
+    /// Zeroes every `ika_dwallet_mpc_seed_identity_state` child.
+    ///
+    /// The gauge is a one-hot SET once per epoch from the per-epoch validator
+    /// start, and nothing else ever writes it — so a node that leaves the
+    /// committee would keep exporting its last state for the life of the
+    /// process. If that state were `awaiting_certification`, the alert built
+    /// on it would fire forever against a node that is no longer a validator
+    /// and no longer has an epoch to participate in. Called on the
+    /// reconfiguration path that produces no validator components.
+    ///
+    /// Zero on every child rather than removing them: the series must keep
+    /// existing so "healthy" stays distinguishable from "not scraped".
+    pub fn clear_seed_identity_state(&self) {
+        for declared in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
+            self.seed_identity_state
+                .with_label_values(&[declared])
+                .set(0);
+        }
+    }
+
     /// Clears every per-session-sequence-number series. Called at
     /// `DWalletMPCManager` construction: the manager (and its
     /// `previously_emitted_user_session_seqs` diff set) is per-epoch, so the

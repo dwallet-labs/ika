@@ -3564,7 +3564,24 @@ impl IkaNode {
                     None
                 }
             };
-            *self.validator_components.lock().await = new_validator_components;
+            {
+                let mut components = self.validator_components.lock().await;
+                // Leaving the committee (or never in it): zero the
+                // seed-identity state gauge. It is a one-hot SET once per
+                // epoch from the per-epoch validator start and written
+                // nowhere else, so without this a departing validator keeps
+                // exporting its last state for the life of the process — and
+                // an `awaiting_certification == 1` alert would fire forever
+                // against a node that no longer has an epoch to participate
+                // in. The children stay present at 0 so "healthy" remains
+                // distinguishable from "not scraped".
+                if new_validator_components.is_none()
+                    && let Some(outgoing) = components.as_ref()
+                {
+                    outgoing.dwallet_mpc_metrics.clear_seed_identity_state();
+                }
+                *components = new_validator_components;
+            }
             // Force releasing the current epoch store DB handle, because the
             // Arc<AuthorityPerEpochStore> may linger.
             cur_epoch_store.release_db_handles();
