@@ -294,7 +294,7 @@ Once the rotation has landed the node logs, at `WARN`:
 seed rotation COMPLETE — the certificate now names the current root seed's mpc_data bundle. Remove `previous-root-seed-key-pair` from the node config
 ```
 
-Remove the field (a restart is not required for correctness — the field is simply no longer read) and delete the old seed file. The same state is on the metric `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}`.
+Remove the field at the next convenient restart, and delete the old seed file. Nothing breaks if you leave it — the node keeps resolving onto the current seed — but every epoch then re-derives the old seed's bundle, on the boot path, for a comparison that can no longer match; and a *later* rotation that swaps only `root-seed-key-pair` would leave this field pointing two seeds back, which is the `previous_seed_mismatch` state below. The same state is on the metric `ika_dwallet_mpc_seed_identity_state{state="rotation_complete"}`.
 
 #### Rotating without the previous-seed field
 

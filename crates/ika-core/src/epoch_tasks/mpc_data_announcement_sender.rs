@@ -690,6 +690,15 @@ impl MpcDataAnnouncementSender {
     /// configured, or when its derivation failed (which is reported and then
     /// treated as "no previous seed" — a derivation fault must not silence
     /// the invariant violation it would otherwise suppress).
+    ///
+    /// This is a multi-second blocking derivation on the sender's task,
+    /// deliberately: it happens at most once per epoch, and only on a
+    /// validator that BOTH configured a previous seed and found the frozen
+    /// digest disagreeing with its current one — i.e. only during a rotation
+    /// that landed after the freeze. It is the same shape as the derivation
+    /// `cached_or_build_announcement` already does on this task every epoch,
+    /// and it runs strictly after the announcement has been submitted, so it
+    /// cannot delay the thing the epoch depends on.
     fn previous_seed_digests(&self) -> Option<DerivableDigests> {
         let previous_root_seed = self.previous_root_seed.as_ref()?;
         let mut cached = self.previous_seed_digests.lock().expect("mutex poisoned");

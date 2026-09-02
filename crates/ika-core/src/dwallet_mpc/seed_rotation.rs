@@ -383,8 +383,11 @@ impl EpochSeedResolution {
                     %previous,
                     "seed rotation COMPLETE — the certificate now names the current \
                      root seed's mpc_data bundle. Remove `previous-root-seed-key-pair` \
-                     from the node config (it is no longer read) and delete the old \
-                     seed file at your convenience."
+                     from the node config at the next convenient restart, and delete \
+                     the old seed file. Nothing breaks if it stays, but every epoch \
+                     re-derives that seed's bundle on the boot path for a comparison \
+                     that can no longer match, and a later rotation that swaps only \
+                     the current seed would leave this field pointing two seeds back."
                 );
             }
             EpochSeedDecision::NoCertifiedDigest { .. } => {
