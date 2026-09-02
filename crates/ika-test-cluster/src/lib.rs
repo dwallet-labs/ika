@@ -47,6 +47,7 @@ use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, Sessi
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::time::Duration;
 use sui_keys::key_derive::generate_new_key;
 use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
 use sui_swarm_config::network_config_builder::ConfigBuilder;
@@ -234,7 +235,7 @@ impl IkaTestCluster {
     /// boundary (the same lifecycle the bootstrap path drives for the
     /// initial set). Caller is responsible for `wait_for_epoch` after.
     pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
-        self.add_joiner_validator_inner(OnChainMpcDataShape::RealKey)
+        self.add_joiner_validator_inner(OnChainMpcDataShape::RealKey, None)
             .await
     }
 
@@ -250,12 +251,30 @@ impl IkaTestCluster {
         &mut self,
         shape: OnChainMpcDataShape,
     ) -> Result<JoinerHandle> {
-        self.add_joiner_validator_inner(shape).await
+        self.add_joiner_validator_inner(shape, None).await
     }
 
+    /// Like [`Self::add_joiner_validator`], but the joiner's
+    /// prepare-then-start barrier reports the epoch's handoff certificate as
+    /// unobtainable for `withhold` after it enters the barrier — so a test can
+    /// prove a node promoted from fullnode to validator declines to start its
+    /// epoch components until its handoff data is actually there.
+    pub async fn add_joiner_validator_withholding_handoff_anchor(
+        &mut self,
+        withhold: Option<Duration>,
+    ) -> Result<JoinerHandle> {
+        self.add_joiner_validator_inner(OnChainMpcDataShape::RealKey, withhold)
+            .await
+    }
+
+    /// The one joiner-spawn body. Both knobs above are orthogonal — the
+    /// on-chain registration SHAPE (#2119) and the handoff-anchor WITHHOLD
+    /// (#2123) — so each public wrapper passes the other's default rather
+    /// than the two paths being duplicated.
     async fn add_joiner_validator_inner(
         &mut self,
         onchain_mpc_data_shape: OnChainMpcDataShape,
+        withhold: Option<Duration>,
     ) -> Result<JoinerHandle> {
         // The joiner's ports are probed when the initialization config is
         // built here, but only bound by `spawn_new_node` after the whole
@@ -357,6 +376,9 @@ impl IkaTestCluster {
         let mut joiner_builder = ValidatorConfigBuilder::new();
         if let Some(path) = &self.ocs_sui_genesis_path {
             joiner_builder = joiner_builder.with_sui_genesis(path.clone());
+        }
+        if let Some(withhold) = withhold {
+            joiner_builder = joiner_builder.with_withhold_handoff_anchor_for_testing(withhold);
         }
         let validator_config = joiner_builder.build(
             &joiner_init,

@@ -139,6 +139,16 @@ the next epoch via the fallback and signing works — validated per
 
 ## Item 2 — barrier on ALL consensus-start paths
 
+> **DONE.** The barrier now runs on the fullnode→validator promotion and
+> process-startup paths as well as the reconfigure seam; `specs/handoff.md`
+> describes the shipped behavior (the three paths, the generalized inputs,
+> the genesis and unmapped-key carve-outs). It landed WITHOUT item 1, so the
+> ordering note at the end of this item stands as an accepted risk rather
+> than a satisfied prerequisite: the indefinite block now applies to a
+> restarting or joining validator too. Items 1 and 3 remain deferred, item 1
+> still subject to the re-derivation the banner at the top of this file
+> demands.
+
 **Problem.** `wait_for_handoff_data_ready` runs only on the
 continuing-validator reconfigure path (lib.rs:2816). Two consensus-start
 paths skip it:
