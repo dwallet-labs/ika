@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::metrics::SuiClientMetrics;
+use crate::metrics::{SuiClientMetrics, SuiResponseErrorKind};
 use crate::rate_limit::RateLimitGate;
 use async_trait::async_trait;
 use core::panic;
@@ -413,10 +413,12 @@ where
                     .iter()
                     .map(|v| {
                         bcs::from_bytes::<StakingPool>(v).map_err(|e| {
-                            self.sui_client_metrics
-                                .sui_rpc_errors
-                                .with_label_values(&["get_epoch_start_system"])
-                                .inc();
+                            // The RPC answered; the bytes it answered with are
+                            // what is wrong. Not an uplink failure.
+                            self.sui_client_metrics.record_response_error(
+                                "get_epoch_start_system",
+                                SuiResponseErrorKind::Decode,
+                            );
                             IkaError::SuiClientSerializationError(format!(
                                 "Can't serialize StakingPool: {e}"
                             ))
@@ -448,10 +450,10 @@ where
                             .iter()
                             .find(|v| v.id == m.validator_id)
                             .ok_or_else(|| {
-                                self.sui_client_metrics
-                                    .sui_rpc_errors
-                                    .with_label_values(&["get_epoch_start_system"])
-                                    .inc();
+                                self.sui_client_metrics.record_response_error(
+                                    "get_epoch_start_system",
+                                    SuiResponseErrorKind::NotFound,
+                                );
                                 IkaError::InvalidCommittee(format!(
                                     "Validator with ID {} not found in the active committee",
                                     m.validator_id
@@ -461,10 +463,10 @@ where
                         // chain, so parsing them can fail. Fail the read and
                         // let it be retried.
                         let info = validator.verified_validator_info().map_err(|code| {
-                            self.sui_client_metrics
-                                .sui_rpc_errors
-                                .with_label_values(&["epoch_start_invalid_validator_info"])
-                                .inc();
+                            self.sui_client_metrics.record_response_error(
+                                "get_epoch_start_system",
+                                SuiResponseErrorKind::ValidatorInfoParse,
+                            );
                             IkaError::InvalidCommittee(format!(
                                 "validator {} has unparsable on-chain metadata (Move error code {code})",
                                 validator.id
@@ -481,10 +483,10 @@ where
                         // rebuilt on every restart. Fail the whole read instead;
                         // `must_get_epoch_start_system` retries until it completes.
                         let Some(mpc_data) = validators_mpc_data.get(&validator.id) else {
-                            self.sui_client_metrics
-                                .sui_rpc_errors
-                                .with_label_values(&["epoch_start_missing_mpc_data"])
-                                .inc();
+                            self.sui_client_metrics.record_response_error(
+                                "get_epoch_start_system",
+                                SuiResponseErrorKind::MissingField,
+                            );
                             ika_types::report_invariant_violation!(
                                 "epoch_start_mpc_data_missing",
                                 validator_id = ?validator.id,
@@ -509,10 +511,10 @@ where
                         // per-signature check would disagree with the on-chain
                         // aggregate check for a full epoch.
                         let protocol_pubkey = m.parsed_protocol_pubkey().map_err(|e| {
-                            self.sui_client_metrics
-                                .sui_rpc_errors
-                                .with_label_values(&["epoch_start_invalid_committee_pubkey"])
-                                .inc();
+                            self.sui_client_metrics.record_response_error(
+                                "get_epoch_start_system",
+                                SuiResponseErrorKind::InvalidCommitteePubkeyParse,
+                            );
                             IkaError::InvalidCommittee(format!(
                                 "active committee member {} has an unparsable BLS protocol \
                                  public key: {e}",
@@ -606,10 +608,12 @@ where
             .iter()
             .map(|v| {
                 bcs::from_bytes::<StakingPool>(v).map_err(|e| {
-                    self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["get_validators_info_by_ids"])
-                        .inc();
+                    // `get_validators` above succeeded — the fetch is fine and
+                    // the bytes are not.
+                    self.sui_client_metrics.record_response_error(
+                        "get_validators_info_by_ids",
+                        SuiResponseErrorKind::Decode,
+                    );
                     IkaError::SuiClientSerializationError(format!(
                         "failed to de-serialize Validator info: {e}"
                     ))
@@ -787,9 +791,7 @@ where
                 Ok(Ok(ika_system_state)) => return ika_system_state,
                 Ok(Err(err)) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_system_inner_object"])
-                        .inc();
+                        .record_read_error("must_get_system_inner_object", &err);
                     warn!(
                         error=?err,
                         "Received error from `get_system_inner()`. Retrying...",
@@ -797,9 +799,7 @@ where
                 }
                 Err(err) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_system_inner_object"])
-                        .inc();
+                        .record_read_error("must_get_system_inner_object", &err);
                     warn!(
                         error=?err,
                         system_object_id=%self.ika_network_config.objects.ika_system_object_id,
@@ -866,9 +866,7 @@ where
                 Ok(Ok(ika_system_state)) => return ika_system_state,
                 Ok(Err(err)) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_dwallet_coordinator_inner"])
-                        .inc();
+                        .record_read_error("must_get_dwallet_coordinator_inner", &err);
                     warn!(
                         error=?err,
                         "Received error from `get_dwallet_coordinator_inner()`. Retrying...",
@@ -876,9 +874,7 @@ where
                 }
                 Err(err) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_dwallet_coordinator_inner"])
-                        .inc();
+                        .record_read_error("must_get_dwallet_coordinator_inner", &err);
                     warn!(
                         error=?err,
                         system_object_id=%self.ika_network_config.objects.ika_system_object_id,
@@ -901,9 +897,7 @@ where
                 Ok(Ok(ika_system_state)) => return ika_system_state,
                 Ok(Err(err)) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_epoch_start_system"])
-                        .inc();
+                        .record_read_error("must_get_epoch_start_system", &err);
                     warn!(
                         error=?err,
                         "Received error from `get_epoch_start_system()`. Retrying...",
@@ -911,9 +905,7 @@ where
                 }
                 Err(err) => {
                     self.sui_client_metrics
-                        .sui_rpc_errors
-                        .with_label_values(&["must_get_epoch_start_system"])
-                        .inc();
+                        .record_read_error("must_get_epoch_start_system", &err);
                     warn!(
                         error=?err,
                         "Received error from `get_epoch_start_system` retry wrapper. Retrying...",
@@ -1096,6 +1088,300 @@ mod pending_active_set_tests {
                 "0x35e3903f1cb93fde2005ee4983091879bfa21c193ba5ac7cf112bb0c7b77021f",
                 "0xa183df56e91f88e839d8da3ca3c83a42a70c3897dfe8af7545c37875c09d5b99",
             ]
+        );
+    }
+}
+
+/// The split between `ika_sui_client_sui_rpc_errors` (Sui did not answer) and
+/// `ika_sui_client_sui_response_errors_total` (Sui answered, the answer was
+/// unusable). The fleet alerts on the former, so a decoding or data defect
+/// landing there reads as an operator's fullnode outage.
+#[cfg(test)]
+mod rpc_vs_response_error_tests {
+    use super::*;
+    use prometheus::core::Collector;
+
+    /// A backend whose only live method is `get_validators`, set to either
+    /// fail at the transport or answer with bytes that are not a
+    /// `StakingPool`. Every other method is unreachable from the two reads
+    /// under test.
+    struct ValidatorsStub {
+        /// `Ok` — the RPC answered with these per-validator BCS blobs;
+        /// `Err` — it never answered.
+        validators: Result<Vec<Vec<u8>>, ()>,
+    }
+
+    impl ValidatorsStub {
+        fn client(validators: Result<Vec<Vec<u8>>, ()>) -> SuiClient<Self> {
+            SuiClient::new_for_testing(Self { validators })
+        }
+    }
+
+    #[async_trait]
+    impl SuiClientInner for ValidatorsStub {
+        type Error = std::io::Error;
+
+        async fn get_validators(
+            &self,
+            _validator_ids: Vec<ObjectID>,
+        ) -> Result<Vec<Vec<u8>>, Self::Error> {
+            self.validators.clone().map_err(|()| {
+                std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "sui rpc unreachable")
+            })
+        }
+
+        async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_sui_epoch(&self) -> Result<u64, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_sui_chain_identifier(&self) -> Result<SuiNetworkChainIdentifier, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_sui_funds(
+            &self,
+            _address: SuiAddress,
+        ) -> Result<SuiFundsBreakdown, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_latest_checkpoint_sequence_number(&self) -> Result<u64, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_system(&self, _id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_extended_field_value_bcs(
+            &self,
+            _ef_id: ObjectID,
+        ) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_clock(&self, _clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_dwallet_coordinator(&self, _id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_mpc_data_from_validators_pool(
+            &self,
+            _validators: &Vec<StakingPool>,
+            _read_next_epoch_mpc_data: bool,
+        ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_network_encryption_keys(
+            &self,
+            _dwallet_coordinator_inner: &DWalletCoordinatorInnerV1,
+        ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_network_encryption_key_with_full_data_by_epoch(
+            &self,
+            _network_decryption_key: &DWalletNetworkEncryptionKey,
+            _epoch: EpochId,
+        ) -> Result<DWalletNetworkEncryptionKeyData, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_current_reconfiguration_public_output(
+            &self,
+            _epoch_id: EpochId,
+            _table_id: ObjectID,
+        ) -> Result<ObjectID, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn read_table_vec_as_raw_bytes(
+            &self,
+            _table_id: ObjectID,
+        ) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_system_inner(
+            &self,
+            _id: ObjectID,
+            _version: u64,
+        ) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_dwallet_coordinator_inner(
+            &self,
+            _id: ObjectID,
+            _version: u64,
+        ) -> Result<Vec<u8>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_validator_inners(
+            &self,
+            _validators: Vec<Validator>,
+        ) -> Result<Vec<Vec<u8>>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_mutable_shared_arg(&self, _id: ObjectID) -> Result<ObjectArg, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_shared_arg(&self, _obj_id: ObjectID) -> Result<ObjectArg, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn get_available_move_packages(
+            &self,
+            _ika_package_id: ObjectID,
+            _ika_system_package_id: ObjectID,
+        ) -> Result<Vec<(ObjectID, MovePackageDigest)>, Self::Error> {
+            unimplemented!("not exercised")
+        }
+        async fn execute_transaction_block_with_effects(
+            &self,
+            _tx: Transaction,
+        ) -> Result<SubmittedTransaction, IkaError> {
+            unimplemented!("not exercised")
+        }
+        async fn get_gas_objects(&self, _address: SuiAddress) -> Vec<ObjectRef> {
+            unimplemented!("not exercised")
+        }
+    }
+
+    /// Every child of `vec` summed — "this family recorded nothing at all",
+    /// which is the assertion that matters here and which a per-label read
+    /// cannot make.
+    fn family_total(vec: &prometheus::IntCounterVec) -> u64 {
+        vec.collect()
+            .iter()
+            .flat_map(|family| family.get_metric())
+            .map(|metric| metric.get_counter().value() as u64)
+            .sum()
+    }
+
+    /// `get_validators` answers; the bytes it answers with are 4 long, and a
+    /// `StakingPool` opens with a 32-byte `UID`. The uplink is healthy.
+    #[tokio::test]
+    async fn a_decode_failure_on_a_successful_rpc_is_not_an_rpc_error() {
+        let client = ValidatorsStub::client(Ok(vec![vec![0xff; 4]]));
+
+        let err = client
+            .get_validators_info_by_ids(vec![ObjectID::random()])
+            .await
+            .expect_err("4 bytes cannot decode as a StakingPool");
+        assert!(
+            matches!(err, IkaError::SuiClientSerializationError(_)),
+            "expected a serialization error, got {err:?}"
+        );
+
+        let metrics = &client.sui_client_metrics;
+        assert_eq!(
+            metrics
+                .sui_response_errors
+                .with_label_values(&["get_validators_info_by_ids", "decode"])
+                .get(),
+            1,
+            "the decode failure belongs to the response counter"
+        );
+        assert_eq!(
+            family_total(&metrics.sui_rpc_errors),
+            0,
+            "a decoding bug must not show up as a Sui uplink failure"
+        );
+    }
+
+    /// The mirror case: the call never came back, which is exactly what
+    /// `ika_sui_client_sui_rpc_errors` is for.
+    #[tokio::test]
+    async fn a_transport_failure_is_an_rpc_error_only() {
+        let client = ValidatorsStub::client(Err(()));
+
+        let err = client
+            .get_validators_info_by_ids(vec![ObjectID::random()])
+            .await
+            .expect_err("the stubbed transport refuses the connection");
+        assert!(
+            matches!(err, IkaError::SuiClientInternalError(_)),
+            "expected an internal/transport error, got {err:?}"
+        );
+
+        let metrics = &client.sui_client_metrics;
+        assert_eq!(
+            metrics
+                .sui_rpc_errors
+                .with_label_values(&["get_validators_info_by_ids"])
+                .get(),
+            1,
+        );
+        assert_eq!(
+            family_total(&metrics.sui_response_errors),
+            0,
+            "nothing was decoded, so nothing can be a response failure"
+        );
+    }
+
+    /// The `must_get_*` wrappers see only the terminal error, and they fire
+    /// once per exhausted retry round — the backoff runs
+    /// 0.4+0.8+1.6+3.2+6.4+12.8s and the 7th check exceeds the 30s budget, so
+    /// a round is ~25.2s and a persistent failure yields ~143 wrapper
+    /// increments/hour, above the fleet's RPC-error alert threshold on their
+    /// own. Routing them by error variant is what keeps a persistent decoding
+    /// bug off that alert.
+    #[test]
+    fn the_retry_wrappers_route_by_error_variant() {
+        let metrics = SuiClientMetrics::new_for_testing();
+        let method = "must_get_epoch_start_system";
+
+        metrics.record_read_error(
+            method,
+            &IkaError::SuiClientInternalError("uplink refused".to_string()),
+        );
+        metrics.record_read_error(
+            method,
+            &IkaError::SuiClientSerializationError("short read".to_string()),
+        );
+        metrics.record_read_error(
+            method,
+            &IkaError::InvalidCommittee("member missing from the fetched set".to_string()),
+        );
+
+        assert_eq!(
+            metrics.sui_rpc_errors.with_label_values(&[method]).get(),
+            1,
+            "only the transport failure belongs to the RPC counter"
+        );
+        assert_eq!(
+            metrics
+                .sui_response_errors
+                .with_label_values(&[method, "decode"])
+                .get(),
+            1,
+        );
+        assert_eq!(
+            metrics
+                .sui_response_errors
+                .with_label_values(&[method, "invalid_committee"])
+                .get(),
+            1,
+        );
+    }
+
+    /// The stability guarantee `SuiResponseErrorKind::classify` documents: a
+    /// variant it does not list falls through to `sui_rpc_errors`, i.e. the
+    /// behaviour every site had before the split. Without this, adding an
+    /// `IkaError` variant could quietly move traffic off the counter the
+    /// fleet alert reads, and nothing would say so.
+    #[test]
+    fn an_unlisted_error_variant_stays_on_the_rpc_counter() {
+        let metrics = SuiClientMetrics::new_for_testing();
+        let method = "must_get_system_inner_object";
+
+        metrics.record_read_error(method, &IkaError::Unknown("something new".to_string()));
+
+        assert_eq!(
+            metrics.sui_rpc_errors.with_label_values(&[method]).get(),
+            1,
+            "an unclassified variant keeps its historical counter"
+        );
+        assert_eq!(
+            family_total(&metrics.sui_response_errors),
+            0,
+            "classify() must not guess a response kind it was never taught"
         );
     }
 }
