@@ -121,7 +121,17 @@ fn min_expected_retries() -> f64 {
 
 /// The epoch the tests strike. Epoch 0's close mints the first handoff
 /// certificate, so from epoch 1 onward there is a real anchor to withhold.
+///
+/// The restart test strikes epoch 2 rather than 1 so the anchor epoch is one
+/// this validator CROSSED while running, which puts the anchor committee in
+/// its local committee store. Committees are written there by reconfiguration
+/// only, so at epoch 1 the anchor (epoch 0) would be absent and the barrier
+/// would fall back to reading `validator_set.previous_committee` from chain —
+/// which only serves while the on-chain epoch is exactly anchor + 1. With
+/// epochs this short the boundary can land inside the restart window, and the
+/// test would then be measuring that race rather than the barrier.
 const STRUCK_EPOCH: u64 = 1;
+const RESTART_STRUCK_EPOCH: u64 = 2;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_boot_into_epoch_waits_for_handoff_data() {
@@ -137,7 +147,7 @@ async fn test_boot_into_epoch_waits_for_handoff_data() {
     let names = cluster.validator_names.clone();
     let restarted = names[3];
     for name in &names {
-        wait_for_node_epoch(&node_handle(&cluster, name), STRUCK_EPOCH).await;
+        wait_for_node_epoch(&node_handle(&cluster, name), RESTART_STRUCK_EPOCH).await;
     }
 
     // Restart the validator with its handoff anchor held back. Consensus for
@@ -188,7 +198,7 @@ async fn test_boot_into_epoch_waits_for_handoff_data() {
     // the network-key material the barrier made it wait for. A validator that
     // had started on stale or absent shares stalls here.
     for name in &names {
-        wait_for_node_epoch(&node_handle(&cluster, name), STRUCK_EPOCH + 1).await;
+        wait_for_node_epoch(&node_handle(&cluster, name), RESTART_STRUCK_EPOCH + 1).await;
     }
 }
 
