@@ -224,7 +224,11 @@ async fn poll_state(
         validator_index,
         deadline,
         &format!("seed-identity state {expected}"),
-        |handle| seed_identity_state(handle).filter(|state| state == expected).map(|_| ()),
+        |handle| {
+            seed_identity_state(handle)
+                .filter(|state| state == expected)
+                .map(|_| ())
+        },
     )
     .await;
 }

@@ -1152,7 +1152,20 @@ impl DWalletMPCService {
         };
 
         // Only include presign requests that haven't been sent yet.
-        let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
+        //
+        // An MPC-INACTIVE epoch (#2119) sends none, and sends no NOA presign
+        // demand either (gated at its own block below). Both are asks the
+        // network would serve to a validator that cannot use the answer, and
+        // "no MPC traffic at all" is the property that makes this state
+        // indistinguishable from an absent member. What it still owes — the
+        // idle status the network's idleness accounting reads, and the NOA
+        // checkpoint observations carrying this validator's finalize/fail
+        // votes — is NOT MPC traffic and keeps flowing.
+        let unsent_presign_requests = if self.mpc_active {
+            self.dwallet_mpc_manager.get_unsent_presign_requests()
+        } else {
+            Vec::new()
+        };
 
         // FIXME(noa-checkpoints): Without a real SuiChainObservation, the entire NOA
         // checkpoint flow is non-functional — messages buffer indefinitely because
@@ -1164,7 +1177,8 @@ impl DWalletMPCService {
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
-        let has_noa_presign_demands = !self.buffered_noa_presign_demands.is_empty();
+        let has_noa_presign_demands =
+            self.mpc_active && !self.buffered_noa_presign_demands.is_empty();
 
         if !has_unsent_requests
             && !idle_status_changed
@@ -1250,7 +1264,7 @@ impl DWalletMPCService {
         // `announced_noa_demand_digests` marks a demand announced when it is
         // buffered, so a dropped demand would never be re-announced by this
         // validator.
-        if self.protocol_config.noa_checkpoints() {
+        if self.mpc_active && self.protocol_config.noa_checkpoints() {
             let noa_presign_demands = std::mem::take(&mut self.buffered_noa_presign_demands);
             for demand in noa_presign_demands {
                 let tx = ConsensusTransaction::new_noa_presign_demand(
