@@ -428,7 +428,7 @@ family, and a family is not "suppressed to zero", it simply is not there:
   unconditional and a mis-classified family costs one lost observation on one
   role rather than a panic.
 
-Two boundaries on the rule:
+Three boundaries on the rule:
 
 - **`uptime{process=...}` and the process-level basics stay in every mode.**
   The protocol-version gauges (`ika_binary_max_protocol_version` and friends)
@@ -439,6 +439,14 @@ Two boundaries on the rule:
   a family from a validator breaks dashboards that already read it, which is a
   separate change with its own blast radius; this rule removes families only
   from processes that never drove them.
+- **`ika_sui_client_*` is mode-independent, deliberately.** Every mode talks to
+  Sui — a notifier runs a read/write `SuiClient` to push checkpoints, a fullnode
+  runs the connector stack's read client — so `SuiClientMetrics` is constructed
+  on the exported registry in one unconditional line of
+  `IkaNode::start_with_mode`, before the mode branch. There is no subsystem
+  behind those families for a mode to decline, so a `sui_rpc_errors` of 0 on a
+  notifier is a real observation and not the "healthy validator" illusion the
+  rule exists to prevent. Do not gate this struct behind a mode.
 
 When a family stays on a mode that looks wrong for it, check what actually
 spawns its writer before "fixing" it. `ika_dwallet_mpc_data_blob_fetch_total`
@@ -450,7 +458,21 @@ about those subsystems, not about their metrics.
 
 The per-mode sets are pinned by `per_mode_registration` in
 `crates/ika-node/src/metrics.rs`, which composes the same constructors the
-start sequence uses and asserts the gathered family names for each mode.
+start sequence uses and asserts the gathered family names for each mode. All
+four of its tests run on PR CI, in the `Cargo Test Check` job.
+
+The pins' domain is `gather()`, what `/metrics` actually serves, so a label vec
+with no children at construction is legitimately absent from all three lists:
+`ika_sui_client_sui_rpc_errors`, `ika_sui_client_sui_response_errors_total` and
+`ika_sui_client_chain_blob_reads` first appear at their increment site. That is
+not a hole in the pin — the two `SuiClientMetrics` vecs that DO carry a zero
+baseline are pre-materialized and pinned, so gating the struct behind a mode
+still fails the comparison, which is what
+`omitting_the_sui_client_metrics_reports_them_missing` asserts directly. Adding
+a family to a mode-independent struct without pre-materializing it is a choice
+about the zero baseline (see "No zero baseline" on `sui_response_errors_total`),
+not a way to stay out of the pins; `scripts/check-metric-names.sh` covers every
+registered literal either way.
 
 ## Validator host telemetry
 

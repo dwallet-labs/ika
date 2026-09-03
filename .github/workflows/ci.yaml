@@ -310,10 +310,23 @@ jobs:
           # being exported (`ika_dwallet_mpc_seed_identity_state`, whose alert
           # would go silent; `ika_dwallet_mpc_self_malicious_total`, whose
           # zero would stop meaning anything) and one added unnoticed.
+          #
+          # All four run here, not just the validator pin (#2124). The whole
+          # point of the set is the DIFFERENCE between modes, and the notifier
+          # and fullnode pins are the only two that see one side of it — with
+          # only the validator pin gated, a family leaking onto the notifier
+          # (ika #2051, the regression these exist for) reached main
+          # unremarked. The fourth is the negative pin: it composes a notifier
+          # with `SuiClientMetrics` omitted and asserts the comparison reports
+          # its families as gone, so the three positive pins cannot quietly
+          # degrade into asserting nothing.
           cargo test -p ika-node --lib -- --exact \
             metrics::per_mode_registration::a_validator_exports_every_family \
+            metrics::per_mode_registration::a_notifier_exports_only_the_families_it_drives \
+            metrics::per_mode_registration::a_fullnode_exports_only_the_families_it_drives \
+            metrics::per_mode_registration::omitting_the_sui_client_metrics_reports_them_missing \
             | tee "$RUNNER_TEMP/seed-rotation-metric-pins.log"
-          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
       - name: Deprecated on-chain mpc_data placeholder pins
         # What a candidate registers in the deprecated on-chain
         # `mpc_data_bytes` field is a byte-format contract (#2119): exactly
