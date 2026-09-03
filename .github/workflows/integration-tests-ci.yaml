@@ -3,14 +3,37 @@ name: Integration Tests CI
 # Manually triggered. Runs the Rust dwallet-MPC integration tests (real
 # class-groups crypto, in-process consensus harness) on the `ika-k8s-large`
 # self-hosted runner. `scope: all` widens to the workspace test suite MINUS
-# the two crates whose tests start a Sui localnet: `ika-test-cluster` and
-# `ika-upgrade-test`. Those run under plain `cargo test` as several tests
-# in one process, each booting a Sui swarm, and collide on ports (the first
-# ever `all` run, 33750543127, died in sui-swarm with "Address already in
-# use"). They have their own workflows that give each test its own process:
-# `test-cluster.yaml` (nextest, profile `cluster`) and `upgrade-test.yaml`
-# (one scenario per job). `all` is therefore "every workspace test that can
-# share a process", not "every test in the repository".
+# `ika-test-cluster`, for two reasons that both matter:
+#
+# 1. Ports. Its tests boot a Sui swarm each, and under plain `cargo test`
+#    a binary's tests run concurrently in ONE process. The test ports come
+#    from `deterministic_port_base` (crates/ika-config/src/local_ip_utils.rs),
+#    which derives the block from NEXTEST_TEST_GLOBAL_SLOT and falls back to
+#    slot 0 without it — so every libtest thread draws base 9000 and the
+#    first cluster holds the ports for its whole test. Both `all` runs before
+#    this exclusion died that way in sui-swarm with "Address already in use":
+#    29056939247 (2026-07-09) and 33750543127 (2026-09-03, one test failed,
+#    two sibling swarms panicked). The cluster suite is covered by
+#    `test-cluster.yaml`, which runs it one process per test under nextest
+#    (profile `cluster`) so each test gets its own slot.
+# 2. Crypto. `ika-test-cluster` carries a self dev-dependency that enables
+#    `dwallet-mpc-unsafe-mock` (crates/ika-test-cluster/Cargo.toml). Under
+#    `--workspace`, dev-dependency features unify into the single `ika-core`
+#    build, so with the crate included EVERY test in the run — including the
+#    dwallet-MPC integration tests — used the INSECURE mock even with
+#    `use_mocks=false` (run 33750543127: ika-core lib in 761 s; excluded, run
+#    33768433944: 4180 s, matching the real-crypto `integration` scope).
+#    `scope: all` is real-crypto coverage only while this exclusion stands.
+#    Re-including the crate, e.g. by moving `all` onto nextest, silently
+#    re-mocks the whole workspace unless the self dev-dependency changes.
+#
+# `ika-upgrade-test` is NOT excluded: its scenario binaries return early
+# unless their RUN_* variable is set (they drive an external `sui` localnet
+# on fixed ports only under `upgrade-test.yaml`, one scenario per job), and
+# its 36 lib unit tests run nowhere else in CI.
+#
+# So `all` is "every workspace test that can share a process, with real
+# crypto"; the cluster suite must be dispatched separately.
 
 on:
   workflow_dispatch:
@@ -66,6 +89,9 @@ env:
 
 jobs:
   run-tests:
+    env:
+      # The one place the `all` exclusion is defined; both cargo steps use it.
+      ALL_SCOPE_EXCLUDES: "--exclude ika-test-cluster"
     name: Run ${{ inputs.scope }} tests
     runs-on: ika-k8s-large
     timeout-minutes: 180
@@ -130,13 +156,15 @@ jobs:
           # when green, and `time` in the run step covers test execution,
           # not rustc.
           # `use_mocks` layers the INSECURE deterministic mock on top of
-          # test-utils; default (off) is real crypto, byte-identical to before.
+          # test-utils; default (off) is real crypto for the `integration`
+          # scope, and for `all` only because `ika-test-cluster` is excluded
+          # (see the header: its self dev-dependency would unify the mock
+          # into ika-core for the whole run).
           FEATURES="test-utils"
           if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            # See the header: the swarm-booting crates cannot run in-process.
-            cargo test --release --workspace \
-              --exclude ika-test-cluster --exclude ika-upgrade-test \
+            # See the header for why `ika-test-cluster` is excluded.
+            cargo test --release --workspace $ALL_SCOPE_EXCLUDES \
               --features "$FEATURES" --color=always --no-run
           else
             cargo test -p ika-core --lib --release --features "$FEATURES" --color=always --no-run
@@ -158,11 +186,21 @@ jobs:
           FEATURES="test-utils"
           if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            # Same exclusions as the build step (see the header). Keep the two
-            # lists identical: a crate built here but not run, or run but not
-            # built, is a silent gap either way.
-            time cargo test --release --workspace \
-              --exclude ika-test-cluster --exclude ika-upgrade-test \
+            # The exclusion is the only thing keeping swarm-booting tests out
+            # of this in-process run, and the failure it prevents is a
+            # 20-minute-deep abort. Fail fast if a crate outside the known set
+            # starts pulling a swarm library into its Cargo.toml.
+            known="crates/ika-swarm/Cargo.toml crates/ika-test-cluster/Cargo.toml crates/ika-upgrade-test/Cargo.toml crates/ika/Cargo.toml"
+            unexpected=""
+            for f in $(grep -lE '^(sui-swarm|ika-swarm)[a-z-]*(\.workspace)? *=' crates/*/Cargo.toml); do
+              case " $known " in *" $f "*) ;; *) unexpected="$unexpected $f" ;; esac
+            done
+            if [ -n "$unexpected" ]; then
+              echo "::error::new swarm dependents outside the scope=all exclusion list:$unexpected — their tests would collide on ports in-process; exclude them here or #[ignore] the swarm tests"
+              exit 1
+            fi
+            # $ALL_SCOPE_EXCLUDES is the job-level list the build step used.
+            time cargo test --release --workspace $ALL_SCOPE_EXCLUDES \
               --features "$FEATURES" --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
