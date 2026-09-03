@@ -444,9 +444,27 @@ Three boundaries on the rule:
   runs the connector stack's read client — so `SuiClientMetrics` is constructed
   on the exported registry in one unconditional line of
   `IkaNode::start_with_mode`, before the mode branch. There is no subsystem
-  behind those families for a mode to decline, so a `sui_rpc_errors` of 0 on a
-  notifier is a real observation and not the "healthy validator" illusion the
-  rule exists to prevent. Do not gate this struct behind a mode.
+  behind those families for a mode to decline, so the "healthy validator"
+  illusion the rule exists to prevent cannot arise here. Do not gate this
+  struct behind a mode.
+
+  These families are **not node-only**: `ika-proxy` constructs the same struct
+  on its own registry (`crates/ika-proxy/src/main.rs`) for its own Sui client,
+  so `ika_sui_client_*` is served by the proxy's endpoint as well as by every
+  node's. Nothing in the metric distinguishes them — only the scrape target
+  does — so a fleet query over these families must be scoped to the node job
+  before it is read as a per-validator uplink rate.
+
+  Note also that most of these families have **no zero baseline on any mode**.
+  `ika_sui_client_sui_rpc_errors`, `..._sui_response_errors_total` and
+  `..._chain_blob_reads` are unseeded label vecs: a healthy node exports **no
+  series at all** for them, not a series at 0. Any rate alert on them must
+  treat absence as zero rather than as a missing target — which matters most
+  for `sui_rpc_errors`, the epoch-boundary boot-wedge lead indicator in
+  [`../playbooks/production-alerts.md`](../playbooks/production-alerts.md).
+  Only `..._rate_limited_errors_total` (both `signal` children seeded at 0),
+  `..._sui_node_info` (the `unknown` child at 1) and the unlabelled
+  `..._sui_node_info_last_success_unixtime` are present from process start.
 
 When a family stays on a mode that looks wrong for it, check what actually
 spawns its writer before "fixing" it. `ika_dwallet_mpc_data_blob_fetch_total`
@@ -459,20 +477,38 @@ about those subsystems, not about their metrics.
 The per-mode sets are pinned by `per_mode_registration` in
 `crates/ika-node/src/metrics.rs`, which composes the same constructors the
 start sequence uses and asserts the gathered family names for each mode. All
-four of its tests run on PR CI, in the `Cargo Test Check` job.
+five of its tests — three per-mode lists plus one control on each half of the
+comparison — run on PR CI, in the `Cargo Test Check` job's "Per-mode metric
+export pins" step.
 
-The pins' domain is `gather()`, what `/metrics` actually serves, so a label vec
+**What the pins do not reach.** The composition mirrors
+`IkaNode::start_with_mode` by hand, and nothing checks the mirror against it.
+A mode gate applied at the real call site, or a metric struct added to the
+start sequence and not to the composition, is invisible to all five tests. The
+pins constrain what each composed constructor registers per mode; they are not
+a statement about the served endpoint. Closing that would take a booted-node
+`/metrics` scrape per mode in `ika-test-cluster`, which does not exist today —
+so keeping the composition in step with `lib.rs` is a review obligation.
+
+**Their domain is `gather()`**, what `/metrics` actually serves, so a label vec
 with no children at construction is legitimately absent from all three lists:
 `ika_sui_client_sui_rpc_errors`, `ika_sui_client_sui_response_errors_total` and
-`ika_sui_client_chain_blob_reads` first appear at their increment site. That is
-not a hole in the pin — the two `SuiClientMetrics` vecs that DO carry a zero
-baseline are pre-materialized and pinned, so gating the struct behind a mode
-still fails the comparison, which is what
-`omitting_the_sui_client_metrics_reports_them_missing` asserts directly. Adding
-a family to a mode-independent struct without pre-materializing it is a choice
-about the zero baseline (see "No zero baseline" on `sui_response_errors_total`),
-not a way to stay out of the pins; `scripts/check-metric-names.sh` covers every
-registered literal either way.
+`ika_sui_client_chain_blob_reads` first appear at their increment site. An
+unseeded family is therefore genuinely outside the pins, and whether to seed
+one is a decision about its zero baseline (see "No zero baseline" on
+`sui_response_errors_total`, which argues it for that family's `method`×`kind`
+cross product specifically — the other two are unseeded by inheritance, and
+their closed `method` sets could be seeded).
+
+`scripts/check-metric-names.sh` is the complementary gate but a different one.
+It enforces exactly four things over every literal metric name in `crates/`:
+the `ika_` prefix (or membership of the frozen legacy allowlist); an explicit
+registry at the registration site, never prometheus's process-global default;
+no `ika`-prefixed registry re-exporting foreign metrics; and that the name
+appears in the generated inventory below — in both directions, so a removed
+metric left in the inventory fails too. It says nothing about which mode
+exports a family, and nothing about whether a family is ever gathered, which is
+why an unseeded vec passes it while sitting outside the per-mode pins.
 
 ## Validator host telemetry
 
