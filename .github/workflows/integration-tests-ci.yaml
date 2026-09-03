@@ -12,8 +12,10 @@ name: Integration Tests CI
 #    slot 0 without it — so every libtest thread draws base 9000 and the
 #    first cluster holds the ports for its whole test. Both `all` runs before
 #    this exclusion died that way in sui-swarm with "Address already in use":
-#    29056939247 (2026-07-09) and 33750543127 (2026-09-03, one test failed,
-#    two sibling swarms panicked). The cluster suite is covered by
+#    29056939247 (2026-07-09) and 33750543127 (2026-09-03: one test failed —
+#    the five sui-node threads of its swarm died with EADDRINUSE and the
+#    test thread with RecvError; the binary's other two tests passed). The
+#    cluster suite is covered by
 #    `test-cluster.yaml`, which runs it one process per test under nextest
 #    (profile `cluster`) so each test gets its own slot.
 # 2. Crypto. `ika-test-cluster` carries a self dev-dependency that enables
@@ -90,8 +92,19 @@ env:
 jobs:
   run-tests:
     env:
-      # The one place the `all` exclusion is defined; both cargo steps use it.
+      # The one place the `all` exclusion is defined; both cargo steps and the
+      # guard use it.
       ALL_SCOPE_EXCLUDES: "--exclude ika-test-cluster"
+      # Crates that pull a swarm library but are SAFE in-process, and why.
+      # The guard step derives the excluded crates from ALL_SCOPE_EXCLUDES
+      # and treats only these as additionally allowed:
+      #   ika            — depends on ika-swarm for `ika start`; its tests
+      #                    never boot one (run 33768433944: 10 tests, ≤0.02 s)
+      #   ika-swarm      — its Swarm::launch tests are #[ignore]d
+      #   ika-upgrade-test — scenario binaries are RUN_*-gated no-ops
+      # Un-ignoring or un-gating any of those re-breaks scope=all with the
+      # guard silent: move the crate to ALL_SCOPE_EXCLUDES instead.
+      SAFE_SWARM_DEPENDENTS: "crates/ika/Cargo.toml crates/ika-swarm/Cargo.toml crates/ika-upgrade-test/Cargo.toml"
     name: Run ${{ inputs.scope }} tests
     runs-on: ika-k8s-large
     timeout-minutes: 180
@@ -146,6 +159,32 @@ jobs:
           nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
           echo $! > cpu-sampler.pid
 
+      - name: Guard the scope=all exclusion
+        if: inputs.scope == 'all'
+        # Before the build, because the failure this prevents costs a full
+        # release build plus a 20-minute-deep test abort. A crate outside the
+        # excluded set and the safe list that pulls a swarm library — sui's
+        # `test-cluster`/`sui-node` (how ika-test-cluster boots its network)
+        # or `sui-swarm`/`ika-swarm` — would run its swarm tests in-process
+        # and collide on ports.
+        run: |
+          excluded=""
+          set -- $ALL_SCOPE_EXCLUDES
+          while [ $# -gt 0 ]; do
+            if [ "$1" = "--exclude" ]; then excluded="$excluded crates/$2/Cargo.toml"; shift; fi
+            shift
+          done
+          allowed="$excluded $SAFE_SWARM_DEPENDENTS"
+          unexpected=""
+          for f in $(grep -lE '^(sui-swarm|ika-swarm|test-cluster|sui-node)[a-z-]*(\.workspace)? *=' crates/*/Cargo.toml); do
+            case " $allowed " in *" $f "*) ;; *) unexpected="$unexpected $f" ;; esac
+          done
+          echo "excluded:$excluded; safe: $SAFE_SWARM_DEPENDENTS; swarm dependents found: $(grep -lE '^(sui-swarm|ika-swarm|test-cluster|sui-node)[a-z-]*(\.workspace)? *=' crates/*/Cargo.toml | tr '\n' ' ')"
+          if [ -n "$unexpected" ]; then
+            echo "::error::swarm dependents outside ALL_SCOPE_EXCLUDES and SAFE_SWARM_DEPENDENTS:$unexpected — their tests would collide on ports in-process; add them to ALL_SCOPE_EXCLUDES, or to SAFE_SWARM_DEPENDENTS with the reason they cannot boot a swarm under cargo test"
+            exit 1
+          fi
+
       - name: Build tests
         env:
           SCOPE: ${{ inputs.scope }}
@@ -186,19 +225,6 @@ jobs:
           FEATURES="test-utils"
           if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            # The exclusion is the only thing keeping swarm-booting tests out
-            # of this in-process run, and the failure it prevents is a
-            # 20-minute-deep abort. Fail fast if a crate outside the known set
-            # starts pulling a swarm library into its Cargo.toml.
-            known="crates/ika-swarm/Cargo.toml crates/ika-test-cluster/Cargo.toml crates/ika-upgrade-test/Cargo.toml crates/ika/Cargo.toml"
-            unexpected=""
-            for f in $(grep -lE '^(sui-swarm|ika-swarm)[a-z-]*(\.workspace)? *=' crates/*/Cargo.toml); do
-              case " $known " in *" $f "*) ;; *) unexpected="$unexpected $f" ;; esac
-            done
-            if [ -n "$unexpected" ]; then
-              echo "::error::new swarm dependents outside the scope=all exclusion list:$unexpected — their tests would collide on ports in-process; exclude them here or #[ignore] the swarm tests"
-              exit 1
-            fi
             # $ALL_SCOPE_EXCLUDES is the job-level list the build step used.
             time cargo test --release --workspace $ALL_SCOPE_EXCLUDES \
               --features "$FEATURES" --color=always -- \

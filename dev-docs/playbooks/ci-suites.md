@@ -30,10 +30,13 @@ a nightly that dispatched only the `main` half is expected, not broken.
 ## Dispatch commands
 
 ```bash
-# Rust dwallet-MPC integration tests (~48 tests, ~35 min at 4 threads).
+# Rust dwallet-MPC integration tests (107 tests, ~70 min test time / ~76 min
+# job at 4 threads, real crypto).
 # Optional: test_filter (suffix after dwallet_mpc::integration_tests::),
 # rust_log.
-#
+gh workflow run integration-tests-ci.yaml --ref <branch> \
+  -f test_threads=4 [-f test_filter=network_dkg::test_network_dkg_full_flow]
+
 # scope=all (manual only — the nightly dispatches the default scope) runs the
 # workspace test suite under plain `cargo test`, excluding ika-test-cluster:
 # its tests each boot a Sui swarm and, in one process, all draw port base
@@ -43,11 +46,10 @@ a nightly that dispatched only the `main` half is expected, not broken.
 # workspace silently ran on the mock. The cluster suite is covered by
 # test-cluster.yaml (and its sim_* tests by simtest.yaml); ika-upgrade-test
 # stays in (its scenarios are RUN_*-gated no-ops here; its lib tests run
-# nowhere else). scope=all is a strict superset of the default scope for
-# about 12 extra minutes (~80 min total at 4 threads).
+# nowhere else). scope=all is a strict superset of the default scope; the
+# measured cost before ika-upgrade-test was re-included was ~5 extra minutes
+# (76 min → 81 min job), to be re-measured with it in.
 gh workflow run integration-tests-ci.yaml --ref <branch> -f scope=all -f test_threads=4
-gh workflow run integration-tests-ci.yaml --ref <branch> \
-  -f test_threads=4 [-f test_filter=network_dkg::test_network_dkg_full_flow]
 
 # Cluster tests (in-process Sui+ika swarm tests via nextest,
 # process-per-test, ~35-40 min at 4 threads; 8-way OOMs the 96Gi pod).
