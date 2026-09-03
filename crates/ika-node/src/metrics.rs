@@ -414,12 +414,67 @@ ika_counter_2 1"
 /// gauges it never drives — at values indistinguishable from a healthy
 /// validator's (ika #2051). Registration now follows the subsystems each mode
 /// actually runs, and these lists are what pins it.
+///
+/// # Deliberately mode-independent
+///
+/// A family in all three lists is not an oversight. `ika_sui_client_*` comes
+/// from [`ika_sui_client::metrics::SuiClientMetrics`], which every mode
+/// constructs on the exported registry in one unconditional line of
+/// `IkaNode::start_with_mode`, because every mode really does talk to Sui: a
+/// notifier runs a read/write `SuiClient` to push checkpoints, and a fullnode
+/// runs the connector stack's read client. There is no subsystem behind those
+/// families that a mode can decline to run, so "absence is the correct signal"
+/// has nothing to say about them and they stay everywhere.
+///
+/// The same holds for the protocol-version gauges (`ika_binary_*`,
+/// `ika_configured_*`, `ika_supported_protocol_version_*`) and
+/// `ika_reconfig_phase`: properties of the running binary, or of a watchdog
+/// every mode arms. See "A process registers only the families it drives" in
+/// `dev-docs/conventions/metrics.md`.
+///
+/// # What these pins do NOT cover
+///
+/// `exported_families` mirrors `IkaNode::start_with_mode` **by hand**: it
+/// builds its own registry and calls the same constructors itself. Nothing
+/// checks the mirror against the real call site, in either direction.
+///
+/// So a mode gate applied at the CALL SITE is invisible here. Swap
+/// `SuiClientMetrics::new` for a `new_for_mode` in `lib.rs` — leaving `new`
+/// in place for ika-proxy and the test constructors — and the notifier's and
+/// fullnode's real `/metrics` lose the `ika_sui_client_*` families while
+/// every test in this module stays green. Nothing about that is specific to
+/// `SuiClientMetrics`: every constructor composed below carries the same gap,
+/// and a struct added to the start sequence and not added here is simply
+/// unpinned.
+///
+/// Read the lists, then, as pinning WHAT EACH COMPOSED STRUCT REGISTERS PER
+/// MODE — a real and previously unpinned property (ika #2051 was a
+/// registration bug) — and not as a proof about the served endpoint. The only
+/// thing that would close the gap is a different test: boot each mode and
+/// scrape its `/metrics` (ika-test-cluster's reach, not this module's). Until
+/// that exists, keeping the composition in step with `lib.rs` is a review
+/// obligation, not a checked one.
 #[cfg(test)]
 mod per_mode_registration {
     use super::IkaNodeMetrics;
     use crate::ValidatorModeMetrics;
     use ika_config::NodeMode;
     use prometheus::Registry;
+
+    /// Whether the composition registers [`SuiClientMetrics`] — flipped only
+    /// by `omitting_the_sui_client_metrics_reports_them_missing`, which shows
+    /// the comparison reports the loss rather than tolerating it.
+    ///
+    /// That is a claim about THIS composition, not about `lib.rs`: a gate
+    /// applied at the real call site never reaches this switch. See "What
+    /// these pins do NOT cover" on the module.
+    ///
+    /// [`SuiClientMetrics`]: ika_sui_client::metrics::SuiClientMetrics
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SuiClient {
+        Registered,
+        Omitted,
+    }
 
     /// The ika-side metric structs the start sequence registers in `mode`,
     /// composed into one registry, returning the family names the endpoint
@@ -431,11 +486,46 @@ mod per_mode_registration {
     /// literal, vec or not, is covered instead by
     /// `scripts/check-metric-names.sh`.
     ///
+    /// Three of the six `ika_sui_client_*` families are exactly that case and
+    /// are therefore absent from all three lists below — not dropped, just not
+    /// served until something observes them:
+    /// `ika_sui_client_sui_rpc_errors{method}`,
+    /// `ika_sui_client_sui_response_errors_total{method,kind}` and
+    /// `ika_sui_client_chain_blob_reads{method}` are label vecs whose children
+    /// are only created at an increment site.
+    ///
+    /// Only ONE of the three is unseeded by a documented decision:
+    /// `sui_response_errors_total`, whose "No zero baseline" note on
+    /// `SuiClientMetrics` argues that its `method`×`kind` cross product is
+    /// knowable only to the increment sites, and explicitly contrasts itself
+    /// with the seeded `sui_rate_limited_errors`. `sui_rpc_errors` and
+    /// `chain_blob_reads` are unseeded by inheritance — nobody ever wrote them
+    /// a baseline. Their `method` sets are closed, so seeding them IS
+    /// possible; it changes what a healthy node exports and what an alert on
+    /// them means, which is a metrics-semantics call this pin work does not
+    /// make.
+    ///
+    /// The three that are pinned survive for two different reasons. Two are
+    /// pre-materialized at construction:
+    /// `ika_sui_client_rate_limited_errors_total` seeds both `signal` children
+    /// at 0, `ika_sui_client_sui_node_info` seeds its `unknown` child at 1.
+    /// The third, `ika_sui_client_sui_node_info_last_success_unixtime`, is a
+    /// plain unlabelled `IntGauge` — there are no children to materialize, so
+    /// `gather()` always returns it.
+    ///
     /// The families left out of this composition are mode-independent (the
-    /// anemo/quinn network, rocksdb, archive and pruner families) or already
-    /// mode-gated elsewhere (the host telemetry in `node_runner`), so none of
-    /// them can move a per-mode difference.
+    /// anemo/quinn network, rocksdb via `DBMetrics::init`, the mysten runtime
+    /// families via `mysten_metrics::init_metrics`, archive and pruner) or
+    /// already mode-gated elsewhere (the host telemetry in `node_runner`), so
+    /// none of them can move a per-mode difference. `NodeConfigMetrics` is
+    /// unconditional in the start sequence too and is absent here because it
+    /// registers nothing at all — it is an empty struct with a no-op
+    /// `record_metrics`.
     fn exported_families(mode: NodeMode) -> Vec<String> {
+        composed_families(mode, SuiClient::Registered)
+    }
+
+    fn composed_families(mode: NodeMode, sui_client: SuiClient) -> Vec<String> {
         let registry = Registry::new();
 
         // Registered by every mode, each internally registering only the
@@ -447,6 +537,14 @@ mod per_mode_registration {
         let _ocs = ika_core::sui_connector::ocs_metrics::OcsMetrics::new(&registry);
         let _proof_provider = ika_network::proof_provider::ProofProviderMetrics::new(&registry);
         let _node = IkaNodeMetrics::new(&registry);
+
+        // Mode-independent by construction: `IkaNode::start_with_mode` builds
+        // this one on `registry_service.default_registry()` before it branches
+        // on the mode at all, so the notifier's and fullnode's `/metrics`
+        // carry it too (ika #2124).
+        if sui_client == SuiClient::Registered {
+            let _sui_client = ika_sui_client::metrics::SuiClientMetrics::new(&registry);
+        }
 
         // Registered only where the subsystems behind them run: the MPC
         // service, the checkpoint builders and the validator telemetry, plus
@@ -469,11 +567,25 @@ mod per_mode_registration {
         names
     }
 
+    /// `(no longer exported, newly exported)` for `actual` against a pinned
+    /// list — the comparison `assert_families` renders, factored out so a test
+    /// can assert on the report itself rather than on a panic message.
+    fn diff_families(actual: &[String], expected: &[&str]) -> (Vec<String>, Vec<String>) {
+        let missing = expected
+            .iter()
+            .filter(|name| !actual.iter().any(|found| found == *name))
+            .map(|name| (*name).to_string())
+            .collect();
+        let unexpected = actual
+            .iter()
+            .filter(|found| !expected.contains(&found.as_str()))
+            .cloned()
+            .collect();
+        (missing, unexpected)
+    }
+
     fn assert_families(mode: NodeMode, expected: &[&str]) {
-        let actual = exported_families(mode);
-        let expected: Vec<String> = expected.iter().map(|name| name.to_string()).collect();
-        let missing: Vec<&String> = expected.iter().filter(|n| !actual.contains(n)).collect();
-        let unexpected: Vec<&String> = actual.iter().filter(|n| !expected.contains(n)).collect();
+        let (missing, unexpected) = diff_families(&exported_families(mode), expected);
         assert!(
             missing.is_empty() && unexpected.is_empty(),
             "{mode} export set changed.\n  no longer exported: {missing:?}\n  newly exported: \
@@ -637,6 +749,10 @@ mod per_mode_registration {
         "ika_split_brain_dwallet_checkpoint_forks",
         "ika_split_brain_system_checkpoint_forks",
         "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        // Mode-independent: every mode constructs `SuiClientMetrics`.
+        "ika_sui_client_rate_limited_errors_total",
+        "ika_sui_client_sui_node_info",
+        "ika_sui_client_sui_node_info_last_success_unixtime",
         "ika_sui_connector_chain_active_system_sessions_count",
         "ika_sui_connector_chain_active_user_sessions_count",
         "ika_sui_connector_chain_dwallet_checkpoint_writer_lag",
@@ -705,6 +821,11 @@ mod per_mode_registration {
         "ika_protocol_upgrade_supporting_stake",
         "ika_reconfig_phase",
         "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        // Mode-independent: a notifier runs a read/write `SuiClient` of its
+        // own, so it exports the same uplink telemetry a validator does.
+        "ika_sui_client_rate_limited_errors_total",
+        "ika_sui_client_sui_node_info",
+        "ika_sui_client_sui_node_info_last_success_unixtime",
         "ika_sui_connector_dwallet_checkpoint_sequence",
         "ika_sui_connector_dwallet_checkpoint_write_requests_total",
         "ika_sui_connector_dwallet_checkpoint_writes_failure_total",
@@ -759,6 +880,11 @@ mod per_mode_registration {
         "ika_protocol_upgrade_supporting_stake",
         "ika_reconfig_phase",
         "ika_stranded_network_key_missing_from_registry_read_condition_active",
+        // Mode-independent: the connector stack's read client is a real
+        // `SuiClient`, so a fullnode's uplink telemetry is the validator's.
+        "ika_sui_client_rate_limited_errors_total",
+        "ika_sui_client_sui_node_info",
+        "ika_sui_client_sui_node_info_last_success_unixtime",
         "ika_supported_protocol_version_max",
         "ika_supported_protocol_version_min",
     ];
@@ -776,5 +902,77 @@ mod per_mode_registration {
     #[test]
     fn a_fullnode_exports_only_the_families_it_drives() {
         assert_families(NodeMode::Fullnode, FULLNODE_FAMILIES);
+    }
+
+    /// The three `ika_sui_client_*` families, which both controls below move
+    /// across the comparison in one direction or the other.
+    const SUI_CLIENT_FAMILIES: &[&str] = &[
+        "ika_sui_client_rate_limited_errors_total",
+        "ika_sui_client_sui_node_info",
+        "ika_sui_client_sui_node_info_last_success_unixtime",
+    ];
+
+    /// Control for the `missing` half. Composing a notifier without
+    /// `SuiClientMetrics` — the shape of gating that struct behind
+    /// `mode.is_validator()`, which is what #2124 found the pins could not
+    /// see — must report its families as no longer exported, and must not
+    /// disturb anything else.
+    ///
+    /// Scoped to this composition. A gate at the `lib.rs` call site is a
+    /// different failure and this test cannot see it either; see "What these
+    /// pins do NOT cover" on the module.
+    #[test]
+    fn omitting_the_sui_client_metrics_reports_them_missing() {
+        let gated = composed_families(NodeMode::Notifier, SuiClient::Omitted);
+        let (missing, unexpected) = diff_families(&gated, NOTIFIER_FAMILIES);
+
+        let expected_missing: Vec<String> =
+            SUI_CLIENT_FAMILIES.iter().map(|n| n.to_string()).collect();
+        assert_eq!(
+            missing, expected_missing,
+            "gating SuiClientMetrics behind a mode must be reported as families that stopped \
+             being exported"
+        );
+        assert!(
+            unexpected.is_empty(),
+            "omitting SuiClientMetrics must not add a family: {unexpected:?}"
+        );
+    }
+
+    /// Control for the `unexpected` half, which nothing else exercises: every
+    /// other test here can only ever assert it is EMPTY, so replacing its
+    /// computation with `Vec::new()` would leave them all green — and a family
+    /// leaking onto a mode that does not drive it is the direction ika #2051
+    /// actually failed in.
+    ///
+    /// Diff the real notifier composition against its pinned list with the
+    /// `ika_sui_client_*` names removed: those three must come back as newly
+    /// exported, and nothing must come back as lost.
+    #[test]
+    fn a_family_the_notifier_list_does_not_name_is_reported_unexpected() {
+        let trimmed: Vec<&str> = NOTIFIER_FAMILIES
+            .iter()
+            .copied()
+            .filter(|name| !SUI_CLIENT_FAMILIES.contains(name))
+            .collect();
+        assert_eq!(
+            trimmed.len(),
+            NOTIFIER_FAMILIES.len() - SUI_CLIENT_FAMILIES.len(),
+            "the notifier list must actually name every ika_sui_client_* family for this control \
+             to mean anything"
+        );
+
+        let (missing, unexpected) = diff_families(&exported_families(NodeMode::Notifier), &trimmed);
+
+        let expected_unexpected: Vec<String> =
+            SUI_CLIENT_FAMILIES.iter().map(|n| n.to_string()).collect();
+        assert_eq!(
+            unexpected, expected_unexpected,
+            "a family exported but absent from the pinned list must be reported as newly exported"
+        );
+        assert!(
+            missing.is_empty(),
+            "trimming the list must not make anything look lost: {missing:?}"
+        );
     }
 }
