@@ -466,7 +466,7 @@ next epoch inherits.
      it (see the barrier section). So adoption flags the key for the
      syncer's chain-sourced read instead of skipping it forever. (Until
      issue #1751 removed the migration chain-read fallback, that fallback
-     covered this shape implicitly; the `v140_churn` scenario's mirrored
+     covered this shape implicitly; the `v141_churn` scenario's mirrored
      joiner caught the regression.)
      A key DKG'd THIS epoch is excluded — the healthy fresh-key
      bootstrap window. Second (mid-epoch restart, issue #1852). Once this

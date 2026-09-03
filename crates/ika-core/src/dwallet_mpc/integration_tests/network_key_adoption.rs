@@ -906,7 +906,7 @@ async fn this_epoch_reconfiguration_output_is_skipped_and_current_epoch_output_r
 /// validators, so without intervention the key is never adopted. Adoption
 /// must flag it for the syncer's stranded-key chain read — the recovery that
 /// the removed v3→v4 chain-read fallback used to provide implicitly (caught
-/// live by the `v140_churn` scenario's mirrored joiner). A key DKG'd THIS
+/// live by the `v141_churn` scenario's mirrored joiner). A key DKG'd THIS
 /// epoch must NOT be flagged: that is the healthy fresh-key bootstrap window.
 #[tokio::test]
 async fn empty_overlay_for_prior_epoch_key_flags_stranded() {
