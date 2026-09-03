@@ -32,8 +32,13 @@ name: Upgrade Test
 #                  v1.4.1 carries #2121 (the validator no longer reads the
 #                  deprecated on-chain mpc_data_bytes), #2120 (registration
 #                  writes a placeholder there), #2123 (prepare-then-start
-#                  handoff barrier) and the #2122 metric split, so those are
-#                  what a mixed committee now straddles.
+#                  handoff barrier) and the #2122 metric split, so both
+#                  sides of this gate are past all four — none of them is
+#                  straddled here; they are listed because the OLD side's
+#                  behaviour moved with them.
+#                  Immediately after a retarget, `main` == the OLD tag, so
+#                  the gate is a same-binary run; real cross-binary coverage
+#                  returns as `main` diverges.
 #                  v1.4.1 is post-#2074, so — as with the v1.4.0 gate it
 #                  replaces, and unlike the v1.3.1-based one before it — this
 #                  mixed committee shares ONE storage model. Crossing the
@@ -45,9 +50,7 @@ name: Upgrade Test
 #                  over the literal v1.4.1 committee, then a mirrored OCS
 #                  joiner folds into the reshared v1.4.1-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
-#                  defaults as v141_rollout. With v1.4.1 on the old side the
-#                  joiner's placeholder mpc_data registration is inert
-#                  (nothing reads the field), which it was not on v1.4.0.
+#                  defaults as v141_rollout.
 #   malicious_v141 — test-testing counterpart: honest literal-v1.4.1
 #                  committee + ONE current validator built with the
 #                  test-testing reconfiguration-message fault; honest

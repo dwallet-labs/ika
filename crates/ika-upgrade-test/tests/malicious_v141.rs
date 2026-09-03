@@ -39,6 +39,12 @@
 //! `ika_dwallet_mpc_malicious_actors_count` gauge, which both releases
 //! export.
 //!
+//! **"Cross-binary" is nominal while `main` == the OLD tag.** Immediately
+//! after a retarget the honest and faulty binaries differ only by the
+//! `test-testing` feature, so this run gates the DETECTION path, not
+//! detection across two releases. The cross-binary half of the claim comes
+//! back as `main` diverges from v1.4.1.
+//!
 //! Opt-in, via `RUN_MALICIOUS_V141=1`:
 //!
 //! ```bash
@@ -83,7 +89,7 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
     // Honest reference binary: the literal v1.4.1 ika-validator.
     let honest = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/tmp/ika-v141/target/release/ika-validator",
+        "/mnt/nvme0n1p1/v141-bins/ika-validator",
     ));
     // Deliberately-faulty current build (corrupts its reshare message),
     // produced by `cargo build --bin ika-validator --features test-testing`.

@@ -19,17 +19,12 @@
 //!   committee 5 → 4 (the reshare-to-fewer-parties direction that only the
 //!   retired `cross_binary` exercised).
 //!
-//! The joiner phase is the part the v1.4.1 retarget most changes. On v1.4.0
-//! a newly registered validator's on-chain `mpc_data_bytes` was still READ by
-//! committee members, so a placeholder registration was a permanent,
-//! unrecoverable committee-build failure and activation order was
-//! load-bearing. v1.4.1 is post-#2121 (nothing reads the field) and
-//! post-#2120 (registration writes the placeholder), so both the booted
-//! committee and the joiner are on the same side of that change and the
-//! join is a plain reshare — see
-//! dev-docs/specs/validator-mpc-data-announcements.md. The joiner also
-//! exercises the prepare-then-start handoff barrier on promotion (#2123),
-//! which v1.4.0 did not run.
+//! The joiner phase is unaffected by the retarget: all four validators are
+//! already swapped to the candidate before `join_validator_mirrored`, so no
+//! OLD binary is in the committee at join time, and the harness registers the
+//! joiner's real mpc_data via
+//! `ika_swarm_config::sui_client::request_add_validator_candidate` — not
+//! #2120's CLI placeholder.
 //!
 //! The sequential replacement has transient mixed states but intentionally
 //! avoids an MPC boundary; real mixed-committee MPC is `v141_rollout`'s job.
@@ -77,7 +72,7 @@ async fn v141_full_swap_then_committee_churn() {
 
     let old = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/tmp/ika-v141/target/release/ika-validator",
+        "/mnt/nvme0n1p1/v141-bins/ika-validator",
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
@@ -137,10 +132,12 @@ async fn v141_full_swap_then_committee_churn() {
         .expect_protocol_version_at_least(7)
         // Sequentially swap every validator to the current build. The
         // current binaries inherit the v1.4.1-written RocksDB state and
-        // reshare the v1.4.1-DKG'd network key. v1.4.1 is post-#2074, so
-        // that inheritance is now within ONE storage model — the durable
-        // tables both binaries keep, not a fold-side set one writes and the
-        // other does not. Crossing the event-sourcing change was
+        // reshare the v1.4.1-DKG'd network key. v1.4.1, like the v1.4.0
+        // release it replaces here, is post-#2074, so that inheritance has
+        // been within ONE storage model since the 1.3.1 -> 1.4.0 retarget
+        // stopped crossing that boundary — the durable tables both binaries
+        // keep, not a fold-side set one writes and the other does not.
+        // Crossing the event-sourcing change was
         // `mid_epoch_rollback`'s job; that scenario was retired with v1.4.0
         // (#2077, #2064), so nothing exercises that crossing now.
         .stop_and_swap(&[0, 1, 2, 3], current.clone())

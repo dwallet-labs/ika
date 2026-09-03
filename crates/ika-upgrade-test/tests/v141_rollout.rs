@@ -18,9 +18,12 @@
 //! Sign lifecycle across two reshares and a full binary swap. That is the
 //! wire-no-op every candidate must be against the release the fleet is running.
 //!
-//! **What the mixed v1.4.1/candidate committee now exercises.** Retargeting
-//! from v1.4.0 moved the OLD side across everything that shipped in v1.4.1,
-//! so these are the behaviours a mixed committee straddles from here on:
+//! **What the retarget removes from this gate's reach.** Retargeting from
+//! v1.4.0 moved the OLD side across everything that shipped in v1.4.1, so
+//! each of the following is now identical on both sides and is no longer a
+//! difference this gate straddles. They are listed because the OLD side's
+//! behaviour moved with them, not because the mixed committee exercises a
+//! disagreement about them:
 //!
 //! - the validator no longer READS the deprecated on-chain `mpc_data_bytes`
 //!   (#2121, Part A of #2119), and a newly registered validator writes a

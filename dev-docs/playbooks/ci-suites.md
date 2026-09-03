@@ -151,6 +151,12 @@ retarget renames all of it in one change — the three test files, their
 spec. Leaving any of them behind is the failure the convention exists to
 make visible.
 
+Immediately after a retarget, `main` == the OLD tag, so the gate is a
+same-binary run; real cross-binary coverage returns as `main` diverges. The
+run that lands with the retarget itself therefore proves the plumbing — that
+the OLD binary builds from the new tag at its own toolchain and the renamed
+gate wires up end to end — not binary compatibility.
+
 There are no capability-pinned scenarios left, but the convention still
 holds and is worth stating: when a scenario's OLD side is pinned to a
 specific capability rather than to "whatever is deployed", say so at the pin
