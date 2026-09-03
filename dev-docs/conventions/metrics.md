@@ -455,7 +455,7 @@ Three boundaries on the rule:
   does — so a fleet query over these families must be scoped to the node job
   before it is read as a per-validator uplink rate.
 
-  Note also that most of these families have **no zero baseline on any mode**.
+  Note also that three of the six families have **no zero baseline on any mode**.
   `ika_sui_client_sui_rpc_errors`, `..._sui_response_errors_total` and
   `..._chain_blob_reads` are unseeded label vecs: a healthy node exports **no
   series at all** for them, not a series at 0. Any rate alert on them must
