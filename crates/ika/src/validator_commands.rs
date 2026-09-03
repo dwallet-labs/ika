@@ -15,7 +15,6 @@ use crate::{IkaPackagesConfigFile, read_ika_sui_config_yaml};
 use clap::*;
 use colored::Colorize;
 use dwallet_classgroups_types::ValidatorMPCSecrets;
-use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
 use ika_config::node::read_authority_keypair_from_file;
@@ -23,9 +22,10 @@ use ika_config::validator_info::ValidatorInfo;
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_sui_client::SuiClient;
 use ika_sui_client::ika_validator_transactions::{
-    BecomeCandidateValidatorData, collect_commission, report_validator, request_add_validator,
-    request_add_validator_candidate, request_remove_validator, request_remove_validator_candidate,
-    request_withdraw_stake, rotate_commission_cap, rotate_operation_cap, set_next_commission,
+    BecomeCandidateValidatorData, collect_commission, deprecated_on_chain_mpc_data_placeholder,
+    report_validator, request_add_validator, request_add_validator_candidate,
+    request_remove_validator, request_remove_validator_candidate, request_withdraw_stake,
+    rotate_commission_cap, rotate_operation_cap, set_next_commission,
     set_next_epoch_consensus_address, set_next_epoch_consensus_pubkey_bytes,
     set_next_epoch_network_address, set_next_epoch_network_pubkey_bytes,
     set_next_epoch_p2p_address, set_next_epoch_protocol_pubkey_bytes, set_pricing_vote,
@@ -428,20 +428,25 @@ impl IkaValidatorCommand {
                     read_network_keypair_from_file(network_key_file_name)?;
                 let pop = generate_proof_of_possession(&keypair, sender_sui_address);
 
-                let (validator_mpc_secrets, validator_encryption_keys_and_proofs) =
+                // Writes `root-seed.key` if it is absent. That file is the whole
+                // of a validator's MPC identity and is still required: the NODE
+                // re-derives the full `ValidatorEncryptionKeysAndProofs` bundle
+                // from it at boot and announces it off chain, through consensus
+                // and P2P (`dev-docs/specs/validator-mpc-data-announcements.md`).
+                // The derived values are deliberately dropped here — nothing
+                // about them is published at registration any more (#2119) — but
+                // the derivation is still run, so a seed that cannot produce
+                // usable MPC material fails now rather than at the node's first
+                // boot.
+                let (_validator_mpc_secrets, _validator_encryption_keys_and_proofs) =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
-                // The Move-side `mpc_data_bytes` carries the bare
-                // `ClassGroupsEncryptionKeyAndProof`; chain readers decode that
-                // shape directly. The full `ValidatorEncryptionKeysAndProofs`
-                // bundle (PVSS + VSS HPKE) is propagated by the off-chain
-                // validator-metadata pipeline (PR #1721), not by this field.
-                // `validator_mpc_secrets` is held locally;
-                // `validator_encryption_keys_and_proofs` is the public payload —
-                // only its class-groups slice is published on chain.
-                let _ = validator_mpc_secrets;
-                let mpc_data_bytes =
-                    bcs::to_bytes(&validator_encryption_keys_and_proofs.class_groups)?;
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
+                // The on-chain `mpc_data_bytes` field is deprecated and ignored
+                // (#2119). The Move entry still requires a
+                // `TableVec<vector<u8>>` for the object to be creatable, so
+                // register the documented placeholder rather than real key
+                // material. See `deprecated_on_chain_mpc_data_placeholder` for
+                // why this exact encoding.
+                let mpc_data = deprecated_on_chain_mpc_data_placeholder();
 
                 let validator_info = ValidatorInfo {
                     name,
@@ -1109,6 +1114,17 @@ impl Display for IkaValidatorCommandResponse {
             }
             IkaValidatorCommandResponse::SetNextEpochMPCData(path) => {
                 writeln!(writer, "Generated new root seed key file: {path:?}.")?;
+                // No transaction was submitted, and an operator used to seeing a
+                // digest here needs to know that is correct rather than a
+                // failure: the on-chain `mpc_data_bytes` field is deprecated and
+                // ignored (#2119), and rotation completes off chain.
+                writeln!(
+                    writer,
+                    "No Sui transaction was submitted: on-chain MPC data is deprecated and \
+                     ignored (ika#2119). Rotation happens off chain — install this file at the \
+                     validator's root-seed path and restart it. The node then re-derives its \
+                     MPC data and announces it through consensus and P2P."
+                )?;
             }
             IkaValidatorCommandResponse::FetchCurrentPricingInfo(path) => {
                 writeln!(
@@ -1178,8 +1194,15 @@ fn make_key_files(
 
 /// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE +
 /// VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
-/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
-/// (published in the on-chain validator record).
+/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload.
+///
+/// NEITHER return value is published on chain. Since #2119 the on-chain
+/// `mpc_data_bytes` field is a deprecated placeholder, and the public payload
+/// reaches peers only through the off-chain pipeline — the node re-derives it
+/// from this same seed at boot and announces it through consensus and P2P
+/// (`dev-docs/specs/validator-mpc-data-announcements.md`). Callers registering a
+/// candidate want this for its side effect (write-or-reuse `root-seed.key`) and
+/// as a fail-fast check that the seed yields usable material.
 fn read_or_generate_root_seed(
     seed_path: PathBuf,
 ) -> Result<(
@@ -1269,6 +1292,84 @@ pub fn write_transaction_response_without_transaction_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ika_sui_client::ika_validator_transactions::DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS;
+
+    /// Pins the SERIALIZATION of the registration payload: the placeholder's
+    /// BCS, and the `mpc_data` field of the `validator.info` YAML that an
+    /// operator carries from `make-validator-info` to `become-candidate` (#2119).
+    ///
+    /// It builds the `ValidatorInfo` directly rather than driving
+    /// `make-validator-info` itself — that path needs a `TransactionContext` and
+    /// runs a full class-groups derivation, which does not belong in a unit
+    /// test. So this does NOT prove the command populates the field from the
+    /// constant; that link is held by the single call site in the
+    /// `MakeValidatorInfo` arm, and the on-the-wire shape is pinned separately
+    /// by `registration_ptb_pushes_exactly_the_placeholder_chunk` in
+    /// `ika-sui-client`.
+    #[test]
+    fn registration_payload_serialization_is_the_documented_placeholder() {
+        assert_eq!(
+            bcs::to_bytes(&deprecated_on_chain_mpc_data_placeholder()).unwrap(),
+            DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS.to_vec(),
+        );
+
+        let temporary_directory = tempfile::tempdir().unwrap();
+        let dir = temporary_directory.path();
+        let protocol_key_file_name = dir.join("protocol.key");
+        let network_key_file_name = dir.join("network.key");
+        let consensus_key_file_name = dir.join("consensus.key");
+        make_key_files(protocol_key_file_name.clone(), true, None).unwrap();
+        make_key_files(network_key_file_name.clone(), false, None).unwrap();
+        make_key_files(consensus_key_file_name.clone(), false, None).unwrap();
+        let keypair = read_authority_keypair_from_file(&protocol_key_file_name);
+        let consensus_keypair: NetworkKeyPair =
+            read_network_keypair_from_file(consensus_key_file_name).unwrap();
+        let network_keypair: NetworkKeyPair =
+            read_network_keypair_from_file(network_key_file_name).unwrap();
+        let sender_sui_address = SuiAddress::ZERO;
+
+        let validator_info = ValidatorInfo {
+            name: "validator".to_string(),
+            mpc_data: deprecated_on_chain_mpc_data_placeholder(),
+            account_address: sender_sui_address,
+            protocol_public_key: keypair.public().into(),
+            consensus_public_key: consensus_keypair.public().clone(),
+            network_public_key: network_keypair.public().clone(),
+            computation_price: 1,
+            description: String::new(),
+            image_url: String::new(),
+            project_url: String::new(),
+            commission_rate: DEFAULT_COMMISSION_RATE,
+            consensus_address: Multiaddr::try_from("/dns/host/udp/8081".to_string()).unwrap(),
+            network_address: Multiaddr::try_from("/dns/host/tcp/8080/http".to_string()).unwrap(),
+            p2p_address: Multiaddr::try_from("/dns/host/udp/8084".to_string()).unwrap(),
+            proof_of_possession: generate_proof_of_possession(&keypair, sender_sui_address),
+        };
+
+        let validator_info_path = dir.join("validator.info");
+        fs::write(
+            &validator_info_path,
+            serde_yaml::to_string(&validator_info).unwrap(),
+        )
+        .unwrap();
+        let written = fs::read_to_string(&validator_info_path).unwrap();
+
+        // `ValidatorInfo` stores `mpc_data` as base64(BCS). Two zero bytes
+        // encode as "AAA=" — pin the on-disk form so a change to the payload
+        // cannot slip through as an opaque blob in review.
+        let as_yaml: serde_yaml::Value = serde_yaml::from_str(&written).unwrap();
+        assert_eq!(
+            as_yaml.get("mpc_data").and_then(|v| v.as_str()),
+            Some("AAA="),
+            "validator.info must carry the placeholder verbatim, got:\n{written}",
+        );
+
+        let reread: ValidatorInfo = serde_yaml::from_str(&written).unwrap();
+        assert_eq!(
+            bcs::to_bytes(&reread.mpc_data).unwrap(),
+            DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS.to_vec(),
+        );
+    }
 
     #[test]
     fn set_next_epoch_mpc_data_requires_no_onchain_arguments() {
@@ -1277,6 +1378,21 @@ mod tests {
                 .unwrap();
 
         assert!(matches!(command, IkaValidatorCommand::SetNextEpochMPCData));
+    }
+
+    /// The command submits nothing, so its output has to say so — an operator
+    /// looking for a transaction digest must not read the absence as a failure.
+    #[test]
+    fn set_next_epoch_mpc_data_output_says_rotation_is_off_chain() {
+        let rendered =
+            IkaValidatorCommandResponse::SetNextEpochMPCData(PathBuf::from("root-seed.key"))
+                .to_string();
+
+        assert!(
+            rendered.contains("No Sui transaction was submitted"),
+            "got: {rendered}",
+        );
+        assert!(rendered.contains("off chain"), "got: {rendered}");
     }
 
     #[test]

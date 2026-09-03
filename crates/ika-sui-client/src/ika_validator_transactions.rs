@@ -1,5 +1,5 @@
 use anyhow::{Error, bail};
-use dwallet_mpc_types::dwallet_mpc::VersionedMPCData;
+use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use fastcrypto::traits::ToFromBytes;
 use ika_config::validator_info::ValidatorInfo;
 use ika_types::error::{IkaError, IkaResult};
@@ -7,10 +7,8 @@ use ika_types::messages_dwallet_mpc::DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME;
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
 use ika_types::sui::{
     COLLECT_COMMISSION_FUNCTION_NAME, CREATE_BYTES_TABLE_VEC_FUNCTION_NAME,
-    DROP_TABLE_VEC_FUNCTION_NAME, INSERT_OR_UPDATE_PRICING_FUNCTION_NAME,
-    NEW_VALIDATOR_METADATA_FUNCTION_NAME, OPTION_DESTROY_NONE_FUNCTION_NAME,
-    OPTION_DESTROY_SOME_FUNCTION_NAME, OPTION_MODULE_NAME, PRICING_MODULE_NAME,
-    PUSH_BACK_TO_TABLE_VEC_FUNCTION_NAME, PricingInfoKey, PricingInfoValue,
+    INSERT_OR_UPDATE_PRICING_FUNCTION_NAME, NEW_VALIDATOR_METADATA_FUNCTION_NAME,
+    PRICING_MODULE_NAME, PUSH_BACK_TO_TABLE_VEC_FUNCTION_NAME, PricingInfoKey, PricingInfoValue,
     REPORT_VALIDATOR_FUNCTION_NAME, REQUEST_ADD_STAKE_FUNCTION_NAME,
     REQUEST_ADD_VALIDATOR_CANDIDATE_FUNCTION_NAME, REQUEST_ADD_VALIDATOR_FUNCTION_NAME,
     REQUEST_REMOVE_VALIDATOR_CANDIDATE_FUNCTION_NAME, REQUEST_REMOVE_VALIDATOR_FUNCTION_NAME,
@@ -18,22 +16,22 @@ use ika_types::sui::{
     ROTATE_OPERATION_CAP_FUNCTION_NAME, SET_NEXT_COMMISSION_FUNCTION_NAME,
     SET_NEXT_EPOCH_CONSENSUS_ADDRESS_FUNCTION_NAME,
     SET_NEXT_EPOCH_CONSENSUS_PUBKEY_BYTES_FUNCTION_NAME,
-    SET_NEXT_EPOCH_MPC_DATA_BYTES_FUNCTION_NAME, SET_NEXT_EPOCH_NETWORK_ADDRESS_FUNCTION_NAME,
+    SET_NEXT_EPOCH_NETWORK_ADDRESS_FUNCTION_NAME,
     SET_NEXT_EPOCH_NETWORK_PUBKEY_BYTES_FUNCTION_NAME, SET_NEXT_EPOCH_P2P_ADDRESS_FUNCTION_NAME,
     SET_NEXT_EPOCH_PROTOCOL_PUBKEY_BYTES_FUNCTION_NAME, SET_PRICING_VOTE_FUNCTION_NAME,
     SET_VALIDATOR_METADATA_FUNCTION_NAME, SET_VALIDATOR_NAME_FUNCTION_NAME, SYSTEM_MODULE_NAME,
-    TABLE_VEC_MODULE_NAME, TABLE_VEC_STRUCT_NAME, UNDO_REPORT_VALIDATOR_FUNCTION_NAME,
-    VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME, VALIDATOR_COMMISSION_STRUCT_NAME,
-    VALIDATOR_METADATA_FUNCTION_NAME, VALIDATOR_METADATA_MODULE_NAME,
-    VALIDATOR_OPERATION_STRUCT_NAME, VERIFY_COMMISSION_CAP_FUNCTION_NAME,
-    VERIFY_OPERATION_CAP_FUNCTION_NAME, VERIFY_VALIDATOR_CAP_FUNCTION_NAME,
-    WITHDRAW_STAKE_FUNCTION_NAME,
+    TABLE_VEC_MODULE_NAME, UNDO_REPORT_VALIDATOR_FUNCTION_NAME, VALIDATOR_CAP_MODULE_NAME,
+    VALIDATOR_CAP_STRUCT_NAME, VALIDATOR_COMMISSION_STRUCT_NAME, VALIDATOR_METADATA_FUNCTION_NAME,
+    VALIDATOR_METADATA_MODULE_NAME, VALIDATOR_OPERATION_STRUCT_NAME,
+    VERIFY_COMMISSION_CAP_FUNCTION_NAME, VERIFY_OPERATION_CAP_FUNCTION_NAME,
+    VERIFY_VALIDATOR_CAP_FUNCTION_NAME, WITHDRAW_STAKE_FUNCTION_NAME,
 };
 
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use serde::Serialize;
+use sui_types::SUI_FRAMEWORK_PACKAGE_ID;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
 use sui_types::effects::TransactionEffectsAPI;
@@ -41,7 +39,6 @@ use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction};
 use sui_types::transaction::{Command, TransactionData};
-use sui_types::{MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_ADDRESS, SUI_FRAMEWORK_PACKAGE_ID};
 
 use crate::transaction_builder::build_transaction_data;
 use crate::transaction_context::TransactionContext;
@@ -54,6 +51,63 @@ pub struct BecomeCandidateValidatorData {
     pub validator_commission_cap_id: ObjectID,
 }
 
+/// BCS encoding of [`deprecated_on_chain_mpc_data_placeholder`]: the `V1`
+/// variant index (ULEB128 `0x00`) followed by a zero-length byte vector
+/// (ULEB128 `0x00`).
+///
+/// This is the exact — and only — chunk pushed into the on-chain
+/// `TableVec<vector<u8>>` at candidate registration.
+pub const DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS: [u8; 2] = [0x00, 0x00];
+
+/// The value a validator candidate registers in the **deprecated** on-chain
+/// `mpc_data_bytes` field (`validator_info.move`, `ValidatorInfo.mpc_data_bytes`).
+///
+/// The field is deprecated and ignored — see issue #2119. Real class-groups key
+/// material lives off-chain: every validator derives the full
+/// `ValidatorEncryptionKeysAndProofs` bundle from its root seed
+/// (`derive_mpc_data_blob`), announces it through consensus with a Blake2b256
+/// blob hash, and peers fetch the bytes over P2P/OCS. See
+/// `dev-docs/specs/validator-mpc-data-announcements.md`.
+///
+/// The Move contract is unchanged: `system::request_add_validator_candidate`
+/// still takes a `TableVec<vector<u8>>`, so a candidate must still hand it
+/// *something* for the object to be creatable. That something is this
+/// placeholder — a `VersionedMPCData::V1` carrying an empty payload.
+///
+/// Why this shape, and not a zero-chunk (fully empty) `TableVec`:
+///
+/// * **It stays well-formed BCS.** `SuiClient::get_epoch_start_system` fails the
+///   entire epoch-start read when an active committee member's record does not
+///   decode as `VersionedMPCData` (a gap there is treated as a read defect, not
+///   a member to skip). A `TableVec` with no chunks reads back as zero bytes,
+///   which is not a valid `VersionedMPCData`, so a single validator registered
+///   that way would break that read for *every* node. `V1 { mpc_data_bytes: [] }`
+///   decodes cleanly; the emptiness is visible only to code that looks *inside*
+///   the envelope, which nothing does any more.
+/// * **It is unambiguous.** A real payload is a `ClassGroupsEncryptionKeyAndProof`
+///   and is never zero-length, so "decodes, but empty" cannot be mistaken for a
+///   truncated or corrupted write — no extra magic marker is needed to say
+///   "deliberate placeholder".
+/// * **It is the smallest such value:** two bytes on chain
+///   ([`DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS`]), in one `TableVec` entry.
+///
+/// Move never indexes into the vector: `validator_info.move` only stores it
+/// (`new`), swaps it (`set_next_epoch_mpc_data_bytes`) and drains it on destroy,
+/// and `validate()` does not look at it at all — so the entry count is
+/// irrelevant to the contract.
+pub fn deprecated_on_chain_mpc_data_placeholder() -> VersionedMPCData {
+    VersionedMPCData::V1(MPCDataV1 {
+        mpc_data_bytes: Vec::new(),
+    })
+}
+
+/// Chunk `mpc_data` into the on-chain `TableVec<vector<u8>>` the Move entry
+/// expects.
+///
+/// Since #2119 the only value that reaches this on the candidate-registration
+/// path is [`deprecated_on_chain_mpc_data_placeholder`], which fits in a single
+/// chunk; the chunking loop is retained because the Move signature is unchanged
+/// and the genesis path in `ika-swarm-config` still writes real bytes.
 fn store_mcp_data_in_table_vec(
     ptb: &mut ProgrammableTransactionBuilder,
     mpc_data: &VersionedMPCData,
@@ -1237,135 +1291,20 @@ pub async fn verify_commission_cap(
 
     execute_transaction(context, tx_data).await
 }
-pub async fn ptb_set_next_epoch_mpc_data_bytes_inner(
-    context: &impl TransactionContext,
-    ika_system_package_id: ObjectID,
-    ika_system_object_id: ObjectID,
-    validator_operation_cap_id: ObjectID,
-    next_mpc_data: &VersionedMPCData,
-) -> Result<(ProgrammableTransactionBuilder, Argument), anyhow::Error> {
-    let client = context.grpc_client()?;
-    let validator_operation_cap_ref = client.get_object_ref(validator_operation_cap_id).await?;
 
-    let mut ptb = ProgrammableTransactionBuilder::new();
-    let store_mcp_data_in_table_vec = store_mcp_data_in_table_vec(&mut ptb, next_mpc_data)?;
-
-    let call_args = vec![
-        store_mcp_data_in_table_vec,
-        ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
-            validator_operation_cap_ref,
-        )))?,
-    ];
-
-    let optional_tablevec_to_delete = add_ika_system_command_to_ptb(
-        context,
-        SET_NEXT_EPOCH_MPC_DATA_BYTES_FUNCTION_NAME,
-        call_args,
-        ika_system_object_id,
-        ika_system_package_id,
-        &mut ptb,
-    )
-    .await?;
-
-    Ok((ptb, optional_tablevec_to_delete))
-}
-
-pub async fn new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
-    context: &impl TransactionContext,
-    ika_system_package_id: ObjectID,
-    ika_system_object_id: ObjectID,
-    validator_operation_cap_id: ObjectID,
-    next_mpc_data: &VersionedMPCData,
-    table_vec_struct_tag: StructTag,
-) -> Result<ProgrammableTransactionBuilder, anyhow::Error> {
-    let (mut ptb, optional_tablevec_to_delete) = ptb_set_next_epoch_mpc_data_bytes_inner(
-        context,
-        ika_system_package_id,
-        ika_system_object_id,
-        validator_operation_cap_id,
-        next_mpc_data,
-    )
-    .await?;
-
-    let tablevec_to_delete = ptb.programmable_move_call(
-        MOVE_STDLIB_PACKAGE_ID,
-        OPTION_MODULE_NAME.into(),
-        OPTION_DESTROY_SOME_FUNCTION_NAME.to_owned(),
-        vec![TypeTag::Struct(Box::new(table_vec_struct_tag))],
-        vec![optional_tablevec_to_delete],
-    );
-
-    ptb.programmable_move_call(
-        SUI_FRAMEWORK_PACKAGE_ID,
-        TABLE_VEC_MODULE_NAME.into(),
-        DROP_TABLE_VEC_FUNCTION_NAME.into(),
-        vec![TypeTag::Vector(Box::new(TypeTag::U8))],
-        vec![tablevec_to_delete],
-    );
-
-    Ok(ptb)
-}
-
-/// Set next epoch MPC data bytes
-pub async fn set_next_epoch_mpc_data_bytes(
-    context: &impl TransactionContext,
-    ika_system_package_id: ObjectID,
-    ika_system_object_id: ObjectID,
-    validator_operation_cap_id: ObjectID,
-    next_mpc_data: VersionedMPCData,
-    gas_budget: u64,
-) -> Result<ExecutedTransaction, anyhow::Error> {
-    let table_vec_struct_tag = StructTag {
-        address: SUI_FRAMEWORK_ADDRESS,
-        module: TABLE_VEC_MODULE_NAME.into(),
-        name: TABLE_VEC_STRUCT_NAME.to_owned(),
-        type_params: vec![TypeTag::Vector(Box::new(TypeTag::U8))],
-    };
-
-    let ptb = new_ptb_set_next_epoch_mpc_data_bytes_with_drop(
-        context,
-        ika_system_package_id,
-        ika_system_object_id,
-        validator_operation_cap_id,
-        &next_mpc_data,
-        table_vec_struct_tag.clone(),
-    )
-    .await?;
-
-    let sender = context.active_address()?;
-
-    let construct_result = construct_unsigned_txn(context, sender, gas_budget, ptb).await;
-
-    let tx_data = match construct_result {
-        Ok(tx_data) => tx_data,
-        Err(IkaError::DryRunFailed(_)) => {
-            // If dry run fails, we try to `destroy_none` as the `set_next_epoch_mpc_data_bytes`
-            // transaction returns an `Option<TableVec>` which most be dropped.
-            let (mut ptb, optional_tablevec_to_delete) = ptb_set_next_epoch_mpc_data_bytes_inner(
-                context,
-                ika_system_package_id,
-                ika_system_object_id,
-                validator_operation_cap_id,
-                &next_mpc_data,
-            )
-            .await?;
-
-            ptb.programmable_move_call(
-                MOVE_STDLIB_PACKAGE_ID,
-                OPTION_MODULE_NAME.into(),
-                OPTION_DESTROY_NONE_FUNCTION_NAME.to_owned(),
-                vec![TypeTag::Struct(Box::new(table_vec_struct_tag))],
-                vec![optional_tablevec_to_delete],
-            );
-            construct_unsigned_txn(context, sender, gas_budget, ptb).await?
-        }
-        Err(e) => {
-            return Err(e.into());
-        }
-    };
-
-    execute_transaction(context, tx_data).await
-}
+// The on-chain MPC-data rotation path (`system::set_next_epoch_mpc_data_bytes`)
+// used to live here as `ptb_set_next_epoch_mpc_data_bytes_inner`,
+// `new_ptb_set_next_epoch_mpc_data_bytes_with_drop` and
+// `set_next_epoch_mpc_data_bytes`. All three are gone as of #2119: the on-chain
+// `mpc_data_bytes` field is deprecated and ignored, so there is nothing to
+// rotate on chain. They had no callers — `ika validator set-next-epoch-mpc-data`
+// has been a local-only root-seed regeneration since the off-chain pipeline
+// landed — and keeping them would have left a ready-made way to write the
+// deprecated field. Rotation is now entirely off-chain: install a new
+// `root-seed.key` and restart; the node re-derives its
+// `ValidatorEncryptionKeysAndProofs` bundle and re-announces it through
+// consensus + P2P (`dev-docs/specs/validator-mpc-data-announcements.md`).
+// The Move functions are deliberately left in place.
 
 /// Set pricing vote for DWallet operations
 pub async fn set_pricing_vote(
@@ -1536,4 +1475,95 @@ pub async fn add_ika_system_command_to_ptb(
         args,
     ));
     Ok(return_arg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sui_types::transaction::{Command, ProgrammableMoveCall};
+
+    /// The on-chain payload is a documented constant, not "whatever the code
+    /// happens to produce". Pin the exact bytes: anything that changes them
+    /// changes what every already-registered validator's record looks like
+    /// next to a freshly-registered one.
+    #[test]
+    fn placeholder_encodes_to_the_documented_two_bytes() {
+        assert_eq!(
+            bcs::to_bytes(&deprecated_on_chain_mpc_data_placeholder()).unwrap(),
+            DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS.to_vec(),
+        );
+    }
+
+    /// The placeholder must round-trip as a `VersionedMPCData`. This is the
+    /// property that lets `get_epoch_start_system` keep its "an active member's
+    /// record must decode" gate: a zero-chunk `TableVec` would fail it.
+    #[test]
+    fn placeholder_round_trips_as_versioned_mpc_data() {
+        let decoded: VersionedMPCData =
+            bcs::from_bytes(&DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS).unwrap();
+        let VersionedMPCData::V1(v1) = decoded;
+        assert!(v1.mpc_data_bytes.is_empty());
+    }
+
+    /// A zero-chunk `TableVec` reads back as zero bytes, which is what
+    /// `get_epoch_start_system` would have to decode. Prove it cannot, so the
+    /// choice of a single sentinel chunk over an empty table is not folklore.
+    #[test]
+    fn empty_table_vec_would_not_decode() {
+        assert!(bcs::from_bytes::<VersionedMPCData>(&[]).is_err());
+    }
+
+    /// The registration transaction must push exactly one chunk, and that chunk
+    /// must be the documented placeholder.
+    #[test]
+    fn registration_ptb_pushes_exactly_the_placeholder_chunk() {
+        let mut ptb = ProgrammableTransactionBuilder::new();
+        store_mcp_data_in_table_vec(&mut ptb, &deprecated_on_chain_mpc_data_placeholder()).unwrap();
+        let transaction = ptb.finish();
+
+        let move_calls: Vec<&ProgrammableMoveCall> = transaction
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::MoveCall(call) => Some(call.as_ref()),
+                _ => None,
+            })
+            .collect();
+
+        let pushes: Vec<&&ProgrammableMoveCall> = move_calls
+            .iter()
+            .filter(|call| call.function.as_str() == PUSH_BACK_TO_TABLE_VEC_FUNCTION_NAME.as_str())
+            .collect();
+        assert_eq!(pushes.len(), 1, "expected exactly one table_vec::push_back");
+        assert_eq!(
+            move_calls
+                .iter()
+                .filter(
+                    |call| call.function.as_str() == CREATE_BYTES_TABLE_VEC_FUNCTION_NAME.as_str()
+                )
+                .count(),
+            1,
+            "expected exactly one table_vec::empty",
+        );
+
+        // `store_mcp_data_in_table_vec` is the only thing that added inputs, and
+        // it adds one pure input per chunk: the BCS of `vector<u8>` (a length
+        // prefix followed by the chunk itself).
+        let pure_inputs: Vec<&Vec<u8>> = transaction
+            .inputs
+            .iter()
+            .filter_map(|input| match input {
+                CallArg::Pure(bytes) => Some(bytes),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pure_inputs.len(), 1);
+        assert_eq!(
+            *pure_inputs[0],
+            bcs::to_bytes(&DEPRECATED_ON_CHAIN_MPC_DATA_PLACEHOLDER_BCS.to_vec()).unwrap(),
+        );
+        // Spelled out, so a change to the encoding cannot slip through by
+        // changing the expectation and the code together.
+        assert_eq!(*pure_inputs[0], vec![0x02, 0x00, 0x00]);
+    }
 }

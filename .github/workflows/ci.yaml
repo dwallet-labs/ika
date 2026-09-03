@@ -314,3 +314,28 @@ jobs:
             metrics::per_mode_registration::a_validator_exports_every_family \
             | tee "$RUNNER_TEMP/seed-rotation-metric-pins.log"
           grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+      - name: Deprecated on-chain mpc_data placeholder pins
+        # What a candidate registers in the deprecated on-chain
+        # `mpc_data_bytes` field is a byte-format contract (#2119): exactly
+        # `[0x00, 0x00]`, in exactly one TableVec entry. It is deliberately
+        # well-formed BCS, because `get_epoch_start_system` fails the whole
+        # epoch-start read for every node when an active member's record does
+        # not decode -- so a change here is a fleet-wide read break, not a
+        # local one. This job is otherwise compile-only, and nothing else on
+        # PR CI executes ika-sui-client's tests, so the pins must be named
+        # here or they never run. The crate is already compiled by the
+        # ika-core check above, and no MPC crypto is involved, so the debug
+        # profile is fine.
+        run: |
+          set -o pipefail
+          cargo test -p ika-sui-client --lib -- \
+            placeholder_encodes_to_the_documented_two_bytes \
+            placeholder_round_trips_as_versioned_mpc_data \
+            empty_table_vec_would_not_decode \
+            registration_ptb_pushes_exactly_the_placeholder_chunk \
+            | tee "$RUNNER_TEMP/mpc-data-placeholder-pins.log"
+          # cargo exits 0 when a name filter matches nothing, so a renamed
+          # test would silently disable this gate. Require the exact count:
+          # unlike a `[1-9][0-9]*` floor, this also catches renaming SOME of
+          # the pins. Bump the number when adding one.
+          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/mpc-data-placeholder-pins.log"

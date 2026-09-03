@@ -301,7 +301,7 @@ impl SuiClientInner for GrpcSuiClient {
     async fn get_mpc_data_from_validators_pool(
         &self,
         validators: &Vec<StakingPool>,
-        read_next_mpc_data: bool,
+        _read_next_epoch_mpc_data: bool,
     ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
         let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
@@ -311,26 +311,29 @@ impl SuiClientInner for GrpcSuiClient {
                     validator.id
                 ))
             })?;
-            let mpc_data_id = if read_next_mpc_data
-                && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
-                && info.previous_mpc_data_bytes.is_none()
-            {
-                next_epoch_mpc_data_bytes.contents.id
-            } else {
-                if info.next_epoch_mpc_data_bytes.is_some()
-                    && info.previous_mpc_data_bytes.is_some()
-                {
-                    ika_types::report_invariant_violation!(
-                        "grpc_validator_mpc_data_overlap",
-                        validator_id=?validator.id,
-                        "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
-                    );
-                }
-
-                info.mpc_data_bytes.contents.id
-            };
-
-            let mpc_data_bytes = self.read_table_vec_as_raw_bytes(mpc_data_id).await?;
+            // Always the current record, whatever the caller asked for.
+            // `next_epoch_mpc_data_bytes` / `previous_mpc_data_bytes` are the
+            // on-chain rotation staging slots. Since #2119 no writer for them
+            // remains in this repo: the `set_next_epoch_mpc_data_bytes`
+            // builders are gone and `ika validator set-next-epoch-mpc-data`
+            // only regenerates the local root seed. That is a statement about
+            // THIS repo, not a guarantee about chain state — the `sui_syncer`
+            // call site still passes `true`, the Move entry still exists, and
+            // `validator_info::rotate_next_epoch_info` would swap a staged slot
+            // into the current record at an epoch change if anything ever wrote
+            // one.
+            //
+            // Nothing has: a read-only walk of every validator record found
+            // both slots `None` on all 115 mainnet validators (ika epoch 398)
+            // and all 111 on testnet (epoch 401), with a current record present
+            // on every one.
+            //
+            // The field this reads is itself deprecated and carries only a
+            // placeholder for validators registered after #2119; MPC-data
+            // rotation is off chain (new root seed -> restart -> re-announce).
+            let mpc_data_bytes = self
+                .read_table_vec_as_raw_bytes(info.mpc_data_bytes.contents.id)
+                .await?;
 
             match bcs::from_bytes::<VersionedMPCData>(&mpc_data_bytes) {
                 Ok(validator_mpc_data) => {

@@ -27,6 +27,12 @@ ika validator make-validator-info \
   <NAME> <DESCRIPTION> <IMAGE_URL> <PROJECT_URL> <HOST_NAME> <GAS_PRICE> <SENDER_SUI_ADDRESS>
 ```
 
+Writes `protocol.key`, `network.key`, `consensus.key`, `root-seed.key` and `validator.info` into the current directory. Existing key files and an existing root seed are reused, never overwritten; `validator.info` is rewritten on every run.
+
+`root-seed.key` is the validator's MPC identity and the only file that cannot be regenerated — back it up before doing anything else. The node derives its full class-groups key material from this seed at boot and announces it to peers off chain; the seed itself is never published.
+
+The `mpc_data` field inside `validator.info` is **not** key material. The on-chain `mpc_data_bytes` field is deprecated, so `make-validator-info` writes a fixed two-byte placeholder there. Note the activation precondition under [`become-candidate`](#become-candidate) before staking a validator built this way.
+
 ### `config-env`
 
 Configure the Ika package and system object IDs for the CLI environment.
@@ -49,6 +55,17 @@ Register as a validator candidate using a validator info file.
 ```bash
 ika validator become-candidate <VALIDATOR_INFO_PATH>
 ```
+
+The transaction submits a placeholder for the on-chain `mpc_data_bytes` field. That field is deprecated ([ika#2119](https://github.com/dwallet-labs/ika/issues/2119)): a validator's real MPC key material is derived from `root-seed.key` and distributed off chain, through consensus announcements and peer-to-peer fetches. The placeholder exists only because the Move entry still requires the argument.
+
+<Callout type="warn" title="Register any time — activate only after the network is upgraded">
+
+Running `become-candidate` with the placeholder is always safe: a candidate's record is never read by any node, on any version.
+
+Staking the validator into the **active committee** is the step with a precondition. Node versions **from v1.4.0 and earlier still read this field** and fail closed on the placeholder. Activate only once every node that builds a committee containing you — all committee validators, and any fullnode or joiner still able to take the bootstrap-window fallback path — runs a release that ignores it.
+
+Activating too early is not a transient error that clears on retry. On v1.4.0 it permanently breaks committee construction for **every** node on the fallback path (no later chain state can satisfy the decode), and the new validator never starts MPC because its own boot-time key check fails. During a rolling upgrade, make activation the last step.
+</Callout>
 
 ### `remove-candidate`
 
@@ -274,7 +291,9 @@ ika validator set-next-epoch-consensus-pubkey \
 ika validator set-next-epoch-mpc-data
 ```
 
-Generates a new `root-seed.key` in the current directory, replacing any existing file. This command does not submit a Sui transaction.
+Generates a new `root-seed.key` in the current directory. This command does not submit a Sui transaction — there is no on-chain MPC-data rotation, and the on-chain `mpc_data_bytes` field is deprecated ([ika#2119](https://github.com/dwallet-labs/ika/issues/2119)). Install the new file at the validator's configured root-seed path and restart the validator; the node derives and announces its MPC data through consensus and P2P.
+
+It refuses to run if `root-seed.key` already exists in the current directory. A root seed cannot be recovered once replaced, so move the old file aside deliberately if you really intend to rotate. To rotate a running validator without a gap in participation, follow *Rotating the root seed* below.
 
 #### Rotating the root seed
 
@@ -282,7 +301,7 @@ Every MPC key the validator holds is derived from its root seed, and the network
 
 Keep participating through the rotation by telling the node which seed it was running:
 
-1. Generate the new seed and install it at the validator's configured `root-seed-key-pair` path. Keep the old file — do not delete it yet.
+1. Generate the new seed in an empty directory (the command refuses to overwrite an existing `root-seed.key`), then install it at the validator's configured `root-seed-key-pair` path. Keep the old file — do not delete it yet.
 2. Add `previous-root-seed-key-pair` to the node config, pointing at the OLD seed file. It takes exactly the same form as `root-seed-key-pair`.
 3. Restart the validator.
 

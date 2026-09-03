@@ -2,9 +2,123 @@
 
 Status: active and unconditional — `MIN_PROTOCOL_VERSION` and
 `MAX_PROTOCOL_VERSION` are both 7, so no supported version turns this off.
-The legacy chain field remains for candidate registration, but operational
-MPC-data updates do not write it; the consensus + P2P pipeline described
-here is the only update and read path.
+The consensus + P2P pipeline described here is the only update and read
+path for validator MPC data.
+
+## The on-chain `mpc_data_bytes` field is a deprecated placeholder
+
+The Move field `ValidatorInfo.mpc_data_bytes` (`validator_info.move`) is
+**deprecated and to be completely ignored** — issue #2119. It used to
+carry the bare `ClassGroupsEncryptionKeyAndProof`; nothing about it was
+ever enforced or verified (#488, closed on that basis; #2117, closed
+unmerged), and everything a validator's peers actually need travels
+through the pipeline below.
+
+- **What a candidate now registers.** `ika validator make-validator-info`
+  writes a fixed placeholder into `validator.info`, and
+  `become-candidate` submits it verbatim: a `VersionedMPCData::V1` with
+  an empty payload, whose BCS is exactly the two bytes `[0x00, 0x00]`,
+  stored as the single entry of the `TableVec<vector<u8>>` the Move
+  entry still takes. The constant is
+  `ika_sui_client::ika_validator_transactions::deprecated_on_chain_mpc_data_placeholder`;
+  its doc comment carries the full rationale, including why it is not a
+  zero-chunk `TableVec` (that reads back as zero bytes and does not
+  decode as `VersionedMPCData`, which would fail
+  `SuiClient::get_epoch_start_system`'s envelope gate — see below — for
+  every node, not just the registrant).
+- **The contract is unchanged.** No Move function was removed or
+  altered; the entry keeps accepting `mpc_data_bytes: TableVec<vector<u8>>`.
+  Only what the CLI *sends* changed. Move never indexes into the vector
+  — it is stored, swapped and drained, never read element-wise — so the
+  single-entry shape is immaterial on chain.
+- **There is no on-chain rotation.** The `set_next_epoch_mpc_data_bytes`
+  transaction builders have been removed from `ika-sui-client` (they had
+  no callers). `ika validator set-next-epoch-mpc-data` regenerates the
+  local `root-seed.key` and submits nothing; the reader in
+  `grpc_backend.rs` no longer consults the `next_epoch_mpc_data_bytes` /
+  `previous_mpc_data_bytes` staging slots. The Move functions are
+  deliberately left in place.
+
+  Two caveats on "no writer", because neither is closed by Rust:
+  `sdk/typescript/src/tx/system.ts` still exports
+  `setNextEpochMpcDataBytes`, though the call cannot execute — it passes
+  the argument as `tx.pure(bcs.vector(bcs.vector(bcs.u8())))` where the
+  Move entry types it as `TableVec<vector<u8>>`, an object, so it is dead
+  rather than dangerous. And if anything ever DID stage a slot,
+  `validator_info::rotate_next_epoch_info` (`validator_info.move:299-319`)
+  swaps it into `mpc_data_bytes` at the next epoch change, moving the old
+  value to `previous_mpc_data_bytes` — so a staged slot is not inert, it
+  silently replaces the current record one epoch later.
+
+  As of ika epoch 398 (mainnet) and 401 (testnet) no such slot exists: a
+  read-only walk of every validator record found `next_epoch_mpc_data_bytes`
+  and `previous_mpc_data_bytes` `None` on all 115 mainnet and all 111
+  testnet validators, and a current record present on every one.
+- **Validators registered before #2119** still hold real bytes in the
+  field. After #2121 nothing reads them, so the two populations are
+  indistinguishable to the protocol; there is no migration.
+
+### Who used to read the field, and the one gate that remains
+
+Before #2121, FOUR sites decoded the on-chain payload. All four were
+removed there. The list is kept as history, because the failure shapes are
+what the placeholder's encoding is designed around — and because it is the
+inventory to check against if anyone proposes reading the field again:
+
+- `ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` — the boot-time seed
+  identity check. Fail-CLOSED: the node did not start MPC.
+- `ika-core/src/sui_connector/sui_syncer.rs` — the bootstrap-window
+  chain-fallback committee build. Fail-CLOSED, and the blast radius was
+  everyone: one member that would not decode failed the whole build for
+  every node on that path, not just the registrant.
+- `ika-types/src/sui/epoch_start_system.rs` — two sites (the committee
+  build and the persisted-state rebuild). Both fail-SOFT: they logged via
+  `error!` / `report_invariant_violation!` and dropped the member, yielding
+  a PARTIAL class-groups map. The more dangerous shape of the two, because
+  it degraded silently instead of failing the read.
+
+**Add no new readers of this field.**
+
+One gate does remain, and it is deliberately about the ENVELOPE only:
+`SuiClient::get_epoch_start_system` (`ika-sui-client`, untouched by #2121)
+still fails the whole epoch-start read if an active committee member's
+record is missing or does not decode as a `VersionedMPCData`. It never
+looks inside. That is precisely why the placeholder is a well-formed
+two-byte `V1` envelope rather than a zero-chunk `TableVec`: the gate keeps
+catching genuine read defects, and stays blind to the fact that the
+payload is now empty.
+
+### Rollout precondition: register any time, activate LAST
+
+Submitting `become-candidate` with the placeholder is safe at any time,
+on any fleet version. A candidate's record is never read: the chain-view
+builder walks `validator_set.active_committee.members` only
+(`SuiClient::get_epoch_start_system`), and so does the syncer's
+bootstrap-window fallback.
+
+**Activation is the constraint.** A placeholder validator MUST NOT be
+staked into the ACTIVE committee until every node that builds a committee
+containing it runs a binary that includes #2121 — that means all
+committee validators, plus any fullnode or joiner that can still take the
+bootstrap-window chain-fallback path.
+
+On v1.4.0 (`release/mainnet-v1.4.0`, byte-identical to the testnet tag) an
+activated placeholder member is not a transient error, it is a permanent
+one:
+
+- the syncer's chain-fallback committee build decodes EVERY member's
+  on-chain bytes and hard-fails the whole build on the first one that will
+  not parse — `chain_fallback_mpc_data_decode` plus
+  `MissingOnChainMpcData`, retried forever, because no chain state change
+  can ever satisfy it. That breaks committee construction for every node
+  in the bootstrap window, not just the new validator; and
+- the new validator additionally fails its own boot-time seed identity
+  check, which decodes its on-chain bytes and compares them against its
+  locally derived class-groups key, so it never starts MPC.
+
+In a rolling upgrade, therefore: swap the whole fleet to a Part A binary
+first, and make placeholder **activation** the last step. Registering
+candidates earlier is fine and costs nothing.
 
 ## Problem
 
@@ -34,12 +148,13 @@ which bytes* deterministic in consensus order.
   the write boundary; P2P fetchers MUST hash-verify fetched bytes
   against the requested digest.
 - **CLI updates**: `ika validator set-next-epoch-mpc-data` replaces the
-  local `root-seed.key` only. It MUST NOT submit the derived public data
-  to Sui. After the validator installs the new file and restarts, the
-  announcement sender derives the full blob and distributes it through
-  consensus and P2P using the paths below. The restart also re-runs the
-  per-epoch seed resolution below, which is what keeps the rotating
-  validator in the epoch it restarts into.
+  local `root-seed.key` only (refusing to overwrite an existing one). It
+  MUST NOT submit the derived public data to Sui — since #2119 there is
+  no builder left that could. After the validator installs the new file
+  and restarts, the announcement sender derives the full blob and
+  distributes it through consensus and P2P using the paths below. The
+  restart also re-runs the per-epoch seed resolution below, which is what
+  keeps the rotating validator in the epoch it restarts into.
 
 ## Seed rotation and per-epoch seed resolution (#2119)
 
