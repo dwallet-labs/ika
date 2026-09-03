@@ -58,11 +58,53 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+      #
+      # The credentials must be sent PROACTIVELY. Git only sends URL
+      # credentials after a 401 challenge, and GitHub's limit does not
+      # challenge: it completes the handshake and then returns a protocol
+      # error ("GitHub is temporarily limiting some unauthenticated
+      # downloads ... Please retry later or authenticate"), so with the
+      # rewrite alone the token was never sent and Upgrade Test run
+      # 33729120682 failed exactly like an anonymous clone.
+      # `http.proactiveAuth = basic` (git >= 2.46; older git ignores the key)
+      # sends the Authorization header on the first request. It is safe next
+      # to actions/checkout's own `http.extraheader` Authorization on this
+      # repo: curl replaces its generated header with the explicit one, so
+      # only one is sent. (An extraheader of our own instead would NOT be
+      # safe: GitHub answers a duplicated Authorization header with 400.)
       run: |
         rewrite="https://x-access-token:${GITHUB_TOKEN}@github.com/"
         git config --global url."${rewrite}".insteadOf "https://github.com/"
+        git config --global http.proactiveAuth basic
         {
-          echo "GIT_CONFIG_COUNT=1"
+          echo "GIT_CONFIG_COUNT=2"
           echo "GIT_CONFIG_KEY_0=url.${rewrite}.insteadOf"
           echo "GIT_CONFIG_VALUE_0=https://github.com/"
+          echo "GIT_CONFIG_KEY_1=http.proactiveAuth"
+          echo "GIT_CONFIG_VALUE_1=basic"
         } >> "$GITHUB_ENV"
+
+    - name: Verify a public GitHub fetch is authenticated on its first request
+      # Turns the mechanism above into a gated invariant instead of a hope:
+      # mimic the Move resolver (no global config, env channel only), trace
+      # the HTTP exchange, and fail the job unless the FIRST request carries
+      # an Authorization header. Only a count is printed: the trace itself
+      # stays in the pipe (git redacts the header value anyway, but the
+      # token must never reach the log).
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -o pipefail
+        rewrite="https://x-access-token:${GITHUB_TOKEN}@github.com/"
+        n=$(GIT_CONFIG_GLOBAL="" GIT_CONFIG_COUNT=2 \
+              GIT_CONFIG_KEY_0="url.${rewrite}.insteadOf" GIT_CONFIG_VALUE_0="https://github.com/" \
+              GIT_CONFIG_KEY_1="http.proactiveAuth" GIT_CONFIG_VALUE_1="basic" \
+              GIT_TRACE_CURL=1 GIT_TRACE_CURL_NO_DATA=1 GIT_TRACE_REDACT=1 \
+              git ls-remote https://github.com/MystenLabs/sui.git HEAD 2>&1 >/dev/null \
+            | grep -c '=> Send header: Authorization:' || true)
+        echo "Authorization headers sent during ls-remote: ${n}"
+        if [ "${n}" -lt 1 ]; then
+          echo "::error::git sent no Authorization header on a public GitHub fetch; dependency fetches would be anonymous and rate-limited per source address"
+          exit 1
+        fi
