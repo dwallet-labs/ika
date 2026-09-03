@@ -311,22 +311,56 @@ jobs:
           # would go silent; `ika_dwallet_mpc_self_malicious_total`, whose
           # zero would stop meaning anything) and one added unnoticed.
           #
-          # All four run here, not just the validator pin (#2124). The whole
-          # point of the set is the DIFFERENCE between modes, and the notifier
-          # and fullnode pins are the only two that see one side of it — with
-          # only the validator pin gated, a family leaking onto the notifier
-          # (ika #2051, the regression these exist for) reached main
-          # unremarked. The fourth is the negative pin: it composes a notifier
-          # with `SuiClientMetrics` omitted and asserts the comparison reports
-          # its families as gone, so the three positive pins cannot quietly
-          # degrade into asserting nothing.
+          # Only the validator pin is named here, deliberately: this step is
+          # #2119's gate and must not depend on a step named for other work.
+          # The full per-mode set (this test included) runs in the step below,
+          # so the one overlapping test executes twice — a second ~0.01s run
+          # against an already-built binary.
+          cargo test -p ika-node --lib -- --exact \
+            metrics::per_mode_registration::a_validator_exports_every_family \
+            | tee "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+      - name: Per-mode metric export pins (#2106, #2124)
+        # What each `NodeMode` registers, per family. Same reason as the steps
+        # around it: `Cargo Test Check` is otherwise compile-only and is the
+        # ONLY PR job that executes ika-node's tests, so a test not named here
+        # never runs on a PR. The notifier and fullnode pins were in exactly
+        # that position until #2124 — and they are the only two that see one
+        # side of a per-mode DIFFERENCE, which is to say a family leaking onto
+        # a mode that does not drive it (ika #2051, the regression the whole
+        # set exists for) had no PR gate at all.
+        #
+        # Two of the five are controls on the comparison itself, one per
+        # direction: `missing` (compose a notifier with `SuiClientMetrics`
+        # omitted) and `unexpected` (diff the notifier against its own list
+        # with the `ika_sui_client_*` names removed). Without them the three
+        # positive pins can degrade into asserting nothing — every one of them
+        # only ever requires both halves to be EMPTY.
+        #
+        # SCOPE, so nobody reads more into a green run than is there: the
+        # tests compose the start sequence's constructors BY HAND into their
+        # own registry. Nothing checks that composition against
+        # `IkaNode::start_with_mode`. A mode gate applied at the real call
+        # site, or a struct added to the start sequence and not to the
+        # composition, is invisible to every test in this step. Closing that
+        # needs a booted-node `/metrics` scrape per mode, which lives in
+        # ika-test-cluster, not here.
+        #
+        # Debug profile: five registry builds, no MPC crypto, no I/O.
+        run: |
+          set -o pipefail
           cargo test -p ika-node --lib -- --exact \
             metrics::per_mode_registration::a_validator_exports_every_family \
             metrics::per_mode_registration::a_notifier_exports_only_the_families_it_drives \
             metrics::per_mode_registration::a_fullnode_exports_only_the_families_it_drives \
             metrics::per_mode_registration::omitting_the_sui_client_metrics_reports_them_missing \
-            | tee "$RUNNER_TEMP/seed-rotation-metric-pins.log"
-          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/seed-rotation-metric-pins.log"
+            metrics::per_mode_registration::a_family_the_notifier_list_does_not_name_is_reported_unexpected \
+            | tee "$RUNNER_TEMP/per-mode-metric-pins.log"
+          # cargo exits 0 when a name filter matches nothing, so a renamed test
+          # would silently disable this gate. Require the exact count: unlike a
+          # `[1-9][0-9]*` floor, this also catches renaming SOME of the pins.
+          # Bump the number when adding one.
+          grep -qE '^test result: ok\. 5 passed' "$RUNNER_TEMP/per-mode-metric-pins.log"
       - name: Deprecated on-chain mpc_data placeholder pins
         # What a candidate registers in the deprecated on-chain
         # `mpc_data_bytes` field is a byte-format contract (#2119): exactly
