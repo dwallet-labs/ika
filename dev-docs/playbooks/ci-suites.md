@@ -46,9 +46,9 @@ gh workflow run integration-tests-ci.yaml --ref <branch> \
 # workspace silently ran on the mock. The cluster suite is covered by
 # test-cluster.yaml (and its sim_* tests by simtest.yaml); ika-upgrade-test
 # stays in (its scenarios are RUN_*-gated no-ops here; its lib tests run
-# nowhere else). scope=all is a strict superset of the default scope; the
-# measured cost before ika-upgrade-test was re-included was ~5 extra minutes
-# (76 min → 81 min job), to be re-measured with it in.
+# nowhere else). scope=all is a strict superset of the default scope for
+# about 11 extra minutes (87 min job vs 76 min, measured on run 33779055774
+# at 4 threads: 56 targets, 846 tests).
 gh workflow run integration-tests-ci.yaml --ref <branch> -f scope=all -f test_threads=4
 
 # Cluster tests (in-process Sui+ika swarm tests via nextest,
