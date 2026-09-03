@@ -32,7 +32,11 @@ a nightly that dispatched only the `main` half is expected, not broken.
 ```bash
 # Rust dwallet-MPC integration tests (~48 tests, ~35 min at 4 threads).
 # Optional: test_filter (suffix after dwallet_mpc::integration_tests::),
-# rust_log, scope=all for the whole workspace.
+# rust_log. scope=all runs the workspace test suite under plain `cargo test`
+# EXCLUDING ika-test-cluster and ika-upgrade-test: their tests each boot a
+# Sui swarm and cannot share a process (in-process they collide on ports).
+# Those two are covered only by test-cluster.yaml and upgrade-test.yaml
+# below; scope=all is not a substitute for dispatching them.
 gh workflow run integration-tests-ci.yaml --ref <branch> \
   -f test_threads=4 [-f test_filter=network_dkg::test_network_dkg_full_flow]
 

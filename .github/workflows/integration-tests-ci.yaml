@@ -2,7 +2,15 @@ name: Integration Tests CI
 
 # Manually triggered. Runs the Rust dwallet-MPC integration tests (real
 # class-groups crypto, in-process consensus harness) on the `ika-k8s-large`
-# self-hosted runner. `scope: all` widens to the entire workspace test suite.
+# self-hosted runner. `scope: all` widens to the workspace test suite MINUS
+# the two crates whose tests start a Sui localnet: `ika-test-cluster` and
+# `ika-upgrade-test`. Those run under plain `cargo test` as several tests
+# in one process, each booting a Sui swarm, and collide on ports (the first
+# ever `all` run, 33750543127, died in sui-swarm with "Address already in
+# use"). They have their own workflows that give each test its own process:
+# `test-cluster.yaml` (nextest, profile `cluster`) and `upgrade-test.yaml`
+# (one scenario per job). `all` is therefore "every workspace test that can
+# share a process", not "every test in the repository".
 
 on:
   workflow_dispatch:
@@ -126,7 +134,10 @@ jobs:
           FEATURES="test-utils"
           if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            cargo test --release --workspace --features "$FEATURES" --color=always --no-run
+            # See the header: the swarm-booting crates cannot run in-process.
+            cargo test --release --workspace \
+              --exclude ika-test-cluster --exclude ika-upgrade-test \
+              --features "$FEATURES" --color=always --no-run
           else
             cargo test -p ika-core --lib --release --features "$FEATURES" --color=always --no-run
           fi
@@ -147,7 +158,12 @@ jobs:
           FEATURES="test-utils"
           if [ "$USE_MOCKS" = "true" ]; then FEATURES="test-utils,dwallet-mpc-unsafe-mock"; fi
           if [ "$SCOPE" = "all" ]; then
-            time cargo test --release --workspace --features "$FEATURES" --color=always -- \
+            # Same exclusions as the build step (see the header). Keep the two
+            # lists identical: a crate built here but not run, or run but not
+            # built, is a silent gap either way.
+            time cargo test --release --workspace \
+              --exclude ika-test-cluster --exclude ika-upgrade-test \
+              --features "$FEATURES" --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
             FILTER="dwallet_mpc::integration_tests"
