@@ -824,8 +824,14 @@ impl ProtocolConfig {
 
             // Set at v4 (see the version match below).
             internal_presign_stale_batch_expiry_rounds: None,
-            // Set at v7 (see the version match below).
-            noa_presign_demand_park_rounds: None,
+            // About an hour of mainnet consensus at ~19.5 rounds/s, and ~4%
+            // of a 24h epoch: far past every honest window a NOA presign
+            // demand waits out (the network-key syncer tick, a restarting
+            // validator's key recovery, a fresh pool's first fill — all
+            // seconds to minutes), and early enough that a demand which will
+            // never be served is dropped while the epoch can still finalize
+            // the rest.
+            noa_presign_demand_park_rounds: Some(70_000),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -886,14 +892,6 @@ impl ProtocolConfig {
                     // Mirrored into `AUTHORITY_NAME_SHORT_ENCODING` at epoch
                     // store construction — serde cannot read the config.
                     cfg.feature_flags.short_authority_names = true;
-                    // About an hour of mainnet consensus at ~19.5 rounds/s,
-                    // and ~4% of a 24h epoch: far past every honest window a
-                    // NOA presign demand waits out (the network-key syncer
-                    // tick, a restarting validator's key recovery, a fresh
-                    // pool's first fill — all seconds to minutes), and early
-                    // enough that a demand which will never be served is
-                    // dropped while the epoch can still finalize the rest.
-                    cfg.noa_presign_demand_park_rounds = Some(70_000);
                 }
                 // 8 => {
                 //     cfg.feature_flags.noa_checkpoints = true;

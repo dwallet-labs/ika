@@ -160,7 +160,7 @@ request behind it would wait forever for an assignment nobody will write.
 
 So a parked demand is dropped once it has been parked for
 `noa_presign_demand_park_rounds` consensus rounds — a `ProtocolConfig`
-constant, `Some(70_000)` from protocol version 7 (`None` would never drop).
+constant, `Some(70_000)` at every supported version (`None` would never drop).
 The queue element records the consensus round its demand was delivered in;
 the drain at round *R* drops any still-unassigned demand delivered at *R_d*
 once `R - R_d >= noa_presign_demand_park_rounds`.
