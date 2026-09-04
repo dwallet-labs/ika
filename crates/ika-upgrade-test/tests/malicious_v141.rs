@@ -4,7 +4,7 @@
 //! Cross-binary **malicious-party detection** rehearsal (test-testing) —
 //! the successor to the retired `malicious_cross_binary`.
 //!
-//! Boots a 4-validator committee on the HONEST literal v1.4.0 release
+//! Boots a 4-validator committee on the HONEST literal v1.4.1 release
 //! (deployed on both networks, protocol v7), lets it complete the genesis
 //! network DKG, then swaps **one** validator to a deliberately-FAULTY
 //! current build (`FAULTY_BIN`) that corrupts its outgoing reconfiguration
@@ -17,7 +17,7 @@
 //! --bin ika-validator --features test-testing`). The fault is compiled
 //! out of every normal build, so a plain release can never carry it.
 //!
-//! Expectation: the honest v1.4.0 validators must identify the faulty one as
+//! Expectation: the honest v1.4.1 validators must identify the faulty one as
 //! a malicious actor and reconfigure without it (committee dips to 3), so
 //! the network still reaches epoch 3. Detection is asserted
 //! **programmatically** by scraping the
@@ -26,24 +26,39 @@
 //! code alone is not the assertion: the network could reach epoch 3 without
 //! flagging anyone, which is exactly the vacuous-pass this guards against. A
 //! green run proves mixed-committee malicious detection against the deployed
-//! release is not vacuous — i.e. `v140_rollout`'s zero-malicious gate would
+//! release is not vacuous — i.e. `v141_rollout`'s zero-malicious gate would
 //! actually fire on a real divergence. This is NOT a production test; it
 //! validates the test infrastructure (see `.claude/skills/test-testing`).
 //!
-//! Opt-in, via `RUN_MALICIOUS_V140=1`:
+//! The honest reference moved from v1.4.0 to v1.4.1 with the rest of the
+//! deployed-release gates, so the convicting quorum now runs the post-#2121
+//! (no on-chain `mpc_data_bytes` read), post-#2123 (prepare-then-start
+//! handoff barrier) code that `v141_rollout` and `v141_churn` also boot.
+//! The fault itself is unchanged: it is injected into the CURRENT build's
+//! reconfiguration advance path, and the assertion remains the
+//! `ika_dwallet_mpc_malicious_actors_count` gauge, which both releases
+//! export.
+//!
+//! **"Cross-binary" is nominal while `main` == the OLD tag.** Immediately
+//! after a retarget the honest and faulty binaries differ only by the
+//! `test-testing` feature, so this run gates the DETECTION path, not
+//! detection across two releases. The cross-binary half of the claim comes
+//! back as `main` diverges from v1.4.1.
+//!
+//! Opt-in, via `RUN_MALICIOUS_V141=1`:
 //!
 //! ```bash
 //! # Build the faulty binary via the feature (no source edit):
 //! cargo build --release -p ika-node --bin ika-validator --features test-testing
 //! cp target/release/ika-validator /tmp/ika-validator-FAULTY-RECONFIG
 //! # then run:
-//! RUN_MALICIOUS_V140=1 \
-//!   OLD_BIN=/path/to/ika-validator-v1.4.0 \
+//! RUN_MALICIOUS_V141=1 \
+//!   OLD_BIN=/path/to/ika-validator-v1.4.1 \
 //!   FAULTY_BIN=/tmp/ika-validator-FAULTY-RECONFIG \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test malicious_v140 -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test malicious_v141 -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -60,9 +75,9 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn honest_committee_marks_faulty_current_validator_malicious() {
-    if std::env::var("RUN_MALICIOUS_V140").is_err() {
+    if std::env::var("RUN_MALICIOUS_V141").is_err() {
         eprintln!(
-            "skipping: set RUN_MALICIOUS_V140=1 (needs OLD_BIN/FAULTY_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
+            "skipping: set RUN_MALICIOUS_V141=1 (needs OLD_BIN/FAULTY_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
     }
@@ -71,10 +86,10 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
         .with_env()
         .init();
 
-    // Honest reference binary: the literal v1.4.0 ika-validator.
+    // Honest reference binary: the literal v1.4.1 ika-validator.
     let honest = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/tmp/ika-v140/target/release/ika-validator",
+        "/mnt/nvme0n1p1/v141-bins/ika-validator",
     ));
     // Deliberately-faulty current build (corrupts its reshare message),
     // produced by `cargo build --bin ika-validator --features test-testing`.
@@ -93,7 +108,7 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
         .to_path_buf();
 
     let base = PathBuf::from(
-        std::env::var("UPGRADE_TEST_DIR").unwrap_or_else(|_| "/tmp/ika-malicious-v140".to_string()),
+        std::env::var("UPGRADE_TEST_DIR").unwrap_or_else(|_| "/tmp/ika-malicious-v141".to_string()),
     );
     let _ = std::fs::remove_dir_all(&base);
 
@@ -118,7 +133,7 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
         .with_min_validator_count(3)
         .with_ika_cli(ika_cli)
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Empty)
-        // Genesis network DKG on the all-honest v1.4.0 committee at v7.
+        // Genesis network DKG on the all-honest v1.4.1 committee at v7.
         .start_all(honest)
         .wait_for_epoch(2)
         // Swap ONE validator to the faulty current build — a mixed committee.
@@ -131,10 +146,10 @@ async fn honest_committee_marks_faulty_current_validator_malicious() {
         .expect_malicious_actors_at_least(&[3], 1)
         .run()
         .await
-        .expect("honest v1.4.0 committee should reconfigure past a faulty current validator");
+        .expect("honest v1.4.1 committee should reconfigure past a faulty current validator");
 
     tracing::info!(
-        "malicious-v140 PASSED: honest v1.4.0 committee reached epoch 3 AND recorded the \
+        "malicious-v141 PASSED: honest v1.4.1 committee reached epoch 3 AND recorded the \
          faulty current validator as malicious (asserted via the \
          ika_dwallet_mpc_malicious_actors_count gauge)"
     );

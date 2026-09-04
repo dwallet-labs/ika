@@ -9,18 +9,18 @@ name: Upgrade Test
 # dev-docs/specs/cross-binary-upgrade.md).
 #
 # Manual dispatch can run any scenario. Relevant pull requests run only
-# `v140_rollout`, avoiding the full expensive matrix on unrelated changes.
+# `v141_rollout`, avoiding the full expensive matrix on unrelated changes.
 # (The v3/v4-era rehearsals — cross_binary, v118_*, v121_rollout — were
-# retired when protocol v3/v4 support was removed; v140_rollout is their
-# successor against the current v1.4.0 release.) Pick the scenario with
+# retired when protocol v3/v4 support was removed; v141_rollout is their
+# successor against the current v1.4.1 release.) Pick the scenario with
 # the `test` input:
 #
 #   smoke        — go/no-go plumbing: 4 same-binary processes reach epoch 2.
 #                  Needs only the current build. Fastest.
 #   workload     — full user DKG -> Presign -> Sign on-chain at genesis
 #                  protocol v7. Current build only.
-#   v140_rollout — the deployed-release compatibility gate: boot the literal
-#                  v1.4.0 release (deployed on mainnet AND testnet, which run
+#   v141_rollout — the deployed-release compatibility gate: boot the literal
+#                  v1.4.1 release (deployed on mainnet AND testnet, which run
 #                  protocol v7 — the only version either binary supports, so
 #                  the run genesises there),
 #                  upgrade exactly one validator to the current build,
@@ -28,24 +28,35 @@ name: Upgrade Test
 #                  zero malicious reports and per-authority output
 #                  byte-equality, then swap the rest and converge again — a
 #                  pure binary swap, no protocol transition. Defaults to
-#                  old_ref=release/mainnet-v1.4.0, old_bin_name=ika-validator.
-#                  v1.4.0 is post-#2074, so unlike the v1.3.1-based gate this
+#                  old_ref=release/mainnet-v1.4.1, old_bin_name=ika-validator.
+#                  v1.4.1 carries #2121 (the validator no longer reads the
+#                  deprecated on-chain mpc_data_bytes), #2120 (registration
+#                  writes a placeholder there), #2123 (prepare-then-start
+#                  handoff barrier) and the #2122 metric split, so both
+#                  sides of this gate are past all four — none of them is
+#                  straddled here; they are listed because the OLD side's
+#                  behaviour moved with them.
+#                  Immediately after a retarget, `main` == the OLD tag, so
+#                  the gate is a same-binary run; real cross-binary coverage
+#                  returns as `main` diverges.
+#                  v1.4.1 is post-#2074, so — as with the v1.4.0 gate it
+#                  replaces, and unlike the v1.3.1-based one before it — this
 #                  mixed committee shares ONE storage model. Crossing the
 #                  event-sourcing change is no longer covered by anything:
 #                  mid_epoch_rollback was the only scenario that did it and
 #                  was retired once v1.4.0 shipped (see
 #                  dev-docs/specs/event-sourced-epoch.md, "Rolling back").
-#   v140_churn   — v140_rollout's churn counterpart: full sequential swap
-#                  over the literal v1.4.0 committee, then a mirrored OCS
-#                  joiner folds into the reshared v1.4.0-origin key (4→5)
+#   v141_churn   — v141_rollout's churn counterpart: full sequential swap
+#                  over the literal v1.4.1 committee, then a mirrored OCS
+#                  joiner folds into the reshared v1.4.1-origin key (4→5)
 #                  and a shrink reshare removes an original (5→4). Same OLD
-#                  defaults as v140_rollout.
-#   malicious_v140 — test-testing counterpart: honest literal-v1.4.0
+#                  defaults as v141_rollout.
+#   malicious_v141 — test-testing counterpart: honest literal-v1.4.1
 #                  committee + ONE current validator built with the
 #                  test-testing reconfiguration-message fault; honest
 #                  validators must convict it and reshare without it
-#                  (committee dips to 3). Green = the v140 gates are not
-#                  vacuous. Same OLD defaults as v140_rollout.
+#                  (committee dips to 3). Green = the v141 gates are not
+#                  vacuous. Same OLD defaults as v141_rollout.
 #   wedged_drain — the #2102 wedged-but-alive drain gate: one validator's
 #                  MPC drain is parked (production-binary env hook) without
 #                  stopping its service, so its round channel fills, its
@@ -73,12 +84,12 @@ name: Upgrade Test
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
 # `--test` target.
 #
-# The OLD binary for v140_rollout is built from `old_ref` in an isolated
+# The OLD binary for v141_rollout is built from `old_ref` in an isolated
 # `git worktree`, at that ref's OWN pinned toolchain (rustup honors the
 # worktree's rust-toolchain.toml). All binaries build with default features —
 # enforcement (enforce-minimum-cpu) is runtime-gated to validators on the ika
 # testnet/mainnet networks, so it is inert on the CI localnet (its ika
-# system object maps to Chain::Unknown), and v1.4.0 already carries the
+# system object maps to Chain::Unknown), and v1.4.1 already carries the
 # runtime gate.
 
 on:
@@ -175,7 +186,7 @@ on:
         description: "Scenario or comma-separated scenarios"
         type: string
         required: false
-        default: "v140_rollout"
+        default: "v141_rollout"
       candidate_sha:
         description: "Exact release-candidate commit SHA to check out and test"
         type: string
@@ -209,7 +220,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build a deliberately divergent candidate for v140_rollout"
+        description: "TEST ONLY: build a deliberately divergent candidate for v141_rollout"
         type: boolean
         required: false
         default: false
@@ -229,7 +240,7 @@ on:
         required: false
         default: ""
       old_ref:
-        description: "Git ref/tag/sha for the OLD binary (empty = per-scenario default; v140_rollout uses release/mainnet-v1.4.0)"
+        description: "Git ref/tag/sha for the OLD binary (empty = per-scenario default; v141_rollout uses release/mainnet-v1.4.1)"
         type: string
         required: false
         default: ""
@@ -239,7 +250,7 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (v140_rollout requires >=480000, wedged_drain >=1680000; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (v141_rollout requires >=480000, wedged_drain >=1680000; empty = scenario default)"
         type: string
         required: false
         default: ""
@@ -264,7 +275,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v140_rollout; the zero-malicious/convergence gate must fail."
+        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v141_rollout; the zero-malicious/convergence gate must fail."
         type: boolean
         required: false
         default: false
@@ -303,10 +314,10 @@ jobs:
         env:
           # The default is the deployed-release compatibility gate, the one
           # scenario every relevant pull request and release candidate runs.
-          TEST: ${{ inputs.test || 'v140_rollout' }}
+          TEST: ${{ inputs.test || 'v141_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v140_rollout v140_churn malicious_v140 restart_spectator wedged_drain"
+          ALL="smoke workload v141_rollout v141_churn malicious_v141 restart_spectator wedged_drain"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -342,7 +353,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           # Full history + tags: the OLD binary is built from an arbitrary
-          # ref (e.g. the release/mainnet-v1.4.0 tag) via `git worktree add`.
+          # ref (e.g. the release/mainnet-v1.4.1 tag) via `git worktree add`.
           fetch-depth: 0
           # Resolve once at trigger time; never rebuild a moving branch head.
           ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
@@ -419,11 +430,11 @@ jobs:
           case "$TEST" in
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
-            v140_churn)   RUN_FLAG=RUN_V140_CHURN ;;
-            malicious_v140) RUN_FLAG=RUN_MALICIOUS_V140 ;;
+            v141_churn)   RUN_FLAG=RUN_V141_CHURN ;;
+            malicious_v141) RUN_FLAG=RUN_MALICIOUS_V141 ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
             wedged_drain) RUN_FLAG=RUN_WEDGED_DRAIN ;;
-            v140_rollout)   RUN_FLAG=RUN_V140_ROLLOUT ;;
+            v141_rollout)   RUN_FLAG=RUN_V141_ROLLOUT ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -431,15 +442,15 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v140_churn | malicious_v140)
-              : "${OLD_REF:=release/mainnet-v1.4.0}"
+            v141_churn | malicious_v141)
+              : "${OLD_REF:=release/mainnet-v1.4.1}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
-            v140_rollout)
+            v141_rollout)
               # OLD is the release the fleet is running; NEW is the candidate.
               # Both support protocol v7 only, so the boundary under test is a
               # pure binary swap.
-              : "${OLD_REF:=release/mainnet-v1.4.0}"
+              : "${OLD_REF:=release/mainnet-v1.4.1}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
           esac
@@ -475,7 +486,7 @@ jobs:
           # exists again — it is the run standing behind a version flip on a
           # live network, which is where mocked agreement is most misleading.
           case "$TEST_NAME" in
-            v140_rollout|v140_churn|malicious_v140)
+            v141_rollout|v141_churn|malicious_v141)
               if [ "$USE_MOCKS" = "true" ]; then
                 echo "$TEST_NAME is a cross-binary gate and must use real cryptography" >&2
                 exit 1
@@ -484,12 +495,12 @@ jobs:
           esac
           # ONE scenario, deliberately. The two rollout gates this condition
           # was originally written for are now a single one, and
-          # malicious_v140 is NOT a third: it builds its own faulty validator
+          # malicious_v141 is NOT a third: it builds its own faulty validator
           # (below) rather than taking it from this input, and it is expected
           # to PASS — the honest committee convicts the fault — whereas this
           # input is expected to make its run FAIL CLOSED.
-          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v140_rollout" ]; then
-            echo "test_testing_fault is only supported by v140_rollout" >&2
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v141_rollout" ]; then
+            echo "test_testing_fault is only supported by v141_rollout" >&2
             exit 1
           fi
           if [ "$TEST_TESTING_FAULT" = "true" ]; then
@@ -513,11 +524,11 @@ jobs:
           # testnet/mainnet networks, so it never fires on this localnet.
           cargo build --release $NODE_FEATURES $NODE_FAULT_FEATURES -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika $IKA_FEATURES
-          if [ "$TEST_NAME" = "malicious_v140" ]; then
+          if [ "$TEST_NAME" = "malicious_v141" ]; then
             # The deliberately-faulty validator: current source with the
             # feature-gated reconfiguration-message fault compiled IN. Built
             # after the normal binaries and copied aside (the feature build
-            # overwrites target/release/ika-validator; malicious_v140 never
+            # overwrites target/release/ika-validator; malicious_v141 never
             # reads the honest current validator, so the overwrite is inert).
             cargo build --release --features test-testing -p ika-node --bin ika-validator
             cp target/release/ika-validator "$GITHUB_WORKSPACE/ika-validator-faulty"
@@ -526,7 +537,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v140_rollout' || matrix.test == 'v140_churn' || matrix.test == 'malicious_v140' }}
+        if: ${{ matrix.test == 'v141_rollout' || matrix.test == 'v141_churn' || matrix.test == 'malicious_v141' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -548,7 +559,7 @@ jobs:
           echo "resolved OLD_REF=$OLD_REF to immutable commit $OLD_COMMIT"
           git worktree add --force --detach "$WT" "$OLD_COMMIT"
           # Build at the OLD ref's own toolchain (rustup reads the worktree's
-          # rust-toolchain.toml). Default features: v1.4.0's
+          # rust-toolchain.toml). Default features: v1.4.1's
           # enforce-minimum-cpu is runtime-gated (inert on the CI localnet),
           # matching its production build.
           ( cd "$WT" && cargo build --release -p ika-node --bin "$OLD_BIN_NAME" )
@@ -560,7 +571,7 @@ jobs:
       - name: Run ${{ matrix.test }}
         env:
           # smoke/workload read IKA_VALIDATOR_BIN/
-          # IKA_NOTIFIER_BIN/IKA_BIN; v140_rollout reads NEW_BIN/NOTIFIER_BIN/
+          # IKA_NOTIFIER_BIN/IKA_BIN; v141_rollout reads NEW_BIN/NOTIFIER_BIN/
           # OLD_BIN/IKA_BIN (OLD_BIN comes from the build step via
           # $GITHUB_ENV; unset for the others, which ignore it). Setting both
           # naming sets is harmless — each test reads only its own.
@@ -615,7 +626,7 @@ jobs:
           # quiet top-up loop can't prove resumption). The reduced-pool
           # override remains a resource concession for the lighter scenarios,
           # not compatibility evidence.
-          if [ "$TEST_NAME" = "v140_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
+          if [ "$TEST_NAME" = "v141_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
             unset IKA_ENABLE_SMALL_PRESIGN_POOLS
           fi
           mkdir -p "$UPGRADE_TEST_DIR"

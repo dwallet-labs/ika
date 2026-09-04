@@ -138,10 +138,10 @@ pub async fn fund_address_from_faucet(
 /// [`fund_address_from_faucet`] insufficient for gas-critical steps:
 /// the faucet executes its transfer asynchronously ("It can take up to 1
 /// minute to get the coin"), and a long-lived payer can arrive at a step
-/// with its earlier grants already burned down to dust (seen live in
-/// v140_churn: the publisher entered the join step with 0.199 SUI total
-/// against a 5 SUI budget). Polling the summed gas-coin balance covers
-/// both.
+/// with its earlier grants already burned down to dust (seen live in the
+/// deployed-release churn scenario — then `v128_churn` — whose publisher
+/// entered the join step with 0.199 SUI total against a 5 SUI budget).
+/// Polling the summed gas-coin balance covers both.
 pub async fn ensure_sui_balance_from_faucet(
     context: &WalletContext,
     address: SuiAddress,
@@ -694,7 +694,7 @@ pub enum GenesisGlobalPresignConfig {
     /// routes workload presigns through the per-dWallet (targeted) path —
     /// the only coverage of that path, since a populated config makes it
     /// unreachable. The cross-binary malicious-party rehearsal
-    /// (`malicious_v140`) genesises with this.
+    /// (`malicious_v141`) genesises with this.
     Empty,
 }
 

@@ -9,7 +9,7 @@
 //! window — not merely stay consensus-healthy while peers absorb every
 //! session.
 //!
-//! This is the ingredient `v140_rollout` lacks: its binary swaps land minutes
+//! This is the ingredient `v141_rollout` lacks: its binary swaps land minutes
 //! from an epoch boundary and none of its gates assert per-validator top-up
 //! participation, so a restarted validator that silently re-mints
 //! already-completed internal-presign ordinals (the in-memory

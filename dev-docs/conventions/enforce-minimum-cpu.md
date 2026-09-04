@@ -42,7 +42,7 @@ When enforcing, startup asserts ≥ 16 cores and panics below that.
   the runtime gate, not for the ref the suite happens to target today.
   `.github/workflows/upgrade-test.yaml` is the opposite case and is also
   deliberate: its OLD build step passes NO feature flags, because the ref it
-  builds (v1.4.0) already carries the runtime gate and the CI localnet's ika
+  builds (v1.4.1) already carries the runtime gate and the CI localnet's ika
   system object maps to `Chain::Unknown`.
 - `IKA_PROTOCOL_CONFIG_CHAIN_OVERRIDE` (honored only when the real
   chain is `Unknown` — `ika-types/src/digests.rs`) makes a localnet
