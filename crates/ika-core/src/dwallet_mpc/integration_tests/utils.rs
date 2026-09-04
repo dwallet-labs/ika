@@ -20,7 +20,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::{IkaError, IkaResult};
-use ika_types::handoff::CertifiedHandoffAttestation;
+use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
@@ -1570,7 +1570,71 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::OverrideGuard;
+
+/// A prior-epoch handoff certificate naming `key_id` — the input the
+/// network-owned-address (NOA) signing key derives from when `noa_checkpoints`
+/// is on — together with the epoch it certifies.
+///
+/// The harness DKGs its key in the epoch under test, so no real certificate
+/// can name it; in production such a key becomes eligible one epoch later.
+/// This stands in for that handoff: the certificate pins the key's real DKG
+/// output digest (adoption's consistency check for a certified DKG-only key),
+/// and its `NetworkKeyId` comes from the mapping the key's instantiation
+/// registered. Install it with [`certify_network_key_for_noa_signing`], or on
+/// a chosen validator's store to stage the derivation per validator.
+#[cfg(test)]
+pub(crate) fn noa_signing_certificate(
+    test_state: &IntegrationTestState,
+    key_id: ObjectID,
+    network_dkg_public_output: &[u8],
+) -> (EpochId, CertifiedHandoffAttestation) {
+    let epoch_id = test_state
+        .dwallet_mpc_services
+        .first()
+        .expect("at least one service")
+        .epoch;
+    let prior_epoch = epoch_id
+        .checked_sub(1)
+        .expect("the harness runs at epoch 1 or later");
+    let network_key_id = crate::network_key_id_mapping::network_key_id_for(&key_id)
+        .expect("the key's instantiation registered its NetworkKeyId");
+    let certificate = CertifiedHandoffAttestation {
+        attestation: HandoffAttestation {
+            epoch: prior_epoch,
+            next_committee_pubkey_set_hash: [0u8; 32],
+            items: vec![(
+                HandoffItemKey::NetworkDkgOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(network_dkg_public_output),
+            )],
+        },
+        signatures: vec![],
+    };
+    (prior_epoch, certificate)
+}
+
+/// Hands every validator the certificate of [`noa_signing_certificate`], so
+/// each derives `key_id` as the epoch's NOA signing key on its next service
+/// iteration. Overwrites any certificate the stores hold for the prior epoch.
+#[cfg(test)]
+pub(crate) fn certify_network_key_for_noa_signing(
+    test_state: &IntegrationTestState,
+    key_id: ObjectID,
+    network_dkg_public_output: &[u8],
+) {
+    let (prior_epoch, certificate) =
+        noa_signing_certificate(test_state, key_id, network_dkg_public_output);
+    for epoch_store in &test_state.epoch_stores {
+        epoch_store
+            .certified_handoff_attestations
+            .lock()
+            .unwrap()
+            .insert(prior_epoch, certificate.clone());
+    }
+}
 
 /// Number of MPC rounds the network DKG runs under the pinned inkrypto
 /// revision (see the root `Cargo.toml`).

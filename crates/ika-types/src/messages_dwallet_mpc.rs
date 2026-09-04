@@ -211,11 +211,18 @@ impl ConsensusNOAObservation {
 /// assign it a presign in the same consensus-delivery order. Deduplicated by
 /// `demand_id` (NOT by authority) so redundant announcements from multiple
 /// validators collapse to one; assignment is idempotent regardless.
+///
+/// The announcement carries nothing the assignment reads besides the demand
+/// identity: the signature algorithm is derived from the identity, and the
+/// network encryption key the presign is drawn under is derived by every
+/// validator from the prior epoch's handoff certificate. Consensus
+/// deduplicates on the identity digest alone, so any payload field here would
+/// be supplied for the whole network by whichever announcement is sequenced
+/// first.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ConsensusNOAPresignDemand {
     pub authority: AuthorityName,
     pub demand_id: crate::noa_checkpoint::NOAPresignDemandId,
-    pub network_encryption_key_id: ObjectID,
 }
 
 impl ConsensusNOAPresignDemand {

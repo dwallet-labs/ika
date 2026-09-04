@@ -559,6 +559,32 @@ next epoch inherits.
      items (see the barrier section) — the only layer that heals an
      already-poisoned mirror.
 
+## The network-owned-address signing key
+
+The certificate has a fourth consumer. The epoch's network-owned-address
+(NOA) signing key — the network encryption key every NOA sign demand's
+presign is drawn under and every NOA sign session runs on — is a pure
+function of the prior epoch's certificate, fixed for the epoch, and derived
+by every validator on its own without anyone announcing a choice
+(`DWalletMPCManager::network_owned_address_signing_key_resolution`). The
+rule: among the keys the epoch-E certificate names (its `NetworkDkgOutput`
+items), the key with the largest `dkg_at_epoch`, ties broken by the smaller
+`NetworkKeyId`, is epoch E+1's NOA signing key. The certificate is the SOLE
+input to eligibility: a key created by DKG during E+1 is not in that
+certificate and waits until E+2, and an epoch with no certificate (genesis,
+or the first epoch of a fresh network) has no NOA signing key — NOA signing
+waits for the first handoff. `dkg_at_epoch` (chain metadata, from the
+network-key syncer's overlay) and the `NetworkKeyId -> ObjectID` translation
+(the process-global mapping) are read locally, and a validator missing
+either for ANY certified key derives nothing rather than choosing among the
+keys it can see; the answer is cached for the epoch once it resolves, since
+every input only ever gains entries. The internal presign pool's NOA
+pool-parameter role and the presign-demand drain both read this derivation
+(`internal-presign-pool.md`, "Which pool a demand draws from"). Under
+`noa_checkpoints` OFF the pool role keeps the previous rule — the oldest
+locally adopted key — so the live protocol version's internal-presign
+sequence numbers do not move.
+
 ## Key invariants
 
 1. One handoff per epoch, attested at EndOfPublish, verified against
@@ -594,6 +620,10 @@ next epoch inherits.
    from), and a certified key with no local `NetworkKeyId → ObjectID`
    translation, which the barrier cannot check or install and which
    adoption's own cert-digest gate covers instead.
+6. The network-owned-address signing key is a function of the prior
+   epoch's certificate alone: no validator announces a choice, a key
+   created after the certificate waits one epoch, and two validators
+   that have derived the key agree on it.
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),
