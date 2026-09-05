@@ -48,9 +48,9 @@ producing a divergent computation, the false-malicious class.
 ## Which pool a demand draws from
 
 A pool is keyed by `(signature algorithm, network encryption key)`, so
-draining a demand starts by choosing an algorithm. That choice comes from
-the demand's IDENTITY (`NOAPresignDemandId::expected_signature_algorithm`),
-never from the announcement that carried it.
+draining a demand starts by naming both. Neither comes from the announcement
+that carried the demand: the announcement carries the demand IDENTITY and
+nothing else the drain reads.
 
 The reason is the dedup key. Presign-demand announcements are deduplicated
 on the demand-id digest ALONE — deliberately, so several validators
@@ -59,93 +59,93 @@ consequence is that the first announcement sequenced for a demand would
 supply any payload field the drain reads, for the whole network, while every
 honest duplicate is dropped behind it. A committee member could then pick the
 pool for any demand whose id it can predict, and demand ids are derivable
-from public data.
+from public data. Rejecting a mismatch would not help: the honest
+announcements were already deduplicated away, so no correct one can follow,
+and the demand would stay unassigned for the epoch — a substitution bug
+traded for a stall. Deriving both inputs is what removes the problem, and it
+is stronger than validating an announced value: there is no second copy to
+disagree with.
 
-Deriving is what removes that, and it is stronger than validating the
-announced value:
+**The algorithm** comes from the demand identity
+(`NOAPresignDemandId::expected_signature_algorithm`). Both demand arms commit
+to it — the checkpoint arm through `kind_name` (whose mapping to the
+counterparty chain's algorithm is pinned by test), the attestation arm by
+carrying it in the identity — so an announcer naming a different algorithm
+produces a DIFFERENT identity, a demand no honest consumer looks up, rather
+than a competing answer for this one. Neither the consensus message nor the
+internal sign request carries an algorithm beside the id, so the pool drained
+and the session instantiated cannot disagree.
 
-- **Rejecting a mismatch is unsafe.** The honest announcements were already
-  deduplicated away, so no correct one can follow: the demand stays
-  unassigned, its sign never happens, and the epoch cannot finalize its NOA
-  checkpoints. A substitution bug would have been traded for a stall.
-- **Carrying no second copy is stronger than comparing two.** Both demand
-  arms commit to their algorithm — the checkpoint arm through `kind_name`
-  (whose mapping to the counterparty chain's algorithm is pinned by test),
-  the attestation arm by carrying it in the identity — so an announcer
-  naming a different algorithm produces a DIFFERENT identity, a demand no
-  honest consumer looks up, rather than a competing answer for this one.
-  Neither the consensus message nor the internal sign request carries an
-  algorithm beside the id, so the pool drained and the session instantiated
-  cannot disagree.
+**The network encryption key** is the epoch's network-owned-address (NOA)
+signing key, which the prepare-then-start barrier resolves from the prior
+epoch's handoff certificate before the epoch's components exist and hands to
+the MPC manager as a constructor input
+(`dwallet_mpc::network_owned_address_signing_key::select`; the rule and the
+barrier's handling are stated in [`handoff.md`](handoff.md), "The
+network-owned-address signing key"): among the keys the certificate names,
+the one with the largest `dkg_at_epoch`, ties broken by the smaller
+`NetworkKeyId`. The certificate is the one input every validator holds
+identically for the whole epoch — quorum-signed, local before the epoch's
+components start, never modified afterwards — so the answer is one value per
+epoch, fixed at construction, and every validator that holds a key holds the
+same one. A validator the barrier could not translate every certified key for
+holds NO key and sits NOA signing out for the epoch rather than choosing
+among the keys it can see; choosing among a subset is exactly the
+per-validator divergence the derivation exists to remove. The key is recorded
+with the assignment, so the sign session later instantiates under the key its
+presign was drawn from.
 
-`network_encryption_key_id` is NOT covered by this reasoning and remains
-announcer-supplied behind the same dedup key: it is frozen at announce time
-on purpose, so the assignment does not depend on the announce-time and
-instantiate-time key resolutions agreeing. What the drain does with a key it
-does not recognise is the subject of the next section.
+The previous rule — the oldest key in the validator's locally ADOPTED set,
+carried in the announcement — let honest validators name different keys
+while their adoption lagged at different rates, and let a dishonest announcer
+name a key nobody holds (issue #2019, which is closed by construction rather
+than by measurement: nothing is announced, and the key is fixed before
+adoption runs). The adopted-set rule survives only behind `noa_checkpoints`
+OFF, where it decides which pool receives the NOA pool parameters on the live
+protocol version; changing it there would move the internal-presign sequence
+numbers under a mixed-binary committee, and no demand can be announced with
+the flag off in any case. With the flag on, the top-up loop applies the NOA
+parameters to the barrier's key from the first top-up, so a key's pool role
+cannot flip mid-epoch on one validator but not another; a validator with no
+key gives every key the internal parameters for the whole epoch.
 
-## A demand naming a network key with no pool: park, with a bound
+## A demand with no key or no pool: park, with a bound
 
-A demand carries the network encryption key it was announced under, and pools
-are keyed by that id, so a validator that has no pool for that key cannot
-assign the demand. It **parks**: the demand stays in the queue in
+Two things stop a validator from assigning a consensus-delivered demand: it
+holds no signing key this epoch, or the key's pool for the demand's algorithm
+is empty. In both cases the demand **parks**: it stays in the queue in
 consensus-delivery order and is retried on every following round. It is
-**not** rejected, and the announced key is **not** validated against the
-validator's own adopted network-key set.
+**not** rejected — there is nothing to reject it against, and an honest
+duplicate announcement could never follow (the dedup key again).
 
-### Why not validate the announced key
-
-Because honest validators genuinely disagree, transiently, about which
-network encryption keys they have adopted — and therefore about the
-network-owned-address signing key derived from that set. Issue #2019
-measured three independent mechanisms in the current code:
-
-- **the epoch-start fill window.** Every epoch's manager starts with an empty
-  adopted-key set and answers "no signing key" until its first
-  blob-complete overlay entry lands. Any stagger between validators — at
-  least one 5s syncer tick at every epoch boundary — leaves one validator
-  holding a key while a peer holds none. This one needs only a single
-  network key to occur, so it applies to mainnet and testnet as they run
-  today. A restarting or joining validator used to lag arbitrarily further,
-  because nothing held it back from starting its epoch components before
-  its handoff data arrived; the prepare-then-start barrier now runs on those
-  paths too (`handoff.md`), so it enters the epoch with the certified key
-  material already local and only the same one-tick overlay stagger remains.
-  What the barrier does NOT bound is a certified key it cannot translate to
-  a local `ObjectID` — the stranded-key shape, which still fills from the
-  syncer's chain read after start;
-- **per-key overlay incompleteness.** The overlay is assembled per validator
-  from chain metadata plus locally cached blobs. An entry whose blobs are
-  still empty is skipped at adoption, and the recovery path is a chain read
-  with no deadline, so with two or more keys a validator can adopt only the
-  higher key while a peer holding both selects the lower;
-- **a handoff-certificate read error**, which makes a validator skip
-  adoption for that tick entirely and freeze on whatever it had adopted
-  before.
-
-A local equality check against the announced key would convert any of these
-lags into a permanent drop of an honest demand, and the honest duplicate
-announcements are already gone — consensus deduplicates presign-demand
-announcements on the demand-id digest alone, so no corrected announcement can
-follow. Rejecting therefore trades a substitution bug for a stall, exactly as
-in the algorithm case above. Parking fails toward delay instead, which is the
-only direction that is safe here.
+Neither condition has a per-validator TIMING. The key is fixed at
+construction, so a validator either holds it all epoch or never does; a
+validator without it never draws from the pool at all, so it cannot bind a
+presign its peers bind to a different demand — it sits NOA signing out, its
+demands park and are dropped at the bound, and the pairing on every keyed
+validator is untouched. The pool is filled from consensus outputs in round
+order on every validator that processes the rounds, adopted or not, so
+"empty" is uniform per round. That leaves the assignment step with no local
+input: a demand delivered at round *R* is assigned at the first round at or
+after *R* whose pool can serve it, identically everywhere.
 
 ### Why the park needs a bound anyway
 
-The same dedup key is what makes an unbounded park exploitable. Whichever
-announcement for a demand is sequenced first supplies the network key for the
-whole network, and demand ids are derivable from public data. A committee
-member that names a key no validator will ever adopt leaves every validator's
-pool lookup empty forever: the demand parks for the rest of the epoch, its
-sign never happens, and the epoch cannot finalize the NOA checkpoint that
-demand belongs to.
+The bound is a liveness backstop, not a security control. There is no
+announced key left for a byzantine member to point at nothing; what remains
+is a validator with no signing key this epoch — an epoch with no prior
+certificate (genesis, or the first epoch of a fresh network, where NOA
+signing waits for the first handoff), or a certified key the barrier could
+not translate on this validator — and a pool that never fills. A demand parked on either
+would otherwise sit in the queue for the rest of the epoch, and the sign
+request behind it would wait forever for an assignment nobody will write.
 
 So a parked demand is dropped once it has been parked for
-`NOA_PRESIGN_DEMAND_PARK_ROUNDS` consensus rounds
-(`dwallet_mpc_service.rs`). The queue element records the consensus round its
-demand was delivered in; the drain at round *R* drops any still-unassigned
-demand delivered at *R_d* once `R - R_d >= NOA_PRESIGN_DEMAND_PARK_ROUNDS`.
+`noa_presign_demand_park_rounds` consensus rounds — a `ProtocolConfig`
+constant, `Some(70_000)` at every supported version (`None` would never drop).
+The queue element records the consensus round its demand was delivered in;
+the drain at round *R* drops any still-unassigned demand delivered at *R_d*
+once `R - R_d >= noa_presign_demand_park_rounds`.
 
 ### Why consensus rounds, and not elapsed time
 
@@ -159,9 +159,10 @@ identical everywhere: the delivery round and the round being drained. The
 third input, whether the demand is still unassigned, is a function of the
 presign pool, which is filled from quorum-agreed outputs in round order and
 is likewise uniform per round. Wall-clock time is not: validators observe
-different elapsed times for the same rounds. Neither is the locally adopted
-key set, nor the network-key overlay — the very things the previous section
-showed to differ between honest validators.
+different elapsed times for the same rounds. Whether this validator holds a
+signing key does not enter the predicate either: the bound measures from the
+consensus delivery round, so a validator without one drops the demand at the
+same round its keyed peers would have had its pool never filled.
 
 The delivery rounds themselves survive a restart for the same reason: the
 round cursor replays the epoch's rounds from the start, so the queue and the
@@ -176,8 +177,8 @@ for its key was empty, and re-draining it either finds the pool still empty or
 assigns from it, exactly as an uncrashed peer did. It is NOT safe for a drop:
 
 1. demand *D* is parked past the bound and dropped at round *R_e*;
-2. *D*'s network key arrives late and its pool fills at some *R_i > R_e* — the
-   honest-lag case the bound deliberately drops anyway;
+2. *D*'s pool fills at some *R_i > R_e* — the honest-lag case the bound
+   deliberately drops anyway;
 3. the validator restarts. The rounds replay, *D* re-enters the rebuilt queue
    at its delivery round, and the drain now sees a pool that can serve it.
 
@@ -199,51 +200,52 @@ as the second arm of one per-demand resolution
 Every demand therefore has at most one terminal resolution per epoch, and a
 replayed drain READS it instead of deciding again: an already-dropped demand
 leaves the rebuilt queue without an assignment attempt, without re-logging at
-error level, and without re-counting the metric. The write happens before the
-demand leaves the queue, and a failed write keeps the demand parked for the
-next round — the same posture as a failed assignment.
+error level, and without re-counting the metric. That read does not need a
+signing key: a replay on a validator that entered the epoch without one reads
+the durable table directly, so a resolved demand leaves the queue instead of
+parking a second time under a bound measured from a delivery round long past.
+The write happens before the demand leaves the queue, and a failed write
+keeps the demand parked for the next round — the same posture as a failed
+assignment.
 
 ### The bound drops an honest-lag demand too, deliberately
 
-No consensus-uniform signal distinguishes "a key nobody will ever adopt" from
-"a key still arriving", and any attempt to distinguish them locally breaks
+No consensus-uniform signal distinguishes "a pool that will never fill" from
+"a pool still filling", and any attempt to distinguish them locally breaks
 uniformity. The bound therefore drops both cases alike, and its only defence
 is being generous enough that no honest window comes near it.
 
-`NOA_PRESIGN_DEMAND_PARK_ROUNDS = 70_000` is about an hour of mainnet
+`noa_presign_demand_park_rounds = 70_000` is about an hour of mainnet
 consensus at ~19.5 rounds/s. The honest windows it has to clear are:
 
-- the network-key syncer re-merges the overlay every 5s — ~100 rounds;
+- the network-key syncer publishes the overlay every 5s — ~100 rounds;
 - a restarting or joining validator recovers a stranded key by chain read and
   then instantiates class groups for it — minutes, so at most low tens of
   thousands of rounds;
-- a freshly adopted key's presign pool is filled by internal-presign MPC —
+- a freshly certified key's presign pool is filled by internal-presign MPC —
   again minutes.
 
 The ceiling is the epoch: a 24h epoch is ~1.7M rounds, so the bound spends
 ~4% of an epoch waiting before giving up, and a demand that is going to be
 dropped is dropped early enough for the epoch to finalize what it can.
 
-The value is a compile-time constant, which is safe only because presign
-demands cannot currently reach the wire at all — announcements are gated on
-the `noa_checkpoints` protocol flag, which is off on every live network, so no
-committee can be split across two values of it. Once that flag is on, the
-number becomes consensus-affecting (validators running different values drop
-different demands) and belongs in `ProtocolConfig`, where a change is
-version-gated rather than binary-driven.
+The value lives in `ProtocolConfig` because it is consensus-affecting once
+demands reach the wire: validators running different values drop different
+demands, so a change has to be version-gated rather than binary-driven.
 
 ### What a drop means
 
 It is terminal for that demand in that epoch, and durable (above). The drain
 increments `ika_dwallet_mpc_noa_presign_demands_evicted_total` (labeled by
 signature algorithm) and logs an `error!` carrying the demand id and its
-digest, the announced network key id, the announcing authority, the delivery
-round and the round of the drop — including the statement that this demand's
-sign will not happen in this epoch. It is deliberately not reported as an
-internal invariant violation: a byzantine announcer causing it is not a bug in
-our code, and neither is an honest lag that outran the bound. A replay of a
-drop that was already recorded logs at debug and does not touch the counter,
-so the metric counts drops, not restarts.
+digest, the signing key (or that this validator holds none this epoch), the
+announcing authority, the delivery round and the round of the drop —
+including the statement that this demand's sign will not happen in this
+epoch. It is deliberately not reported as an internal invariant violation: a
+validator without a signing key, or an honest lag that outran the bound, is
+not a bug in our code. A replay of a drop that was
+already recorded logs at debug and does not touch the counter, so the metric
+counts drops, not restarts.
 
 Two other paths read the same durable resolution rather than any process
 memory, which is what makes them survive a restart as well:
@@ -251,8 +253,8 @@ memory, which is what makes them survive a restart as well:
 - the **pending sign request** behind a dropped demand is released (it would
   otherwise wait forever for an assignment nobody will write, feeding the
   NOA-sign starvation warning). Only the assignment branch of that read needs
-  the signing network key locally; a release must not, or a validator that
-  never adopts the key would hold the request forever;
+  the signing network key locally; a release must not, or a validator
+  without one would hold the request forever;
 - the **announcement** pass skips any demand that already has a resolution, so
   a dropped demand is not re-announced — a re-announcement would be
   deduplicated into nothing anyway, the consensus key being the demand-id

@@ -61,6 +61,9 @@ use ika_core::dwallet_checkpoints::{
     DWalletCheckpointMetrics, DWalletCheckpointService, DWalletCheckpointStore,
     SendDWalletCheckpointToStateSync, SubmitDWalletCheckpointToConsensus,
 };
+use ika_core::dwallet_mpc::network_owned_address_signing_key::{
+    self, NetworkOwnedAddressSigningKeySelection,
+};
 use ika_core::epoch::committee_store::CommitteeStore;
 use ika_core::epoch::consensus_store_pruner::ConsensusStorePruner;
 use ika_core::epoch::epoch_metrics::EpochMetrics;
@@ -74,6 +77,7 @@ use ika_core::validator_metadata::{next_committee_pubkey_set, verify_joiner_boot
 use ika_network::discovery::TrustedPeerChangeEvent;
 use ika_network::{discovery, state_sync};
 use ika_protocol_config::{ProtocolConfig, ProtocolVersion};
+use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use mysten_metrics::{RegistryService, spawn_monitored_task};
 use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
@@ -491,6 +495,29 @@ impl IkaNode {
             &config.db_path().join("store"),
             Some(perpetual_tables_options.options),
         ));
+        // Reload every `ObjectID <-> NetworkKeyId` translation this process
+        // persisted, before anything reads the mapping: the prepare-then-start
+        // barrier below translates the handoff certificate's keys to resolve
+        // the epoch's network-owned-address signing key, and a translation
+        // that lived only in the previous process would leave a restarted
+        // validator without a signing key for the epoch.
+        let loaded_network_key_id_mappings = perpetual_tables
+            .iter_network_key_id_mappings()
+            .filter_map(|entry| {
+                entry
+                    .map_err(|e| {
+                        warn!(error = ?e, "skipping an unreadable persisted NetworkKeyId mapping")
+                    })
+                    .ok()
+            })
+            .inspect(|(object_id, network_key_id)| {
+                ika_core::network_key_id_mapping::register(*object_id, *network_key_id)
+            })
+            .count();
+        info!(
+            loaded_network_key_id_mappings,
+            "loaded the persisted network key id mappings"
+        );
 
         // Choose the gRPC/OCS topology before constructing the Sui client.
         use ika_config::node::{SuiDataSource, SuiTransportPlan, select_sui_transport};
@@ -1424,7 +1451,7 @@ impl IkaNode {
             // chain. Entering epoch 0 has no predecessor to be handed off
             // from — the chain-true no-cert genesis epoch — and is skipped on
             // the same `>= 1` test the joiner bootstrap uses.
-            if epoch_store.epoch() >= 1 {
+            let network_owned_address_signing_key_id = if epoch_store.epoch() >= 1 {
                 let barrier = HandoffBarrierContext {
                     p2p_network: p2p_network.clone(),
                     perpetual_tables: perpetual_tables.clone(),
@@ -1434,6 +1461,7 @@ impl IkaNode {
                         .as_ref()
                         .map(|metrics| metrics.telemetry.clone()),
                     withhold_anchor_for: config.withhold_handoff_anchor_for_testing,
+                    network_keys_receiver: sui_data_receivers.network_keys_receiver.clone(),
                 };
                 let anchor_committee = AnchorCommittee::Resolved {
                     committee_store: state.committee_store().clone(),
@@ -1455,7 +1483,9 @@ impl IkaNode {
                 )
                 .await
                 {
-                    HandoffBarrierOutcome::Ready => {}
+                    HandoffBarrierOutcome::Ready {
+                        network_owned_address_signing_key_id,
+                    } => network_owned_address_signing_key_id,
                     HandoffBarrierOutcome::FailedClosed => {
                         return Err(anyhow!(
                             "cross-epoch handoff anchor for epoch {anchor_epoch} is contradicted; \
@@ -1470,7 +1500,9 @@ impl IkaNode {
                         ));
                     }
                 }
-            }
+            } else {
+                None
+            };
             let components = Self::construct_validator_components(
                 config.clone(),
                 state.clone(),
@@ -1492,6 +1524,7 @@ impl IkaNode {
                 noa_system_finalized.clone(),
                 stranded_network_keys.clone(),
                 commit_liveness.clone(),
+                network_owned_address_signing_key_id,
             )
             .await?;
 
@@ -2117,6 +2150,7 @@ impl IkaNode {
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
         commit_liveness: Option<Arc<commit_liveness_watchdog::CommitLivenessWatchdog>>,
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Result<ValidatorComponents> {
         let mut config_clone = config.clone();
         let consensus_config = config_clone
@@ -2186,6 +2220,7 @@ impl IkaNode {
             noa_system_finalized,
             stranded_network_keys,
             commit_liveness,
+            network_owned_address_signing_key_id,
         )
         .await
     }
@@ -2217,6 +2252,9 @@ impl IkaNode {
         noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
         commit_liveness: Option<Arc<commit_liveness_watchdog::CommitLivenessWatchdog>>,
+        // Resolved by the prepare-then-start barrier from the prior epoch's
+        // handoff certificate; the MPC manager takes it as a fixed input.
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Result<ValidatorComponents> {
         // Channel for network-owned-address sign requests (sender unused after
         // pipeline→handler migration; receiver still drained by service loop).
@@ -2398,6 +2436,7 @@ impl IkaNode {
             system_checkpoint_handler,
             stranded_network_keys,
             &seed_resolution,
+            network_owned_address_signing_key_id,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -3405,10 +3444,13 @@ impl IkaNode {
                 // so only it prepares. A node leaving the committee
                 // (validator last epoch, not this one) must not block on
                 // handoff data it will never use.
-                if self.state.is_validator(&new_epoch_store)
-                    && !matches!(
-                        wait_for_handoff_data_ready(
-                            &HandoffBarrierContext::from_node(&self),
+                let network_owned_address_signing_key_id =
+                    if self.state.is_validator(&new_epoch_store) {
+                        match wait_for_handoff_data_ready(
+                            &HandoffBarrierContext::from_node(
+                                &self,
+                                sui_data_receivers.network_keys_receiver.clone(),
+                            ),
                             cur_epoch_store.epoch(),
                             // The epoch we are leaving IS the anchor epoch,
                             // so its committee is in hand.
@@ -3416,30 +3458,39 @@ impl IkaNode {
                             &epoch_peer_ids(&cur_epoch_store),
                             &new_epoch_store,
                         )
-                        .await,
-                        HandoffBarrierOutcome::Ready
-                    )
-                {
-                    // The cross-epoch anchor is contradicted and the node has
-                    // been signalled to halt (the barrier logged why). Leave
-                    // the reconfiguration loop instead of starting the epoch's
-                    // components on it — consensus is already torn down at
-                    // this point, so the node is deliberately inert from here.
-                    //
-                    // Matched as "not Ready" rather than on the contradicted
-                    // variant alone so no future outcome can start the epoch by
-                    // default. Only that variant is reachable here: the anchor
-                    // committee is HELD (the outgoing store's own), so the
-                    // resolution this arm's sibling reports on cannot fail.
-                    error!(
-                        next_epoch,
-                        "prepare-then-start: the cross-epoch anchor for epoch {next_epoch} is \
-                         CONTRADICTED; refusing to enter the epoch and leaving the \
-                         reconfiguration loop with consensus down. The node has been signalled to \
-                         shut down (the barrier logged which contradiction)."
-                    );
-                    return Ok(());
-                }
+                        .await
+                        {
+                            HandoffBarrierOutcome::Ready {
+                                network_owned_address_signing_key_id,
+                            } => network_owned_address_signing_key_id,
+                            // The cross-epoch anchor is contradicted and the node
+                            // has been signalled to halt (the barrier logged why).
+                            // Leave the reconfiguration loop instead of starting
+                            // the epoch's components on it — consensus is already
+                            // torn down at this point, so the node is deliberately
+                            // inert from here.
+                            //
+                            // Matched as "not Ready" rather than on the
+                            // contradicted variant alone so no future outcome can
+                            // start the epoch by default. Only that variant is
+                            // reachable here: the anchor committee is HELD (the
+                            // outgoing store's own), so the resolution this arm's
+                            // sibling reports on cannot fail.
+                            _ => {
+                                error!(
+                                    next_epoch,
+                                    "prepare-then-start: the cross-epoch anchor for epoch \
+                                 {next_epoch} is CONTRADICTED; refusing to enter the epoch and \
+                                 leaving the reconfiguration loop with consensus down. The node \
+                                 has been signalled to shut down (the barrier logged which \
+                                 contradiction)."
+                                );
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        None
+                    };
 
                 if self.state.is_validator(&new_epoch_store) {
                     // Only restart consensus if this node is still a validator in the new epoch.
@@ -3466,6 +3517,7 @@ impl IkaNode {
                             self.noa_system_finalized.clone(),
                             self.stranded_network_keys.clone(),
                             self.commit_liveness.clone(),
+                            network_owned_address_signing_key_id,
                         )
                         .await?,
                     )
@@ -3513,27 +3565,35 @@ impl IkaNode {
                     // anchor epoch even though this node was not in that
                     // committee: the store still carries the committee the
                     // cert was signed by and the peers that serve it.
-                    if !matches!(
-                        wait_for_handoff_data_ready(
-                            &HandoffBarrierContext::from_node(&self),
-                            cur_epoch_store.epoch(),
-                            &AnchorCommittee::Held(cur_epoch_store.committee().clone()),
-                            &epoch_peer_ids(&cur_epoch_store),
-                            &new_epoch_store,
-                        )
-                        .await,
-                        HandoffBarrierOutcome::Ready
-                    ) {
-                        error!(
-                            next_epoch,
-                            "prepare-then-start: the cross-epoch anchor for epoch \
-                             {next_epoch} is CONTRADICTED; refusing to promote this node into \
-                             that committee and leaving the reconfiguration loop. The node has \
-                             been signalled to shut down (the barrier logged which \
-                             contradiction)."
-                        );
-                        return Ok(());
-                    }
+                    let network_owned_address_signing_key_id = match wait_for_handoff_data_ready(
+                        &HandoffBarrierContext::from_node(
+                            &self,
+                            sui_data_receivers.network_keys_receiver.clone(),
+                        ),
+                        cur_epoch_store.epoch(),
+                        &AnchorCommittee::Held(cur_epoch_store.committee().clone()),
+                        &epoch_peer_ids(&cur_epoch_store),
+                        &new_epoch_store,
+                    )
+                    .await
+                    {
+                        HandoffBarrierOutcome::Ready {
+                            network_owned_address_signing_key_id,
+                        } => network_owned_address_signing_key_id,
+                        // Matched as "not Ready" for the same reason as the
+                        // continuing-validator seam above.
+                        _ => {
+                            error!(
+                                next_epoch,
+                                "prepare-then-start: the cross-epoch anchor for epoch \
+                                 {next_epoch} is CONTRADICTED; refusing to promote this node \
+                                 into that committee and leaving the reconfiguration loop. The \
+                                 node has been signalled to shut down (the barrier logged which \
+                                 contradiction)."
+                            );
+                            return Ok(());
+                        }
+                    };
 
                     Some(
                         Self::construct_validator_components(
@@ -3557,6 +3617,7 @@ impl IkaNode {
                             self.noa_system_finalized.clone(),
                             self.stranded_network_keys.clone(),
                             self.commit_liveness.clone(),
+                            network_owned_address_signing_key_id,
                         )
                         .await?,
                     )
@@ -3690,12 +3751,22 @@ struct HandoffBarrierContext {
     telemetry: Option<Arc<ValidatorTelemetryMetrics>>,
     /// TESTS ONLY — `NodeConfig::withhold_handoff_anchor_for_testing`.
     withhold_anchor_for: Option<Duration>,
+    /// The network-key syncer's chain-fed overlay: every on-chain network
+    /// encryption key with its metadata. The barrier reads each certified
+    /// key's `dkg_at_epoch` from it to resolve the epoch's
+    /// network-owned-address signing key.
+    network_keys_receiver: watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
 }
 
 impl HandoffBarrierContext {
     /// The two paths that run inside `monitor_reconfiguration` build the
     /// context from the running node.
-    fn from_node(node: &IkaNode) -> Self {
+    fn from_node(
+        node: &IkaNode,
+        network_keys_receiver: watch::Receiver<
+            Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>,
+        >,
+    ) -> Self {
         Self {
             p2p_network: node.p2p_network.clone(),
             perpetual_tables: node.state.perpetual_tables(),
@@ -3703,6 +3774,7 @@ impl HandoffBarrierContext {
             bootstrap_outcomes: node.metrics.joiner_bootstrap_outcomes_total.clone(),
             telemetry: node.validator_telemetry.clone(),
             withhold_anchor_for: node.config.withhold_handoff_anchor_for_testing,
+            network_keys_receiver,
         }
     }
 
@@ -3850,8 +3922,14 @@ enum AnchorOutcome {
 /// to start the epoch's components.
 enum HandoffBarrierOutcome {
     /// The epoch's full verified handoff data is local — start the epoch's
-    /// components.
-    Ready,
+    /// components, with the network-owned-address signing key the barrier
+    /// resolved from the certificate: `None` when the epoch has no such key
+    /// (no certificate, or one naming no network key) or when this
+    /// validator could not translate every certified key and sits NOA
+    /// signing out this epoch.
+    Ready {
+        network_owned_address_signing_key_id: Option<ObjectID>,
+    },
     /// The cross-epoch anchor is contradicted. The node has been signalled to
     /// halt and the caller MUST NOT start the epoch's components. The boot
     /// path additionally turns this into a startup error, because the
@@ -4190,7 +4268,9 @@ async fn wait_for_handoff_data_ready(
                              {next_epoch}. Entering it without a cross-epoch anchor, the same \
                              as entering epoch 0 at genesis."
                         );
-                        return HandoffBarrierOutcome::Ready;
+                        return HandoffBarrierOutcome::Ready {
+                            network_owned_address_signing_key_id: None,
+                        };
                     }
                     AnchorCommitteeResolution::Unavailable => {}
                 }
@@ -4265,21 +4345,85 @@ async fn wait_for_handoff_data_ready(
             )
         });
 
-        if ready {
-            let elapsed = started_at.elapsed();
-            if let Some(telemetry) = &telemetry {
-                telemetry.handoff_prepare_waiting.set(0);
-                telemetry
-                    .handoff_prepare_duration_seconds
-                    .observe(elapsed.as_secs_f64());
+        // Condition 3: the epoch's network-owned-address signing key — a
+        // pure function of the certificate's keys ranked by their chain
+        // `dkg_at_epoch` — resolved here so the epoch's components receive
+        // it as a fixed input and never choose for themselves. Only the chain
+        // metadata can still be on its way (the syncer publishes every
+        // on-chain key's within a tick), so that alone is a not-ready
+        // condition. A certified key this process cannot translate is NOT:
+        // the translation registers when the key is instantiated or derived,
+        // after the components start, so waiting would deadlock every joiner
+        // on a network whose keys are outside the compiled-in constants. Such
+        // a validator enters the epoch with no signing key and sits NOA
+        // signing out until the next handoff; a restart is spared this by
+        // the persisted mapping loaded at boot.
+        let mut awaiting_metadata_key_ids: Vec<ObjectID> = Vec::new();
+        if let Some(cert) = cert.filter(|_| ready) {
+            let overlay = ctx.network_keys_receiver.borrow().clone();
+            let selection = network_owned_address_signing_key::select(cert, |object_id| {
+                overlay.get(object_id).map(|data| data.dkg_at_epoch)
+            });
+            let resolved = match selection {
+                NetworkOwnedAddressSigningKeySelection::AwaitingMetadata(key_ids) => Err(key_ids),
+                NetworkOwnedAddressSigningKeySelection::Selected {
+                    object_id,
+                    network_key_id,
+                    dkg_at_epoch,
+                } => {
+                    info!(
+                        next_epoch,
+                        network_owned_address_signing_key_id = ?object_id,
+                        ?network_key_id,
+                        dkg_at_epoch,
+                        "prepare-then-start: resolved epoch {next_epoch}'s network-owned-address \
+                         signing key from the handoff certificate"
+                    );
+                    Ok(Some(object_id))
+                }
+                NetworkOwnedAddressSigningKeySelection::NoCertifiedKey => {
+                    info!(
+                        next_epoch,
+                        "prepare-then-start: the handoff certificate names no network key, so \
+                         epoch {next_epoch} has no network-owned-address signing key"
+                    );
+                    Ok(None)
+                }
+                NetworkOwnedAddressSigningKeySelection::Untranslatable(network_key_ids) => {
+                    warn!(
+                        next_epoch,
+                        untranslatable_cert_keys = ?network_key_ids,
+                        "prepare-then-start: certified network keys with no ObjectID \
+                         translation on this process — this validator enters epoch \
+                         {next_epoch} with NO network-owned-address signing key and will not \
+                         take part in NOA signing until the next handoff. Expected only for a \
+                         joiner on a network whose keys are outside the compiled-in constants; \
+                         a restarted validator holds the persisted mapping."
+                    );
+                    Ok(None)
+                }
+            };
+            match resolved {
+                Ok(network_owned_address_signing_key_id) => {
+                    let elapsed = started_at.elapsed();
+                    if let Some(telemetry) = &telemetry {
+                        telemetry.handoff_prepare_waiting.set(0);
+                        telemetry
+                            .handoff_prepare_duration_seconds
+                            .observe(elapsed.as_secs_f64());
+                    }
+                    info!(
+                        next_epoch,
+                        "prepare-then-start: epoch {next_epoch} handoff data ready+verified \
+                         after {}s, {retries} retries; starting MPC",
+                        elapsed.as_secs()
+                    );
+                    return HandoffBarrierOutcome::Ready {
+                        network_owned_address_signing_key_id,
+                    };
+                }
+                Err(key_ids) => awaiting_metadata_key_ids = key_ids,
             }
-            info!(
-                next_epoch,
-                "prepare-then-start: epoch {next_epoch} handoff data ready+verified after \
-                 {}s, {retries} retries; starting MPC",
-                elapsed.as_secs()
-            );
-            return HandoffBarrierOutcome::Ready;
         }
 
         retries += 1;
@@ -4375,6 +4519,7 @@ async fn wait_for_handoff_data_ready(
                 missing_locally = missing_key_ids.len(),
                 missing_key_ids = ?missing_key_ids,
                 unmapped_cert_keys = ?unmapped_cert_keys,
+                awaiting_metadata_key_ids = ?awaiting_metadata_key_ids,
                 retries,
                 withheld_for_testing = withheld,
                 "prepare-then-start: still awaiting full verified handoff data for epoch \

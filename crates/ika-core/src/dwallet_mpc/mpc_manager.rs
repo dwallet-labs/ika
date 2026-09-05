@@ -454,6 +454,21 @@ pub(crate) struct DWalletMPCManager {
     /// prior epoch's handoff cert); the instantiation input set.
     pub(crate) adopted_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
+    /// The epoch's network-owned-address (NOA) signing key, resolved by the
+    /// prepare-then-start barrier from the prior epoch's handoff certificate
+    /// before this manager exists
+    /// (`dwallet_mpc::network_owned_address_signing_key::select`), and fixed
+    /// for the epoch. `None` when the epoch has no such key — no prior
+    /// certificate, or one naming no network key — or when this validator
+    /// could not translate every certified key at the barrier and therefore
+    /// sits NOA signing out this epoch. Read only with `noa_checkpoints` on.
+    network_owned_address_signing_key_id: Option<ObjectID>,
+
+    /// Keys whose `ObjectID <-> NetworkKeyId` translation this manager has
+    /// already written to the perpetual store
+    /// (`persist_network_key_id_mapping`).
+    persisted_network_key_id_mappings: HashSet<ObjectID>,
+
     /// The `(overlay, cert-present)` input pair of the last completed
     /// `adopt_cert_verified_keys` pass. The overlay watch publishes a
     /// fresh `Arc` on every change (never mutates in place) and the
@@ -728,6 +743,7 @@ impl DWalletMPCManager {
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
         max_computation_cores: Option<usize>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -744,6 +760,7 @@ impl DWalletMPCManager {
             network_owned_address_sign_output_sender,
             max_computation_cores,
             stranded_network_keys,
+            network_owned_address_signing_key_id,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -767,6 +784,7 @@ impl DWalletMPCManager {
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
         max_computation_cores: Option<usize>,
         stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -854,6 +872,8 @@ impl DWalletMPCManager {
             sent_presign_sequence_numbers: HashSet::new(),
             logged_lock_deferred_presigns: HashSet::new(),
             adopted_network_key_data: HashMap::new(),
+            network_owned_address_signing_key_id,
+            persisted_network_key_id_mappings: HashSet::new(),
             last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
             pending_network_key_instantiations: HashMap::new(),
@@ -1875,6 +1895,7 @@ impl DWalletMPCManager {
                 deferred_unmapped_key = true;
                 continue;
             }
+            self.persist_network_key_id_mapping(*key_id);
             let cert_dkg_digest = network_key_id.as_ref().and_then(|id| dkg_digests.get(id));
             let cert_reconfig_digest = network_key_id
                 .as_ref()
@@ -2376,60 +2397,132 @@ impl DWalletMPCManager {
         }
     }
 
-    /// Returns the network encryption key ID used for network-owned-address signing (the oldest by DKG epoch).
-    /// Used by internal presign session instantiation to determine internal-signing-specific pool params.
+    /// The network encryption key that signs for the network-owned address
+    /// (NOA) this epoch, or `None` when this validator has none.
     ///
-    /// Ties on `dkg_at_epoch` (two keys DKG'd in the same epoch) break by key
-    /// id: without the tie-break, `min_by` keeps the LAST minimum in `HashMap`
-    /// iteration order — per-process-random, so validators could disagree on
-    /// which key is the NOA key and apply different pool configs (different
-    /// batch sizes ⇒ divergent internal-presign sequence numbers).
+    /// With `noa_checkpoints` on, the key is the one the prepare-then-start
+    /// barrier resolved from the prior epoch's handoff certificate and handed
+    /// to this manager at construction (see the field): a pure function of
+    /// the certificate, fixed for the epoch, so every validator that answers
+    /// `Some` answers the same key, without anyone announcing a choice.
+    /// `None` means the epoch has no such key, or this validator could not
+    /// translate every certified key at the barrier and sits NOA signing out
+    /// this epoch. The adopted set is deliberately not read: it still drives
+    /// instantiation and the internal-presign top-up loop, but WHEN a
+    /// validator adopts is per-validator, and choosing over it let honest
+    /// validators name different keys.
+    ///
+    /// With the flag off, this is the pre-existing pool-role rule — the
+    /// oldest ADOPTED key — kept byte for byte so the internal-presign
+    /// top-up decisions, and with them the per-pool sequence numbers, do not
+    /// move on the live protocol version. NOA signing itself is impossible
+    /// with the flag off (no demand is ever announced), so the adopted-set
+    /// rule then serves the pool role alone.
     pub(super) fn network_owned_address_signing_network_encryption_key_id(
         &self,
     ) -> Option<ObjectID> {
-        // Select over the ADOPTED set, not the installed set
-        // (`network_keys.network_encryption_keys`): installation completes on
-        // wall-clock time per validator, so choosing over it would let two
-        // honest validators pick a different NOA key while their installs lag,
-        // apply different pool configs (batch sizes), and diverge the
-        // internal-presign top-up decision. The adopted set drives the same
-        // top-up loop, so the two stay consistent WITHIN a validator.
-        //
-        // That is the only guarantee here: the answer is NOT uniform across
-        // validators at a given moment. `adopt_cert_verified_keys` is a
-        // per-tick LOCAL pass over a LOCAL overlay — WHICH keys are adoptable
-        // is network-uniform (the handoff cert pins them), but WHEN each
-        // validator adopts is not. The adopted set starts empty every epoch
-        // and fills as each key's blobs become locally resolvable, a key whose
-        // overlay entry is still blob-empty is skipped while its siblings
-        // adopt, and a handoff-cert read error skips the whole pass for a
-        // tick. So this returns `None` on a validator whose peers already
-        // answer `Some`, and with more than one key it can return a different
-        // key than a peer whose adopted set is ahead. The divergence is
-        // transient (the set only grows, so everyone converges on the same
-        // minimum) but not tick-bounded — a stranded key can stay unresolved
-        // for much of an epoch. Callers must not treat a peer's choice that
-        // differs from this one as evidence of misbehavior; see issue #2019.
+        if self.protocol_config.noa_checkpoints() {
+            self.network_owned_address_signing_key_id
+        } else {
+            self.oldest_adopted_network_encryption_key_id()
+        }
+    }
+
+    /// The barrier's answer is a constructor input; tests that DKG their key
+    /// after construction set it here, standing in for the next epoch's
+    /// barrier naming that key.
+    #[cfg(test)]
+    pub(crate) fn set_network_owned_address_signing_key_id_for_testing(
+        &mut self,
+        key_id: Option<ObjectID>,
+    ) {
+        self.network_owned_address_signing_key_id = key_id;
+    }
+
+    /// Writes a key's `ObjectID <-> NetworkKeyId` translation to the
+    /// perpetual store the first time this manager sees it resolved, so the
+    /// process-global mapping — which registers it in memory at instantiation
+    /// or by the background derivation — survives a restart and is loaded
+    /// back before the prepare-then-start barrier runs. Idempotent per key;
+    /// a failed write is retried on the next call.
+    fn persist_network_key_id_mapping(&mut self, key_id: ObjectID) {
+        if self.persisted_network_key_id_mappings.contains(&key_id) {
+            return;
+        }
+        let Some(network_key_id) = network_key_id_for(&key_id) else {
+            return;
+        };
+        // Absent only in the integration-test harness.
+        let Some(perpetual_tables) = self.epoch_store.perpetual_tables_handle() else {
+            return;
+        };
+        match perpetual_tables.insert_network_key_id_mapping(key_id, network_key_id) {
+            Ok(()) => {
+                self.persisted_network_key_id_mappings.insert(key_id);
+            }
+            Err(e) => warn!(
+                ?key_id,
+                ?network_key_id,
+                error = ?e,
+                "failed to persist the network key's NetworkKeyId mapping; retrying on the \
+                 next pass"
+            ),
+        }
+    }
+
+    /// The pre-`noa_checkpoints` pool-role rule: the oldest ADOPTED key by
+    /// `dkg_at_epoch`, ties broken by the smaller key id. Kept byte for byte
+    /// for the flag-off path (see the caller): the internal-presign top-up
+    /// loop applies the NOA pool parameters to this key, so changing the
+    /// choice on the live protocol version would move the per-pool sequence
+    /// numbers under a mixed-binary committee.
+    ///
+    /// Selects over the ADOPTED set, not the installed set: installation
+    /// completes on wall-clock time per validator, while the adopted set
+    /// drives the same top-up loop, so the two stay consistent WITHIN a
+    /// validator. Across validators the answer is only eventually uniform —
+    /// adoption is a per-tick local pass — which is why the flag-on path
+    /// derives the key from the handoff certificate instead.
+    fn oldest_adopted_network_encryption_key_id(&self) -> Option<ObjectID> {
         self.adopted_network_key_data
             .values()
             .min_by(|a, b| a.dkg_at_epoch.cmp(&b.dkg_at_epoch).then(a.id.cmp(&b.id)))
             .map(|data| data.id)
     }
 
-    /// Instantiates internal presign sessions based on consensus-agreed network key IDs.
-    /// Uses only keys that have reached quorum agreement via status update voting.
+    /// Instantiates internal presign sessions for every adopted network key,
+    /// applying the network-owned-address (NOA) pool parameters to the NOA
+    /// signing key's pools and the internal pool parameters to every other
+    /// key's.
     pub(super) fn instantiate_internal_presign_sessions(
         &mut self,
         consensus_round: u64,
         number_of_consensus_rounds: u64,
         network_is_idle: bool,
     ) {
-        // Check if we are ready to instantiate internal sessions, which depend on the consensus agreed (synced) network key data.
-        let agreed_network_owned_address_signing_key_id =
-            match self.network_owned_address_signing_network_encryption_key_id() {
-                Some(id) => id,
+        // Which key's pools get the NOA parameters. The two parameter sets
+        // differ in batch size, and a batch mints one session identifier per
+        // session, so a key whose role FLIPPED at a per-validator moment
+        // would mint a different number of ordinals on different validators
+        // and offset their streams for that pool. The role is therefore
+        // fixed before any top-up:
+        //
+        // - flag on: the key the prepare-then-start barrier resolved from the
+        //   prior epoch's handoff certificate, a constructor input that never
+        //   changes within the epoch. `None` — no key this epoch — gives
+        //   every key the internal parameters for the whole epoch.
+        // - flag off: the pre-existing rule, the oldest adopted key, and the
+        //   pre-existing early return while nothing is adopted; kept byte
+        //   for byte so the live protocol version's sequence numbers stay
+        //   put.
+        let network_owned_address_signing_key_id = if self.protocol_config.noa_checkpoints() {
+            self.network_owned_address_signing_key_id
+        } else {
+            match self.oldest_adopted_network_encryption_key_id() {
+                Some(key_id) => Some(key_id),
                 None => return,
-            };
+            }
+        };
 
         // Iterate the dedicated internal-pool driver — `network_presign_pool_algorithms`
         // is decoupled from `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`
@@ -2471,7 +2564,7 @@ impl DWalletMPCManager {
             };
             for (curve, signature_algorithm) in pool_algorithms.iter().copied() {
                 let is_network_owned_address_signing_presign =
-                    agreed_network_owned_address_signing_key_id == key_id;
+                    network_owned_address_signing_key_id == Some(key_id);
 
                 let (
                     minimal_pool_size,
@@ -3985,6 +4078,10 @@ impl DWalletMPCManager {
                             .inc();
                         self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
+                        // Installation registered the key's NetworkKeyId in
+                        // the process-global mapping; make it survive a
+                        // restart.
+                        self.persist_network_key_id_mapping(key_id);
                         // Mirror the adopted **DKG** output bytes
                         // into the local digest caches so validators that
                         // didn't reach `Finalize` locally still hold the

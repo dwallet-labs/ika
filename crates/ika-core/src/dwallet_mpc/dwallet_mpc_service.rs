@@ -80,6 +80,7 @@ use mpc::GuaranteedOutputDeliveryRoundResult;
 #[cfg(any(test, feature = "test-utils"))]
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
@@ -94,45 +95,6 @@ const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
 
 pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
-
-/// How many consensus rounds a network-owned-address presign demand may stay
-/// parked in the assignment drain before it is dropped.
-///
-/// A demand carries the network encryption key it was announced under, and the
-/// presign pool is keyed by that id, so a demand naming a key this validator
-/// holds no pool for cannot be assigned. It parks (kept in consensus-delivery
-/// order, retried every round) rather than being rejected, because honest
-/// validators do transiently hold different adopted key sets and a local
-/// reject would turn that lag into a permanent drop — the reasoning is in
-/// `dev-docs/specs/internal-presign-pool.md`. Without an upper bound, a demand
-/// naming a key NO validator will ever adopt parks for the rest of the epoch
-/// and blocks that epoch's NOA checkpoint finalization.
-///
-/// Rounds, not wall clock, so the drop decision is identical on every
-/// validator (see `DWalletMPCService::drain_consensus_rounds`).
-///
-/// The value is ~1 hour of mainnet consensus at ~19.5 rounds/s (the rate the
-/// catch-up gate is calibrated against — see `CATCH_UP_ENTER_GAP_ROUNDS`).
-/// That sits far above every window in which an honest validator can still be
-/// missing a key or its pool:
-/// - the network-key syncer re-merges the overlay every 5s (~100 rounds);
-/// - a restarting or joining validator recovers a stranded key by chain read
-///   and then instantiates class groups for it — minutes, so at most low tens
-///   of thousands of rounds;
-/// - a freshly adopted key's presign pool is filled by internal-presign MPC,
-///   again minutes.
-///
-/// And far below the epoch it has to fit inside: a 24h epoch is ~1.7M rounds,
-/// so the bound spends ~4% of an epoch waiting before giving up on a demand.
-///
-/// A compile-time constant is safe only while demands cannot reach the wire:
-/// announcements are gated on `noa_checkpoints()`, which is off on every live
-/// network, so no committee can currently be split across two values of it.
-/// Once that flag is on, changing this number is a consensus-affecting change
-/// — validators running different values would drop different demands — and
-/// it has to move into `ProtocolConfig`, where a change is version-gated
-/// rather than binary-driven.
-const NOA_PRESIGN_DEMAND_PARK_ROUNDS: u64 = 70_000;
 
 /// A consensus-agreed NOA presign demand waiting in the assignment drain,
 /// together with the consensus round that delivered it.
@@ -263,18 +225,18 @@ pub struct DWalletMPCService {
     buffered_noa_presign_demands: Vec<ConsensusNOAPresignDemand>,
     /// NOA sign presign demands agreed via consensus, drained in
     /// consensus-delivery order to assign each a presign (kept across rounds
-    /// when the pool is momentarily empty, up to
-    /// [`NOA_PRESIGN_DEMAND_PARK_ROUNDS`]).
+    /// while the signing key is not yet derived here or its pool is
+    /// momentarily empty, up to `noa_presign_demand_park_rounds`).
     agreed_noa_presign_demands_queue: Vec<ParkedNOAPresignDemand>,
     /// Digests of demands this validator has already announced this epoch, so it
     /// announces each demand at most once.
     announced_noa_demand_digests: HashSet<[u8; 32]>,
-    /// Consensus rounds a demand may stay parked before the drain drops it.
-    /// [`NOA_PRESIGN_DEMAND_PARK_ROUNDS`] in production; only tests override
-    /// it. The value is part of a consensus-uniform predicate, so every
-    /// validator must run the same one — it is deliberately NOT node
-    /// configuration.
-    noa_presign_demand_park_rounds: u64,
+    /// Consensus rounds a demand may stay parked before the drain drops it;
+    /// `None` never drops. Read from `ProtocolConfig`
+    /// (`noa_presign_demand_park_rounds`), so a change is version-gated: the
+    /// value is part of a consensus-uniform predicate, and validators running
+    /// different bounds would drop different demands. Only tests override it.
+    noa_presign_demand_park_rounds: Option<u64>,
     /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
     network_owned_address_sign_output_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignOutput>,
@@ -325,6 +287,11 @@ impl DWalletMPCService {
         // runs at all. Resolved per epoch by
         // `DWalletMPCService::verify_validator_keys`.
         seed_resolution: &EpochSeedResolution,
+        // This epoch's network-owned-address signing key, resolved by the
+        // prepare-then-start barrier from the prior epoch's handoff
+        // certificate (`network_owned_address_signing_key::select`); `None`
+        // when the epoch has none or this validator sits NOA signing out.
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -337,6 +304,8 @@ impl DWalletMPCService {
         let schnorr_presign_second_round_delay = protocol_config
             .schnorr_presign_second_round_delay_as_option()
             .unwrap_or(0);
+        let noa_presign_demand_park_rounds =
+            protocol_config.noa_presign_demand_park_rounds_as_option();
 
         let max_mpc_computation_cores = node_config.max_mpc_computation_cores;
         // The seed for THIS epoch, not simply the configured one: during a
@@ -372,6 +341,7 @@ impl DWalletMPCService {
             network_owned_address_sign_output_sender,
             max_mpc_computation_cores,
             stranded_network_keys,
+            network_owned_address_signing_key_id,
         );
         // Self-malicious diagnostic snapshots are mirrored to disk beside the
         // databases (NOT under `db_path()`/live, which is RocksDB-managed):
@@ -417,7 +387,7 @@ impl DWalletMPCService {
             buffered_noa_presign_demands: Vec::new(),
             agreed_noa_presign_demands_queue: Vec::new(),
             announced_noa_demand_digests: HashSet::new(),
-            noa_presign_demand_park_rounds: NOA_PRESIGN_DEMAND_PARK_ROUNDS,
+            noa_presign_demand_park_rounds,
             network_owned_address_sign_output_receiver,
             dwallet_checkpoint_handler,
             system_checkpoint_handler,
@@ -488,6 +458,9 @@ impl DWalletMPCService {
                 NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
             );
 
+        let protocol_config = ProtocolConfig::get_for_max_version_UNSAFE();
+        let noa_presign_demand_park_rounds =
+            protocol_config.noa_presign_demand_park_rounds_as_option();
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             // Integration tests always drive a participating validator; the
@@ -512,11 +485,12 @@ impl DWalletMPCService {
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
-                ProtocolConfig::get_for_max_version_UNSAFE(),
+                protocol_config.clone(),
                 epoch_store,
                 network_owned_address_sign_output_sender,
                 None,
                 Arc::new(ArcSwap::from_pointee(HashSet::new())),
+                None,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -524,7 +498,7 @@ impl DWalletMPCService {
             sui_data_requests: sui_data_receivers,
             name: authority_name,
             epoch: 1,
-            protocol_config: ProtocolConfig::get_for_max_version_UNSAFE(),
+            protocol_config,
             committee: Arc::new(committee),
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
@@ -547,7 +521,7 @@ impl DWalletMPCService {
             buffered_noa_presign_demands: Vec::new(),
             agreed_noa_presign_demands_queue: Vec::new(),
             announced_noa_demand_digests: HashSet::new(),
-            noa_presign_demand_park_rounds: NOA_PRESIGN_DEMAND_PARK_ROUNDS,
+            noa_presign_demand_park_rounds,
             network_owned_address_sign_output_receiver: tokio::sync::mpsc::channel(
                 NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
             )
@@ -599,13 +573,25 @@ impl DWalletMPCService {
         self.last_read_consensus_round
     }
 
+    /// Sets the epoch's network-owned-address signing key the way the
+    /// prepare-then-start barrier would have handed it in at construction —
+    /// the harness DKGs its key after the service exists.
+    #[cfg(test)]
+    pub(crate) fn set_network_owned_address_signing_key_id_for_testing(
+        &mut self,
+        key_id: Option<ObjectID>,
+    ) {
+        self.dwallet_mpc_manager
+            .set_network_owned_address_signing_key_id_for_testing(key_id);
+    }
+
     /// Shrinks the demand park bound so a test can reach it in a handful of
-    /// rounds instead of [`NOA_PRESIGN_DEMAND_PARK_ROUNDS`]. Never call this
-    /// outside tests: validators that disagree on the bound disagree on which
-    /// demands were dropped.
+    /// rounds instead of the `ProtocolConfig` value. Never call this outside
+    /// tests: validators that disagree on the bound disagree on which demands
+    /// were dropped.
     #[cfg(test)]
     pub(crate) fn set_noa_presign_demand_park_rounds_for_testing(&mut self, rounds: u64) {
-        self.noa_presign_demand_park_rounds = rounds;
+        self.noa_presign_demand_park_rounds = Some(rounds);
     }
 
     #[cfg(test)]
@@ -1070,20 +1056,19 @@ impl DWalletMPCService {
 
         // Announce a presign demand for each pending request so every validator
         // assigns it a presign in the same consensus-delivery order (the drain
-        // in `drain_consensus_rounds`). Gated on `noa_checkpoints()`
-        // for wire safety — the `NOAPresignDemand` consensus kind must never
-        // reach a peer that predates it — and on the signing network key being
-        // known (the demand carries its id, and the presign pool is keyed by it;
-        // announcing before adoption would let validators disagree on the key).
-        // Announce each demand at most once; one the drain already resolved —
-        // assigned a presign, or dropped at the park bound — needs no
-        // (re-)announcement, and the resolution is durable, so this holds after
-        // a restart too. Do NOT pop/instantiate here.
-        if self.protocol_config.noa_checkpoints()
-            && let Some(network_encryption_key_id) = self
-                .dwallet_mpc_manager
-                .network_owned_address_signing_network_encryption_key_id()
-        {
+        // in `drain_consensus_rounds`). Gated on `noa_checkpoints()` for wire
+        // safety — the `NOAPresignDemand` consensus kind must never reach a
+        // peer that predates it — and on nothing else: the announcement
+        // carries only the demand identity. The network encryption key the
+        // presign is drawn under is not announced; every validator derives it
+        // from the prior epoch's handoff certificate at assignment time, so an
+        // announcement does not wait for this validator to have derived it (a
+        // demand sequenced before the derivation resolves simply parks in the
+        // drain). Announce each demand at most once; one the drain already
+        // resolved — assigned a presign, or dropped at the park bound — needs
+        // no (re-)announcement, and the resolution is durable, so this holds
+        // after a restart too. Do NOT pop/instantiate here.
+        if self.protocol_config.noa_checkpoints() {
             for request in &self.pending_network_owned_address_sign_requests {
                 let digest = request.demand_id.digest();
                 if self.announced_noa_demand_digests.contains(&digest) {
@@ -1116,7 +1101,6 @@ impl DWalletMPCService {
                     .push(ConsensusNOAPresignDemand {
                         authority: self.name,
                         demand_id: request.demand_id.clone(),
-                        network_encryption_key_id,
                     });
                 self.announced_noa_demand_digests.insert(digest);
             }
@@ -1223,6 +1207,9 @@ impl DWalletMPCService {
             self.last_noa_starvation_log = Some(Instant::now());
             warn!(
                 pending_requests = self.pending_network_owned_address_sign_requests.len(),
+                signing_key = ?self
+                    .dwallet_mpc_manager
+                    .network_owned_address_signing_network_encryption_key_id(),
                 "network-owned-address sign requests waiting: presign not yet assigned \
                  in consensus order or signing key unavailable"
             );
@@ -1367,7 +1354,6 @@ impl DWalletMPCService {
                 let tx = ConsensusTransaction::new_noa_presign_demand(
                     demand.authority,
                     demand.demand_id.clone(),
-                    demand.network_encryption_key_id,
                 );
                 if let Err(e) = self
                     .dwallet_submit_to_consensus
@@ -1377,6 +1363,161 @@ impl DWalletMPCService {
                     error!(error = ?e, consensus_round, "Failed to submit NOA presign demand; re-buffering for retry");
                     self.buffered_noa_presign_demands.push(demand);
                 }
+            }
+        }
+    }
+
+    /// Drains one parked NOA presign demand at `consensus_round` under the
+    /// epoch's network-owned-address signing key as this validator has derived
+    /// it (`None` while it has not), returning whether the demand stays in the
+    /// queue.
+    ///
+    /// With a key, `assign_presign_for_demand` is atomic + idempotent: it pops
+    /// a presign and records the assignment (raw presign + the key it was
+    /// drawn under) in ONE committed batch, or returns the existing resolution
+    /// without popping. The pop and the record MUST be one commit — a crash
+    /// between a self-committed pop and a separate record would let a re-drain
+    /// after a consensus-round replay pop a different presign than peers
+    /// assigned. `Assigned` (just now, or by an earlier drain) and `Evicted`
+    /// are both terminal — the demand leaves the queue; `PoolEmpty` parks it,
+    /// preserving order across rounds until the presign is generated or the
+    /// park bound expires; `Err` parks it for retry.
+    ///
+    /// Without a key nothing can be popped, but a demand this validator
+    /// already resolved in an earlier pass over the same rounds — a restart
+    /// replaying the epoch before the derivation's inputs have landed again —
+    /// must still leave the queue on its DURABLE resolution. Parking it
+    /// instead would let the replayed bound drop it a second time: the
+    /// eviction write is a no-op on a resolved demand, but the queue would
+    /// hold a demand whose sign already ran, and the drop would be counted
+    /// and logged as new. So the durable table is read first, and only an
+    /// unresolved demand parks.
+    ///
+    /// The algorithm comes from the demand IDENTITY, never from the
+    /// announcement: the consensus dedup key is the demand-id digest alone,
+    /// so the first announcement sequenced for a demand would otherwise
+    /// supply any payload field for the whole network while the honest
+    /// duplicates are dropped behind it. The key comes from the handoff
+    /// certificate for the same reason. Carrying neither is stronger than
+    /// validating either: an announcer with a different algorithm produces a
+    /// DIFFERENT identity — a demand no honest consumer looks up — and there
+    /// is no announced key left to substitute. The pool popped here therefore
+    /// cannot disagree with the session instantiated from the same id and the
+    /// same stored key.
+    ///
+    /// The park bound (`noa_presign_demand_park_rounds`, from
+    /// `ProtocolConfig`) is a liveness backstop, not a security control: it
+    /// is what stops a demand whose pool never fills — or whose key this
+    /// validator can never derive — from parking for the whole epoch and
+    /// blocking that epoch's NOA checkpoint finalization. No consensus-uniform
+    /// signal tells a pool that will never fill from one still filling, so the
+    /// bound drops both alike and is sized so no honest window comes near it;
+    /// `dev-docs/specs/internal-presign-pool.md` records the windows.
+    fn drain_parked_noa_presign_demand(
+        &self,
+        parked: &ParkedNOAPresignDemand,
+        consensus_round: Round,
+        signing_key: Option<ObjectID>,
+    ) -> bool {
+        let ParkedNOAPresignDemand {
+            demand,
+            delivered_at_consensus_round,
+        } = parked;
+        let outcome = match signing_key {
+            Some(network_encryption_key_id) => self.epoch_store.assign_presign_for_demand(
+                &PresignDemand::Noa {
+                    demand_id: demand.demand_id.clone(),
+                },
+                demand.demand_id.expected_signature_algorithm(),
+                network_encryption_key_id,
+            ),
+            None => self
+                .epoch_store
+                .noa_presign_demand_resolution(&demand.demand_id)
+                .map(|resolution| match resolution {
+                    Some(NoaPresignDemandResolution::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                        ..
+                    }) => PresignAssignmentOutcome::Assigned {
+                        session_identifier,
+                        blending_index,
+                        presign,
+                    },
+                    Some(NoaPresignDemandResolution::Evicted) => PresignAssignmentOutcome::Evicted,
+                    None => PresignAssignmentOutcome::PoolEmpty,
+                }),
+        };
+        match outcome {
+            Ok(PresignAssignmentOutcome::Assigned { .. }) => false,
+            // Dropped by an earlier round of this same stream and recorded
+            // durably, so this is a re-drain (a restart replaying the epoch's
+            // rounds). Terminal already: leave the store alone, and do not
+            // re-log or re-count what the original pass already reported.
+            Ok(PresignAssignmentOutcome::Evicted) => {
+                debug!(
+                    demand_id = ?demand.demand_id,
+                    demand_id_digest = hex::encode(demand.demand_id_digest()),
+                    "replayed a NOA presign demand that was already dropped at the park bound; \
+                     leaving it dropped"
+                );
+                false
+            }
+            Ok(PresignAssignmentOutcome::PoolEmpty) => {
+                let parked_rounds = consensus_round.saturating_sub(*delivered_at_consensus_round);
+                let Some(park_rounds) = self.noa_presign_demand_park_rounds else {
+                    return true;
+                };
+                if parked_rounds < park_rounds {
+                    return true;
+                }
+                // Record the drop DURABLY before dropping the demand from the
+                // queue. The pool is not rewound by a replay, so a drop kept
+                // only in memory would let a restart re-read this demand at
+                // its delivery round against a pool that filled after the drop
+                // and pop for a demand every peer abandoned. On a write error,
+                // keep the demand and retry next round — the same failure
+                // posture as an assignment error.
+                if let Err(e) = self.epoch_store.evict_noa_presign_demand(&demand.demand_id) {
+                    error!(
+                        error = ?e,
+                        demand_id = ?demand.demand_id,
+                        "failed to record a NOA presign demand's drop — keeping it parked for retry"
+                    );
+                    return true;
+                }
+                self.dwallet_mpc_metrics
+                    .noa_presign_demands_evicted_total
+                    .with_label_values(&[&format!(
+                        "{:?}",
+                        demand.demand_id.expected_signature_algorithm()
+                    )])
+                    .inc();
+                error!(
+                    demand_id = ?demand.demand_id,
+                    demand_id_digest = hex::encode(demand.demand_id_digest()),
+                    signing_key = ?signing_key,
+                    announcing_authority = ?demand.authority,
+                    delivered_at_consensus_round,
+                    eviction_consensus_round = consensus_round,
+                    parked_rounds,
+                    "dropping a NOA presign demand that stayed unassigned for the whole park \
+                     bound. This demand's sign will NOT happen in this epoch — either the \
+                     network-owned-address signing key was never derivable here (no handoff \
+                     certificate for the prior epoch, or a certified key this validator could \
+                     not translate or read chain metadata for), or its presign pool took longer \
+                     than the bound to fill"
+                );
+                false
+            }
+            Err(e) => {
+                ika_types::report_invariant_violation!(
+                    "noa_presign_assignment",
+                    error=?e,
+                    "failed to assign presign for NOA demand — keeping for retry"
+                );
+                true
             }
         }
     }
@@ -1949,22 +2090,28 @@ impl DWalletMPCService {
             //   (d) the presign pool is network-uniform (keyed by the
             //       consensus-assigned presign sequence), so popping in the same
             //       order yields the same presign per demand on every validator;
-            //   (e) a demand that stays unassigned is dropped on a predicate
-            //       built only from (a)-(d): its consensus delivery round, the
-            //       consensus round being drained, and whether the pool of
-            //       (a)-(d) could serve it. Nothing per-validator — not the
-            //       locally adopted key set, not the network-key overlay, not
-            //       wall clock — enters it, so every validator drops the same
-            //       demand at the same round. A drop decided on local state
-            //       would put back exactly the disagreement this queue exists
-            //       to remove.
+            //   (e) the network encryption key every presign is drawn under
+            //       is derived from the prior epoch's handoff certificate —
+            //       one value per epoch, identical on every validator that
+            //       has derived it — never announced and never read from the
+            //       locally adopted key set;
+            //   (f) a demand that stays unassigned is dropped on a predicate
+            //       built from its consensus delivery round, the consensus
+            //       round being drained, and whether the pool of (a)-(e)
+            //       could serve it. No wall clock enters it. The one
+            //       per-validator input is WHEN this validator finished
+            //       deriving (e): until then a demand parks here while a peer
+            //       that derived earlier may already have assigned it. The
+            //       bound still measures from the consensus delivery round,
+            //       so a late deriver that never resolves drops the demand at
+            //       the same round its peers would have.
             // `assign_presign_for_demand` is atomic + idempotent: it pops and
-            // records in one committed batch, and reports an already-resolved demand
-            // without popping again (so re-delivery, and a re-drain after a
-            // consensus-round replay, are both safe). Keeping a demand while the
-            // pool is empty (`PoolEmpty` => keep) preserves ordering across
-            // rounds until its presign is generated, up to
-            // `noa_presign_demand_park_rounds`. Both the queue and the
+            // records in one committed batch, and reports an already-resolved
+            // demand without popping again (so re-delivery, and a re-drain
+            // after a consensus-round replay, are both safe). Keeping a demand
+            // while the pool is empty or the signing key is not yet derived
+            // preserves ordering across rounds until its presign is generated,
+            // up to `noa_presign_demand_park_rounds`. Both the queue and the
             // resolution table it writes are per-epoch (the queue rebuilds
             // empty on the per-epoch service restart; the table is physically
             // dropped on epoch rotation), and so are the delivery rounds
@@ -1976,17 +2123,14 @@ impl DWalletMPCService {
             // outcomes are therefore written to the same durable per-demand
             // table, and the replay reads them instead of deciding again.
             //
-            // The assignment step reads ONLY the consensus-delivered demand
-            // queue and the consensus-generated presign pool — there is no
-            // wall-clock, channel-arrival-order, or local-instantiation-order
-            // input in it. That is the whole point: the bug this replaces
-            // popped presigns in local instantiation order, which diverged
-            // across a staggered restart. The `network_encryption_key_id` is
-            // carried IN the consensus-agreed demand (frozen at announce), and
-            // the sign later instantiates under that same key (stored with the
-            // assignment), so the key is fully consensus-uniform — it does not
-            // rest on the announce-time and instantiate-time key resolutions
-            // agreeing.
+            // The assignment step reads the consensus-delivered demand queue,
+            // the consensus-generated presign pool, and the certificate-derived
+            // signing key — there is no channel-arrival-order or
+            // local-instantiation-order input in it. That is the whole point:
+            // the bug this replaces popped presigns in local instantiation
+            // order, which diverged across a staggered restart. The sign later
+            // instantiates under the key stored with the assignment, so the
+            // assignment and the session cannot disagree on it.
             self.agreed_noa_presign_demands_queue.extend(
                 noa_presign_demand_messages
                     .into_iter()
@@ -1996,138 +2140,16 @@ impl DWalletMPCService {
                     }),
             );
             if !self.agreed_noa_presign_demands_queue.is_empty() {
-                let park_rounds = self.noa_presign_demand_park_rounds;
-                self.agreed_noa_presign_demands_queue.retain(|parked| {
-                    let ParkedNOAPresignDemand {
-                        demand,
-                        delivered_at_consensus_round,
-                    } = parked;
-                    // Atomic + idempotent (see `assign_presign_for_demand`): pops a
-                    // presign and records the assignment (raw presign + the
-                    // demand's network key id) in ONE committed batch, or
-                    // returns the existing assignment without popping. The pop
-                    // and the record MUST be one commit — a crash between a
-                    // self-committed pop and a separate record would let a
-                    // re-drain after a consensus-round replay pop a different
-                    // presign than peers assigned. `Assigned` (just now, or by
-                    // an earlier drain) and `Evicted` are both terminal — drop
-                    // from the queue; `PoolEmpty` => keep, preserving order
-                    // across rounds until the presign is generated or the park
-                    // bound expires; `Err` => keep for retry.
-                    // The algorithm comes from the demand IDENTITY, never from
-                    // the announcement: the consensus dedup key is the
-                    // demand-id digest alone, so the first announcement
-                    // sequenced for a demand would otherwise supply that field
-                    // for the whole network while the honest duplicates are
-                    // dropped behind it. Carrying no second copy is stronger
-                    // than comparing two: an announcer with a different
-                    // algorithm produces a DIFFERENT identity — a demand no
-                    // honest consumer looks up — and the pool popped here
-                    // cannot disagree with the session instantiated from the
-                    // same id.
-                    //
-                    // `network_encryption_key_id` is NOT derivable from the
-                    // identity (it is frozen at announce time on purpose, so
-                    // the assignment does not rest on the announce-time and
-                    // instantiate-time key resolutions agreeing), so it stays
-                    // announcer-supplied behind the same dedup key. It is
-                    // deliberately NOT validated against the locally adopted
-                    // key set: honest validators transiently hold different
-                    // adopted sets (every epoch start has such a window), so a
-                    // local reject would drop honest demands. A demand naming a
-                    // key this validator has no pool for therefore parks, in
-                    // order, and is retried every round — and is dropped only
-                    // once it has been parked for `park_rounds` consensus
-                    // rounds, which is what stops a demand naming a key nobody
-                    // will ever adopt from parking for the whole epoch and
-                    // blocking that epoch's NOA checkpoint finalization. The
-                    // bound cannot tell that case apart from a key still on its
-                    // way, because no consensus-uniform signal distinguishes
-                    // them; it is sized so that no honest window comes near it
-                    // (see `NOA_PRESIGN_DEMAND_PARK_ROUNDS`), and
-                    // `dev-docs/specs/internal-presign-pool.md` records why
-                    // parking-with-a-bound is the only safe shape here.
-                    match self.epoch_store.assign_presign_for_demand(
-                        &PresignDemand::Noa {
-                            demand_id: demand.demand_id.clone(),
-                        },
-                        demand.demand_id.expected_signature_algorithm(),
-                        demand.network_encryption_key_id,
-                    ) {
-                        Ok(PresignAssignmentOutcome::Assigned { .. }) => false,
-                        // Dropped by an earlier round of this same stream and
-                        // recorded durably, so this is a re-drain (a restart
-                        // replaying the epoch's rounds). Terminal already: leave
-                        // the store alone, and do not re-log or re-count what
-                        // the original pass already reported.
-                        Ok(PresignAssignmentOutcome::Evicted) => {
-                            debug!(
-                                demand_id = ?demand.demand_id,
-                                demand_id_digest = hex::encode(demand.demand_id_digest()),
-                                "replayed a NOA presign demand that was already dropped at the \
-                                 park bound; leaving it dropped"
-                            );
-                            false
-                        }
-                        Ok(PresignAssignmentOutcome::PoolEmpty) => {
-                            let parked_rounds =
-                                consensus_round.saturating_sub(*delivered_at_consensus_round);
-                            if parked_rounds < park_rounds {
-                                return true;
-                            }
-                            // Record the drop DURABLY before dropping the demand
-                            // from the queue. The pool is not rewound by a
-                            // replay, so a drop kept only in memory would let a
-                            // restart re-read this demand at its delivery round
-                            // against a pool that filled after the drop and pop
-                            // for a demand every peer abandoned. On a write
-                            // error, keep the demand and retry next round —
-                            // the same failure posture as an assignment error.
-                            if let Err(e) =
-                                self.epoch_store.evict_noa_presign_demand(&demand.demand_id)
-                            {
-                                error!(
-                                    error = ?e,
-                                    demand_id = ?demand.demand_id,
-                                    "failed to record a NOA presign demand's drop — keeping it \
-                                     parked for retry"
-                                );
-                                return true;
-                            }
-                            self.dwallet_mpc_metrics
-                                .noa_presign_demands_evicted_total
-                                .with_label_values(&[&format!(
-                                    "{:?}",
-                                    demand.demand_id.expected_signature_algorithm()
-                                )])
-                                .inc();
-                            error!(
-                                demand_id = ?demand.demand_id,
-                                demand_id_digest = hex::encode(demand.demand_id_digest()),
-                                network_encryption_key_id = ?demand.network_encryption_key_id,
-                                announcing_authority = ?demand.authority,
-                                delivered_at_consensus_round,
-                                eviction_consensus_round = consensus_round,
-                                parked_rounds,
-                                "dropping a NOA presign demand that stayed unassigned for the \
-                                 whole park bound: no presign pool exists for the network \
-                                 encryption key its announcement named. This demand's sign will \
-                                 NOT happen in this epoch — either the announcer named a key the \
-                                 network never adopts, or that key took longer than the bound to \
-                                 arrive"
-                            );
-                            false
-                        }
-                        Err(e) => {
-                            ika_types::report_invariant_violation!(
-                                "noa_presign_assignment",
-                                error=?e,
-                                "failed to assign presign for NOA demand — keeping for retry"
-                            );
-                            true
-                        }
-                    }
+                // Derived once per round: the answer is fixed for the epoch
+                // once it exists, and every parked demand draws under it.
+                let signing_key = self
+                    .dwallet_mpc_manager
+                    .network_owned_address_signing_network_encryption_key_id();
+                let mut queue = mem::take(&mut self.agreed_noa_presign_demands_queue);
+                queue.retain(|parked| {
+                    self.drain_parked_noa_presign_demand(parked, consensus_round, signing_key)
                 });
+                self.agreed_noa_presign_demands_queue = queue;
             }
 
             // Group checkpoint messages by chain.

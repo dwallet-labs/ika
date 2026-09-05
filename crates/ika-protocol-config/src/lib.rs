@@ -543,6 +543,18 @@ pub struct ProtocolConfig {
     /// it derives the deterministic session identifiers every validator
     /// computes independently.
     internal_presign_stale_batch_expiry_rounds: Option<u64>,
+
+    /// Consensus rounds a network-owned-address (NOA) presign demand may stay
+    /// parked in the assignment drain — unassigned because the epoch's NOA
+    /// signing key is not yet derived on this validator, or because that
+    /// key's presign pool is still empty — before the drain drops it for the
+    /// epoch. A demand delivered at round `R_d` is dropped at the first
+    /// drained round `R` with `R - R_d >= this`. `None` never drops (the
+    /// demand parks for the rest of the epoch). Version-gated because the
+    /// drop is part of a consensus-uniform predicate: validators running
+    /// different bounds would drop different demands and disagree on which
+    /// demands hold a presign.
+    noa_presign_demand_park_rounds: Option<u64>,
 }
 
 // feature flags
@@ -812,6 +824,14 @@ impl ProtocolConfig {
 
             // Set at v4 (see the version match below).
             internal_presign_stale_batch_expiry_rounds: None,
+            // About an hour of mainnet consensus at ~19.5 rounds/s, and ~4%
+            // of a 24h epoch: far past every honest window a NOA presign
+            // demand waits out (the network-key syncer tick, a restarting
+            // validator's key recovery, a fresh pool's first fill — all
+            // seconds to minutes), and early enough that a demand which will
+            // never be served is dropped while the epoch can still finalize
+            // the rest.
+            noa_presign_demand_park_rounds: Some(70_000),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
