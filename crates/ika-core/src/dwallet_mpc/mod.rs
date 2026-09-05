@@ -51,6 +51,7 @@ pub mod dwallet_mpc_service;
 mod mpc_diagnostics;
 pub mod mpc_manager;
 pub mod mpc_session;
+pub mod network_owned_address_signing_key;
 mod park_drain_test_hook;
 pub mod seed_rotation;
 

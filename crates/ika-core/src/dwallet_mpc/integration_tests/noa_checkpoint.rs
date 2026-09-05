@@ -29,7 +29,9 @@ use tracing::info;
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStoreTrait, NoaPresignDemandResolution,
 };
-use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
+use crate::dwallet_mpc::integration_tests::network_dkg::{
+    create_network_key_test, create_noa_signing_network_key_test,
+};
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, build_test_state, create_test_protocol_config_guard,
@@ -44,17 +46,14 @@ use crate::noa_checkpoints::{NOAChainSubmitter, NOACheckpointHandler, TxExecutio
 async fn setup_noa_test_state() -> IntegrationTestState {
     let mut test_state = build_test_state(4);
 
-    let (consensus_round, network_key_bytes, network_key_id) =
-        create_network_key_test(&mut test_state).await;
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_noa_signing_network_key_test(&mut test_state).await;
 
     info!(
         "Network key created at consensus round {}, key_id: {:?}",
         consensus_round, network_key_id
     );
     test_state.consensus_round = consensus_round as usize;
-    // The NOA signing key derives from the prior epoch's handoff certificate;
-    // hand every validator one naming the key.
-    utils::certify_network_key_for_noa_signing(&test_state, network_key_id, &network_key_bytes);
 
     let start_round = test_state.consensus_round as u64;
     let consensus_round = utils::advance_rounds_while_presign_pool_empty(
@@ -673,18 +672,18 @@ async fn test_noa_status_update_rebuffers_on_submit_failure() {
     assert_eq!(submitted_demands, vec![demand]);
 }
 
-// ── Test 6: a demand sequenced before the signing key is derived ─────────────
+// ── Test 6: the drain under the barrier-resolved signing key ─────────────────
 
 /// Runs `rounds` consensus rounds through the services at `indices`, then one
 /// final iteration so the last round created is actually drained.
 async fn flow_consensus_rounds_on(
     test_state: &mut IntegrationTestState,
-    indices: [usize; 2],
+    indices: &[usize],
     rounds: usize,
 ) {
     for _ in 0..rounds {
         for index in indices {
-            test_state.dwallet_mpc_services[index]
+            test_state.dwallet_mpc_services[*index]
                 .run_service_loop_iteration()
                 .await;
         }
@@ -698,35 +697,35 @@ async fn flow_consensus_rounds_on(
         test_state.consensus_round += 1;
     }
     for index in indices {
-        test_state.dwallet_mpc_services[index]
+        test_state.dwallet_mpc_services[*index]
             .run_service_loop_iteration()
             .await;
     }
 }
 
-/// A demand sequenced while a validator has not yet derived the epoch's
-/// network-owned-address signing key parks, and once the derivation resolves
-/// it is assigned the SAME presign a peer that derived the key immediately
-/// assigned it.
+/// Two validators holding the epoch's signing key assign the same demand the
+/// SAME presign, entry for entry; a third, which the barrier left without a
+/// key this epoch, parks the demand and never draws from the pool.
 ///
-/// Two validators receive the same demand in the same round over identical
-/// pools. The peer holds the prior epoch's handoff certificate from the start
-/// and assigns at delivery; the target holds none, parks, and assigns once it
-/// is handed the certificate. Their assignment tables must then match entry
-/// for entry: same presign, same blending index, same session, same key.
+/// All three receive the same demand in the same round over identical
+/// two-slot pools, so which slot the drain takes is observable. The keyed
+/// pair must agree exactly (same session, blending index, presign, key), and
+/// the keyless one must leave its pool untouched — it sits NOA signing out,
+/// it does not diverge.
 #[tokio::test]
 #[cfg(test)]
-async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_assignment() {
+async fn test_noa_presign_demand_assignment_matches_across_keyed_validators() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let _guard = create_test_protocol_config_guard_with_noa_checkpoints();
 
     let mut test_state = build_test_state(4);
-    let (consensus_round, network_key_bytes, network_key_id) =
+    let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    const TARGET: usize = 0;
-    const PEER: usize = 1;
+    const KEYED: [usize; 2] = [0, 1];
+    const KEYLESS: usize = 2;
+    const ALL: [usize; 3] = [0, 1, 2];
     let demand_id = NOAPresignDemandId::Checkpoint {
         tx_ref: NOACheckpointTxRef {
             kind_name: NOACheckpointKindName::SuiDWallet,
@@ -738,9 +737,9 @@ async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_ass
     };
     let algorithm = demand_id.expected_signature_algorithm();
 
-    // Identical pools with two slots each, so WHICH slot the drain takes is
-    // observable, seeded before any top-up batch can complete.
-    for index in [TARGET, PEER] {
+    // Identical pools with two slots each, seeded before any top-up batch
+    // can complete.
+    for index in ALL {
         for (slot, marker) in [(0u64, 0x3Au8), (1, 0x3B)] {
             test_state.epoch_stores[index]
                 .insert_presigns(
@@ -753,25 +752,20 @@ async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_ass
                 .expect("seed the presign pool");
         }
     }
+    for index in KEYED {
+        test_state.dwallet_mpc_services[index]
+            .set_network_owned_address_signing_key_id_for_testing(Some(network_key_id));
+    }
 
-    // Only the peer can derive the signing key from the start.
-    let (prior_epoch, certificate) =
-        utils::noa_signing_certificate(&test_state, network_key_id, &network_key_bytes);
-    test_state.epoch_stores[PEER]
-        .certified_handoff_attestations
-        .lock()
-        .unwrap()
-        .insert(prior_epoch, certificate.clone());
-
-    // The same demand reaches both validators in the same round: this round
-    // goes to everyone the usual way, then both get one more round carrying
-    // the demand.
+    // The same demand reaches all three in the same round: this round goes
+    // to everyone the usual way, then each gets one more round carrying the
+    // demand.
     let announcing_authority = test_state
         .committee
         .names()
-        .nth(2)
+        .nth(3)
         .copied()
-        .expect("committee has a third member");
+        .expect("committee has a fourth member");
     let round = test_state.consensus_round as u64;
     utils::send_advance_results_between_parties(
         &test_state.committee,
@@ -780,7 +774,7 @@ async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_ass
         round,
     )
     .await;
-    for index in [TARGET, PEER] {
+    for index in ALL {
         let mut payload = utils::empty_round_payload(round + 1);
         payload.noa_presign_demands.push(ConsensusNOAPresignDemand {
             authority: announcing_authority,
@@ -790,55 +784,30 @@ async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_ass
     }
     test_state.consensus_round += 2;
 
-    flow_consensus_rounds_on(&mut test_state, [TARGET, PEER], 3).await;
+    flow_consensus_rounds_on(&mut test_state, &ALL, 3).await;
 
-    let peer_resolution = test_state.epoch_stores[PEER]
-        .noa_presign_demand_resolution(&demand_id)
-        .expect("read the peer's resolution");
+    let resolutions: Vec<_> = KEYED
+        .iter()
+        .map(|index| {
+            test_state.epoch_stores[*index]
+                .noa_presign_demand_resolution(&demand_id)
+                .expect("read resolution")
+        })
+        .collect();
     assert!(
         matches!(
-            peer_resolution,
-            Some(NoaPresignDemandResolution::Assigned { .. })
-        ),
-        "the peer derived the key at once and assigns at delivery, found {peer_resolution:?}"
-    );
-    assert_eq!(
-        test_state.epoch_stores[TARGET]
-            .noa_presign_demand_resolution(&demand_id)
-            .expect("read the target's resolution"),
-        None,
-        "the target cannot derive the key yet, so its demand parks"
-    );
-    assert_eq!(
-        test_state.dwallet_mpc_services[TARGET].parked_noa_presign_demand_count(),
-        1,
-        "the parked demand stays in the target's queue"
-    );
-
-    // The target's derivation input lands.
-    test_state.epoch_stores[TARGET]
-        .certified_handoff_attestations
-        .lock()
-        .unwrap()
-        .insert(prior_epoch, certificate);
-    flow_consensus_rounds_on(&mut test_state, [TARGET, PEER], 3).await;
-
-    let target_resolution = test_state.epoch_stores[TARGET]
-        .noa_presign_demand_resolution(&demand_id)
-        .expect("read the target's resolution");
-    assert_eq!(
-        target_resolution, peer_resolution,
-        "the parked demand must be assigned exactly what the peer assigned it"
-    );
-    assert!(
-        matches!(
-            target_resolution,
+            resolutions[0],
             Some(NoaPresignDemandResolution::Assigned { network_encryption_key_id, .. })
                 if network_encryption_key_id == network_key_id
         ),
-        "the assignment records the certificate-derived key, found {target_resolution:?}"
+        "a keyed validator assigns at delivery under the signing key, found {:?}",
+        resolutions[0]
     );
-    for index in [TARGET, PEER] {
+    assert_eq!(
+        resolutions[0], resolutions[1],
+        "the two keyed validators must bind the same presign to the demand"
+    );
+    for index in KEYED {
         assert_eq!(
             test_state.dwallet_mpc_services[index].parked_noa_presign_demand_count(),
             0,
@@ -852,4 +821,24 @@ async fn test_noa_presign_demand_parked_on_an_underived_key_matches_the_peer_ass
             "exactly one slot is consumed on validator {index}"
         );
     }
+
+    assert_eq!(
+        test_state.epoch_stores[KEYLESS]
+            .noa_presign_demand_resolution(&demand_id)
+            .expect("read resolution"),
+        None,
+        "the keyless validator parks the demand"
+    );
+    assert_eq!(
+        test_state.dwallet_mpc_services[KEYLESS].parked_noa_presign_demand_count(),
+        1,
+        "the parked demand stays in the keyless validator's queue"
+    );
+    assert_eq!(
+        test_state.epoch_stores[KEYLESS]
+            .presign_pool_size(algorithm, network_key_id)
+            .expect("pool size"),
+        2,
+        "the keyless validator never draws from the pool"
+    );
 }

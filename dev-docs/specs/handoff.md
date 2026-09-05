@@ -384,6 +384,21 @@ next epoch inherits.
 
    Nothing else is exempt.
 
+   THE SIGNING KEY. Once the certificate and every certified output are
+   local, the barrier also resolves the epoch's network-owned-address
+   signing key from the certificate (see "The network-owned-address
+   signing key" below) and returns it with `Ready`, so the epoch's
+   components take it as a fixed constructor input and never choose for
+   themselves. A certified key whose chain metadata (`dkg_at_epoch`, from
+   the network-key syncer's overlay) is not local yet is one more not-ready
+   condition, waited out like the others. A certified key with no
+   `NetworkKeyId → ObjectID` translation is the exemption above again:
+   the barrier passes, and the validator enters the epoch with NO signing
+   key, sitting NOA signing out until the next handoff. The persisted
+   mapping (loaded at boot) keeps a restart out of that case; only a
+   joiner on a network whose keys are outside the compiled-in constants
+   reaches it.
+
    FAIL-CLOSED. A contradicted anchor — peers served certificates and
    none verified, or a locally persisted one that no longer verifies —
    halts the node on every path, and the caller does not start the
@@ -561,25 +576,37 @@ next epoch inherits.
 
 ## The network-owned-address signing key
 
-The certificate has a fourth consumer. The epoch's network-owned-address
-(NOA) signing key — the network encryption key every NOA sign demand's
-presign is drawn under and every NOA sign session runs on — is a pure
-function of the prior epoch's certificate, fixed for the epoch, and derived
-by every validator on its own without anyone announcing a choice
-(`DWalletMPCManager::network_owned_address_signing_key_resolution`). The
-rule: among the keys the epoch-E certificate names (its `NetworkDkgOutput`
-items), the key with the largest `dkg_at_epoch`, ties broken by the smaller
-`NetworkKeyId`, is epoch E+1's NOA signing key. The certificate is the SOLE
-input to eligibility: a key created by DKG during E+1 is not in that
-certificate and waits until E+2, and an epoch with no certificate (genesis,
-or the first epoch of a fresh network) has no NOA signing key — NOA signing
-waits for the first handoff. `dkg_at_epoch` (chain metadata, from the
-network-key syncer's overlay) and the `NetworkKeyId -> ObjectID` translation
-(the process-global mapping) are read locally, and a validator missing
-either for ANY certified key derives nothing rather than choosing among the
-keys it can see; the answer is cached for the epoch once it resolves, since
-every input only ever gains entries. The internal presign pool's NOA
-pool-parameter role and the presign-demand drain both read this derivation
+The certificate has a fourth consumer, and the barrier evaluates it. The
+epoch's network-owned-address (NOA) signing key — the network encryption key
+every NOA sign demand's presign is drawn under and every NOA sign session
+runs on — is a pure function of the prior epoch's certificate, fixed for the
+epoch, resolved by the prepare-then-start barrier on every path that starts
+a validator's epoch components, and handed to the MPC manager as a
+constructor input (`dwallet_mpc::network_owned_address_signing_key::select`).
+Nothing announces a choice. The rule: among the keys the epoch-E certificate
+names (its `NetworkDkgOutput` items), the key with the largest
+`dkg_at_epoch`, ties broken by the smaller `NetworkKeyId`, is epoch E+1's
+NOA signing key. The certificate is the SOLE input to eligibility: a key
+created by DKG during E+1 is not in that certificate and waits until E+2, and
+an epoch with no certificate (genesis, or the first epoch of a fresh network)
+has no NOA signing key — NOA signing waits for the first handoff.
+
+The rule needs two local inputs. `dkg_at_epoch` is chain metadata, read from
+the network-key syncer's overlay (every on-chain key, published within a
+tick); a certified key whose metadata is not local yet is a not-ready
+condition, and the barrier waits for it like any other. The `NetworkKeyId ->
+ObjectID` translation is the process-global mapping: seeded with the
+deployed keys, registered at instantiation or by the background derivation,
+and — so that a restart does not lose it — written to the perpetual store
+(`network_key_ids_by_object_id`) by the MPC manager and loaded back at boot
+before the barrier runs. A certified key with NO translation is the same
+carve-out as in the barrier section: the translation registers only after
+the components start, so the barrier does not wait; that validator enters
+the epoch with no signing key and sits NOA signing out until the next
+handoff, logged loudly. It never chooses among the keys it can translate.
+Expected only for a joiner on a network whose keys are outside the
+compiled-in constants. The internal presign pool's NOA pool-parameter role
+and the presign-demand drain both read the manager's fixed key
 (`internal-presign-pool.md`, "Which pool a demand draws from"). Under
 `noa_checkpoints` OFF the pool role keeps the previous rule — the oldest
 locally adopted key — so the live protocol version's internal-presign
@@ -621,9 +648,10 @@ sequence numbers do not move.
    translation, which the barrier cannot check or install and which
    adoption's own cert-digest gate covers instead.
 6. The network-owned-address signing key is a function of the prior
-   epoch's certificate alone: no validator announces a choice, a key
-   created after the certificate waits one epoch, and two validators
-   that have derived the key agree on it.
+   epoch's certificate alone, resolved by the barrier and fixed for the
+   epoch: no validator announces a choice, a key created after the
+   certificate waits one epoch, and two validators that hold a key hold
+   the same one.
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),

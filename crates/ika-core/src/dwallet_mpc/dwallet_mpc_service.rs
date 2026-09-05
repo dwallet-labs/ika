@@ -287,6 +287,11 @@ impl DWalletMPCService {
         // runs at all. Resolved per epoch by
         // `DWalletMPCService::verify_validator_keys`.
         seed_resolution: &EpochSeedResolution,
+        // This epoch's network-owned-address signing key, resolved by the
+        // prepare-then-start barrier from the prior epoch's handoff
+        // certificate (`network_owned_address_signing_key::select`); `None`
+        // when the epoch has none or this validator sits NOA signing out.
+        network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -336,6 +341,7 @@ impl DWalletMPCService {
             network_owned_address_sign_output_sender,
             max_mpc_computation_cores,
             stranded_network_keys,
+            network_owned_address_signing_key_id,
         );
         // Self-malicious diagnostic snapshots are mirrored to disk beside the
         // databases (NOT under `db_path()`/live, which is RocksDB-managed):
@@ -484,6 +490,7 @@ impl DWalletMPCService {
                 network_owned_address_sign_output_sender,
                 None,
                 Arc::new(ArcSwap::from_pointee(HashSet::new())),
+                None,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -564,6 +571,18 @@ impl DWalletMPCService {
     #[allow(dead_code)]
     pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
         self.last_read_consensus_round
+    }
+
+    /// Sets the epoch's network-owned-address signing key the way the
+    /// prepare-then-start barrier would have handed it in at construction —
+    /// the harness DKGs its key after the service exists.
+    #[cfg(test)]
+    pub(crate) fn set_network_owned_address_signing_key_id_for_testing(
+        &mut self,
+        key_id: Option<ObjectID>,
+    ) {
+        self.dwallet_mpc_manager
+            .set_network_owned_address_signing_key_id_for_testing(key_id);
     }
 
     /// Shrinks the demand park bound so a test can reach it in a handful of
@@ -1190,7 +1209,7 @@ impl DWalletMPCService {
                 pending_requests = self.pending_network_owned_address_sign_requests.len(),
                 signing_key = ?self
                     .dwallet_mpc_manager
-                    .network_owned_address_signing_key_resolution(),
+                    .network_owned_address_signing_network_encryption_key_id(),
                 "network-owned-address sign requests waiting: presign not yet assigned \
                  in consensus order or signing key unavailable"
             );
