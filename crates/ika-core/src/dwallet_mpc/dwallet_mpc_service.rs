@@ -3591,3 +3591,222 @@ impl DWalletMPCService {
         Ok(resolution)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dwallet_mpc::integration_tests::utils::{self, TestingAuthorityPerEpochStore};
+    use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+    use ika_types::messages_dwallet_mpc::ConsensusGlobalPresignRequest;
+    use ika_types::noa_checkpoint::NOAPresignDemandId;
+
+    fn presign_demand(authority: AuthorityName, marker: u8) -> ConsensusNOAPresignDemand {
+        ConsensusNOAPresignDemand {
+            authority,
+            demand_id: NOAPresignDemandId::GrpcAttestation {
+                session_identifier: [marker; 32],
+                signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
+            },
+        }
+    }
+
+    fn seed_presign_pools(stores: &[Arc<TestingAuthorityPerEpochStore>], key_id: ObjectID) {
+        for store in stores {
+            for (slot, marker) in [(0, 0x3Au8), (1, 0x3Bu8)] {
+                store
+                    .insert_presigns(
+                        DWalletSignatureAlgorithm::EdDSA,
+                        key_id,
+                        slot,
+                        SessionIdentifier::new(SessionType::InternalPresign, [marker; 32]),
+                        vec![vec![marker; 16]],
+                    )
+                    .expect("seed identical presign pools");
+            }
+        }
+    }
+
+    async fn deliver_and_drain(
+        services: &mut [DWalletMPCService],
+        stores: &[Arc<TestingAuthorityPerEpochStore>],
+        payload: ConsensusRoundPayload,
+    ) {
+        assert_eq!(services.len(), stores.len());
+        for (service, store) in services.iter_mut().zip(stores) {
+            store.deliver_round(payload.clone()).await;
+            service.drain_consensus_rounds().await;
+            assert_eq!(service.last_read_consensus_round, Some(payload.round));
+        }
+    }
+
+    fn assigned_presign(
+        store: &TestingAuthorityPerEpochStore,
+        demand_id: &NOAPresignDemandId,
+    ) -> NoaPresignDemandResolution {
+        let resolution = store
+            .noa_presign_demand_resolution(demand_id)
+            .expect("read demand resolution")
+            .expect("demand must be resolved");
+        assert!(
+            matches!(resolution, NoaPresignDemandResolution::Assigned { .. }),
+            "demand must receive a presign: {resolution:?}"
+        );
+        resolution
+    }
+
+    /// Skipping a NOA demand must not change the next global request's
+    /// checkpoint: both consumers draw from the same internal presign pool.
+    /// The two keyed validators are the control for the keyless validator.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn noa_keyless_validator_preserves_global_presign_checkpoint() {
+        let _guard = utils::create_test_protocol_config_guard_with_noa_checkpoints();
+        let (mut services, _senders, _collectors, stores, _notify, _requests, _outputs) =
+            utils::create_dwallet_mpc_services(3);
+        let key_id = ObjectID::random();
+        seed_presign_pools(&stores, key_id);
+        for service in &mut services[..2] {
+            service.set_network_owned_address_signing_key_id_for_testing(Some(key_id));
+        }
+
+        let demand = presign_demand(services[0].name, 1);
+        let mut payload = utils::empty_round_payload(1);
+        payload.noa_presign_demands.push(demand.clone());
+        deliver_and_drain(&mut services, &stores, payload).await;
+        assert_eq!(
+            assigned_presign(&stores[0], &demand.demand_id),
+            assigned_presign(&stores[1], &demand.demand_id),
+            "the keyed control validators must agree on the NOA assignment"
+        );
+        assert_eq!(
+            stores[2]
+                .noa_presign_demand_resolution(&demand.demand_id)
+                .unwrap(),
+            None,
+            "the validator without a signing key parks the NOA demand"
+        );
+
+        let request = GlobalPresignRequest {
+            session_identifier: SessionIdentifier::new(SessionType::User, [0x71; 32]),
+            session_sequence_number: 10,
+            presign_id: ObjectID::random(),
+            curve: DWalletCurve::Curve25519,
+            signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
+            dwallet_network_encryption_key_id: key_id,
+        };
+        let mut payload = utils::empty_round_payload(2);
+        payload.global_presign_requests = services
+            .iter()
+            .map(|service| ConsensusGlobalPresignRequest {
+                authority: service.name,
+                request: request.clone(),
+            })
+            .collect();
+        deliver_and_drain(&mut services, &stores, payload).await;
+
+        let checkpoints: Vec<_> = stores
+            .iter()
+            .map(|store| {
+                let checkpoints = store.pending_checkpoints.lock().unwrap();
+                assert_eq!(
+                    checkpoints.len(),
+                    1,
+                    "the global request must emit a checkpoint"
+                );
+                checkpoints[0].clone()
+            })
+            .collect();
+        assert_eq!(checkpoints[0], checkpoints[1], "keyed checkpoint control");
+        assert_eq!(
+            checkpoints[0], checkpoints[2],
+            "a keyless validator must emit the same global-presign checkpoint as its peers"
+        );
+    }
+
+    /// A joiner may learn and persist its missing key mapping after entering
+    /// the epoch without a signing key. Reconstructing its service with the
+    /// now-resolvable key must not reuse a presign peers consumed before its
+    /// restart. Replay retains both the pool and the earlier eviction.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn noa_keyless_restart_preserves_later_noa_assignment() {
+        let _guard = utils::create_test_protocol_config_guard_with_noa_checkpoints();
+        let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(3);
+        let (mut services, _senders, _collectors, stores, _notify, _requests, _outputs) =
+            utils::create_dwallet_mpc_services_with_committee_and_seeds(
+                committee.clone(),
+                seeds.clone(),
+                bundles.clone(),
+            );
+        let key_id = ObjectID::random();
+        seed_presign_pools(&stores, key_id);
+        for service in &mut services {
+            service.set_noa_presign_demand_park_rounds_for_testing(1);
+        }
+        for service in &mut services[..2] {
+            service.set_network_owned_address_signing_key_id_for_testing(Some(key_id));
+        }
+
+        let first_demand = presign_demand(services[0].name, 1);
+        let mut payload = utils::empty_round_payload(1);
+        payload.noa_presign_demands.push(first_demand.clone());
+        deliver_and_drain(&mut services, &stores, payload).await;
+        assert_eq!(
+            assigned_presign(&stores[0], &first_demand.demand_id),
+            assigned_presign(&stores[1], &first_demand.demand_id),
+            "the keyed control validators must agree before the restart"
+        );
+        deliver_and_drain(&mut services, &stores, utils::empty_round_payload(2)).await;
+        assert_eq!(
+            stores[2]
+                .noa_presign_demand_resolution(&first_demand.demand_id)
+                .unwrap(),
+            Some(NoaPresignDemandResolution::Evicted),
+            "the keyless validator reaches the park bound"
+        );
+        assert_eq!(
+            stores[2]
+                .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, key_id)
+                .unwrap(),
+            2,
+            "the keyless validator retains the presign its peers consumed"
+        );
+
+        let authority = services[2].name;
+        let (mut restarted, _senders, _collector, _notify, _request, _output) =
+            utils::create_dwallet_mpc_service_over_epoch_store(
+                &authority,
+                committee,
+                seeds[&authority].clone(),
+                bundles,
+                stores[2].clone(),
+            );
+        // Supply the answer the barrier returns after reloading the newly
+        // persisted mapping, before the replacement service drains any round.
+        restarted.set_network_owned_address_signing_key_id_for_testing(Some(key_id));
+        restarted.set_noa_presign_demand_park_rounds_for_testing(1);
+        services[2] = restarted;
+        stores[2].replay_recorded_rounds().await;
+        services[2].drain_consensus_rounds().await;
+        assert_eq!(services[2].last_read_consensus_round, Some(2));
+        assert_eq!(
+            stores[2]
+                .noa_presign_demand_resolution(&first_demand.demand_id)
+                .unwrap(),
+            Some(NoaPresignDemandResolution::Evicted),
+            "replay must retain the original eviction"
+        );
+
+        let second_demand = presign_demand(services[0].name, 2);
+        let mut payload = utils::empty_round_payload(3);
+        payload.noa_presign_demands.push(second_demand.clone());
+        deliver_and_drain(&mut services, &stores, payload).await;
+        let assignments: Vec<_> = stores
+            .iter()
+            .map(|store| assigned_presign(store, &second_demand.demand_id))
+            .collect();
+        assert_eq!(assignments[0], assignments[1], "keyed assignment control");
+        assert_eq!(
+            assignments[0], assignments[2],
+            "a formerly keyless restart must assign the same presign as its peers"
+        );
+    }
+}

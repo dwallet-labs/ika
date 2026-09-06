@@ -23,5 +23,5 @@ mod seed_rotation_store;
 mod session;
 mod sign;
 mod threshold_not_reached;
-mod utils;
+pub(super) mod utils;
 mod validator_restart;
