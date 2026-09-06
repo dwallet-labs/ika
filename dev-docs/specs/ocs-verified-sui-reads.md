@@ -705,6 +705,18 @@ the next poll while a bad signature halts the fold loudly
 and folded in order, a cache hit is the object's current state up to the
 poll lag, and safely skips re-running the proof.
 
+The head scan fetches up to eight full checkpoints concurrently, using the
+same Sui transport and node-wide rate-limit gate as before. Results are
+buffered and folded in sequence order: a later checkpoint may finish its RPC
+first, but cannot be verified, install a committee, update the cache, or move
+the persisted cursor before earlier scan results are handled. This overlaps
+network latency while bounding both outstanding fetches and completed
+checkpoints waiting to fold; a large catch-up range cannot enlarge that buffer.
+A verification failure stops the scan at that checkpoint and drops all later
+buffered results and pending fetches. Fetch failures still become pending
+gaps and allow the scan to continue, as described below. Pending-gap retries
+and the fast-forward policy retain their existing limits and ordering.
+
 **Reading the head (pruning-immune watermark).** Everything below starts
 from "what is the latest checkpoint sequence" — the folder's per-tick
 scan bound, the folder's first-start cursor, the `SuiClient` describe
