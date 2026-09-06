@@ -273,9 +273,9 @@ impl IkaCheckpointPusher {
                 warn!(
                     cursor = self.cursor,
                     latest_seq,
-                    "upstream claimed a latest-checkpoint watermark advancing faster than \
-                     checkpoint production can explain — skipping ticks rather than folding it \
-                     into the cursor (logged once until samples are accepted again)"
+                    "pusher stalled: upstream watermark exceeds the available rate allowance \
+                     — skipping scans while allowance accrues \
+                     (logged once until samples are accepted again)"
                 );
                 self.watermark_refusal_warned = true;
             }
@@ -1899,6 +1899,62 @@ mod tests {
             Some(latest_seq),
             "the pusher must catch up to a legitimately distant head"
         );
+    }
+
+    #[tokio::test]
+    async fn watermark_refusal_recovers_and_resumes_folding_without_restart() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        perpetual.put_sui_pusher_last_seq(100).unwrap();
+        let cache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees,
+            transport_reporting(&committee, &keys, 100, HashMap::new()),
+            cache.clone(),
+            metrics.clone(),
+        )
+        .await;
+        pusher.advance().await.unwrap();
+        let latest_seq = 20_100;
+        let checkpoints = ((latest_seq - 99)..=latest_seq)
+            .map(|seq| (seq, plain_checkpoint(&committee, &keys, seq)))
+            .collect();
+        pusher.transport = transport_reporting(&committee, &keys, latest_seq, checkpoints);
+        pusher.advance().await.unwrap();
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+        assert!(pusher.watermark_refusal_warned);
+        assert_eq!(metrics.pusher_stalled.get(), 1);
+
+        pusher
+            .watermark
+            .elapse_for_testing(Duration::from_secs(500));
+        pusher.advance().await.unwrap();
+        assert!(!pusher.watermark_refusal_warned);
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(100),
+            "recovery still requires a second tick to confirm the fast-forward"
+        );
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(latest_seq)
+        );
+        assert_eq!(cache.processed_head_seq(), latest_seq);
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(metrics.pusher_skipped_irrelevant_total.get(), 100);
+        pusher.advance().await.unwrap();
+        assert_eq!(metrics.pusher_stalled.get(), 0);
     }
 
     /// One inflated watermark must change NOTHING: not the persisted cursor

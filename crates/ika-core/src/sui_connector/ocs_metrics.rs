@@ -95,8 +95,9 @@ pub struct OcsMetrics {
     /// A refusal is skipped, not folded — steady state is zero, and any
     /// increase means an upstream is claiming advance faster than checkpoint
     /// production can explain (a desynced backend, a wrong-network endpoint, a
-    /// corrupted response), or that this process was paused longer than the
-    /// bound's burst covers (a restart clears that; the bound is in-process).
+    /// corrupted response), or that a genuine gap exceeds the currently
+    /// available allowance. Allowance keeps accruing during refusals, so a
+    /// genuine upstream producing below the refill rate eventually recovers.
     /// Refusals on `folder` leave the cursor BEHIND the chain head — the
     /// opposite signature to the poisoned cursor the bound prevents.
     pub watermark_implausible_total: IntCounterVec, // labels: ["consumer"]

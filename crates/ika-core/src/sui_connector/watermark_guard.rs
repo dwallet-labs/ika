@@ -18,10 +18,12 @@
 //! delta limit. A per-sample limit bounds nothing over time: an upstream that
 //! reports "previous + just under the limit" on every 250 ms tick is admitted
 //! forever and walks the head arbitrarily far ahead, one legal step at a
-//! time. Here, allowance accrues at [`SUSTAINED_CHECKPOINTS_PER_SECOND`] up
-//! to a [`BURST_ALLOWANCE`] ceiling and is **spent by every accepted
-//! increase**, so admitted advance is bounded by that rate over any window
-//! longer than one burst, whatever the step size.
+//! time. Here, allowance accrues at [`SUSTAINED_CHECKPOINTS_PER_SECOND`] and
+//! is **spent by every accepted increase**. After an increase the unspent
+//! balance is capped at [`BURST_ALLOWANCE`]. Between increases it may exceed
+//! that cap, so a long observation gap or refusal stretch can recover. From
+//! any accepted increase, further admitted advance is bounded by one burst
+//! plus elapsed refill, whatever the step size.
 //!
 //! The bucket compares observations **within this process** and never against
 //! persisted state: after downtime a genuine watermark is arbitrarily far
@@ -45,14 +47,11 @@ use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 /// long process pauses in the OCS spec).
 const SUSTAINED_CHECKPOINTS_PER_SECOND: u64 = 10;
 
-/// Ceiling on unspent allowance — the largest single jump that can be
-/// admitted, about one hour of real production (~4/s). Sized so every
-/// observation gap a running process can plausibly experience passes without
-/// a refusal: the folder polls every 250 ms, and even a pathological tick
-/// that exhausts every bounded retry budget costs tens of seconds. A gap
-/// longer than the ceiling (a host paused for hours) is admitted only as the
-/// bucket refills — bounded, self-healing, and cleared outright by a restart,
-/// which re-seeds the guard.
+/// Initial allowance and maximum balance left after the head increases,
+/// about one hour of real production (~4/s). Refill between increases is
+/// uncapped: capping it would permanently refuse every gap above this size,
+/// because refusals do not move the head. Repeated or retreating samples must
+/// preserve that catch-up allowance too.
 const BURST_ALLOWANCE: u64 = 15_000;
 
 /// The rate-bound state of one watermark consumer. Cheap and independent per
@@ -92,8 +91,7 @@ impl Bucket {
         }
         self.tokens = self
             .tokens
-            .saturating_add(whole_seconds.saturating_mul(SUSTAINED_CHECKPOINTS_PER_SECOND))
-            .min(BURST_ALLOWANCE);
+            .saturating_add(whole_seconds.saturating_mul(SUSTAINED_CHECKPOINTS_PER_SECOND));
         self.refilled_at += Duration::from_secs(whole_seconds);
     }
 }
@@ -126,7 +124,7 @@ impl WatermarkGuard {
         if advance > bucket.tokens {
             return false;
         }
-        bucket.tokens -= advance;
+        bucket.tokens = (bucket.tokens - advance).min(BURST_ALLOWANCE);
         bucket.head = seq;
         true
     }
@@ -150,6 +148,11 @@ impl WatermarkGuard {
         let mut guarded = self.bucket.lock();
         let bucket = guarded.get_or_insert_with(|| Bucket::seeded_at(seq));
         bucket.head = bucket.head.max(seq);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn elapse_for_testing(&self, duration: Duration) {
+        self.bucket.lock().as_mut().unwrap().refilled_at -= duration;
     }
 }
 
@@ -255,6 +258,62 @@ mod tests {
         drop(guarded);
 
         assert!(guard.admit(1_000 + BURST_ALLOWANCE + 5_000));
+    }
+
+    #[test]
+    fn a_long_observation_gap_is_admitted_without_restarting() {
+        let guard = WatermarkGuard::new();
+        assert!(guard.admit(1_000_000));
+        guard.elapse_for_testing(Duration::from_secs(5_000));
+
+        assert!(
+            guard.admit(1_020_000),
+            "a long observation gap must not permanently exceed the refill budget"
+        );
+        assert!(guard.admit(1_020_000 + BURST_ALLOWANCE));
+        assert!(
+            !guard.admit(1_020_000 + BURST_ALLOWANCE + 1),
+            "catch-up must leave at most one burst of unused allowance"
+        );
+    }
+
+    #[test]
+    fn refusals_and_lagging_samples_preserve_catch_up_allowance() {
+        let guard = WatermarkGuard::new();
+        let start = 1_000_000;
+        guard.note_verified_floor(start);
+        assert!(!guard.admit(start + 20_000));
+
+        // The upstream keeps producing at 5/s, slower than the refill rate.
+        // Repeated refusals, unchanged verified floors, and a lagging backend
+        // must not discard the allowance needed to catch it.
+        for seconds in 1..1_000 {
+            guard.elapse_for_testing(Duration::from_secs(1));
+            guard.note_verified_floor(start);
+            assert!(guard.admit(start - 1));
+            assert!(guard.admit(start));
+            assert!(!guard.admit(start + 20_000 + 5 * seconds));
+        }
+        guard.elapse_for_testing(Duration::from_secs(1));
+        assert!(
+            guard.admit(start + 25_000),
+            "refill must catch a moving upstream after a refused stretch"
+        );
+        assert!(!guard.admit(start + 25_001));
+    }
+
+    #[test]
+    fn verified_progress_preserves_catch_up_allowance() {
+        let guard = WatermarkGuard::new();
+        guard.note_verified_floor(1_000_000);
+        guard.elapse_for_testing(Duration::from_secs(500));
+        guard.note_verified_floor(1_001_000);
+        assert!(
+            guard.admit(1_020_000),
+            "verified progress must not discard credit during catch-up"
+        );
+        assert!(guard.admit(1_021_000));
+        assert!(!guard.admit(1_021_001));
     }
 
     /// A locally-verified floor raises the head for free and, before any
