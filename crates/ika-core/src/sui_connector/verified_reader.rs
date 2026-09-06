@@ -1569,6 +1569,7 @@ mod tests {
     use ika_sui_client::transport::derive_object_field_wrapper_id;
     use parking_lot::Mutex;
     use std::collections::BTreeMap;
+    use std::fs::read_to_string;
     use sui_light_client::proof::ocs::ModifiedObjectTree;
     use sui_types::base_types::ObjectDigest;
     use sui_types::committee::Committee as SuiCommittee;
@@ -1580,6 +1581,8 @@ mod tests {
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
     use sui_types::object::Owner;
+    use tracing::subscriber::with_default;
+    use tracing_subscriber::fmt;
 
     /// The two rejection gates exercised below — high-water rollback and
     /// freshness — are pure local checks that never reach the network, so the
@@ -1764,20 +1767,38 @@ mod tests {
     #[tokio::test]
     async fn reader_watermark_refusal_warnings_are_throttled() {
         let (_dir, reader) = test_reader(None);
-        reader.note_upstream_head(1_000_000);
-        reader.note_upstream_head(2_000_000);
-        let first_warning = reader.upstream_head_refusal_warned_at.lock().unwrap();
-        reader.note_upstream_head(1_000_001);
-        reader.note_upstream_head(2_000_000);
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = fmt()
+            .with_writer(log.reopen().unwrap())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        with_default(subscriber, || {
+            reader.note_upstream_head(1_000_000);
+            reader.note_upstream_head(2_000_000);
+            reader.note_upstream_head(1_000_001);
+            reader.note_upstream_head(2_000_000);
+            assert_eq!(
+                read_to_string(log.path())
+                    .unwrap()
+                    .matches("provider claimed a latest-checkpoint head")
+                    .count(),
+                1,
+                "even separate refusal stretches must share the warning limit"
+            );
+            let first_warning = reader.upstream_head_refusal_warned_at.lock().unwrap();
+            *reader.upstream_head_refusal_warned_at.lock() =
+                Some(first_warning - Duration::from_secs(60));
+            reader.note_upstream_head(2_000_000);
+        });
         assert_eq!(
-            *reader.upstream_head_refusal_warned_at.lock(),
-            Some(first_warning),
-            "even separate refusal stretches must share the warning limit"
+            read_to_string(log.path())
+                .unwrap()
+                .matches("provider claimed a latest-checkpoint head")
+                .count(),
+            2,
+            "a refusal after one minute must log again"
         );
-        *reader.upstream_head_refusal_warned_at.lock() =
-            Some(first_warning - Duration::from_secs(60));
-        reader.note_upstream_head(2_000_000);
-        assert!(reader.upstream_head_refusal_warned_at.lock().unwrap() >= first_warning);
         assert_eq!(
             reader
                 .metrics

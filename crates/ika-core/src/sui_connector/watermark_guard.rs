@@ -22,8 +22,9 @@
 //! is **spent by every accepted increase**. After an increase the unspent
 //! balance is capped at [`BURST_ALLOWANCE`]. Between increases it may exceed
 //! that cap, so a long observation gap or refusal stretch can recover. From
-//! any accepted increase, further admitted advance is bounded by one burst
-//! plus elapsed refill, whatever the step size.
+//! any accepted increase, further unverified advance is bounded by one burst
+//! plus elapsed refill, whatever the step size. Locally verified floors
+//! advance for free and preserve recovery credit.
 //!
 //! The bucket compares observations **within this process** and never against
 //! persisted state: after downtime a genuine watermark is arbitrarily far
@@ -47,7 +48,7 @@ use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 /// long process pauses in the OCS spec).
 const SUSTAINED_CHECKPOINTS_PER_SECOND: u64 = 10;
 
-/// Initial allowance and maximum balance left after the head increases,
+/// Initial allowance and maximum balance left after an unverified increase,
 /// about one hour of real production (~4/s). Refill between increases is
 /// uncapped: capping it would permanently refuse every gap above this size,
 /// because refusals do not move the head. Repeated or retreating samples must
