@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::{StreamExt, stream};
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::archive::CheckpointArchive;
 use ika_sui_client::transport::SuiTransport;
@@ -41,6 +42,10 @@ use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition}
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
+
+/// Bound both outstanding RPCs and fetched checkpoints awaiting their turn
+/// to fold. Overlap fullnode latency without buffering an entire catch-up span.
+const MAX_CONCURRENT_CHECKPOINT_FETCHES: usize = 8;
 
 pub struct IkaCheckpointPusher {
     /// Raw Sui transport used to fetch full checkpoints for proof
@@ -367,8 +372,19 @@ impl IkaCheckpointPusher {
             }
         }
 
-        for seq in (self.cursor + 1)..=latest_seq {
-            match self.transport.get_full_checkpoint(seq).await {
+        let transport = self.transport.clone();
+        let mut checkpoints = stream::iter((self.cursor + 1)..=latest_seq)
+            .map(|seq| {
+                let transport = transport.clone();
+                async move { (seq, transport.get_full_checkpoint(seq).await) }
+            })
+            // Results must reach the fold in sequence order: an end-of-epoch
+            // checkpoint installs the committee needed by the next epoch.
+            // Dropping this stream on a fold error cancels the remaining
+            // fetches without advancing their cursors or caching their data.
+            .buffered(MAX_CONCURRENT_CHECKPOINT_FETCHES);
+        while let Some((seq, result)) = checkpoints.next().await {
+            match result {
                 Ok(data) => {
                     self.fold_checkpoint(seq, &data)?;
                 }
@@ -937,7 +953,9 @@ fn type_touches_ika(t: &TypeTag, ika: &HashSet<ObjectID>) -> bool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use parking_lot::Mutex;
     use std::collections::{BTreeMap, HashMap};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, TransportError};
     use sui_types::base_types::{ObjectDigest, SequenceNumber, TransactionDigest};
@@ -949,6 +967,7 @@ mod tests {
         CheckpointCommitment, CheckpointContents, CheckpointSummary, EndOfEpochData,
     };
     use sui_types::object::Owner;
+    use tokio::time::{Instant as TokioInstant, sleep};
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
     use crate::sui_connector::verified_state_cache::{
@@ -960,6 +979,7 @@ mod tests {
     /// (modeling an upstream prune). Only the three reads the pusher makes are
     /// implemented; the rest panic so an unexpected call is loud.
     struct MockTransport {
+        fetch_control: Option<Arc<FetchControl>>,
         latest: CertifiedCheckpointSummary,
         /// Emulates a fullnode pruning AT head: the availability window is
         /// empty, so summary reads NotFound even for `latest`, while the
@@ -970,6 +990,24 @@ mod tests {
         /// `last_checkpoint_of_epoch` (the catch-up boundary walk). Empty for
         /// the slices that never reach `capture_committees_through`.
         eoe_seqs: HashMap<u64, CheckpointSequenceNumber>,
+    }
+
+    #[derive(Default)]
+    struct FetchControl {
+        delays: HashMap<CheckpointSequenceNumber, Duration>,
+        in_flight: AtomicUsize,
+        peak_in_flight: AtomicUsize,
+        completed: Mutex<Vec<CheckpointSequenceNumber>>,
+    }
+
+    struct InFlightFetch<'a> {
+        control: &'a FetchControl,
+    }
+
+    impl Drop for InFlightFetch<'_> {
+        fn drop(&mut self) {
+            self.control.in_flight.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     #[async_trait]
@@ -996,6 +1034,24 @@ mod tests {
             &self,
             seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointData, TransportError> {
+            let _in_flight = self.fetch_control.as_ref().map(|control| {
+                let in_flight = control.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
+                control
+                    .peak_in_flight
+                    .fetch_max(in_flight, Ordering::Relaxed);
+                InFlightFetch { control }
+            });
+            if let Some(control) = &self.fetch_control {
+                sleep(
+                    control
+                        .delays
+                        .get(&seq)
+                        .copied()
+                        .unwrap_or(Duration::from_millis(650)),
+                )
+                .await;
+                control.completed.lock().push(seq);
+            }
             self.checkpoints
                 .get(&seq)
                 .cloned()
@@ -1182,6 +1238,156 @@ mod tests {
         .unwrap()
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_checkpoint_fetches_fold_in_order_across_epochs() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let checkpoint_count = 19;
+        let checkpoints = (0..checkpoint_count)
+            .map(|epoch| {
+                let committee =
+                    Committee::new(epoch, committee.voting_rights.iter().copied().collect());
+                let seq = 100 + epoch;
+                (seq, end_of_epoch_checkpoint(&committee, &keys, seq))
+            })
+            .collect::<HashMap<_, _>>();
+        let latest_seq = 99 + checkpoint_count;
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([(100, Duration::from_secs(2))]),
+            ..Default::default()
+        });
+        let transport = Arc::new(MockTransport {
+            fetch_control: Some(control.clone()),
+            latest: checkpoints[&latest_seq].checkpoint_summary.clone(),
+            latest_summary_pruned: false,
+            checkpoints,
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+        let cache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache.clone(),
+            metrics.clone(),
+        )
+        .await;
+
+        let started = TokioInstant::now();
+        pusher
+            .advance()
+            .await
+            .expect("in-order folding must install each epoch committee before using it");
+        let peak = control.peak_in_flight.load(Ordering::Relaxed);
+        assert!(peak > 1, "checkpoint fetches must overlap");
+        assert!(
+            peak <= MAX_CONCURRENT_CHECKPOINT_FETCHES,
+            "fetch concurrency exceeded its bound"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "650 ms checkpoint RPCs must not serialize the whole catch-up scan"
+        );
+        let completed = control.completed.lock();
+        assert_ne!(
+            completed[0], 100,
+            "the epoch boundary must arrive out of order"
+        );
+        assert_eq!(completed.len(), checkpoint_count as usize);
+        assert_eq!(control.in_flight.load(Ordering::Relaxed), 0);
+        assert_eq!(committees.head_epoch(), checkpoint_count);
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(latest_seq)
+        );
+        assert_eq!(cache.processed_head_seq(), latest_seq);
+        assert_eq!(metrics.pusher_pushed_total.get(), checkpoint_count);
+        assert!(pusher.pending_gaps.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_checkpoint_fetches_stop_at_a_verification_failure() {
+        let (committee, keys) = Committee::new_simple_test_committee_of_size(4);
+        let (foreign_committee, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([
+                (100, Duration::from_secs(2)),
+                (102, Duration::from_secs(20)),
+            ]),
+            ..Default::default()
+        });
+        let transport = Arc::new(MockTransport {
+            fetch_control: Some(control.clone()),
+            latest: plain_checkpoint(&committee, &keys, 102).checkpoint_summary,
+            latest_summary_pruned: false,
+            checkpoints: HashMap::from([
+                (
+                    100,
+                    end_of_epoch_checkpoint(&foreign_committee, &foreign_keys, 100),
+                ),
+                (101, end_of_epoch_checkpoint(&committee, &keys, 101)),
+                (102, plain_checkpoint(&committee, &keys, 102)),
+            ]),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+        let cache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache.clone(),
+            metrics.clone(),
+        )
+        .await;
+
+        let error = pusher.advance().await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("checkpoint summary failed committee verification")
+        );
+        assert_eq!(*control.completed.lock(), vec![101, 100]);
+        assert_eq!(control.peak_in_flight.load(Ordering::Relaxed), 3);
+        assert_eq!(
+            control.in_flight.load(Ordering::Relaxed),
+            0,
+            "a failed fold must cancel outstanding fetches"
+        );
+        assert_eq!(pusher.cursor, 99);
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(99));
+        assert_eq!(cache.processed_head_seq(), 99);
+        assert_eq!(committees.head_epoch(), 0);
+        assert!(
+            perpetual
+                .get_sui_end_of_epoch_checkpoint(101)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(metrics.pusher_pushed_total.get(), 0);
+        assert!(pusher.pending_gaps.is_empty());
+    }
+
     /// Slice 1: the pusher installs `committee[E+1]` the moment it streams past
     /// the end-of-epoch checkpoint — the committee head advances without the
     /// ratchet ever reaching back for that (prune-prone) checkpoint.
@@ -1206,6 +1412,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: true,
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
@@ -1242,6 +1449,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             // The summary read NotFounds — as a pruned-at-head fullnode does.
             latest_summary_pruned: true,
             latest,
@@ -1278,6 +1486,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
@@ -1306,7 +1515,7 @@ mod tests {
     /// as a pending gap, and once the checkpoint materializes a later tick
     /// folds it late — recovering its committee capture and end-of-epoch
     /// retention.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn unavailable_checkpoint_becomes_pending_gap_and_folds_when_it_materializes() {
         let (committee, keys) = Committee::new_simple_test_committee();
         let dir = tempfile::tempdir().unwrap();
@@ -1319,13 +1528,21 @@ mod tests {
             .unwrap(),
         );
 
-        // latest=100, but its contents haven't materialized yet → NotFound.
+        // The unavailable boundary responds after two later checkpoints.
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
-        let latest = eoe.checkpoint_summary.clone();
+        let latest = plain_checkpoint(&committee, &keys, 102).checkpoint_summary;
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([(100, Duration::from_secs(2))]),
+            ..Default::default()
+        });
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: Some(control.clone()),
             latest_summary_pruned: false,
             latest: latest.clone(),
-            checkpoints: HashMap::new(),
+            checkpoints: HashMap::from([
+                (101, plain_checkpoint(&committee, &keys, 101)),
+                (102, plain_checkpoint(&committee, &keys, 102)),
+            ]),
             eoe_seqs: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
@@ -1336,11 +1553,17 @@ mod tests {
         // Nothing folded, but the scan did NOT stall: the cursor advanced
         // past the gap, which is now pending repair.
         assert_eq!(committees.head_epoch(), 0);
-        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+        assert_ne!(control.completed.lock()[0], 100);
+        assert_eq!(control.peak_in_flight.load(Ordering::Relaxed), 3);
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(102));
+        assert_eq!(pusher.cache.processed_head_seq(), 102);
+        assert_eq!(pusher.metrics.pusher_fetch_failures_total.get(), 1);
+        assert_eq!(pusher.metrics.pusher_skipped_irrelevant_total.get(), 2);
         assert!(pusher.pending_gaps.contains_key(&100));
 
         // The checkpoint materializes; the next tick repairs the gap.
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
@@ -1351,6 +1574,7 @@ mod tests {
 
         assert_eq!(committees.head_epoch(), 1);
         assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(102));
         assert!(
             perpetual
                 .get_sui_end_of_epoch_checkpoint(100)
@@ -1392,6 +1616,7 @@ mod tests {
         // before the prune does.
         let latest = end_of_epoch_checkpoint(&committee, &keys, 2_100).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(30u64, eoe_30), (90u64, eoe_90)]),
@@ -1456,6 +1681,7 @@ mod tests {
         }
         let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
@@ -1500,6 +1726,7 @@ mod tests {
         checkpoints.insert(6, end_of_epoch_checkpoint(&committee, &keys, 6));
         checkpoints.insert(9, plain_checkpoint(&committee, &keys, 9));
         pusher.transport = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints,
@@ -1582,6 +1809,7 @@ mod tests {
         let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
         let latest = eoe.checkpoint_summary.clone();
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
@@ -1653,6 +1881,7 @@ mod tests {
 
         let latest = plain_checkpoint(&committee, &keys, 100).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
@@ -1713,6 +1942,7 @@ mod tests {
 
         let latest = plain_checkpoint(&committee, &keys, 101).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::new(),
@@ -1780,6 +2010,7 @@ mod tests {
             .collect();
         let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
@@ -1800,6 +2031,7 @@ mod tests {
         // construction seeds the cache's processed head to the resumed cursor.
         let resume_cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let transport2: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints,
@@ -1839,6 +2071,7 @@ mod tests {
         checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
     ) -> Arc<dyn SuiTransport> {
         Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest: plain_checkpoint(committee, keys, latest_seq).checkpoint_summary,
             checkpoints,
@@ -2433,6 +2666,7 @@ mod tests {
         let latest = forged.checkpoint_summary.clone();
         let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest,
             checkpoints: HashMap::from([(100u64, forged)]),
@@ -2483,6 +2717,7 @@ mod tests {
             .unwrap(),
         );
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            fetch_control: None,
             latest_summary_pruned: false,
             latest: end_of_epoch_checkpoint(&committee, &keys, 1).checkpoint_summary,
             checkpoints: HashMap::new(),
