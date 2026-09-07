@@ -66,6 +66,6 @@ docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg PROFILE="$PROFILE" \
   --build-arg BIN="$BIN" \
-  --build-arg GH_DEPLOY_KEY="GH_DEPLOY_KEY" \
+  --build-arg GH_DEPLOY_KEY="$GH_DEPLOY_KEY" \
   --tag "$DOCKER_TAG" \
   "$@"

@@ -17,6 +17,7 @@ ARG BIN=ika-validator
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Setup SSH for manual git
 RUN mkdir -p ~/.ssh
