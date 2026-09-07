@@ -258,13 +258,14 @@ pub struct OcsVerifiedReader {
     /// wants the floor low can simply claim a low head, which is already
     /// ignored, and is the documented eclipse residual.
     ///
-    /// The bound is anchored to the verified cache's fold head before every
-    /// claim (`note_verified_floor`), NOT to the first claim: on a mirrored or
-    /// peer-only node the claim comes from a relay that is untrusted by
-    /// design, so seeding from its first word would let it choose the floor
-    /// outright. The fold head only advances to checkpoints carrying a
-    /// committee quorum signature, which a relay cannot manufacture.
+    /// Mirrored/peer-only readers anchor to the verified cache's fold head;
+    /// their relay must not choose the initial floor. Direct readers seed from
+    /// their own fullnode's first claim, like the folder, since the persisted
+    /// fold head can be arbitrarily old after a quiet stretch.
     upstream_head_guard: WatermarkGuard,
+    /// Throttle refusal warnings across all network reads, including separate
+    /// refusal stretches. The counter still records every refused sample.
+    upstream_head_refusal_warned_at: Mutex<Option<Instant>>,
     /// Cache-first staleness tripwire: if the cache head lags
     /// `observed_upstream_head` by more than this many checkpoints, the cache
     /// is too stale (e.g. a stalled pusher), so `try_cache_hit` falls through
@@ -313,6 +314,7 @@ impl OcsVerifiedReader {
             cache_first,
             observed_upstream_head: AtomicU64::new(0),
             upstream_head_guard: WatermarkGuard::new(),
+            upstream_head_refusal_warned_at: Mutex::new(None),
             staleness_bound,
             anchor_refreshed_at: Mutex::new(HashMap::new()),
             changeset_index: None,
@@ -370,28 +372,35 @@ impl OcsVerifiedReader {
     /// the anti-under-report guarantee rests on are unchanged — a refused
     /// claim leaves the floor exactly where it was.
     ///
-    /// The bound is re-anchored to the verified cache's fold head on every
-    /// call, so it tracks committee-verified local progress for free and can
-    /// never be left metering against a stale anchor while the node's own
-    /// verified state has moved on. **Residual:** a node whose cache is still
+    /// On mirrored/peer-only nodes the bound is re-anchored to the verified
+    /// cache's fold head on every call. Direct nodes use their own fullnode's
+    /// first claim instead, so an old persisted cache does not delay the
+    /// freshness tripwire after restart. **Residual:** a node whose cache is still
     /// empty (a cold peer-only/mirrored start) has no local anchor at all, so
     /// its first claim seeds the floor — an untrusted relay picks the initial
     /// value there. That is the known eclipse residual (a lone malicious relay
     /// pinning a fresh node), narrowed but not closed here.
     fn note_upstream_head(&self, seq: CheckpointSequenceNumber) {
-        self.upstream_head_guard
-            .note_verified_floor(self.cache.head_seq());
+        if !self.cache_first {
+            self.upstream_head_guard
+                .note_verified_floor(self.cache.head_seq());
+        }
         if !self.upstream_head_guard.admit(seq) {
             self.metrics
                 .watermark_implausible_total
                 .with_label_values(&["reader"])
                 .inc();
-            warn!(
-                claimed_head = seq,
-                observed_head = self.observed_upstream_head.load(Ordering::Relaxed),
-                "provider claimed a latest-checkpoint head advancing faster than checkpoint \
-                 production can explain — leaving the freshness floor unchanged"
-            );
+            let mut warned_at = self.upstream_head_refusal_warned_at.lock();
+            if warned_at.is_none_or(|last| last.elapsed() >= Duration::from_secs(60)) {
+                *warned_at = Some(Instant::now());
+                warn!(
+                    claimed_head = seq,
+                    observed_head = self.observed_upstream_head.load(Ordering::Relaxed),
+                    "provider claimed a latest-checkpoint head beyond the available rate \
+                     allowance — leaving the freshness floor unchanged while allowance \
+                     accrues (logged at most once per minute)"
+                );
+            }
             return;
         }
         self.observed_upstream_head
@@ -1560,6 +1569,7 @@ mod tests {
     use ika_sui_client::transport::derive_object_field_wrapper_id;
     use parking_lot::Mutex;
     use std::collections::BTreeMap;
+    use std::fs::read_to_string;
     use sui_light_client::proof::ocs::ModifiedObjectTree;
     use sui_types::base_types::ObjectDigest;
     use sui_types::committee::Committee as SuiCommittee;
@@ -1571,6 +1581,8 @@ mod tests {
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
     use sui_types::object::Owner;
+    use tracing::subscriber::with_default;
+    use tracing_subscriber::fmt;
 
     /// The two rejection gates exercised below — high-water rollback and
     /// freshness — are pure local checks that never reach the network, so the
@@ -1700,6 +1712,101 @@ mod tests {
         assert_eq!(
             reader.observed_upstream_head.load(Ordering::Relaxed),
             1_000_100
+        );
+    }
+
+    #[tokio::test]
+    async fn old_persisted_cache_does_not_wedge_reader_watermarks() {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let cached_head = 380_287_027;
+        let upstream_head = 380_372_670;
+        tables
+            .write_verified_object_cache(vec![], cached_head)
+            .unwrap();
+        let cache = Arc::new(VerifiedStateCache::open(tables).unwrap());
+
+        let (_direct_dir, mut direct) = test_reader_cache_first(100);
+        direct.cache = cache.clone();
+        direct.note_upstream_head(upstream_head);
+        assert_eq!(
+            direct.observed_upstream_head.load(Ordering::Relaxed),
+            upstream_head,
+            "the direct reader must seed from its fullnode despite an old cache"
+        );
+        assert!(
+            direct
+                .try_cache_hit(ObjectID::from_single_byte(7))
+                .is_none()
+        );
+        assert_eq!(direct.metrics.cache_first_stale_total.get(), 1);
+        // Later inflated claims are still refused after the direct seed.
+        direct.note_upstream_head(upstream_head + 1_000_000);
+        assert_eq!(
+            direct.observed_upstream_head.load(Ordering::Relaxed),
+            upstream_head
+        );
+
+        let (_mirrored_dir, mut mirrored) = test_reader(None);
+        mirrored.cache = cache;
+        mirrored.note_upstream_head(upstream_head);
+        assert_eq!(mirrored.observed_upstream_head.load(Ordering::Relaxed), 0);
+        // A relay cannot seed from its first word, but the same guard must
+        // eventually recover without any new Ika objects or a restart.
+        mirrored
+            .upstream_head_guard
+            .elapse_for_testing(Duration::from_secs(10_000));
+        mirrored.note_upstream_head(upstream_head);
+        assert_eq!(
+            mirrored.observed_upstream_head.load(Ordering::Relaxed),
+            upstream_head,
+            "an old verified anchor must not cause permanent reader refusal"
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_watermark_refusal_warnings_are_throttled() {
+        let (_dir, reader) = test_reader(None);
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = fmt()
+            .with_writer(log.reopen().unwrap())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        with_default(subscriber, || {
+            reader.note_upstream_head(1_000_000);
+            reader.note_upstream_head(2_000_000);
+            reader.note_upstream_head(1_000_001);
+            reader.note_upstream_head(2_000_000);
+            assert_eq!(
+                read_to_string(log.path())
+                    .unwrap()
+                    .matches("provider claimed a latest-checkpoint head")
+                    .count(),
+                1,
+                "even separate refusal stretches must share the warning limit"
+            );
+            let first_warning = reader.upstream_head_refusal_warned_at.lock().unwrap();
+            *reader.upstream_head_refusal_warned_at.lock() =
+                Some(first_warning - Duration::from_secs(60));
+            reader.note_upstream_head(2_000_000);
+        });
+        assert_eq!(
+            read_to_string(log.path())
+                .unwrap()
+                .matches("provider claimed a latest-checkpoint head")
+                .count(),
+            2,
+            "a refusal after one minute must log again"
+        );
+        assert_eq!(
+            reader
+                .metrics
+                .watermark_implausible_total
+                .with_label_values(&["reader"])
+                .get(),
+            3,
+            "throttling warnings must not suppress refusal metrics"
         );
     }
 

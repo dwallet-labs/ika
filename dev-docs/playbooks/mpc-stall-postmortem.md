@@ -304,11 +304,14 @@ construction; divergence = determinism bug).
     `ika_ocs_watermark_implausible_total{consumer="folder"}` climbing →
     the rate bound is refusing the upstream's samples.** Either the
     endpoint really is reporting an unexplainable head (check it), or
-    the process was paused/suspended for longer than the bound's burst
-    covers (~an hour of production) — the bound uses monotonic time,
-    which does not advance while a host is suspended. It heals on its
-    own at a few checkpoints per second, and a **restart clears it
-    outright** (the bound is in-process state, re-seeded at start). Do
+    a genuine gap exceeds the available allowance. The bound accrues
+    10 checkpoints/s of monotonic elapsed time even during refusals;
+    it catches an upstream producing below that rate without a restart.
+    Suspend time may not count toward that allowance on every platform.
+    A **restart re-seeds the folder guard**. On v1.4.0/v1.4.1 the refill
+    cap prevents recovery for gaps over 15,000 checkpoints: restart
+    clears the folder wedge, but the reader may immediately refuse again
+    against its old persisted cache. Upgrade to the recovery fix. Do
     NOT clear the cursor row here; the cursor is fine.
 
   Mechanism, both bounds, and the full recovery note:

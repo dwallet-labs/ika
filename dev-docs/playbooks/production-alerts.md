@@ -304,12 +304,22 @@ a page.
 - `rate(ika_ocs_watermark_implausible_total[15m]) > 0` → an upstream is
   claiming a latest-checkpoint height advancing faster than checkpoint
   production can explain (a desynced load-balancer backend, an endpoint on the
-  wrong network, a corrupted response) — or this process was paused longer than
-  the bound's burst covers, which a restart clears. Refused samples are
+  wrong network, a corrupted response) — or a genuine gap exceeds the
+  available allowance. Allowance keeps accruing at 10 checkpoints/s during
+  refusals, so an upstream producing below that rate eventually recovers
+  without a restart. Refused samples are
   skipped, so this is a configuration/upstream-health signal, not data loss;
   sustained refusals on `{consumer="folder"}` mean the checkpoint folder is
   skipping ticks and its cursor will lag *behind* the head (the opposite
-  signature to a poisoned cursor). Check `ika_ocs_pusher_cursor_seq` against
+  signature to a poisoned cursor). A folder refusal rate near the poll rate
+  (normally 4/s) means almost every scan is being skipped; the generic
+  `ika_ocs_pusher_stalled` gauge alone also covers ordinary lag. Reader
+  warnings are limited to one per minute, so use the counter for volume.
+  On v1.4.0/v1.4.1, refill is capped before admission and a gap over 15,000
+  checkpoints cannot recover this way: restart clears the folder guard,
+  while a reader anchored to an old persisted cache can refuse again after
+  restart. Upgrade to the recovery fix for both consumers.
+  Check `ika_ocs_pusher_cursor_seq` against
   the chain head and see
   [`mpc-stall-postmortem.md`](mpc-stall-postmortem.md)'s interpretation rules
   plus
