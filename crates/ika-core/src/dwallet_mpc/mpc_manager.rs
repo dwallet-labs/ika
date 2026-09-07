@@ -1799,10 +1799,11 @@ impl DWalletMPCManager {
                 // PRIOR epoch this is not a convergence window — the local
                 // producer cache will never fill (this validator never
                 // computed the key's outputs): the JOINER / cold-start shape.
-                // The cert-pinned blob install (barrier) covers only the
-                // continuing-validator path today, so without intervention the
-                // overlay stays empty and the key is never adopted — parking
-                // every session on it for this validator. Flag it for the
+                // The startup barrier prepares every certified inherited
+                // key. This recovery remains necessary for keys outside that
+                // certificate, including the first off-chain epoch, where an
+                // empty overlay would otherwise park every session on the
+                // key for this validator. Flag it for the
                 // syncer's stranded-key chain read (#1852 machinery): the
                 // chain holds the real blobs (written at DKG/reconfiguration
                 // regardless of the off-chain plane), the cert digest gates

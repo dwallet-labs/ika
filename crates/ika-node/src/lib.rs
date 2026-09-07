@@ -4531,10 +4531,9 @@ async fn wait_for_handoff_data_ready(
                     // Cert keys with NO ObjectID mapping (this validator
                     // never instantiated the key and it is not one of the
                     // compiled-in deployed keys) are keys the barrier can
-                    // neither check nor install yet. With NOA enabled these
-                    // hold the key-selection gate closed while preparation
-                    // requests chain recovery and derives the mappings. With
-                    // NOA off they retain the downstream adoption guard.
+                    // neither check nor install yet. These hold the startup
+                    // barrier closed in every mode while preparation requests
+                    // chain recovery and derives the mappings.
                     // A key with both a DKG
                     // and a reconfiguration item would list twice — dedup via
                     // the ordered set.
