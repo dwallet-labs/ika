@@ -1,7 +1,11 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.98.1-bookworm AS builder
+FROM rust:1.98-trixie AS builder
+
+# Install the exact patch release even when the official image tag lags behind.
+ENV RUST_VERSION=1.98.1
+RUN rustup toolchain install "${RUST_VERSION}" --profile minimal && rustup default "${RUST_VERSION}"
 
 # Arguments
 ARG PROFILE=release
@@ -43,7 +47,7 @@ RUN cargo build --profile ${PROFILE} --locked --bin ika-proxy
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 # CA certificates and other dependencies for debug.
 RUN apt-get update && \

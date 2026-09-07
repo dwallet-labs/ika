@@ -1,6 +1,6 @@
 # Runtime-only image — expects pre-built binary in build context
 # Used for ika-validator, ika-fullnode, or ika-notifier via BIN arg
-FROM debian:stable-slim
+FROM debian:trixie-slim
 
 ARG BUILD_DATE
 ARG GIT_REVISION
