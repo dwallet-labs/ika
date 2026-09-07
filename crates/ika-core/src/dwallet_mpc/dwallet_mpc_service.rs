@@ -3698,7 +3698,7 @@ mod tests {
             .iter()
             .map(|service| ConsensusGlobalPresignRequest {
                 authority: service.name,
-                request: request.clone(),
+                request,
             })
             .collect();
         deliver_and_drain(&mut services, &stores, payload).await;
