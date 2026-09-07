@@ -116,7 +116,7 @@ methods/macros: unbounded channels, `block_on`,
 here. The rules below are the ones lints can't check:
 
 - **NEVER use `unsafe`** — no exceptions (also denied by workspace lint)
-- Rust 1.97 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
+- Rust 1.98.1 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
 - Prefer functional style; iterators (`map`/`filter`/`fold`) over loops;
   avoid mutable variables unless necessary
 - Shadow variables when transforming and the old value won't be used

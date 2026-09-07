@@ -19,6 +19,8 @@
 //! (`get_full_checkpoint`, `last_checkpoint_of_epoch`) are committee-ratchet
 //! plumbing.
 
+// Anemo fixes the generated RPC error type to Status; boxing it changes the API.
+#[allow(clippy::result_large_err)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.SuiStateMirror.rs"));
 }

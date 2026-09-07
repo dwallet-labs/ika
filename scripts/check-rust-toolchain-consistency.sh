@@ -8,8 +8,8 @@
 # how the v1.4.0 release build failed: a dependency refresh raised the MSRV
 # past the Docker image's rustc while rust-toolchain.toml was already ahead.
 #
-# The Docker tag carries major.minor (rust:1.97-bookworm tracks the latest
-# 1.97.x), so that is the granularity compared.
+# Compare major.minor so the check accepts both exact patch tags and
+# rolling minor tags for the Docker builders.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

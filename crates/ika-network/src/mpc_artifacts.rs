@@ -20,6 +20,8 @@ use anemo::codegen::InboundRequestLayer;
 use anemo_tower::inflight_limit;
 use std::sync::Arc;
 
+// Anemo fixes the generated RPC error type to Status; boxing it changes the API.
+#[allow(clippy::result_large_err)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.ValidatorMetadata.rs"));
 }

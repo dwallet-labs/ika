@@ -19,7 +19,10 @@
 //! instantiation, and a validator that never instantiated the key (a
 //! joiner) derives the id from its locally-held key blobs in the
 //! background when a handoff cert forces the translation — see
-//! `spawn_network_key_id_registration` in `network_dkg`. Without that
+//! `spawn_network_key_id_registration` in `network_dkg`. With NOA enabled,
+//! the prepare-then-start barrier drives this recovery before any epoch
+//! components run, so every validator drains the same presign pool from its
+//! first round. With NOA disabled the adoption pass drives it. Without that
 //! path, adoption needs the mapping, the mapping registers at
 //! instantiation, and instantiation needs adoption: a deadlock that
 //! wedges the joiner's epoch entry.

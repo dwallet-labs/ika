@@ -361,26 +361,21 @@ next epoch inherits.
    with a failed read wedges every validator on the network's own first
    epoch.
 
-   One certified ITEM is also exempt, and it has to be. The certificate
-   names keys by `NetworkKeyId`; every local digest slice and blob cache
-   is keyed by `ObjectID`. The translation is a process-global map holding
-   the deployed keys as compiled-in constants plus whatever this PROCESS
-   has instantiated or derived. A key outside the constants that this
-   process has not touched — every fresh localnet/CI DKG, seen by a joiner
-   or by a just-restarted validator — has no entry, and the barrier can do
-   nothing about it: the installer has no `ObjectID` to cache bytes under,
-   and the derivation that would register one runs from the MPC manager's
-   adoption pass, which does not exist until the barrier releases. So an
-   unmapped item passes the readiness predicate and is reported instead
-   (`unmapped_cert_keys` on the periodic warn). That does not admit stale
-   shares: adoption DEFERS an unmapped key rather than installing anything
-   for it, and once the background derivation registers the mapping it
-   re-applies the same cert-digest gate and refuses a local output that
-   contradicts the certificate. The barrier's own contribution — the
-   certificate being local — is what arms that gate. The cost is liveness:
-   the key's sessions park until the stranded-key recovery fills them.
-   Blocking instead would deadlock every joiner and every restart on a
-   network whose keys are outside the constants.
+   With `noa_checkpoints` OFF, an unmapped certified item retains a
+   readiness exception. The certificate names keys by `NetworkKeyId`, while
+   local caches use `ObjectID`. The manager defers adoption until background
+   derivation registers that translation, then applies the certificate's
+   digest checks. This preserves the live protocol's startup behavior.
+
+   With `noa_checkpoints` ON, an unmapped item blocks startup. Before any
+   MPC manager exists, the barrier requests missing blobs through the
+   already-running syncer's stranded-key recovery, then derives mappings on
+   rayon from the published blobs. Changed blobs retry a failed derivation;
+   unchanged inputs are not spawned repeatedly. Once mapped, every certified
+   DKG and reconfiguration output must be held with its certified digest.
+   The material predicate itself requires mappings, so a registration racing
+   key selection cannot skip verification. Startup then resolves the same
+   NOA key as peers, before any shared presign pool can be consumed.
 
    Nothing else is exempt.
 
@@ -477,9 +472,9 @@ next epoch inherits.
      key: the certificate names keys by `NetworkKeyId`, the caches are
      keyed by `ObjectID`, and a key this process has never instantiated
      that is not one of the compiled-in deployed keys has no translation
-     between the two — the barrier passes it rather than deadlocking on
-     it (see the barrier section). So adoption flags the key for the
-     syncer's chain-sourced read instead of skipping it forever. (Until
+     between the two. With NOA enabled the barrier flags this key for the
+     syncer's chain-sourced read before startup; with NOA disabled it passes
+     the key and adoption flags it instead (see the barrier section). (Until
      issue #1751 removed the migration chain-read fallback, that fallback
      covered this shape implicitly; the deployed-release churn scenario's
      mirrored joiner — then `v125_churn` — caught the regression.)
@@ -599,13 +594,15 @@ ObjectID` translation is the process-global mapping: seeded with the
 deployed keys, registered at instantiation or by the background derivation,
 and — so that a restart does not lose it — written to the perpetual store
 (`network_key_ids_by_object_id`) by the MPC manager and loaded back at boot
-before the barrier runs. A certified key with NO translation is the same
-carve-out as in the barrier section: the translation registers only after
-the components start, so the barrier does not wait; that validator enters
-the epoch with no signing key and sits NOA signing out until the next
-handoff, logged loudly. It never chooses among the keys it can translate.
-Expected only for a joiner on a network whose keys are outside the
-compiled-in constants. The internal presign pool's NOA pool-parameter role
+before the barrier runs. With NOA enabled, a certified key with no
+translation blocks startup while the barrier requests missing blobs and
+runs the same identity derivation the adoption pass uses. A restart with no
+persisted mapping repeats that recovery and resolves the same key before
+replaying rounds. Missing local data is never converted to a keyless epoch:
+NOA and global requests share a presign pool, so sitting out NOA assignments
+would make later global checkpoints and post-restart assignments diverge.
+Only the absence of certified keys produces a keyless epoch uniformly.
+The internal presign pool's NOA pool-parameter role
 and the presign-demand drain both read the manager's fixed key
 (`internal-presign-pool.md`, "Which pool a demand draws from"). Under
 `noa_checkpoints` OFF the pool role keeps the previous rule — the oldest
@@ -644,14 +641,15 @@ sequence numbers do not move.
    seam, fullnode→validator promotion, and process startup into an
    epoch — with two carve-outs, both stated in the barrier section:
    entering epoch 0 at genesis (no predecessor epoch to be handed off
-   from), and a certified key with no local `NetworkKeyId → ObjectID`
-   translation, which the barrier cannot check or install and which
-   adoption's own cert-digest gate covers instead.
+   from), and, only with NOA disabled, a certified key with no local
+   `NetworkKeyId → ObjectID` translation, which adoption's cert-digest gate
+   covers instead. With NOA enabled, preparation recovers the mapping and
+   checks the certified material before releasing startup.
 6. The network-owned-address signing key is a function of the prior
    epoch's certificate alone, resolved by the barrier and fixed for the
    epoch: no validator announces a choice, a key created after the
-   certificate waits one epoch, and two validators that hold a key hold
-   the same one.
+   certificate waits one epoch, and every validator resolves the same key
+   (or all resolve no key) before any NOA-enabled epoch components start.
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),

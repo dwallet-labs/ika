@@ -1,7 +1,7 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.98.1-bookworm AS builder
 
 # Arguments
 ARG PROFILE=release
