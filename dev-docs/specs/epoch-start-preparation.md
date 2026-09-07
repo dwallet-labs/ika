@@ -25,6 +25,15 @@ startup/restart, continuing-validator reconfiguration, and fullnode promotion.
 | Local AHE decryption shares and VSS caches                    | Instantiated key and root seed                                                      | AHE decryption finished; VSS cache derivation finished with its recorded outcome                                    |
 | Fixed NOA signing key                                         | Certified key set and immutable creation metadata                                   | Resolved before construction; absent local data never means a keyless epoch                                         |
 
+The connector constructor first publishes the verified Sui system and
+coordinator objects to the syncer's watch channels. This initial read is
+independent of `SuiExecutor::run_epoch`, which starts only after node startup.
+Otherwise the barrier waits for key metadata, the syncer waits for these
+objects, and the epoch execution loop waits for the barrier: a startup
+deadlock even when the certificate and its artifact blobs are already local.
+The normal epoch loop continues refreshing the objects afterwards. Initial
+publication performs no checkpoint writes or epoch transitions.
+
 The barrier fetches missing validator bundles inline using
 `fetch_missing_prior_cert_mpc_data_blobs`. Waiting for the epoch's periodic
 fetcher would deadlock because that task does not exist yet. A blob cached only
@@ -114,3 +123,9 @@ live-overlay reconfiguration bytes. The startup test must fail with
 `validator bundles must be ingested before startup`, and the snapshot test
 must fail with `startup must use the certified shares, not the live overlay`.
 Both expected assertions were observed; the clean controls pass.
+
+`test_boot_into_epoch_waits_for_handoff_data` bounds restart at 120 seconds:
+the deliberate 30-second anchor hold must finish, and the initial Sui object
+publication must let key-metadata preparation complete without starting the
+epoch execution loop first. The deployed-release rollout exercises the same
+bootstrap with no persisted key-ID mapping.

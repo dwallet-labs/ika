@@ -364,7 +364,10 @@ next epoch inherits.
    Every certified key must have a `NetworkKeyId → ObjectID` mapping,
    independently of `noa_checkpoints`. Before the MPC manager exists, the
    barrier requests missing blobs through the running syncer's stranded-key
-   recovery and derives mappings on rayon. Changed inputs retry failed
+   recovery and derives mappings on rayon. The connector constructor first
+   publishes the verified Sui system/coordinator objects that feed the syncer;
+   their first publication cannot wait for the epoch execution loop, which
+   starts only after the barrier. Changed inputs retry failed
    derivations; unchanged inputs are not spawned repeatedly. Every certified
    DKG and reconfiguration output must have both matching digest rows and
    hash-verified backing bytes in the perpetual store. A digest row alone
