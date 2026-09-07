@@ -91,13 +91,13 @@ pub async fn pump_changesets(
         .await
         .map_err(|e| ChangesetError::Internal(e.to_string()))?;
 
-    if page.is_empty() {
-        if let Some(received) = highest_seen.filter(|_| known_gap) {
-            return Err(ChangesetError::Gap {
-                expected: from_seq,
-                received,
-            });
-        }
+    if page.is_empty()
+        && let Some(received) = highest_seen.filter(|_| known_gap)
+    {
+        return Err(ChangesetError::Gap {
+            expected: from_seq,
+            received,
+        });
     }
 
     // Bound the page length before the per-entry BLS verify loop below. The
@@ -116,10 +116,10 @@ pub async fn pump_changesets(
     let mut expected = head.map(|_| from_seq);
     for entry in page {
         let received = *entry.summary.sequence_number();
-        if let Some(expected) = expected {
-            if received != expected {
-                return Err(ChangesetError::Gap { expected, received });
-            }
+        if let Some(expected) = expected
+            && received != expected
+        {
+            return Err(ChangesetError::Gap { expected, received });
         }
         expected = Some(received.saturating_add(1));
         committees
