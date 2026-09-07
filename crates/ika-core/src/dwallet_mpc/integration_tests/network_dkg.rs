@@ -337,6 +337,26 @@ async fn test_reconfiguration_completes_with_partial_upcoming_keys() {
 pub(crate) async fn create_network_key_test(
     test_state: &mut IntegrationTestState,
 ) -> (Round, Vec<u8>, ObjectID) {
+    create_network_key_test_with_noa_signing_role(test_state, false).await
+}
+
+/// [`create_network_key_test`], with the new key handed to every validator as
+/// the epoch's network-owned-address (NOA) signing key BEFORE it is adopted —
+/// the order the prepare-then-start barrier guarantees in production, where
+/// the key is a constructor input and the first internal-presign top-up
+/// already runs under the NOA pool parameters. The harness DKGs the key in
+/// the epoch under test, so no barrier ran with it; production would name it
+/// one epoch later. Meaningful only with `noa_checkpoints` on.
+pub(crate) async fn create_noa_signing_network_key_test(
+    test_state: &mut IntegrationTestState,
+) -> (Round, Vec<u8>, ObjectID) {
+    create_network_key_test_with_noa_signing_role(test_state, true).await
+}
+
+async fn create_network_key_test_with_noa_signing_role(
+    test_state: &mut IntegrationTestState,
+    noa_signing_key: bool,
+) -> (Round, Vec<u8>, ObjectID) {
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
@@ -367,6 +387,11 @@ pub(crate) async fn create_network_key_test(
         key_id =
             Some(ObjectID::from_bytes(message.dwallet_network_encryption_key_id.clone()).unwrap());
         network_key_bytes.extend(message.public_output.clone())
+    }
+    if noa_signing_key {
+        for service in &mut test_state.dwallet_mpc_services {
+            service.set_network_owned_address_signing_key_id_for_testing(key_id);
+        }
     }
     test_state
         .sui_data_senders

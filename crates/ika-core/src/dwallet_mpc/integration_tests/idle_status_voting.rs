@@ -1,6 +1,8 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
-use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
+use crate::dwallet_mpc::integration_tests::network_dkg::{
+    create_network_key_test, create_noa_signing_network_key_test,
+};
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TEST_IDLE_SESSION_COUNT_THRESHOLD, build_test_state, create_test_protocol_config_guard,
@@ -527,9 +529,11 @@ async fn test_split_idle_status_vote_does_not_reach_consensus() {
         );
     }
 
-    // Create network key to enable internal presigns.
+    // Create network key to enable internal presigns, handed in as the
+    // epoch's NOA signing key the way the barrier would: the NOA signs
+    // below instantiate only under a signing key.
     let (consensus_round, _network_key_bytes, network_key_id) =
-        create_network_key_test(&mut test_state).await;
+        create_noa_signing_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
     // Fill the EdDSA presign pool (needed for the sign request).

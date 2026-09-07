@@ -654,12 +654,10 @@ impl ConsensusTransaction {
     pub fn new_noa_presign_demand(
         authority: AuthorityName,
         demand_id: crate::noa_checkpoint::NOAPresignDemandId,
-        network_encryption_key_id: ObjectID,
     ) -> Self {
         let msg = ConsensusNOAPresignDemand {
             authority,
             demand_id,
-            network_encryption_key_id,
         };
         let mut hasher = DefaultHasher::new();
         msg.demand_id_digest().hash(&mut hasher);
@@ -817,7 +815,6 @@ impl ConsensusTransaction {
 mod wire_format_tests {
     use super::*;
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
-    use sui_types::base_types::ObjectID;
 
     /// The BCS variant tag of `ConsensusTransactionKind` is a cross-version
     /// wire contract: every binary in a mixed committee decodes every other
@@ -848,7 +845,6 @@ mod wire_format_tests {
                         session_identifier: [0u8; 32],
                         signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
                     },
-                    network_encryption_key_id: ObjectID::ZERO,
                 }
             )),
             15,

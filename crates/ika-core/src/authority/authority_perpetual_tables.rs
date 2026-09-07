@@ -8,6 +8,7 @@ use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::sui_connector::verified_state_cache::VerifiedSnapshot;
+use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
@@ -51,6 +52,17 @@ pub struct AuthorityPerpetualTables {
     /// for, and skipping a single epoch can permanently break their
     /// ability to bootstrap.
     pub(crate) certified_handoff_attestations: DBMap<EpochId, CertifiedHandoffAttestation>,
+
+    /// `ObjectID -> NetworkKeyId` for every network encryption key this
+    /// process has translated — registered at instantiation or by the
+    /// background derivation, written here by the MPC manager, and loaded
+    /// into the process-global `network_key_id_mapping` at boot. The
+    /// mapping is content-derived and reconfiguration-invariant, so an
+    /// entry never changes. It exists so a restarting validator can
+    /// translate every certified key at the prepare-then-start barrier,
+    /// where the epoch's network-owned-address signing key is resolved,
+    /// instead of only after the key's re-instantiation.
+    pub(crate) network_key_ids_by_object_id: DBMap<ObjectID, NetworkKeyId>,
 
     /// Per-key map `network_key_id -> blob digest` for the network
     /// DKG output. Stable across epochs (a key's DKG output is
@@ -402,6 +414,28 @@ impl AuthorityPerpetualTables {
         &self,
     ) -> impl Iterator<Item = IkaResult<(EpochId, CertifiedHandoffAttestation)>> + '_ {
         self.certified_handoff_attestations
+            .safe_iter()
+            .map(|res| res.map_err(IkaError::from))
+    }
+
+    /// Records a network key's `ObjectID -> NetworkKeyId` translation.
+    /// Idempotent: the mapping never changes for a key.
+    pub fn insert_network_key_id_mapping(
+        &self,
+        object_id: ObjectID,
+        network_key_id: NetworkKeyId,
+    ) -> IkaResult {
+        self.network_key_ids_by_object_id
+            .insert(&object_id, &network_key_id)?;
+        Ok(())
+    }
+
+    /// Every persisted `ObjectID -> NetworkKeyId` translation — what the
+    /// node loads into `network_key_id_mapping` at boot.
+    pub fn iter_network_key_id_mappings(
+        &self,
+    ) -> impl Iterator<Item = IkaResult<(ObjectID, NetworkKeyId)>> + '_ {
+        self.network_key_ids_by_object_id
             .safe_iter()
             .map(|res| res.map_err(IkaError::from))
     }
@@ -828,6 +862,28 @@ mod tests {
             .collect();
         seen.sort();
         assert_eq!(seen, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn network_key_id_mappings_round_trip() {
+        let (_dir, tables) = open_tables();
+        let first = (ObjectID::from_single_byte(1), NetworkKeyId([1u8; 32]));
+        let second = (ObjectID::from_single_byte(2), NetworkKeyId([2u8; 32]));
+        for (object_id, network_key_id) in [second, first] {
+            tables
+                .insert_network_key_id_mapping(object_id, network_key_id)
+                .unwrap();
+        }
+        // Re-inserting the same mapping is a no-op.
+        tables
+            .insert_network_key_id_mapping(first.0, first.1)
+            .unwrap();
+        let mut seen: Vec<_> = tables
+            .iter_network_key_id_mappings()
+            .map(|r| r.unwrap())
+            .collect();
+        seen.sort();
+        assert_eq!(seen, vec![first, second]);
     }
 
     #[tokio::test]

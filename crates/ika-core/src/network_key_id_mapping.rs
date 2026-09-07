@@ -24,6 +24,14 @@
 //! instantiation, and instantiation needs adoption: a deadlock that
 //! wedges the joiner's epoch entry.
 //!
+//! The map itself is process memory, but every registration the MPC
+//! manager observes is also written to the perpetual store
+//! (`network_key_ids_by_object_id`) and loaded back through [`register`]
+//! at boot, before the prepare-then-start barrier runs. That is what lets
+//! a restarting validator translate every certified key at the barrier —
+//! where the epoch's network-owned-address signing key is resolved —
+//! rather than only after it re-instantiates the key.
+//!
 //! TODO(NetworkKeyId-from-event): delete this module once the request
 //! event carries the `NetworkKeyId`. The runtime/tables then key by
 //! `NetworkKeyId` directly and `ObjectID` is dropped as the key identity.

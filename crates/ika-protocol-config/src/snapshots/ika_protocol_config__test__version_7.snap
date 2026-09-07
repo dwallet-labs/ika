@@ -78,3 +78,4 @@ internal_eddsa_presign_pool_maximum_size: 30000
 internal_schnorrkel_substrate_presign_pool_maximum_size: 30000
 internal_taproot_presign_pool_maximum_size: 30000
 internal_presign_stale_batch_expiry_rounds: 3000
+noa_presign_demand_park_rounds: 70000

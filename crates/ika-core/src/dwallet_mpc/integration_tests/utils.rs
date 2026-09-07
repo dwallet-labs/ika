@@ -1572,6 +1572,24 @@ use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_protocol_config::OverrideGuard;
 
+/// Makes `key_id` every validator's network-owned-address (NOA) signing key
+/// for the epoch, the way the prepare-then-start barrier hands the key in at
+/// construction.
+///
+/// The harness DKGs its key in the epoch under test, so no real certificate
+/// names it and no barrier ran with it; in production such a key becomes the
+/// signing key one epoch later, when the next barrier resolves it from the
+/// certificate. This stands in for that.
+#[cfg(test)]
+pub(crate) fn select_network_key_for_noa_signing(
+    test_state: &mut IntegrationTestState,
+    key_id: ObjectID,
+) {
+    for service in &mut test_state.dwallet_mpc_services {
+        service.set_network_owned_address_signing_key_id_for_testing(Some(key_id));
+    }
+}
+
 /// Number of MPC rounds the network DKG runs under the pinned inkrypto
 /// revision (see the root `Cargo.toml`).
 /// Driven by upstream's threshold-encryption-to-sharing sub-protocol; bump if upstream changes.
