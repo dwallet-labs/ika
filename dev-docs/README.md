@@ -47,6 +47,9 @@ them has a bug — determine which before changing either.
 - [`specs/handoff.md`](specs/handoff.md) — cross-epoch handoff:
   attestation, EndOfPublish V2, certificate, joiner bootstrap, the
   prepare-then-start barrier, network-key adoption guards.
+- [`specs/epoch-start-preparation.md`](specs/epoch-start-preparation.md) —
+  inherited MPC inputs prepared before consensus, durable artifact checks,
+  parameter/share initialization, and inputs necessarily produced in-epoch.
 - [`specs/epoch-close-session-lock.md`](specs/epoch-close-session-lock.md)
   — the frozen session-completion target, the strict-equality close
   predicate, the gate-consensus-submission rule, batch-processing rules.

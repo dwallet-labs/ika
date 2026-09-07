@@ -48,6 +48,7 @@ use ika_core::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX, EpochStoreParams,
 };
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
+use ika_core::blob_cache::BlobCache;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
@@ -61,6 +62,9 @@ use ika_core::dwallet_checkpoints::{
     DWalletCheckpointMetrics, DWalletCheckpointService, DWalletCheckpointStore,
     SendDWalletCheckpointToStateSync, SubmitDWalletCheckpointToConsensus,
 };
+use ika_core::dwallet_mpc::epoch_start_data::{
+    certified_network_key_data, missing_validator_mpc_data,
+};
 use ika_core::dwallet_mpc::network_owned_address_signing_key::{
     self, NetworkOwnedAddressSigningKeySelection,
 };
@@ -71,6 +75,7 @@ use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
     P2pHandoffCertSource,
 };
+use ika_core::epoch_tasks::peer_blob_fetcher::fetch_missing_prior_cert_mpc_data_blobs;
 use ika_core::network_key_id_mapping;
 use ika_core::storage::RocksDbStore;
 use ika_core::sui_connector::pubkey_provider_updater::fetch_previous_committee;
@@ -254,7 +259,7 @@ use ika_core::system_checkpoints::{
     SendSystemCheckpointToStateSync, SubmitSystemCheckpointToConsensus, SystemCheckpointMetrics,
     SystemCheckpointService, SystemCheckpointStore,
 };
-use ika_network::mpc_artifacts::{fetch_blob, mpc_data_blob_hash};
+use ika_network::mpc_artifacts::{InMemoryBlobStore, fetch_blob, mpc_data_blob_hash};
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
@@ -1464,6 +1469,10 @@ impl IkaNode {
                     withhold_anchor_for: config.withhold_handoff_anchor_for_testing,
                     network_keys_receiver: sui_data_receivers.network_keys_receiver.clone(),
                     stranded_network_keys: stranded_network_keys.clone(),
+                    mpc_data_blob_store: mpc_data_blob_store.clone(),
+                    mpc_data_blob_fetch_outcomes: ika_node_metrics
+                        .mpc_data_blob_fetch_total
+                        .clone(),
                 };
                 let anchor_committee = AnchorCommittee::Resolved {
                     committee_store: state.committee_store().clone(),
@@ -2477,6 +2486,10 @@ impl IkaNode {
                 watchdog as Arc<dyn ika_core::consensus_handler::ConsensusCommitSink>
             }),
         );
+
+        // Complete the inherited public parameters, AHE decryption shares,
+        // and VSS caches before even the first replayed round is consumed.
+        dwallet_mpc_service.prepare_epoch().await?;
 
         info!("Starting consensus manager asynchronously");
 
@@ -3760,6 +3773,8 @@ struct HandoffBarrierContext {
     network_keys_receiver: watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     /// Lets preparation request missing blobs before the MPC manager exists.
     stranded_network_keys: Arc<ArcSwap<HashSet<ObjectID>>>,
+    mpc_data_blob_store: Arc<InMemoryBlobStore>,
+    mpc_data_blob_fetch_outcomes: IntCounterVec,
 }
 
 impl HandoffBarrierContext {
@@ -3780,6 +3795,8 @@ impl HandoffBarrierContext {
             withhold_anchor_for: node.config.withhold_handoff_anchor_for_testing,
             network_keys_receiver,
             stranded_network_keys: node.stranded_network_keys.clone(),
+            mpc_data_blob_store: node.mpc_data_blob_store.clone(),
+            mpc_data_blob_fetch_outcomes: node.metrics.mpc_data_blob_fetch_total.clone(),
         }
     }
 
@@ -4094,6 +4111,7 @@ async fn prepare_handoff_anchor(
                 .insert_certified_handoff_attestation(anchor_epoch, &cert)
             {
                 warn!(error = ?e, anchor_epoch, "failed to persist anchor handoff cert");
+                return AnchorOutcome::Unavailable;
             }
             install_joiner_network_key_outputs(&cert, &ctx.p2p_network, peer_ids, new_epoch_store)
                 .await;
@@ -4151,16 +4169,15 @@ async fn prepare_handoff_anchor(
 /// no predecessor to be handed off from: entering epoch 0 at genesis, which
 /// the boot caller filters out the same way the joiner bootstrap does.
 ///
-/// The barrier waits on two conditions, both grounded in off-chain data (the
-/// verified handoff cert + this validator's local outputs) — no chain state
-/// beyond resolving the signing committee on the boot path, and no dependency
-/// on the chain-fed `network_keys_receiver`:
+/// The barrier waits for the verified certificate, its durable artifacts,
+/// and the chain metadata needed to identify the inherited keys:
 ///   1. The cross-epoch trust anchor (the `anchor_epoch` handoff cert) is
 ///      locally present + verified — `prepare_handoff_anchor` returns it,
 ///      fetching it inline if missing.
 ///   2. Every network-key output item the cert certifies —
 ///      `NetworkReconfigurationOutput` AND `NetworkDkgOutput` — is held
-///      locally with a digest matching the cert. The cert's single `epoch`
+///      locally with matching digest rows AND hash-verified backing bytes.
+///      The cert's single `epoch`
 ///      field scopes the whole handoff, so there is no per-key epoch to
 ///      check — only per-key presence. BOTH digest sources are read from the
 ///      store for the epoch being ENTERED, which is the only store a booting
@@ -4178,9 +4195,16 @@ async fn prepare_handoff_anchor(
 ///      output; `prepare_handoff_anchor` and the per-retry installer fetch +
 ///      cache missing/mismatching outputs from peers. See
 ///      `all_cert_network_key_outputs_held_locally`.
-///   3. The NOA signing key is resolved from the certificate and chain
-///      metadata. With NOA enabled, preparation recovers missing mappings
-///      before startup; only a certificate naming no key resolves to None.
+///   3. Every certified validator MPC bundle belonging to the entering
+///      committee is durable, hash-matching and structurally decodable.
+///      Missing bundles are fetched inline, before the epoch's fetcher starts.
+///   4. The NOA signing key is resolved from the certificate and chain
+///      metadata. Preparation recovers missing mappings before startup; only
+///      a certificate naming no key resolves to None.
+///
+/// After this barrier, `DWalletMPCService::prepare_epoch` instantiates the
+/// certified parameters and derives local shares before consensus starts.
+/// See `dev-docs/specs/epoch-start-preparation.md` for the complete boundary.
 async fn wait_for_handoff_data_ready(
     ctx: &HandoffBarrierContext,
     anchor_epoch: EpochId,
@@ -4217,8 +4241,14 @@ async fn wait_for_handoff_data_ready(
     // path, a per-second P2P hammering of converging peers). The signing
     // committee is cached for the same reason — on the boot path resolving it
     // costs a chain read.
-    let noa_checkpoints = new_epoch_store.protocol_config().noa_checkpoints();
     let mut key_id_derivation_inputs = HashMap::new();
+    let blob_cache = BlobCache::new(
+        ctx.mpc_data_blob_store.clone(),
+        ctx.perpetual_tables.clone(),
+    );
+    let current_peers = new_epoch_store
+        .epoch_start_state()
+        .get_authority_names_to_peer_ids();
     let mut anchor_cert: Option<CertifiedHandoffAttestation> = None;
     let mut signing_committee: Option<Arc<Committee>> = None;
     let mut committee_resolve_attempts: u32 = 0;
@@ -4330,22 +4360,20 @@ async fn wait_for_handoff_data_ready(
         }
         let cert = anchor_cert.as_ref();
 
-        // NOA demand assignment drains a shared pool even before this node
-        // can sign. Resolve the same key as peers before any round can run.
+        // Resolve all inherited key identities before any round can run.
+        // NOA demand assignment also needs the same pool choice on every node.
         // The syncer and rayon workers are process-level services, so this
         // recovery does not depend on starting the epoch's MPC manager.
         let overlay = ctx.network_keys_receiver.borrow().clone();
-        if noa_checkpoints
-            && cert.is_some_and(|cert| {
-                cert.attestation.items.iter().any(|(item, _)| match item {
-                    HandoffItemKey::NetworkDkgOutput { key_id }
-                    | HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                        network_key_id_mapping::object_id_for(key_id).is_none()
-                    }
-                    HandoffItemKey::ValidatorMpcData { .. } => false,
-                })
+        if cert.is_some_and(|cert| {
+            cert.attestation.items.iter().any(|(item, _)| match item {
+                HandoffItemKey::NetworkDkgOutput { key_id }
+                | HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                    network_key_id_mapping::object_id_for(key_id).is_none()
+                }
+                HandoffItemKey::ValidatorMpcData { .. } => false,
             })
-        {
+        }) {
             network_owned_address_signing_key::prepare_missing_key_mappings(
                 anchor_epoch,
                 &overlay,
@@ -4376,14 +4404,35 @@ async fn wait_for_handoff_data_ready(
                 cert,
                 &local_dkg_digests,
                 &local_reconfiguration_digests,
-                noa_checkpoints,
             )
         });
 
-        // Condition 3: resolve the epoch's NOA key before construction.
-        // Missing metadata waits in every mode. With NOA enabled, missing
-        // mappings also wait: None is valid only when the certificate names
-        // no key, never as a per-validator opt-out from shared pool drains.
+        // Digests alone are insufficient: their backing bytes may be absent,
+        // and the current validator bundle is also inherited from this cert.
+        let missing_validator_data = cert
+            .map(|cert| {
+                missing_validator_mpc_data(cert, new_epoch_store.committee(), |digest| {
+                    ctx.perpetual_tables
+                        .get_mpc_artifact_blob(digest)
+                        .ok()
+                        .flatten()
+                })
+            })
+            .unwrap_or_default();
+        let network_key_data_error = cert.and_then(|cert| {
+            certified_network_key_data(cert, next_epoch, &overlay, |digest| {
+                ctx.perpetual_tables
+                    .get_mpc_artifact_blob(digest)
+                    .ok()
+                    .flatten()
+            })
+            .err()
+        });
+        let ready = ready && missing_validator_data.is_empty() && network_key_data_error.is_none();
+
+        // Resolve the epoch's NOA key before construction. Missing metadata
+        // and mappings wait in every mode. None is valid only when the cert
+        // names no key, never as a local opt-out from shared pool drains.
         let mut awaiting_metadata_key_ids: Vec<ObjectID> = Vec::new();
         if let Some(cert) = cert.filter(|_| ready) {
             let selection = network_owned_address_signing_key::select(
@@ -4391,9 +4440,7 @@ async fn wait_for_handoff_data_ready(
                 network_key_id_mapping::object_id_for,
                 |object_id| overlay.get(object_id).map(|data| data.dkg_at_epoch),
             );
-            if let Some(network_owned_address_signing_key_id) =
-                selection.epoch_start_key(noa_checkpoints)
-            {
+            if let Some(network_owned_address_signing_key_id) = selection.epoch_start_key() {
                 let elapsed = started_at.elapsed();
                 if let Some(telemetry) = &telemetry {
                     telemetry.handoff_prepare_waiting.set(0);
@@ -4430,6 +4477,15 @@ async fn wait_for_handoff_data_ready(
         if let Some(cert) = cert.filter(|_| !withheld) {
             install_joiner_network_key_outputs(cert, &ctx.p2p_network, peer_ids, new_epoch_store)
                 .await;
+            fetch_missing_prior_cert_mpc_data_blobs(
+                cert,
+                new_epoch_store.name,
+                &blob_cache,
+                &ctx.p2p_network,
+                &current_peers,
+                &ctx.mpc_data_blob_fetch_outcomes,
+            )
+            .await;
         }
 
         // Surface the breakdown at least every 10 SECONDS so a hang is never
@@ -4512,6 +4568,8 @@ async fn wait_for_handoff_data_ready(
                 missing_key_ids = ?missing_key_ids,
                 unmapped_cert_keys = ?unmapped_cert_keys,
                 awaiting_metadata_key_ids = ?awaiting_metadata_key_ids,
+                ?missing_validator_data,
+                ?network_key_data_error,
                 retries,
                 withheld_for_testing = withheld,
                 "prepare-then-start: still awaiting full verified handoff data for epoch \
@@ -4581,7 +4639,16 @@ async fn install_joiner_network_key_outputs(
         } else {
             local_dkg_digests.get(&object_id) == Some(expected_digest)
         };
-        if held_locally {
+        let bytes_held = epoch_store
+            .perpetual_tables_handle()
+            .is_some_and(|perpetual| {
+                perpetual
+                    .get_mpc_artifact_blob(expected_digest)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|bytes| mpc_data_blob_hash(&bytes) == *expected_digest)
+            });
+        if held_locally && bytes_held {
             continue;
         }
         let mut verified_bytes = None;
@@ -4720,25 +4787,19 @@ fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
 /// because the installer runs solely while this predicate reads not-ready.
 /// Do not narrow this back to reconfiguration-only: that made the barrier
 /// instantly ready for a poisoned validator every epoch and the wedge
-/// permanent. `ValidatorMpcData` items are not gated (they feed the mpc_data
-/// freeze, a separate plane). A cert with no network-key items is trivially
-/// ready on this condition.
+/// permanent. `ValidatorMpcData` and the backing network-key bytes have
+/// separate readiness checks in the barrier. A cert with no network-key
+/// items is trivially ready on this condition.
 ///
-/// With NOA enabled, every certified key must translate before this check
+/// Every certified key must translate before this check
 /// passes. The barrier requests missing chain blobs and derives mappings
 /// before constructing the MPC manager. Checking the translation here as
 /// well as at key selection prevents a background registration between the
 /// two checks from releasing an epoch with unverified key material.
-///
-/// With NOA disabled, unmapped keys retain the existing exception: the
-/// manager defers adoption until its background derivation registers the
-/// mapping, then enforces the certificate's digests. No NOA demands drain
-/// the shared pool on that live-protocol path.
 fn all_cert_network_key_outputs_held_locally(
     cert: &CertifiedHandoffAttestation,
     local_dkg_digests: &BTreeMap<ObjectID, [u8; 32]>,
     local_reconfiguration_digests: &BTreeMap<ObjectID, [u8; 32]>,
-    require_mappings: bool,
 ) -> bool {
     cert.attestation
         .items
@@ -4746,11 +4807,10 @@ fn all_cert_network_key_outputs_held_locally(
         .all(|(item, cert_digest)| match item {
             HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
                 // Cert keys by NetworkKeyId; local digests by ObjectID. An
-                // unmapped key waits when NOA requires a uniform pool choice.
-                ika_core::network_key_id_mapping::object_id_for(key_id)
-                    .map_or(!require_mappings, |object_id| {
-                        local_reconfiguration_digests.get(&object_id) == Some(cert_digest)
-                    })
+                // unmapped key must be resolved before the epoch starts.
+                ika_core::network_key_id_mapping::object_id_for(key_id).is_some_and(|object_id| {
+                    local_reconfiguration_digests.get(&object_id) == Some(cert_digest)
+                })
             }
             // The DKG output is as load-bearing as the reconfiguration
             // output: adoption's cert-digest gate rejects the key when the
@@ -4765,9 +4825,7 @@ fn all_cert_network_key_outputs_held_locally(
             // leaving a poisoned validator wedged permanently.
             HandoffItemKey::NetworkDkgOutput { key_id } => {
                 ika_core::network_key_id_mapping::object_id_for(key_id)
-                    .map_or(!require_mappings, |object_id| {
-                        local_dkg_digests.get(&object_id) == Some(cert_digest)
-                    })
+                    .is_some_and(|object_id| local_dkg_digests.get(&object_id) == Some(cert_digest))
             }
             HandoffItemKey::ValidatorMpcData { .. } => true,
         })
@@ -4823,7 +4881,7 @@ mod tests {
         let cert = cert_with_reconfiguration_items(vec![(network_key_id(0), [1u8; 32])]);
         let held = BTreeMap::from([(key_id(0), [1u8; 32])]);
         assert!(all_cert_network_key_outputs_held_locally(
-            &cert, &no_dkg, &held, false
+            &cert, &no_dkg, &held
         ));
 
         // Output not yet computed/cached locally (empty slice) → not ready.
@@ -4831,14 +4889,13 @@ mod tests {
             &cert,
             &no_dkg,
             &BTreeMap::new(),
-            false
         ));
 
         // Local digest differs from the cert's (a stale/wrong local output —
         // the exact condition the cert-digest match exists to catch) → not ready.
         let stale = BTreeMap::from([(key_id(0), [9u8; 32])]);
         assert!(!all_cert_network_key_outputs_held_locally(
-            &cert, &no_dkg, &stale, false
+            &cert, &no_dkg, &stale
         ));
 
         // Two certified outputs, only one held locally → not ready (EVERY item
@@ -4849,13 +4906,13 @@ mod tests {
         ]);
         let one = BTreeMap::from([(key_id(0), [1u8; 32])]);
         assert!(!all_cert_network_key_outputs_held_locally(
-            &cert_two, &no_dkg, &one, false
+            &cert_two, &no_dkg, &one
         ));
 
         // Both held with matching digests → ready.
         let both = BTreeMap::from([(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
         assert!(all_cert_network_key_outputs_held_locally(
-            &cert_two, &no_dkg, &both, false
+            &cert_two, &no_dkg, &both
         ));
 
         // A certified DKG output is load-bearing too: a local mirror whose
@@ -4881,7 +4938,6 @@ mod tests {
             &dkg_only,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            false
         ));
         // Poisoned mirror (digest mismatch) → not ready.
         let poisoned = BTreeMap::from([(key_id(0), [9u8; 32])]);
@@ -4889,7 +4945,6 @@ mod tests {
             &dkg_only,
             &poisoned,
             &BTreeMap::new(),
-            false
         ));
         // Canonical mirror matching the cert → ready.
         let canonical = BTreeMap::from([(key_id(0), [5u8; 32])]);
@@ -4897,36 +4952,15 @@ mod tests {
             &dkg_only,
             &canonical,
             &BTreeMap::new(),
-            true,
-        ));
-        assert!(!all_cert_network_key_outputs_held_locally(
-            &dkg_only,
-            &poisoned,
-            &BTreeMap::new(),
-            true,
-        ));
-        assert!(all_cert_network_key_outputs_held_locally(
-            &dkg_only,
-            &canonical,
-            &BTreeMap::new(),
-            false
         ));
 
-        // An unmapped item blocks NOA-enabled startup, including before
-        // the material check can compare its digest. The flag-off path keeps
-        // its downstream adoption guard and previous readiness behavior.
+        // An unmapped item blocks startup before the material check can
+        // compare its digest, regardless of whether NOA is enabled.
         let unmapped = cert_with_reconfiguration_items(vec![(network_key_id(200), [3u8; 32])]);
         assert!(!all_cert_network_key_outputs_held_locally(
             &unmapped,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            true,
-        ));
-        assert!(all_cert_network_key_outputs_held_locally(
-            &unmapped,
-            &BTreeMap::new(),
-            &BTreeMap::new(),
-            false
         ));
         // Registering the mapping arms the gate for that same key: now the
         // missing local output DOES hold the barrier closed.
@@ -4935,7 +4969,6 @@ mod tests {
             &unmapped,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            false
         ));
     }
 }

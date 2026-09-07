@@ -17,6 +17,9 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::{
     SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED, SESSION_STATE_WAITING_FOR_REQUEST,
     optional_session_type_label, session_type_label,
 };
+use crate::dwallet_mpc::epoch_start_data::{
+    certified_network_key_data, missing_validator_mpc_data,
+};
 use crate::dwallet_mpc::mpc_diagnostics::{
     LocalAuthorityMaliciousReason, MPC_ANOMALY_SCHEMA_VERSION, MpcAnomalyContext, MpcAnomalyKind,
     OutputReportDiagnostic, OutputVoteDiagnostics, OutputVoteGroupDiagnostic, SessionOrigin,
@@ -906,6 +909,80 @@ impl DWalletMPCManager {
             finalized_tx_refs: HashSet::new(),
             failed_tx_ref_rounds: HashSet::new(),
         })
+    }
+
+    /// Finish inherited-key initialization before consensus replay or live
+    /// rounds can reach this manager. Genesis has no inherited data: its first
+    /// key set must still be produced by that epoch's consensus freeze.
+    pub(crate) async fn prepare_epoch(&mut self) -> DwalletMPCResult<()> {
+        let Some(prior_epoch) = self.epoch_id.checked_sub(1) else {
+            return Ok(());
+        };
+        let Some(cert) = self
+            .epoch_store
+            .get_certified_handoff_attestation(prior_epoch)?
+        else {
+            return Ok(());
+        };
+        let perpetual = self.epoch_store.perpetual_tables_handle().ok_or_else(|| {
+            DwalletMPCError::InternalError("epoch preparation has no perpetual store".to_owned())
+        })?;
+        let missing = missing_validator_mpc_data(&cert, &self.committee, |digest| {
+            perpetual.get_mpc_artifact_blob(digest).ok().flatten()
+        });
+        if !missing.is_empty() {
+            return Err(DwalletMPCError::InternalError(format!(
+                "epoch preparation is missing certified validator MPC data: {missing:?}"
+            )));
+        }
+        self.ingest_offchain_mpc_keys()?;
+        if !self.current_epoch_keys_ingested
+            && cert.attestation.items.iter().any(|(item, _)| {
+                matches!(item, HandoffItemKey::ValidatorMpcData { validator }
+                if self.committee.authority_index(validator).is_some())
+            })
+        {
+            return Err(DwalletMPCError::InternalError(
+                "epoch preparation did not ingest its certified validator MPC keys".to_owned(),
+            ));
+        }
+        let metadata = self
+            .sui_data_receivers
+            .network_keys_receiver
+            .borrow()
+            .clone();
+        let keys = certified_network_key_data(&cert, self.epoch_id, &metadata, |digest| {
+            perpetual.get_mpc_artifact_blob(digest).ok().flatten()
+        })?;
+        let required_keys: Vec<_> = keys.keys().copied().collect();
+        info!(
+            epoch = self.epoch_id,
+            network_keys = required_keys.len(),
+            "preparing inherited MPC parameters and local shares before consensus startup"
+        );
+        self.adopt_cert_verified_keys(&Arc::new(keys));
+        self.instantiate_adopted_network_keys();
+        while !self.pending_network_key_instantiations.is_empty() {
+            self.poll_pending_network_key_instantiations().await;
+            if !self.pending_network_key_instantiations.is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        let unprepared: Vec<_> = required_keys
+            .into_iter()
+            .filter(|key_id| !self.last_instantiated_network_key_data.contains_key(key_id))
+            .collect();
+        if !unprepared.is_empty() {
+            return Err(DwalletMPCError::InternalError(format!(
+                "epoch preparation could not initialize certified network keys: {unprepared:?}"
+            )));
+        }
+        info!(
+            epoch = self.epoch_id,
+            network_keys = self.last_instantiated_network_key_data.len(),
+            "inherited MPC keys and shares prepared before consensus startup"
+        );
+        Ok(())
     }
 
     pub(crate) fn sync_last_session_to_complete_in_current_epoch(

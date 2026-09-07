@@ -88,7 +88,7 @@ the one with the largest `dkg_at_epoch`, ties broken by the smaller
 identically for the whole epoch — quorum-signed, local before the epoch's
 components start, never modified afterwards — so the answer is one value per
 epoch, fixed at construction, and every validator that holds a key holds the
-same one. With NOA enabled, the barrier recovers any missing key-id
+same one. In every mode, the barrier recovers any missing key-id
 translation before starting the epoch's components. It requests missing
 chain blobs through the syncer and derives the identity on rayon; missing
 metadata also waits. A validator may not sit out NOA assignments because

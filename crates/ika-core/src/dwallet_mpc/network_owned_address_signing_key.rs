@@ -53,15 +53,13 @@ pub enum NetworkOwnedAddressSigningKeySelection {
 impl NetworkOwnedAddressSigningKeySelection {
     /// The constructor input, or `None` while startup must wait. A resolved
     /// `Some(None)` means the certificate names no key, uniformly across the
-    /// committee. With NOA enabled, missing local mappings must never produce
-    /// that answer: skipping NOA demand assignment would leave the shared
+    /// committee. Missing local mappings must never produce that answer.
+    /// With NOA enabled, skipping demand assignment would leave the shared
     /// presign pool out of step with keyed peers, including after a restart.
-    /// The flag-off exception preserves the live protocol's startup behavior.
-    pub fn epoch_start_key(&self, noa_checkpoints: bool) -> Option<Option<ObjectID>> {
+    pub fn epoch_start_key(&self) -> Option<Option<ObjectID>> {
         match self {
             Self::Selected { object_id, .. } => Some(Some(*object_id)),
             Self::NoCertifiedKey => Some(None),
-            Self::Untranslatable(_) if !noa_checkpoints => Some(None),
             Self::Untranslatable(_) | Self::AwaitingMetadata(_) => None,
         }
     }
@@ -338,27 +336,24 @@ mod tests {
     }
 
     #[test]
-    fn epoch_start_waits_for_mapping_and_metadata_with_noa_enabled() {
+    fn epoch_start_waits_for_mapping_and_metadata() {
         let object_id = ObjectID::random();
         let network_key_id = NetworkKeyId(rand::random());
         let certificate = certificate_naming(&[network_key_id]);
         let missing_mapping = select(&certificate, |_| None, |_| Some(0));
         assert_eq!(
-            missing_mapping.epoch_start_key(true),
+            missing_mapping.epoch_start_key(),
             None,
             "an unresolved certified key must block epoch startup"
         );
-        assert_eq!(missing_mapping.epoch_start_key(false), Some(None));
 
         let missing_metadata = select(&certificate, |_| Some(object_id), |_| None);
-        assert_eq!(missing_metadata.epoch_start_key(true), None);
-        assert_eq!(missing_metadata.epoch_start_key(false), None);
+        assert_eq!(missing_metadata.epoch_start_key(), None);
 
         let resolved = select(&certificate, |_| Some(object_id), |_| Some(0));
-        assert_eq!(resolved.epoch_start_key(true), Some(Some(object_id)));
-        assert_eq!(resolved.epoch_start_key(false), Some(Some(object_id)));
+        assert_eq!(resolved.epoch_start_key(), Some(Some(object_id)));
         assert_eq!(
-            select(&certificate_naming(&[]), |_| None, |_| None).epoch_start_key(true),
+            select(&certificate_naming(&[]), |_| None, |_| None).epoch_start_key(),
             Some(None),
             "a certificate with no key is uniformly keyless"
         );
@@ -455,7 +450,7 @@ mod tests {
         assert_eq!(object_id_for(&network_key_id), Some(object_id));
         let certificate = certificate_naming(&[network_key_id]);
         assert_eq!(
-            select(&certificate, object_id_for, |_| Some(0)).epoch_start_key(true),
+            select(&certificate, object_id_for, |_| Some(0)).epoch_start_key(),
             Some(Some(object_id))
         );
     }

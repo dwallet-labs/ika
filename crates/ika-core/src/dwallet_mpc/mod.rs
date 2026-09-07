@@ -48,6 +48,7 @@ pub struct NetworkOwnedAddressSignOutput {
 
 mod catchup_gate;
 pub mod dwallet_mpc_service;
+pub mod epoch_start_data;
 mod mpc_diagnostics;
 pub mod mpc_manager;
 pub mod mpc_session;

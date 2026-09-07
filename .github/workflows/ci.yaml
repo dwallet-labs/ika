@@ -264,12 +264,23 @@ jobs:
             tests::all_cert_network_key_outputs_held_locally_cases --test-threads=1 \
             | tee "$RUNNER_TEMP/noa-material-readiness.log"
           grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/noa-material-readiness.log"
+      - name: Run inherited epoch preparation regressions
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-core --lib -- \
+            dwallet_mpc::epoch_start_data::tests \
+            epoch_startup_ \
+            dwallet_mpc::integration_tests::mid_epoch_restart_keys::missing_prior_cert_blob_is_refetched_from_peers_and_ingested \
+            --test-threads=1 | tee "$RUNNER_TEMP/epoch-preparation.log"
+          grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/epoch-preparation.log"
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: noa-presign-regressions
-          path: ${{ runner.temp }}/noa-*.log
+          path: |
+            ${{ runner.temp }}/noa-*.log
+            ${{ runner.temp }}/epoch-preparation.log
 
   cargo-check:
     name: Cargo Test Check

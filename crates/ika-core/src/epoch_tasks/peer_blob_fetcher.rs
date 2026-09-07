@@ -373,10 +373,12 @@ impl PeerBlobFetcher {
 /// later, DB restored, writes lost in a crash window) holds no local copy
 /// and has no announcement to fetch by. The MPC manager sources the CURRENT
 /// epoch's validator key bundle from exactly these cert digests against the
-/// perpetual store and correctly defers ingestion while any pinned blob is
-/// missing (never falling back to the freeze channel); without this repair
-/// the deferral retries the same local store forever and the validator is
-/// MPC-dead for this and every following epoch (issue #1881).
+/// perpetual store. Startup repairs these blobs before ingestion and before
+/// consensus starts; periodic passes retain the same repair path. Readiness
+/// requires a valid durable copy even when the P2P cache holds an in-memory
+/// copy. Without repair, missing blobs would strand ingestion permanently
+/// (issue #1881); falling back to the current freeze channel would diverge
+/// the key set from peers.
 ///
 /// Byte-safe by construction: the digests come from the quorum-signed cert
 /// and blobs are content-addressed, so ANY holder is authoritative. The
@@ -409,7 +411,18 @@ pub async fn fetch_missing_prior_cert_mpc_data_blobs(
         .filter(|(validator, _)| {
             *validator == own_authority || authority_names_to_peer_ids.contains_key(validator)
         })
-        .filter(|(_, digest)| !blob_cache.contains(digest))
+        .filter(|(_, digest)| {
+            !blob_cache
+                .get_persisted(digest)
+                .ok()
+                .flatten()
+                .is_some_and(|bytes| {
+                    matches!(
+                        verify_peer_blob_for_relay(&bytes, digest),
+                        PeerBlobVerdict::Accept
+                    )
+                })
+        })
         .collect();
     if missing.is_empty() {
         return 0;

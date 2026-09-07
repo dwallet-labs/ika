@@ -460,12 +460,10 @@ is the expected shape of a late rotation and self-heals.
   permanently-down-but-staked member never wedges reconfiguration.
   Carry-forward is deterministic: the prior certificate is
   consensus-anchored and perpetual, and the prepare-then-start barrier
-  holds it locally before this epoch's consensus is processed — on the
-  continuing-validator reconfigure path today; the joiner-promotion and
-  cold-startup consensus-start paths are pending the barrier wiring
-  (see `dev-docs/plans/handoff-barrier-escape-and-pure-close-gate.md`),
-  so until then a first-time joiner racing its bootstrap fetch can
-  freeze without the carried map. A fresh announcement that diverged
+  holds it locally before this epoch's consensus is processed on all three
+  paths: continuing-validator reconfiguration, fullnode promotion, and
+  process startup. A joiner cannot race bootstrap and freeze without the
+  carried map. A fresh announcement that diverged
   (landing a member in `excluded`) is overridden by the known-good
   prior digest, since the true blob cannot legitimately change between
   epochs. A cert READ ERROR at the freeze
@@ -512,8 +510,10 @@ validator latched for the whole epoch. Sourcing rules
    post-freeze it carries the CURRENT epoch's frozen set, a possible
    strict superset of the boundary set (a late-attested joiner), and
    ingesting it would byte-diverge this validator's VSS presign public
-   inputs from the committee's. Cert read errors retry; missing
-   cert-pinned blobs defer ingestion until propagation converges.
+   inputs from the committee's. The startup barrier repairs missing durable
+   blobs before consensus starts, and `DWalletMPCService::prepare_epoch`
+   completes current-key ingestion. A read or assembly failure in preparation
+   fails startup; it cannot defer inherited keys into the service loop.
 4. **Deferral repair — prior-cert blob refetch**: announcement-driven
    fetching cannot converge a cert-pinned blob whose owner has been
    dark for epochs — the owner never re-announces (carry-forward
@@ -528,7 +528,9 @@ validator latched for the whole epoch. Sourcing rules
    any holder is authoritative — blobs are content-addressed and
    verified (digest + structural decode) against the quorum-signed
    cert digest before the write-through persist — and the manager's
-   next retry assembles from the repaired store. The missing-blob
+   preparation assembles from the repaired store. The startup barrier runs
+   this same repair inline, before the periodic fetcher exists. Only a valid
+   durable copy satisfies readiness; a memory-only P2P copy does not. The missing-blob
    count is exported as the `ika_dwallet_mpc_prior_cert_blobs_missing`
    gauge (0 once assembly completes), so a stuck ingest is visible
    without log access.

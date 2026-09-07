@@ -857,6 +857,16 @@ impl DWalletMPCService {
         }
     }
 
+    /// Called before consensus starts, including its durable-history replay.
+    /// An uncertified local seed deliberately sits out MPC and must still be
+    /// able to join consensus so the network can certify its replacement.
+    pub async fn prepare_epoch(&mut self) -> DwalletMPCResult<()> {
+        if self.mpc_active {
+            self.dwallet_mpc_manager.prepare_epoch().await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn run_service_loop_iteration(&mut self) {
         debug!("Running DWalletMPCService loop");
 
@@ -3602,6 +3612,28 @@ mod tests {
     use ika_types::messages_dwallet_mpc::ConsensusGlobalPresignRequest;
     use ika_types::noa_checkpoint::NOAPresignDemandId;
 
+    #[tokio::test]
+    async fn epoch_startup_preserves_seed_inactive_consensus_participation() {
+        let (mut services, _, _, epoch_stores, _, _, _) = utils::create_dwallet_mpc_services(1);
+        // An inactive seed is a deliberate non-participating MPC epoch. It
+        // must not wait for shares it cannot decrypt or stop consensus.
+        epoch_stores[0]
+            .certified_handoff_attestations
+            .lock()
+            .unwrap()
+            .insert(services[0].epoch - 1, handoff_certificate());
+        services[0].mpc_active = false;
+        services[0].prepare_epoch().await.unwrap();
+        assert!(
+            services[0]
+                .dwallet_mpc_manager
+                .network_keys
+                .network_encryption_keys
+                .is_empty()
+        );
+        assert!(services[0].dwallet_mpc_manager.sessions.is_empty());
+    }
+
     fn handoff_certificate() -> CertifiedHandoffAttestation {
         CertifiedHandoffAttestation {
             attestation: HandoffAttestation {
@@ -3626,12 +3658,12 @@ mod tests {
         // barrier's recovery (or the boot-time reload of persisted mappings).
         let missing = network_owned_address_signing_key::select(certificate, |_| None, |_| Some(0));
         assert_eq!(
-            missing.epoch_start_key(true),
+            missing.epoch_start_key(),
             None,
             "an unresolved certified key must block epoch startup"
         );
         network_owned_address_signing_key::select(certificate, |_| Some(key_id), |_| Some(0))
-            .epoch_start_key(true)
+            .epoch_start_key()
             .expect("the recovered mapping releases epoch startup")
     }
 

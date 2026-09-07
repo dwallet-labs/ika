@@ -361,38 +361,39 @@ next epoch inherits.
    with a failed read wedges every validator on the network's own first
    epoch.
 
-   With `noa_checkpoints` OFF, an unmapped certified item retains a
-   readiness exception. The certificate names keys by `NetworkKeyId`, while
-   local caches use `ObjectID`. The manager defers adoption until background
-   derivation registers that translation, then applies the certificate's
-   digest checks. This preserves the live protocol's startup behavior.
+   Every certified key must have a `NetworkKeyId → ObjectID` mapping,
+   independently of `noa_checkpoints`. Before the MPC manager exists, the
+   barrier requests missing blobs through the running syncer's stranded-key
+   recovery and derives mappings on rayon. Changed inputs retry failed
+   derivations; unchanged inputs are not spawned repeatedly. Every certified
+   DKG and reconfiguration output must have both matching digest rows and
+   hash-verified backing bytes in the perpetual store. A digest row alone
+   cannot release startup. The material predicate itself requires mappings,
+   so registration racing key selection cannot skip verification.
 
-   With `noa_checkpoints` ON, an unmapped item blocks startup. Before any
-   MPC manager exists, the barrier requests missing blobs through the
-   already-running syncer's stranded-key recovery, then derives mappings on
-   rayon from the published blobs. Changed blobs retry a failed derivation;
-   unchanged inputs are not spawned repeatedly. Once mapped, every certified
-   DKG and reconfiguration output must be held with its certified digest.
-   The material predicate itself requires mappings, so a registration racing
-   key selection cannot skip verification. Startup then resolves the same
-   NOA key as peers, before any shared presign pool can be consumed.
+   The certificate's `ValidatorMpcData` items intersected with the entering
+   committee must also be durable, hash-matching and structurally decodable.
+   The barrier runs prior-cert peer repair inline; it cannot wait on an
+   epoch task that starts only after the barrier. An in-memory P2P cache copy
+   does not satisfy a missing durable blob.
 
-   Nothing else is exempt.
+   THE SIGNING KEY. The barrier resolves the epoch's NOA signing key from
+   the certificate and immutable creation metadata (`dkg_at_epoch`) and
+   returns it with `Ready` as a fixed constructor input. Missing metadata
+   waits. Only a certificate naming no key produces `None`; missing local
+   mappings or blobs never turn one validator's epoch into a keyless epoch.
 
-   THE SIGNING KEY. Once the certificate and every certified output are
-   local, the barrier also resolves the epoch's network-owned-address
-   signing key from the certificate (see "The network-owned-address
-   signing key" below) and returns it with `Ready`, so the epoch's
-   components take it as a fixed constructor input and never choose for
-   themselves. A certified key whose chain metadata (`dkg_at_epoch`, from
-   the network-key syncer's overlay) is not local yet is one more not-ready
-   condition, waited out like the others. A certified key with no
-   `NetworkKeyId → ObjectID` translation is the exemption above again:
-   the barrier passes, and the validator enters the epoch with NO signing
-   key, sitting NOA signing out until the next handoff. The persisted
-   mapping (loaded at boot) keeps a restart out of that case; only a
-   joiner on a network whose keys are outside the compiled-in constants
-   reaches it.
+   CRYPTOGRAPHIC PREPARATION. Before consensus replay or live rounds start,
+   the MPC service ingests the certified validator bundle, instantiates all
+   inherited network-key parameters, decrypts its AHE shares and finishes
+   VSS cache derivation. The snapshot uses exact certificate-pinned bytes
+   and the entering epoch's access structure: the live overlay can already
+   contain the next committee's outputs on a restart. An MPC-inactive
+   validator after a seed mismatch retains consensus participation without
+   decrypting. Genesis and the first off-chain epoch have no inherited data;
+   their own freeze and DKG must run during the epoch. The complete startup
+   boundary and remaining dynamic inputs are in
+   [`epoch-start-preparation.md`](epoch-start-preparation.md).
 
    FAIL-CLOSED. A contradicted anchor — peers served certificates and
    none verified, or a locally persisted one that no longer verifies —
@@ -472,9 +473,9 @@ next epoch inherits.
      key: the certificate names keys by `NetworkKeyId`, the caches are
      keyed by `ObjectID`, and a key this process has never instantiated
      that is not one of the compiled-in deployed keys has no translation
-     between the two. With NOA enabled the barrier flags this key for the
-     syncer's chain-sourced read before startup; with NOA disabled it passes
-     the key and adoption flags it instead (see the barrier section). (Until
+     between the two. The barrier flags this key for the syncer's
+     chain-sourced read before startup in every mode. Adoption retains the
+     same recovery mechanism for data arriving during the epoch. (Until
      issue #1751 removed the migration chain-read fallback, that fallback
      covered this shape implicitly; the deployed-release churn scenario's
      mirrored joiner — then `v125_churn` — caught the regression.)
@@ -594,8 +595,7 @@ ObjectID` translation is the process-global mapping: seeded with the
 deployed keys, registered at instantiation or by the background derivation,
 and — so that a restart does not lose it — written to the perpetual store
 (`network_key_ids_by_object_id`) by the MPC manager and loaded back at boot
-before the barrier runs. With NOA enabled, a certified key with no
-translation blocks startup while the barrier requests missing blobs and
+before the barrier runs. A certified key with no translation blocks startup while the barrier requests missing blobs and
 runs the same identity derivation the adoption pass uses. A restart with no
 persisted mapping repeats that recovery and resolves the same key before
 replaying rounds. Missing local data is never converted to a keyless epoch:
@@ -639,17 +639,16 @@ sequence numbers do not move.
    artifacts. Enforced on all three paths that start a validator's
    epoch-specific components — the continuing-validator reconfigure
    seam, fullnode→validator promotion, and process startup into an
-   epoch — with two carve-outs, both stated in the barrier section:
-   entering epoch 0 at genesis (no predecessor epoch to be handed off
-   from), and, only with NOA disabled, a certified key with no local
-   `NetworkKeyId → ObjectID` translation, which adoption's cert-digest gate
-   covers instead. With NOA enabled, preparation recovers the mapping and
-   checks the certified material before releasing startup.
+   epoch. The only no-anchor case is an epoch with no predecessor off-chain
+   (genesis or the first off-chain epoch). Every certified key's mapping and
+   material are ready before consensus starts in every mode. Active MPC
+   validators also finish parameter and share preparation before that point;
+   intentionally MPC-inactive validators still participate in consensus.
 6. The network-owned-address signing key is a function of the prior
    epoch's certificate alone, resolved by the barrier and fixed for the
    epoch: no validator announces a choice, a key created after the
    certificate waits one epoch, and every validator resolves the same key
-   (or all resolve no key) before any NOA-enabled epoch components start.
+   (or all resolve no key) before consensus replay or live rounds start.
 
 Code anchors: `crates/ika-types/src/handoff.rs` (types),
 `crates/ika-core/src/handoff_cert.rs` (aggregation + verification),

@@ -6,14 +6,19 @@
 //! helpers other test modules build on.
 
 use crate::SuiDataSenders;
+use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::spawn_network_encryption_key_public_data_instantiation;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_network_dkg_event_to_all_parties,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::network_key_id_mapping::network_key_id_for;
 use crate::request_protocol_data::{NetworkEncryptionKeyReconfigurationData, ProtocolData};
+use crate::validator_metadata::derive_mpc_data_blob;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::committee::Committee;
+use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, SessionIdentifier,
@@ -24,7 +29,152 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
+use tempfile::TempDir;
 use tracing::{error, info};
+
+#[tokio::test]
+async fn epoch_startup_prepares_inherited_key_material_before_any_round() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+        bundles.clone(),
+    );
+    let mut state = IntegrationTestState {
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+        committee: committee.clone(),
+        crypto_round: 1,
+        consensus_round: 1,
+    };
+    let (_, dkg_bytes, key_id) = create_network_key_test(&mut state).await;
+    let prior_epoch = committee.epoch;
+    let mut committee = committee;
+    committee.epoch += 1;
+    let (mut services, senders, _, stores, _, _, _) =
+        utils::create_dwallet_mpc_services_with_committee_and_seeds(
+            committee.clone(),
+            seeds.clone(),
+            bundles,
+        );
+    let directory = TempDir::new().unwrap();
+    let perpetual = Arc::new(AuthorityPerpetualTables::open(directory.path(), None));
+    let dkg_digest = mpc_data_blob_hash(&dkg_bytes);
+    perpetual
+        .insert_mpc_artifact_blob(dkg_digest, &dkg_bytes)
+        .unwrap();
+    let network_key_id = network_key_id_for(&key_id).unwrap();
+    let mut items = vec![(
+        HandoffItemKey::NetworkDkgOutput {
+            key_id: network_key_id,
+        },
+        dkg_digest,
+    )];
+    for (validator, seed) in seeds {
+        let blob = derive_mpc_data_blob(&seed).unwrap();
+        let digest = mpc_data_blob_hash(&blob);
+        perpetual.insert_mpc_artifact_blob(digest, &blob).unwrap();
+        items.push((HandoffItemKey::ValidatorMpcData { validator }, digest));
+    }
+    items.sort_by(|(first, _), (second, _)| first.cmp(second));
+    stores[0]
+        .perpetual_tables
+        .lock()
+        .unwrap()
+        .replace(perpetual);
+    stores[0]
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(
+            prior_epoch,
+            CertifiedHandoffAttestation {
+                attestation: HandoffAttestation {
+                    epoch: prior_epoch,
+                    next_committee_pubkey_set_hash: [0; 32],
+                    items,
+                },
+                signatures: Vec::new(),
+            },
+        );
+    // A restarted node can observe the next committee's data on the live
+    // channel. Only the immutable creation epoch is useful to preparation.
+    senders[0]
+        .network_keys_sender
+        .send(Arc::new(HashMap::from([(
+            key_id,
+            DWalletNetworkEncryptionKeyData {
+                id: key_id,
+                current_epoch: committee.epoch + 1,
+                dkg_at_epoch: prior_epoch,
+                network_dkg_public_output: b"wrong overlay anchor".to_vec(),
+                current_reconfiguration_public_output: b"next committee's shares".to_vec(),
+                state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+            },
+        )])))
+        .unwrap();
+    senders[0].current_epoch_mpc_keys_sender.send(None).unwrap();
+    let service = &mut services[0];
+    let manager = service.dwallet_mpc_manager_mut();
+    manager.current_epoch_keys_ingested = false;
+    assert!(manager.network_keys.network_encryption_keys.is_empty());
+    assert!(manager.network_keys.decryption_key_shares(&key_id).is_err());
+    assert!(manager.network_keys.vss_shamir_cache(&key_id).is_err());
+
+    service
+        .prepare_epoch()
+        .await
+        .expect("certified keys must prepare without a consensus round");
+
+    let manager = service.dwallet_mpc_manager();
+    assert!(
+        manager.current_epoch_keys_ingested,
+        "validator bundles must be ingested before startup"
+    );
+    assert!(manager.pending_network_key_instantiations.is_empty());
+    assert_eq!(
+        manager
+            .network_keys
+            .get_network_encryption_key_public_data(&key_id)
+            .unwrap()
+            .epoch(),
+        committee.epoch
+    );
+    assert!(
+        !manager
+            .network_keys
+            .decryption_key_shares(&key_id)
+            .unwrap()
+            .is_empty(),
+        "AHE shares must be decrypted before startup"
+    );
+    assert_eq!(
+        manager
+            .network_keys
+            .vss_shamir_cache(&key_id)
+            .expect("VSS caches must be derived before startup")
+            .derived_for_epoch,
+        committee.epoch
+    );
+    assert!(
+        manager.sessions.is_empty(),
+        "preparation must not process MPC sessions"
+    );
+}
 
 #[tokio::test]
 #[cfg(test)]
