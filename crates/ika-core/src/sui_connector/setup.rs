@@ -448,7 +448,9 @@ pub async fn build_sui_connector_stack(
     const CHANGESET_RETAIN_WINDOW: u64 = 432_000;
     let changeset_index: Option<SharedChangesetIndex> = changeset_source.is_some().then(|| {
         Arc::new(RwLock::new(
-            ChangesetIndex::new().with_retain_window(Some(CHANGESET_RETAIN_WINDOW)),
+            ChangesetIndex::new()
+                .with_retain_window(Some(CHANGESET_RETAIN_WINDOW))
+                .with_metrics(metrics.clone()),
         ))
     });
     let changeset_receiver = match (changeset_source, &changeset_index) {
@@ -465,6 +467,7 @@ pub async fn build_sui_connector_stack(
                 CHANGESET_PAGE_LIMIT,
                 bootstrap_from,
                 CHANGESET_POLL_INTERVAL,
+                metrics.clone(),
             ))
         }
         _ => None,

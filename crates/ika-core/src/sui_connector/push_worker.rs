@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream};
 use ika_network::proof_provider::VerifiedObjectEntry;
@@ -179,6 +179,7 @@ impl IkaCheckpointPusher {
             }
         };
         metrics.pusher_cursor_seq.set(cursor as i64);
+        metrics.pusher_lag_checkpoints.set(0);
         // Seed the cache's processed head so the reader's staleness tripwire
         // doesn't spuriously fire before the first poll tick advances it.
         cache.note_processed(cursor);
@@ -230,9 +231,9 @@ impl IkaCheckpointPusher {
         // while the window stays empty. The height watermark survives pruning.
         let latest_seq = self.transport.get_latest_checkpoint_sequence().await?;
 
-        // Stall gauge: upstream advanced but we haven't caught up by more than
-        // a tick's worth of checkpoints. A stalled pusher freezes the cache,
-        // so direct cache-first reads fall through to the network
+        // Legacy lag flag: a moving cursor can still remain behind upstream.
+        // Last-progress time separately identifies a stopped scanner. Lag
+        // can cause cache-first reads to fall through to the network
         // (`cache_first_stale_total`). `STALL_THRESHOLD` sits between the
         // normal per-tick lag (a handful) and the FAR_BEHIND fast-forward.
         // Computed from the raw sample, BEFORE the rate bound below decides
@@ -244,12 +245,13 @@ impl IkaCheckpointPusher {
         // gauge is not, because duration is what a gauge is for.
         const STALL_THRESHOLD: u64 = 100;
         let lag = latest_seq.saturating_sub(self.cursor);
+        self.metrics.pusher_lag_checkpoints.set(lag as i64);
         let stalled = lag > STALL_THRESHOLD;
         self.metrics.pusher_stalled.set(stalled as i64);
         match (stalled, self.stall_warned) {
             (true, false) => warn!(
                 cursor = self.cursor,
-                latest_seq, lag, "pusher stalled: falling behind upstream"
+                latest_seq, lag, "pusher lag exceeds 100 checkpoints"
             ),
             (false, true) => info!(
                 cursor = self.cursor,
@@ -358,6 +360,12 @@ impl IkaCheckpointPusher {
             );
             self.cursor = new_cursor;
             self.metrics.pusher_cursor_seq.set(new_cursor as i64);
+            self.metrics.pusher_last_progress_timestamp_seconds.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
             let _ = self.perpetual.put_sui_pusher_last_seq(new_cursor);
             // Gaps inside the sacrificed span go with it (covered by the
             // fast-forward warn above) — but each is still a permanent loss,
@@ -408,6 +416,12 @@ impl IkaCheckpointPusher {
             }
             self.cursor = seq;
             self.metrics.pusher_cursor_seq.set(seq as i64);
+            self.metrics.pusher_last_progress_timestamp_seconds.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
             if let Err(e) = self.perpetual.put_sui_pusher_last_seq(seq) {
                 warn!(seq, error = ?e, "failed to persist pusher cursor");
             }

@@ -11,7 +11,7 @@
 //! verify), so the relay is fully untrusted.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -23,6 +23,7 @@ use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 
 use crate::sui_connector::committee_store::CommitteeStore;
 use crate::sui_connector::ocs_currency::{AbsorbOutcome, ChangesetError, ChangesetIndex};
+use crate::sui_connector::ocs_metrics::OcsMetrics;
 
 /// Shared, mutable changeset index — written only by the receiver, read by the
 /// read path's currency check.
@@ -36,6 +37,8 @@ pub trait ChangesetSource: Send + Sync {
         &self,
         from_seq: CheckpointSequenceNumber,
         limit: u32,
+        require_contiguous: bool,
+        known_gap: bool,
     ) -> Result<Vec<ChangesetEntry>, TransportError>;
 }
 
@@ -45,18 +48,28 @@ impl ChangesetSource for SuiMirrorTransport {
         &self,
         from_seq: CheckpointSequenceNumber,
         limit: u32,
+        require_contiguous: bool,
+        known_gap: bool,
     ) -> Result<Vec<ChangesetEntry>, TransportError> {
-        Ok(SuiMirrorTransport::changeset_page(self, from_seq, limit)
+        Ok(
+            SuiMirrorTransport::changeset_page(
+                self,
+                from_seq,
+                limit,
+                require_contiguous,
+                known_gap,
+            )
             .await?
-            .entries)
+            .entries,
+        )
     }
 }
 
 /// Pull the next contiguous page — from `contiguous head + 1`, or
 /// `bootstrap_from` when the index is empty — BLS-verify each entry against its
 /// epoch committee, and fold it. Returns the number of entries that *advanced*
-/// the contiguous frontier (0 = caught up to the source's head, or the page
-/// made no progress).
+/// the contiguous frontier (0 = empty page or already folded by concurrent
+/// gossip). A non-contiguous page is an explicit error, never caught-up.
 ///
 /// BLS verification runs *outside* the index lock so the read path's currency
 /// queries aren't blocked on it; only the fold takes a brief write lock.
@@ -67,15 +80,25 @@ pub async fn pump_changesets(
     page_limit: u32,
     bootstrap_from: CheckpointSequenceNumber,
 ) -> Result<usize, ChangesetError> {
-    let from_seq = index
-        .read()
-        .highest_contiguous_seq()
-        .map(|seq| seq + 1)
-        .unwrap_or(bootstrap_from);
+    let (head, highest_seen) = {
+        let index = index.read();
+        (index.highest_contiguous_seq(), index.highest_seen_seq())
+    };
+    let known_gap = highest_seen > head;
+    let from_seq = head.map(|seq| seq + 1).unwrap_or(bootstrap_from);
     let page = source
-        .changeset_page(from_seq, page_limit)
+        .changeset_page(from_seq, page_limit, head.is_some(), known_gap)
         .await
         .map_err(|e| ChangesetError::Internal(e.to_string()))?;
+
+    if page.is_empty() {
+        if let Some(received) = highest_seen.filter(|_| known_gap) {
+            return Err(ChangesetError::Gap {
+                expected: from_seq,
+                received,
+            });
+        }
+    }
 
     // Bound the page length before the per-entry BLS verify loop below. The
     // server clamps to `MAX_CHANGESET_PAGE`, but a byzantine peer can ignore its
@@ -90,7 +113,15 @@ pub async fn pump_changesets(
     }
 
     let mut advanced = 0;
+    let mut expected = head.map(|_| from_seq);
     for entry in page {
+        let received = *entry.summary.sequence_number();
+        if let Some(expected) = expected {
+            if received != expected {
+                return Err(ChangesetError::Gap { expected, received });
+            }
+        }
+        expected = Some(received.saturating_add(1));
         committees
             .verify_summary(entry.summary.clone())
             .map_err(|e| ChangesetError::Unverified(e.to_string()))?;
@@ -113,6 +144,7 @@ pub struct ChangesetReceiver {
     page_limit: u32,
     bootstrap_from: CheckpointSequenceNumber,
     poll_interval: Duration,
+    metrics: Arc<OcsMetrics>,
 }
 
 impl ChangesetReceiver {
@@ -123,6 +155,7 @@ impl ChangesetReceiver {
         page_limit: u32,
         bootstrap_from: CheckpointSequenceNumber,
         poll_interval: Duration,
+        metrics: Arc<OcsMetrics>,
     ) -> Self {
         Self {
             index,
@@ -131,6 +164,7 @@ impl ChangesetReceiver {
             page_limit,
             bootstrap_from,
             poll_interval,
+            metrics,
         }
     }
 
@@ -141,6 +175,7 @@ impl ChangesetReceiver {
             "ChangesetReceiver starting"
         );
         let mut tick = tokio::time::interval(self.poll_interval);
+        let mut last_warning: Option<Instant> = None;
         loop {
             tick.tick().await;
             // Drain: keep pulling within a tick until caught up (no further
@@ -161,7 +196,18 @@ impl ChangesetReceiver {
                         debug!(advanced, "ChangesetReceiver folded changesets");
                     }
                     Err(e) => {
-                        warn!(error = ?e, "ChangesetReceiver tick failed; will retry");
+                        match &e {
+                            ChangesetError::Gap { .. } => self.metrics.changeset_gap_total.inc(),
+                            ChangesetError::Internal(_) => {
+                                self.metrics.changeset_fetch_failures_total.inc()
+                            }
+                            _ => {}
+                        }
+                        if last_warning.is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+                        {
+                            last_warning = Some(Instant::now());
+                            warn!(error = ?e, "ChangesetReceiver tick failed; will retry");
+                        }
                         break;
                     }
                 }
@@ -240,6 +286,8 @@ mod tests {
             &self,
             from_seq: CheckpointSequenceNumber,
             limit: u32,
+            _require_contiguous: bool,
+            _known_gap: bool,
         ) -> Result<Vec<ChangesetEntry>, TransportError> {
             Ok(self
                 .0
@@ -287,6 +335,62 @@ mod tests {
             .unwrap();
         assert_eq!(advanced, 0);
         assert_eq!(index.read().highest_contiguous_seq(), Some(12));
+    }
+
+    #[tokio::test]
+    async fn retention_gap_is_not_caught_up_and_verified_successor_recovers() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        let (first, digest) = signed_entry(&committee, &keys, 10, None, [modified(0xA1, 1)].into());
+        let (missing, digest) = signed_entry(
+            &committee,
+            &keys,
+            11,
+            Some(digest),
+            [modified(0xA1, 2)].into(),
+        );
+        let (later, _) = signed_entry(
+            &committee,
+            &keys,
+            12,
+            Some(digest),
+            [modified(0xA1, 3)].into(),
+        );
+        let index = Arc::new(RwLock::new(ChangesetIndex::new()));
+        pump_changesets(&index, &VecSource(vec![first]), &store, 64, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            pump_changesets(&index, &VecSource(vec![later.clone()]), &store, 64, 10).await,
+            Err(ChangesetError::Gap {
+                expected: 11,
+                received: 12
+            }),
+            "a retained later checkpoint must surface a gap, not caught-up"
+        );
+        assert_eq!(index.read().highest_contiguous_seq(), Some(10));
+        assert_eq!(
+            pump_changesets(&index, &VecSource(vec![missing, later]), &store, 64, 10)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(index.read().highest_contiguous_seq(), Some(12));
+    }
+
+    #[tokio::test]
+    async fn empty_index_can_bootstrap_at_relay_retention_floor() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        let (entry, _) = signed_entry(&committee, &keys, 30, None, [modified(0xA1, 1)].into());
+        let index = Arc::new(RwLock::new(ChangesetIndex::new()));
+        assert_eq!(
+            pump_changesets(&index, &VecSource(vec![entry]), &store, 64, 10)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(index.read().highest_contiguous_seq(), Some(30));
     }
 
     /// A foreign-signed entry is rejected at the BLS gate and not folded.

@@ -21,6 +21,10 @@
 //! `dev-docs/specs/ocs-verified-sui-reads.md`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::sui_connector::ocs_metrics::OcsMetrics;
 
 use crate::sui_connector::committee_store::CommitteeStore;
 use sui_light_client::proof::ocs::OCSNonInclusionProof;
@@ -104,6 +108,8 @@ pub enum AbsorbOutcome {
     Advanced { new_head: CheckpointSequenceNumber },
     /// Out of order (a gap precedes it) — queued until its predecessor arrives.
     Queued,
+    /// Out of order and not retained because the pending queue is full.
+    Dropped,
     /// At or below the frontier already — ignored (idempotent).
     AlreadyFolded,
 }
@@ -135,6 +141,11 @@ pub enum ChangesetError {
     BrokenChain { seq: CheckpointSequenceNumber },
     #[error("changeset summary failed committee verification: {0}")]
     Unverified(String),
+    #[error("changeset retention gap: expected {expected}, received {received}")]
+    Gap {
+        expected: CheckpointSequenceNumber,
+        received: CheckpointSequenceNumber,
+    },
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -161,6 +172,8 @@ const MAX_PENDING_CHANGESETS: usize = 256;
 /// a byzantine relay must not be able to skip a checkpoint that would have
 /// modified an id.
 pub struct ChangesetIndex {
+    metrics: Option<Arc<OcsMetrics>>,
+    last_queue_warning: Option<Instant>,
     index: HashMap<ObjectID, IdRecord>,
     /// `(seq, digest)` of the highest contiguously-folded checkpoint.
     contiguous_head: Option<(CheckpointSequenceNumber, CheckpointDigest)>,
@@ -198,6 +211,8 @@ impl Default for ChangesetIndex {
 impl ChangesetIndex {
     pub fn new() -> Self {
         Self {
+            metrics: None,
+            last_queue_warning: None,
             index: HashMap::new(),
             contiguous_head: None,
             oldest_folded: None,
@@ -206,6 +221,11 @@ impl ChangesetIndex {
             retain_window: None,
             fold_filter: None,
         }
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<OcsMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Bound the index to objects modified within `window` checkpoints of the
@@ -242,6 +262,37 @@ impl ChangesetIndex {
     /// the frontier only at `head + 1` with a matching `previous_digest`,
     /// queuing gap-creating inputs, and draining the queue as gaps fill.
     pub fn absorb(
+        &mut self,
+        summary: &CertifiedCheckpointSummary,
+        object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
+    ) -> Result<AbsorbOutcome, ChangesetError> {
+        let result = self.absorb_inner(summary, object_states);
+        if let Some(metrics) = &self.metrics {
+            metrics
+                .changeset_contiguous_head
+                .set(self.highest_contiguous_seq().map_or(-1, |s| s as i64));
+            metrics
+                .changeset_highest_seen
+                .set(self.highest_seen_seq().map_or(-1, |s| s as i64));
+            metrics
+                .changeset_pending_depth
+                .set(self.pending.len() as i64);
+            if matches!(result, Ok(AbsorbOutcome::Advanced { .. })) {
+                metrics.changeset_last_progress_timestamp_seconds.set(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                );
+            }
+            if matches!(result, Ok(AbsorbOutcome::Dropped)) {
+                metrics.changeset_dropped_total.inc();
+            }
+        }
+        result
+    }
+
+    fn absorb_inner(
         &mut self,
         summary: &CertifiedCheckpointSummary,
         object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
@@ -300,13 +351,19 @@ impl ChangesetIndex {
                     // rather than grow unbounded; it is re-pulled from the
                     // contiguous head later, and the affected ids read a safe
                     // `Unknown` (per-read fallback) until the gap fills.
-                    warn!(
-                        seq,
-                        pending = self.pending.len(),
-                        "changeset pending queue at cap; dropping out-of-order entry \
-                         (relay may be withholding the contiguous head)"
-                    );
-                    Ok(AbsorbOutcome::Queued)
+                    if self
+                        .last_queue_warning
+                        .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+                    {
+                        self.last_queue_warning = Some(Instant::now());
+                        warn!(
+                            seq,
+                            contiguous_head = head_seq,
+                            pending = self.pending.len(),
+                            "changeset pending queue at cap; dropping out-of-order entry (retry the missing checkpoint through a retaining relay)"
+                        );
+                    }
+                    Ok(AbsorbOutcome::Dropped)
                 } else {
                     self.pending.insert(seq, incoming);
                     Ok(AbsorbOutcome::Queued)
@@ -876,61 +933,69 @@ mod tests {
         )
     }
 
-    /// Out-of-order absorb with large gaps grows `pending` unbounded — there is
-    /// no cap on the queue. Seqs 10/100/1000 absorbed out of order: 100 and 1000
-    /// queue (gaps before them), the frontier stays at 10, and nothing ever
-    /// drains them because the gaps are never filled. Documents the no-cap
-    /// behaviour the design flags as a follow-up (a byzantine relay streaming
-    /// far-future seqs would accumulate them).
-    #[test]
-    fn pending_queue_grows_unbounded_on_large_gaps() {
+    /// A withheld predecessor cannot grow memory or advance currency. Once
+    /// it arrives, the verified queue drains and discarded entries can be
+    /// re-fetched without skipping a signature, artifacts or chain check.
+    #[tokio::test]
+    async fn pending_queue_is_bounded_and_recovers_after_verified_gap_fill() {
         let (committee, keys) = Committee::new_simple_test_committee();
-        let mut idx = ChangesetIndex::new();
-
-        let s10 = states([modified(0xA1, 1)]);
-        let s100 = states([modified(0xA2, 1)]);
-        let s1000 = states([modified(0xA3, 1)]);
-        // Each is signed with *some* valid previous_digest; the seqs are not
-        // adjacent, so previous-chaining never matters — they only queue.
-        let (c10, _d10) = signed_changeset(&committee, &keys, 10, None, &s10);
-        let (c1000, _d1000) = signed_changeset(
-            &committee,
-            &keys,
-            1000,
-            Some(CheckpointDigest::new([0x99; 32])),
-            &s1000,
-        );
-        let (c100, _d100) = signed_changeset(
-            &committee,
-            &keys,
-            100,
-            Some(CheckpointDigest::new([0x88; 32])),
-            &s100,
-        );
-
-        assert_eq!(
-            idx.absorb(&c10, s10).unwrap(),
-            AbsorbOutcome::Advanced { new_head: 10 }
-        );
-        // Out of order: 1000 then 100. Both queue behind the gap at 11.
-        assert_eq!(idx.absorb(&c1000, s1000).unwrap(), AbsorbOutcome::Queued);
-        assert_eq!(idx.absorb(&c100, s100).unwrap(), AbsorbOutcome::Queued);
-
-        // Frontier is still 10; the queue holds both far-future seqs with no cap.
-        assert_eq!(idx.highest_contiguous_seq(), Some(10));
+        let (_dir, store) = committee_store(committee.clone());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut idx = ChangesetIndex::new().with_metrics(metrics.clone());
+        let mut previous = None;
+        let entries: Vec<_> = (10..=270)
+            .map(|seq| {
+                let object_states = states([modified(0xA1, seq)]);
+                let (summary, digest) =
+                    signed_changeset(&committee, &keys, seq, previous, &object_states);
+                previous = Some(digest);
+                (summary, object_states)
+            })
+            .collect();
+        let (summary, object_states) = &entries[0];
+        idx.absorb_verified(&store, summary, object_states.clone())
+            .unwrap();
+        let progress = metrics.changeset_last_progress_timestamp_seconds.get();
+        // Withhold 11, deliver 12..270: 256 retained and three discarded.
+        for (summary, object_states) in &entries[2..] {
+            idx.absorb_verified(&store, summary, object_states.clone())
+                .unwrap();
+        }
         assert_eq!(
             idx.pending.len(),
-            2,
-            "no cap: both gap-creating seqs retained"
+            256,
+            "pending queue must retain at most 256 entries"
         );
-        assert!(idx.pending.contains_key(&100) && idx.pending.contains_key(&1000));
-        assert_eq!(idx.highest_seen_seq(), Some(1000));
+        assert_eq!(metrics.changeset_dropped_total.get(), 3);
+        assert_eq!(metrics.changeset_pending_depth.get(), 256);
+        assert_eq!(metrics.changeset_contiguous_head.get(), 10);
+        assert_eq!(metrics.changeset_highest_seen.get(), 270);
+        assert_eq!(
+            metrics.changeset_last_progress_timestamp_seconds.get(),
+            progress
+        );
+        assert_eq!(idx.currency(id(0xA1), 270), CurrencyVerdict::Unknown);
 
-        // The gap at 11 is never filled, so the queue never drains — currency
-        // for the queued ids stays Unknown (frontier never reaches them).
-        assert_eq!(idx.currency(id(0xA2), 100), CurrencyVerdict::Unknown);
-        assert_eq!(idx.currency(id(0xA3), 1000), CurrencyVerdict::Unknown);
-        assert_eq!(idx.pending.len(), 2);
+        let (summary, object_states) = &entries[1];
+        assert_eq!(
+            idx.absorb_verified(&store, summary, object_states.clone())
+                .unwrap(),
+            AbsorbOutcome::Advanced { new_head: 267 }
+        );
+        assert!(idx.pending.is_empty());
+        for (summary, object_states) in &entries[258..] {
+            idx.absorb_verified(&store, summary, object_states.clone())
+                .unwrap();
+        }
+        assert_eq!(
+            idx.highest_contiguous_seq(),
+            Some(270),
+            "verified gap recovery must reach the previously discarded tail"
+        );
+        assert_eq!(metrics.changeset_pending_depth.get(), 0);
+        assert_eq!(metrics.changeset_contiguous_head.get(), 270);
+        assert_eq!(idx.currency(id(0xA1), 270), CurrencyVerdict::Current);
+        assert_eq!(idx.currency(id(0xA1), 10), CurrencyVerdict::Stale);
     }
 
     /// A queued successor whose `previous_digest` does not chain onto its

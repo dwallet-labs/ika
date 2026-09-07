@@ -28,6 +28,11 @@
 
 use std::sync::Arc;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use anemo::rpc::Status;
+use anemo::types::header::STATUS_MESSAGE;
+use anemo::types::response::StatusCode;
 use anemo::types::{PeerAffinity, PeerInfo};
 use anemo::{Network, PeerId, Request};
 use async_trait::async_trait;
@@ -221,15 +226,24 @@ impl SuiMirrorPeers {
                             PeerFailure::Unreachable
                         },
                     );
-                    warn!(
-                        ?peer_id,
-                        ?status,
-                        "{op_label}: peer returned error, trying next"
-                    );
-                    self.metrics
-                        .relay_peer_failover_total
-                        .with_label_values(&[op_label, &peer_id.to_string()])
-                        .inc();
+                    if op_label == "changeset_page" {
+                        // Empty pages are normal at head. Retention gaps can
+                        // persist for hours; the receiver emits a rate-limited
+                        // warning when the full pass fails to find a successor.
+                        debug!(?peer_id, ?status, "changeset_page: trying next relay");
+                    } else {
+                        warn!(
+                            ?peer_id,
+                            ?status,
+                            "{op_label}: peer returned error, trying next"
+                        );
+                    }
+                    if op_label != "changeset_page" || status.status() != StatusCode::NotFound {
+                        self.metrics
+                            .relay_peer_failover_total
+                            .with_label_values(&[op_label, &peer_id.to_string()])
+                            .inc();
+                    }
                     self.demote(peer_id);
                     last_err = Some(format!("{status:?}"));
                 }
@@ -509,13 +523,58 @@ impl SuiMirrorTransport {
         &self,
         from_seq: CheckpointSequenceNumber,
         limit: u32,
+        require_contiguous: bool,
+        known_gap: bool,
     ) -> Result<ChangesetPageResponse, TransportError> {
-        self.peers
+        // A healthy head poll may accept an empty page immediately. Once a
+        // gap is known (from verified gossip or this pass's retention floor),
+        // probe every serving peer for the missing successor.
+        let gap_detected = Arc::new(AtomicBool::new(known_gap));
+        let result = self
+            .peers
             .try_peers("changeset_page", move |c| {
+                let gap_detected = gap_detected.clone();
                 let req = Request::new(ChangesetPageRequest { from_seq, limit });
-                Box::pin(async move { c.changeset_page(req).await })
+                Box::pin(async move {
+                    let response = c.changeset_page(req).await?;
+                    let page = response.body();
+                    if page.entries.len() > limit as usize {
+                        return Err(Status::internal("changeset page exceeds requested limit"));
+                    }
+                    let Some(first) = page.entries.first() else {
+                        if !gap_detected.load(Ordering::Relaxed) {
+                            return Ok(response);
+                        }
+                        // Try every serving peer before concluding that we are
+                        // caught up. An empty response from one lagging relay
+                        // must not hide another relay's available successor.
+                        return Err(Status::new_with_message(
+                            StatusCode::NotFound,
+                            "changeset page is empty",
+                        )
+                        .with_header(STATUS_MESSAGE, "changeset page is empty"));
+                    };
+                    if require_contiguous && *first.summary.sequence_number() != from_seq {
+                        gap_detected.store(true, Ordering::Relaxed);
+                        // A pruned relay serves its retention floor. That is
+                        // useful only for bootstrap: an initialized index must
+                        // find its exact successor elsewhere, never skip it.
+                        return Err(Status::internal(format!(
+                            "changeset retention gap: requested {from_seq}, received {}",
+                            first.summary.sequence_number(),
+                        )));
+                    }
+                    Ok(response)
+                })
             })
-            .await
+            .await;
+        match result {
+            // Only unanimous data absence from the serving peers is caught-up.
+            Err(TransportError::NotFound(_)) if !known_gap => Ok(ChangesetPageResponse {
+                entries: Vec::new(),
+            }),
+            other => other,
+        }
     }
 }
 
@@ -648,6 +707,15 @@ impl SuiTransport for SuiMirrorTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sui_state_mirror::{ChangesetEntry, SuiStateMirrorServer};
+    use crate::utils::build_network;
+    use std::collections::BTreeMap;
+    use sui_types::committee::Committee;
+    use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
+    };
 
     /// The relay verdict for a pass in which no peer succeeded: `NotFound` is
     /// preserved across the untrusted relay ONLY when at least one peer was
@@ -746,7 +814,10 @@ mod tests {
     /// `get_chain_identifier` answers, `last_checkpoint_of_epoch` returns the
     /// service's genuine (message-bearing) data-absence `NotFound`, everything
     /// else errors as unused.
-    struct StubMirror;
+    #[derive(Default)]
+    struct StubMirror {
+        entries: Vec<ChangesetEntry>,
+    }
 
     #[anemo::async_trait]
     impl crate::sui_state_mirror::SuiStateMirror for StubMirror {
@@ -782,9 +853,18 @@ mod tests {
         }
         async fn changeset_page(
             &self,
-            _: Request<ChangesetPageRequest>,
+            request: Request<ChangesetPageRequest>,
         ) -> Result<anemo::Response<ChangesetPageResponse>, anemo::rpc::Status> {
-            Err(anemo::rpc::Status::internal("unused"))
+            let request = request.into_body();
+            Ok(anemo::Response::new(ChangesetPageResponse {
+                entries: self
+                    .entries
+                    .iter()
+                    .filter(|e| *e.summary.sequence_number() >= request.from_seq)
+                    .take(request.limit as usize)
+                    .cloned()
+                    .collect(),
+            }))
         }
         async fn last_checkpoint_of_epoch(
             &self,
@@ -829,8 +909,9 @@ mod tests {
         use crate::sui_state_mirror::SuiStateMirrorServer;
         use crate::utils::build_network;
 
-        let serving =
-            build_network(|router| router.add_rpc_service(SuiStateMirrorServer::new(StubMirror)));
+        let serving = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror::default()))
+        });
         let non_serving = build_network(|router| router);
         let consumer = build_network(|router| router);
 
@@ -881,6 +962,116 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn changeset_retention_gap_and_empty_peer_fall_back_to_exact_successor() {
+        let entry = changeset_entry(11);
+        let pruned = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(20)],
+            }))
+        });
+        let empty = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror::default()))
+        });
+        let retaining = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![entry],
+            }))
+        });
+        let consumer = build_network(|router| router);
+        let pruned_id = consumer.connect(pruned.local_addr()).await.unwrap();
+        let empty_id = consumer.connect(empty.local_addr()).await.unwrap();
+        let retaining_id = consumer.connect(retaining.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let transport = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer.clone(),
+            vec![pruned_id, empty_id, retaining_id],
+            metrics.clone(),
+        ));
+        let page = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(
+            *page.entries[0].summary.sequence_number(),
+            11,
+            "initialized receiver must try another relay for the exact successor"
+        );
+        let empty_first = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer.clone(),
+            vec![empty_id, retaining_id],
+            metrics.clone(),
+        ));
+        assert_eq!(
+            *empty_first
+                .changeset_page(11, 64, true, true)
+                .await
+                .unwrap()
+                .entries[0]
+                .summary
+                .sequence_number(),
+            11,
+            "a known gap must probe beyond an empty first relay"
+        );
+        let only_pruned = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer.clone(),
+            vec![pruned_id],
+            metrics.clone(),
+        ));
+        assert!(
+            matches!(
+                only_pruned.changeset_page(11, 64, true, false).await,
+                Err(TransportError::Network(_))
+            ),
+            "exhausted retention gaps must not report caught-up"
+        );
+        assert_eq!(
+            *only_pruned
+                .changeset_page(11, 64, false, false)
+                .await
+                .unwrap()
+                .entries[0]
+                .summary
+                .sequence_number(),
+            20
+        );
+        let only_empty =
+            SuiMirrorTransport::new(SuiMirrorPeers::new(consumer, vec![empty_id], metrics));
+        assert!(
+            only_empty.changeset_page(11, 64, true, true).await.is_err(),
+            "a known missing successor cannot be declared caught-up"
+        );
+        assert!(
+            only_empty
+                .changeset_page(11, 64, true, false)
+                .await
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+    }
+
+    fn changeset_entry(seq: u64) -> ChangesetEntry {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let object_states = BTreeMap::new();
+        let artifacts = CheckpointArtifacts::from_object_states(object_states.clone());
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts.digest().unwrap())],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        ChangesetEntry {
+            summary: CertifiedCheckpointSummary::new_from_keypairs_for_testing(
+                summary, &keys, &committee,
+            ),
+            object_states,
+        }
+    }
+
     /// Addressed `sui-state-mirror-peers` entries ({peer-id, address}) are
     /// registered as high-affinity known peers, so anemo's connection manager
     /// dials and maintains the connection on its own — a pinned relay outside
@@ -893,8 +1084,9 @@ mod tests {
         use crate::utils::{build_network, build_network_with_anemo_config};
         use ika_config::node::AddressedSuiStateMirrorPeer;
 
-        let serving =
-            build_network(|router| router.add_rpc_service(SuiStateMirrorServer::new(StubMirror)));
+        let serving = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror::default()))
+        });
         // Fast connectivity checks so the auto-dial happens promptly (the
         // production default is 5s).
         let mut anemo_config = anemo::Config::default();
