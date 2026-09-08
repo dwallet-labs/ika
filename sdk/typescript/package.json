@@ -67,7 +67,7 @@
 		"@vitest/ui": "4.1.9",
 		"dotenv": "^17.4.2",
 		"execa": "^9.6.1",
-		"js-yaml": "^5.2.1",
+		"js-yaml": "^5.2.2",
 		"typedoc": "^0.28.19",
 		"typescript": "catalog:",
 		"vitest": "4.1.9"
