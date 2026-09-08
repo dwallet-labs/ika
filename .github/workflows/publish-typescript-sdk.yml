@@ -79,7 +79,7 @@ jobs:
       # publishing itself goes through pnpm, which does not use npm here.
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6.0.10
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
 
