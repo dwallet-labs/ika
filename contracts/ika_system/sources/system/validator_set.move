@@ -752,6 +752,22 @@ public(package) fun is_active_validator(self: &ValidatorSet, validator_id: ID): 
     self.active_committee.contains(&validator_id)
 }
 
+/// Returns true if `validator_id` is in either the current active committee
+/// or the next epoch's active committee. Mirrors the `is_current_committee
+/// || is_next_committee` predicate used internally by
+/// `request_withdraw_stake` / `withdraw_stake` to branch between the
+/// two-epoch-cooldown path and the inactive-direct-withdraw path.
+///
+/// Exposed so external callers (liquid staking pools, custody integrations)
+/// can route around the `EWithdrawDirectly` abort in
+/// `validator::request_withdraw_stake` when a validator they hold positions
+/// on has rotated out of both committees, without copying the full
+/// `BlsCommittee` to do the same check externally.
+public(package) fun is_in_committees(self: &ValidatorSet, validator_id: ID): bool {
+    self.active_committee.contains(&validator_id)
+        || self.next_epoch_active_committee.is_some_and!(|c| c.contains(&validator_id))
+}
+
 /// Returns all the validators who are currently reporting `validator_id`
 public(package) fun get_reporters_of(self: &ValidatorSet, validator_id: ID): VecSet<ID> {
     if (self.validator_report_records.contains(&validator_id)) {
