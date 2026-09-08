@@ -23,6 +23,8 @@
 
 use ika_protocol_config::ProtocolVersion;
 use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, wait_for_node_epoch};
+use std::time::Duration;
+use tokio::time::timeout;
 
 /// dWallet curve id for secp256k1 (matches the on-chain enum discriminant).
 const DWALLET_CURVE_SECP256K1: u32 = 0;
@@ -324,26 +326,39 @@ async fn ocs_verifier_v4_direct_validator_restart_resumes_and_keeps_serving() {
 
     // Reach a steady state: the pusher has folded Ika objects into the persisted
     // cache and the committee chain has crossed a boundary.
-    cluster.wait_for_epoch(2).await;
-    let (network_key_id, network_dkg_public_output) = cluster
-        .wait_for_network_key()
+    timeout(Duration::from_secs(120), cluster.wait_for_epoch(2))
         .await
-        .expect("network key DKG did not complete before the restart");
+        .expect("OCS restart test did not reach epoch 2 before stopping a validator");
+    let (network_key_id, network_dkg_public_output) =
+        timeout(Duration::from_secs(300), cluster.wait_for_network_key())
+            .await
+            .expect("network key DKG timed out before the restart")
+            .expect("network key DKG did not complete before the restart");
 
     // Restart one validator. Never bind its handle across stop()/start().
     let restart_name = cluster.validator_names[3];
+    eprintln!("OCS restart: stopping validator {restart_name}");
     cluster
         .swarm
         .node(&restart_name)
         .expect("validator exists")
         .stop();
-    cluster
-        .swarm
-        .node(&restart_name)
-        .expect("validator exists")
-        .start()
-        .await
-        .expect("validator failed to restart");
+    eprintln!("OCS restart: stopped; waiting for startup and inherited key preparation");
+    timeout(
+        Duration::from_secs(120),
+        cluster
+            .swarm
+            .node(&restart_name)
+            .expect("validator exists")
+            .start(),
+    )
+    .await
+    .expect(
+        "OCS validator restart must publish Sui inputs and prepare inherited keys \
+         before the epoch execution loop starts",
+    )
+    .expect("validator failed to restart");
+    eprintln!("OCS restart: validator started; requesting a fresh user DKG");
 
     // Liveness through the restart: a fresh user DKG must complete, which needs
     // the restarted validator's rehydrated verified reads + MPC ingestion.
@@ -368,7 +383,10 @@ async fn ocs_verifier_v4_direct_validator_restart_resumes_and_keeps_serving() {
 
     // And cross another boundary: the restarted validator's committee ratchet
     // resumed from persisted state, so reconfiguration still works.
-    cluster.wait_for_epoch(4).await;
+    timeout(Duration::from_secs(120), cluster.wait_for_epoch(4))
+        .await
+        .expect("OCS cluster did not reach epoch 4 after the validator restart");
+    eprintln!("OCS restart: user DKG and post-restart epoch advance completed");
 }
 
 /// Relay failover: in the mirrored topology the first two (direct) validators

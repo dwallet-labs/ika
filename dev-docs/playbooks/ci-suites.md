@@ -75,6 +75,13 @@ gh run watch <run-id>
 gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<attempt> / rust-tests-log-<attempt>
 ```
 
+The OCS direct-validator restart regression bounds startup at 120 seconds
+and reports whether it is stopping, starting, or driving the post-restart
+DKG. Its nextest override also terminates a test process after 20 minutes,
+covering synchronous shutdown and panic cleanup that async timeouts cannot
+interrupt. A timeout is a test failure, not a successful or skipped scenario;
+inspect the captured output before retrying it.
+
 ## Upgrade test (out-of-process harness; release validation is MANUAL)
 
 `.github/workflows/upgrade-test.yaml` runs the out-of-process harness
