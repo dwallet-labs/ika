@@ -46,6 +46,7 @@ use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, poll_until, wait_f
 use ika_types::crypto::AuthorityName;
 use prometheus::proto::MetricType;
 use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 /// How long each test holds a node's handoff anchor back. Long enough that a
 /// node which ignored the barrier would be observably up and in consensus
@@ -165,7 +166,13 @@ async fn test_boot_into_epoch_waits_for_handoff_data() {
         "restarting the validator with its handoff anchor withheld",
     );
     let started_at = Instant::now();
-    node.start().await.expect("validator failed to restart");
+    timeout(Duration::from_secs(120), node.start())
+        .await
+        .expect(
+            "restart must publish the Sui system/coordinator inputs and resolve inherited \
+             key metadata before the epoch execution loop starts",
+        )
+        .expect("validator failed to restart");
     let boot_elapsed = started_at.elapsed();
 
     assert!(

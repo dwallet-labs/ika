@@ -1,7 +1,11 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.98-trixie AS builder
+
+# Install the exact patch release even when the official image tag lags behind.
+ENV RUST_VERSION=1.98.1
+RUN rustup toolchain install "${RUST_VERSION}" --profile minimal && rustup default "${RUST_VERSION}"
 
 # Arguments
 ARG PROFILE=release
@@ -13,6 +17,7 @@ ARG BIN=ika-validator
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
 ENV GIT_REVISION=$GIT_REVISION
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 # Setup SSH for manual git
 RUN mkdir -p ~/.ssh
@@ -43,7 +48,7 @@ RUN cargo build --profile ${PROFILE} --locked --bin ${BIN}
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:stable-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 ARG WORKDIR=/opt
 ARG BUILD_DATE

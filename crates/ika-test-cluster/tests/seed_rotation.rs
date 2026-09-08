@@ -257,20 +257,18 @@ async fn rotate_root_seed(
 /// barrier that never released would hang this test until the harness killed
 /// it — an outcome indistinguishable from an unrelated infrastructure stall.
 ///
-/// The barrier gates only on the certificate's network-key items and ignores
-/// its `ValidatorMpcData` ones, so a node resolving onto its previous seed —
-/// or sitting the epoch out — has nothing to wedge on. This bound is what
-/// turns that reasoning into an assertion: exceed it and the test says which
-/// restart hung and why that is the interesting failure.
+/// Certified validator bundles are public artifacts recoverable from peers,
+/// independently of the rotated local seed. An MPC-inactive validator skips
+/// decryption after the barrier; retaining the previous seed must also allow
+/// preparation to finish. This bound catches either path waiting forever.
 async fn start_within_budget(node: &ika_swarm::memory::Node, what: &str) {
     match tokio::time::timeout(Duration::from_secs(180), node.start()).await {
         Ok(result) => result.unwrap_or_else(|e| panic!("failed to restart {what}: {e}")),
         Err(_) => panic!(
             "restarting {what} did not complete within 180s — the node is stuck before its \
-             epoch components start. The prepare-then-start handoff barrier is the only \
-             thing on that path that waits indefinitely; a rotating or sat-out validator \
-             must not wedge there, because the barrier does not gate on the certificate's \
-             ValidatorMpcData items."
+             epoch components start. Sui metadata and certified artifacts must be \
+             recoverable before the epoch execution loop starts; a rotated local seed \
+             must not prevent public-artifact recovery or MPC-inactive consensus startup."
         ),
     }
 }

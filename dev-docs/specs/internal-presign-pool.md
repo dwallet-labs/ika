@@ -88,11 +88,14 @@ the one with the largest `dkg_at_epoch`, ties broken by the smaller
 identically for the whole epoch — quorum-signed, local before the epoch's
 components start, never modified afterwards — so the answer is one value per
 epoch, fixed at construction, and every validator that holds a key holds the
-same one. A validator the barrier could not translate every certified key for
-holds NO key and sits NOA signing out for the epoch rather than choosing
-among the keys it can see; choosing among a subset is exactly the
-per-validator divergence the derivation exists to remove. The key is recorded
-with the assignment, so the sign session later instantiates under the key its
+same one. In every mode, the barrier recovers any missing key-id
+translation before starting the epoch's components. It requests missing
+chain blobs through the syncer and derives the identity on rayon; missing
+metadata also waits. A validator may not sit out NOA assignments because
+its local mapping is missing: NOA and global requests consume the same
+pool, so that would diverge later global checkpoints. A restart repeats the
+same resolution before replay, preserving the epoch's key choice. The key
+is recorded with the assignment, so the sign session later instantiates under the key its
 presign was drawn from.
 
 The previous rule — the oldest key in the validator's locally ADOPTED set,
@@ -118,16 +121,14 @@ consensus-delivery order and is retried on every following round. It is
 **not** rejected — there is nothing to reject it against, and an honest
 duplicate announcement could never follow (the dedup key again).
 
-Neither condition has a per-validator TIMING. The key is fixed at
-construction, so a validator either holds it all epoch or never does; a
-validator without it never draws from the pool at all, so it cannot bind a
-presign its peers bind to a different demand — it sits NOA signing out, its
-demands park and are dropped at the bound, and the pairing on every keyed
-validator is untouched. The pool is filled from consensus outputs in round
-order on every validator that processes the rounds, adopted or not, so
-"empty" is uniform per round. That leaves the assignment step with no local
-input: a demand delivered at round *R* is assigned at the first round at or
-after *R* whose pool can serve it, identically everywhere.
+Both conditions are network-uniform. Startup resolves the same key on
+every validator before any round is processed, including after a restart;
+only a certificate naming no key (or the genesis no-certificate case)
+leaves the whole committee keyless. The pool is filled from consensus
+outputs in round order on every validator that processes the rounds,
+adopted or not, so "empty" is uniform per round. A demand delivered at
+round *R* is assigned at the first round at or after *R* whose pool can
+serve it, identically everywhere.
 
 ### Why the park needs a bound anyway
 
@@ -135,9 +136,8 @@ The bound is a liveness backstop, not a security control. There is no
 announced key left for a byzantine member to point at nothing; what remains
 is a validator with no signing key this epoch — an epoch with no prior
 certificate (genesis, or the first epoch of a fresh network, where NOA
-signing waits for the first handoff), or a certified key the barrier could
-not translate on this validator — and a pool that never fills. A demand parked on either
-would otherwise sit in the queue for the rest of the epoch, and the sign
+signing waits for the first handoff) — and a pool that never fills. A demand
+parked on either would otherwise sit in the queue for the rest of the epoch, and the sign
 request behind it would wait forever for an assignment nobody will write.
 
 So a parked demand is dropped once it has been parked for
@@ -202,8 +202,8 @@ replayed drain READS it instead of deciding again: an already-dropped demand
 leaves the rebuilt queue without an assignment attempt, without re-logging at
 error level, and without re-counting the metric. That read does not need a
 signing key: a replay on a validator that entered the epoch without one reads
-the durable table directly, so a resolved demand leaves the queue instead of
-parking a second time under a bound measured from a delivery round long past.
+the durable table directly. Startup still resolves the same key before
+replay; this lookup never authorizes a different key choice on restart.
 The write happens before the demand leaves the queue, and a failed write
 keeps the demand parked for the next round — the same posture as a failed
 assignment.

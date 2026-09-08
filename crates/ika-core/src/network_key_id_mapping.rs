@@ -19,7 +19,9 @@
 //! instantiation, and a validator that never instantiated the key (a
 //! joiner) derives the id from its locally-held key blobs in the
 //! background when a handoff cert forces the translation — see
-//! `spawn_network_key_id_registration` in `network_dkg`. Without that
+//! `spawn_network_key_id_registration` in `network_dkg`. The startup barrier
+//! drives this recovery for every inherited key before consensus starts;
+//! adoption retains it for keys arriving during the epoch. Without that
 //! path, adoption needs the mapping, the mapping registers at
 //! instantiation, and instantiation needs adoption: a deadlock that
 //! wedges the joiner's epoch entry.

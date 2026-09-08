@@ -444,7 +444,7 @@ async fn missing_prior_cert_blob_is_refetched_from_peers_and_ingested() {
     // content-addressed and pinned by the quorum-signed cert).
     let (dark_digest, dark_blob) = dark_member_blob.expect("dark member blob");
     let serving_store = InMemoryBlobStore::new();
-    serving_store.insert(dark_digest, dark_blob);
+    serving_store.insert(dark_digest, dark_blob.clone());
     let server = build_server(
         serving_store,
         AnnouncementRelayHandle::new(),
@@ -464,6 +464,11 @@ async fn missing_prior_cert_blob_is_refetched_from_peers_and_ingested() {
         (serving_member, live_peer_id),
     ]);
     let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual.clone());
+    // A warm P2P copy does not satisfy the manager's durable read. Startup
+    // repair must still fetch/write through instead of skipping this digest.
+    blob_cache.in_memory().insert(dark_digest, dark_blob);
+    assert!(blob_cache.contains(&dark_digest));
+    assert!(blob_cache.get_persisted(&dark_digest).unwrap().is_none());
     let fetch_outcomes = IntCounterVec::new(
         Opts::new("test_mpc_data_blob_fetch_total", "test fetch outcomes"),
         &["result"],

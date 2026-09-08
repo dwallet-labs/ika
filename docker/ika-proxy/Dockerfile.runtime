@@ -1,5 +1,5 @@
 # Runtime-only image — expects pre-built binary in build context
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # CA certificates and other dependencies
 RUN apt-get update && \

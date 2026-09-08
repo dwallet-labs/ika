@@ -4,7 +4,11 @@
 # Usage:
 #   Linux x64 (default):  docker build --output type=local,dest=out .
 #   Linux arm64:          docker build --build-arg TARGET=aarch64-unknown-linux-gnu --output type=local,dest=out .
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.98-trixie AS builder
+
+# Install the exact patch release even when the official image tag lags behind.
+ENV RUST_VERSION=1.98.1
+RUN rustup toolchain install "${RUST_VERSION}" --profile minimal && rustup default "${RUST_VERSION}"
 
 ARG PROFILE=release
 ARG GIT_REVISION=unknown

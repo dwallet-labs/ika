@@ -179,6 +179,8 @@ impl SyncCommittees {
 /// itself does not depend on pull-mode sync, so deferring costs nothing.
 pub type CommitteeSource = watch::Receiver<Option<SyncCommittees>>;
 
+// Anemo fixes the generated RPC error type to Status; boxing it changes the API.
+#[allow(clippy::result_large_err)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.StateSync.rs"));
 }

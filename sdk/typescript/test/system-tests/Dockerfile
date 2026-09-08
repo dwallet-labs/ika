@@ -1,7 +1,11 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.90-bullseye AS builder
+FROM rust:1.98-trixie AS builder
+
+# Install the exact patch release even when the official image tag lags behind.
+ENV RUST_VERSION=1.98.1
+RUN rustup toolchain install "${RUST_VERSION}" --profile minimal && rustup default "${RUST_VERSION}"
 
 ARG GIT_REVISION=unknown
 ARG WORKDIR=/opt
@@ -28,7 +32,7 @@ RUN cargo build ${CARGO_BUILD_FLAGS} --profile release --bin ika-node
 # ==========================
 # Runtime stage
 # ==========================
-FROM debian:bullseye-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 ARG WORKDIR=/opt
 ARG BUILD_DATE

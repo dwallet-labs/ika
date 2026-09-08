@@ -63,6 +63,12 @@ impl BlobCache {
             || matches!(self.perpetual.get_mpc_artifact_blob(digest), Ok(Some(_)))
     }
 
+    /// Startup readiness must check the durable copy that the MPC manager
+    /// reads, even when the P2P cache still holds a memory-only copy.
+    pub fn get_persisted(&self, digest: &[u8; 32]) -> IkaResult<Option<Vec<u8>>> {
+        self.perpetual.get_mpc_artifact_blob(digest)
+    }
+
     /// The underlying in-memory store, exposed for startup hydration.
     pub fn in_memory(&self) -> &Arc<InMemoryBlobStore> {
         &self.in_memory

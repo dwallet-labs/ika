@@ -138,6 +138,21 @@ where
         }
     }
 
+    /// Seed the syncer's inputs before a validator can wait at the handoff
+    /// barrier. The epoch execution loop starts after that barrier, so it
+    /// cannot be the first publisher of the objects needed to release it.
+    /// These are the same verified reads used by the normal epoch loop;
+    /// this preparation performs no checkpoint writes or epoch transitions.
+    pub(super) async fn prepare_epoch_inputs(&self) {
+        let system = self.must_get_system_inner().await;
+        let coordinator = self.must_get_dwallet_coordinator_inner().await;
+        let _ = self.system_object_sender.send(Some(system));
+        let _ = self
+            .dwallet_coordinator_object_sender
+            .send(Some(coordinator));
+        info!("published initial Sui system and coordinator inputs before epoch execution");
+    }
+
     /// Retrieve the System wrapper + its inner. OCS-verified when a reader is
     /// wired in; otherwise read from the direct gRPC client. Retries forever.
     async fn must_get_system_inner(&self) -> (System, SystemInner) {

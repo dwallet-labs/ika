@@ -186,6 +186,10 @@ impl SuiConnectorService {
             >,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
 
+        // The handoff barrier needs the syncer's key metadata before
+        // `run_epoch` can start. Publish its verified root objects now.
+        sui_executor.prepare_epoch_inputs().await;
+
         let task_handles = SuiSyncer::new(sui_client.clone(), sui_connector_metrics.clone())
             .run(
                 next_epoch_committee_sender,

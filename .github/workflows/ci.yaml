@@ -15,7 +15,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   # Change to specific Rust release to pin or `stable` for the latest stable version.
-  rust_stable: 1.97.1
+  rust_stable: 1.98.1
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
   CARGO_INCREMENTAL: 0
@@ -216,6 +216,71 @@ jobs:
         run: ./scripts/simtest/install.sh
       - name: Run Clippy under msim
         run: cargo simtest clippy --all-targets --all-features -- -D warnings
+
+  noa-presign-regressions:
+    name: NOA presign regressions
+    runs-on: ika-k8s-large
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+      - name: Install build dependencies
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: noa-presign-release
+      - name: Run NOA startup and replay regressions
+        # Package scope keeps real crypto; workspace scope would unify the
+        # cluster crate's mock feature. Check counts so a rename cannot turn
+        # either filter into a successful run of zero tests.
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-core --lib \
+            dwallet_mpc::network_owned_address_signing_key::tests -- --test-threads=1 \
+            | tee "$RUNNER_TEMP/noa-key-preparation.log"
+          grep -qE '^test result: ok\. 9 passed' "$RUNNER_TEMP/noa-key-preparation.log"
+          cargo test --locked --release -p ika-core --lib -- --exact \
+            dwallet_mpc::dwallet_mpc_service::tests::noa_startup_preserves_global_presign_checkpoint \
+            dwallet_mpc::dwallet_mpc_service::tests::noa_restart_preserves_later_noa_assignment \
+            --test-threads=1 | tee "$RUNNER_TEMP/noa-presign-regressions.log"
+          grep -qE '^test result: ok\. 2 passed' "$RUNNER_TEMP/noa-presign-regressions.log"
+          cargo test --locked --release -p ika-node --lib -- --exact \
+            tests::all_cert_network_key_outputs_held_locally_cases --test-threads=1 \
+            | tee "$RUNNER_TEMP/noa-material-readiness.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/noa-material-readiness.log"
+      - name: Run inherited epoch preparation regressions
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-core --lib -- \
+            dwallet_mpc::epoch_start_data::tests \
+            epoch_startup_ \
+            dwallet_mpc::integration_tests::mid_epoch_restart_keys::missing_prior_cert_blob_is_refetched_from_peers_and_ingested \
+            --test-threads=1 | tee "$RUNNER_TEMP/epoch-preparation.log"
+          grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/epoch-preparation.log"
+      - name: Upload regression logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: noa-presign-regressions
+          path: |
+            ${{ runner.temp }}/noa-*.log
+            ${{ runner.temp }}/epoch-preparation.log
 
   cargo-check:
     name: Cargo Test Check
