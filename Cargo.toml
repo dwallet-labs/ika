@@ -370,3 +370,7 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+
+# Consensus owns full-epoch replay and reports progress to the application.
+[patch."https://github.com/MystenLabs/sui"]
+consensus-core = { git = "https://github.com/dwallet-labs/sui", rev = "7d65f601c39542ddc47d4aecba9c672a74134588" }
