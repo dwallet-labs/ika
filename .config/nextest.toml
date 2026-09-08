@@ -31,6 +31,13 @@ fail-fast = false
 # dies (OOM/eviction), the live log is the only surviving evidence.
 failure-output = "immediate"
 
+[[profile.cluster.overrides]]
+# The OCS restart test normally finishes in a few minutes. Bound the whole
+# process as well as its async waits: synchronous node shutdown or unwinding
+# a failed startup can block before an in-test timeout can report failure.
+filter = 'binary(ocs_verifier) & test(=ocs_verifier_v4_direct_validator_restart_resumes_and_keeps_serving)'
+slow-timeout = { period = "60s", terminate-after = 20 }
+
 [profile.simtestnightly]
 # Print out output for failing tests as soon as they fail, and also at the end
 # of the run (for easy scrollability).

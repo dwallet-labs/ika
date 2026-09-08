@@ -458,6 +458,30 @@ back to the per-read monotone defenses. The index is bounded by a retain
 window (`CHANGESET_RETAIN_WINDOW`, larger than one epoch). Direct nodes do
 not run it — their own folder is already a complete in-order fold.
 
+**Retention gaps and progress diagnostics.** A relay may answer a request
+below its retention floor with its earliest available page. An empty index
+may bootstrap there after normal committee BLS and artifacts verification.
+An initialized index requests exactly `head + 1`: the client rejects a
+later first entry and tries the other serving peers. When a gap is known from verified gossip or a retention-floor response,
+empty pages also try other peers; exhausted peers remain an error while
+that successor is missing. A healthy poll with no known gap accepts an
+empty page without probing the whole committee. A retention gap mixed
+with empty responses remains an error. The receiver independently
+checks every page sequence, so a gap within a page is also an error, rather
+than a successful zero-advance poll. It never resets the index, skips a
+missing checkpoint, or weakens `previous_digest`, BLS or artifacts binding.
+If every available relay has pruned the successor, recovery requires a relay
+that retains it; this change does not manufacture missing verified history.
+
+The out-of-order queue retains at most 256 changesets. It counts each drop,
+reports contiguous head, highest verified sequence seen and queue depth,
+and warns at most once a minute per index. Last-progress Unix time changes
+only when the contiguous head advances, including draining verified queued
+successors. Gossip and pull paths share these metrics. Fetch failures and
+non-contiguous pages are counted separately. Metrics use no checkpoint,
+object or error-message labels. A non-running/uninitialized index has head
+and highest-seen `-1`, and last-progress time `0`.
+
 **Eclipse residual (known non-guarantee, NARROWED by the currency gate):**
 the monotone defenses are relative, not absolute. A fresh node whose only
 relay is malicious can be pinned to an internally-consistent
@@ -845,7 +869,15 @@ both in `watermark_guard.rs` / `push_worker.rs`:
 `ika_ocs_pusher_stalled` is computed from the raw sample *before* the
 rate bound decides, so a run of refused ticks reads as the stall it is.
 The gauge is neither monotone nor persisted, so a bad sample cannot
-latch it.
+latch it. Despite its legacy name, the flag means `upstream - cursor > 100`,
+not that the cursor stopped. `ika_ocs_pusher_lag_checkpoints` exposes the raw
+sampled difference (`-1` when no pusher runs), and
+`ika_ocs_pusher_last_progress_timestamp_seconds` records scan-cursor advance
+(`0` until the first advance). Fast-forward and scanning failed fetches both
+advance that cursor, so operators must inspect fetch failures, cache gaps
+and verified-read failures independently. None of these diagnostics change
+watermark admission or authorize state.
+
 The folder logs the watermark refusal as the stall reason once per stretch,
 then logs recovery. The reader logs refusals at most once per minute across
 all reads and refusal stretches. Both counters still count every refusal.

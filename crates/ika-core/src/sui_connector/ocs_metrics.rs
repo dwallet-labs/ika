@@ -59,12 +59,21 @@ pub struct OcsMetrics {
     /// to act — typically re-anchor against a full-retention source).
     pub ratchet_failures_total: IntCounterVec, // labels: ["reason"]
 
+    pub pusher_lag_checkpoints: IntGauge,
+    pub pusher_last_progress_timestamp_seconds: IntGauge,
+    pub changeset_contiguous_head: IntGauge,
+    pub changeset_highest_seen: IntGauge,
+    pub changeset_pending_depth: IntGauge,
+    pub changeset_last_progress_timestamp_seconds: IntGauge,
+    pub changeset_dropped_total: IntCounter,
+    pub changeset_fetch_failures_total: IntCounter,
+    pub changeset_gap_total: IntCounter,
+
     // Pusher (sui-state-direct)
     pub pusher_cursor_seq: IntGauge,
-    /// 1 while the local pusher is stalled (upstream advanced but the pusher
-    /// cursor has not for `pusher_stall_threshold` checkpoints); 0 otherwise.
-    /// A stalled pusher freezes the cache, so direct cache-first reads fall
-    /// through to the network (see `cache_first_stale_total`).
+    /// Legacy lag flag: 1 when the sampled upstream watermark exceeds the
+    /// scan cursor by more than 100 checkpoints, even if the cursor advances.
+    /// Use last-progress time to distinguish lag from a stopped scanner.
     pub pusher_stalled: IntGauge,
     pub pusher_pushed_total: IntCounter,
     pub pusher_skipped_irrelevant_total: IntCounter,
@@ -169,6 +178,51 @@ impl OcsMetrics {
                 registry,
             )
             .unwrap(),
+            pusher_lag_checkpoints: register_int_gauge_with_registry!(
+                "ika_ocs_pusher_lag_checkpoints",
+                "Upstream checkpoint watermark minus scanned cursor (unauthenticated diagnostic only); -1 when no pusher is active",
+                registry,
+            ).unwrap(),
+            pusher_last_progress_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_ocs_pusher_last_progress_timestamp_seconds",
+                "Unix time of the last scan cursor advance, including fast-forward; 0 before any advance; not proof of successful cache folding",
+                registry,
+            ).unwrap(),
+            changeset_contiguous_head: register_int_gauge_with_registry!(
+                "ika_ocs_changeset_contiguous_head",
+                "Highest contiguously verified changeset sequence; -1 before bootstrap or when no receiver runs",
+                registry,
+            ).unwrap(),
+            changeset_highest_seen: register_int_gauge_with_registry!(
+                "ika_ocs_changeset_highest_seen",
+                "Highest artifacts-bound and committee-verified changeset sequence received; -1 before any entry",
+                registry,
+            ).unwrap(),
+            changeset_pending_depth: register_int_gauge_with_registry!(
+                "ika_ocs_changeset_pending_depth",
+                "Out-of-order changesets retained awaiting a predecessor, capped at 256",
+                registry,
+            ).unwrap(),
+            changeset_last_progress_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_ocs_changeset_last_progress_timestamp_seconds",
+                "Unix time of the last contiguous changeset head advance; 0 before bootstrap",
+                registry,
+            ).unwrap(),
+            changeset_dropped_total: register_int_counter_with_registry!(
+                "ika_ocs_changeset_dropped_total",
+                "Out-of-order changesets dropped because the pending queue is at capacity",
+                registry,
+            ).unwrap(),
+            changeset_fetch_failures_total: register_int_counter_with_registry!(
+                "ika_ocs_changeset_fetch_failures_total",
+                "Changeset page fetch attempts that failed, including exhausted relay retention-gap fallback",
+                registry,
+            ).unwrap(),
+            changeset_gap_total: register_int_counter_with_registry!(
+                "ika_ocs_changeset_gap_total",
+                "Changeset pages rejected for a non-contiguous sequence",
+                registry,
+            ).unwrap(),
             pusher_cursor_seq: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_cursor_seq",
                 "Highest Sui checkpoint sequence the sui-state-direct pusher has scanned",
@@ -177,7 +231,7 @@ impl OcsMetrics {
             .unwrap(),
             pusher_stalled: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_stalled",
-                "1 while the sui-state-direct pusher is stalled (upstream advanced but the cursor has not); 0 otherwise",
+                "Legacy lag flag: 1 while the sampled upstream watermark is over 100 checkpoints ahead of the scan cursor; does not imply no progress",
                 registry,
             )
             .unwrap(),
@@ -296,6 +350,9 @@ impl OcsMetrics {
         metrics
             .committee_head_epoch
             .set(Self::COMMITTEE_HEAD_NOT_APPLICABLE);
+        metrics.pusher_lag_checkpoints.set(-1);
+        metrics.changeset_contiguous_head.set(-1);
+        metrics.changeset_highest_seen.set(-1);
         metrics
     }
 
