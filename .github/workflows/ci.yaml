@@ -273,6 +273,13 @@ jobs:
             dwallet_mpc::integration_tests::mid_epoch_restart_keys::missing_prior_cert_blob_is_refetched_from_peers_and_ingested \
             --test-threads=1 | tee "$RUNNER_TEMP/epoch-preparation.log"
           grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/epoch-preparation.log"
+      - name: Run consensus-owned replay regressions
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-core --lib \
+            consensus_manager::replay_tests -- --test-threads=1 \
+            | tee "$RUNNER_TEMP/consensus-replay.log"
+          grep -qE '^test result: ok\. 3 passed' "$RUNNER_TEMP/consensus-replay.log"
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -281,6 +288,7 @@ jobs:
           path: |
             ${{ runner.temp }}/noa-*.log
             ${{ runner.temp }}/epoch-preparation.log
+            ${{ runner.temp }}/consensus-replay.log
 
   cargo-check:
     name: Cargo Test Check

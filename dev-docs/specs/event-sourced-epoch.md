@@ -3,171 +3,94 @@
 **The consensus store is the only truth for epoch-scoped state. Everything
 derived from it is held in memory and rebuilt by replay on every restart.**
 
-Actors: `ConsensusManager::start`, `consensus_manager::boot_replay`,
-`ConsensusHandler::handle_consensus_commit`, the in-memory derived state on
-`AuthorityPerEpochStore`, the `DWalletMPCService` round drain, and the
-checkpoint builders' signature outputs.
+Actors: `ConsensusManager::start`, consensus-core's `CommitObserver` and
+`CommitConsumerMonitor`, `ConsensusHandler::handle_consensus_commit`, the
+in-memory state on `AuthorityPerEpochStore`, the MPC round drain, and the
+checkpoint builders.
 
-What the store still keeps on disk, and why:
+What remains on disk, and why:
 [`../preserved-epoch-state-audit.md`](../preserved-epoch-state-audit.md).
 
-## The model
+## Storage and replay ownership
 
-On every start, a node opening the current epoch's store:
+**Consensus-core is the sole owner of consensus storage and replay.** Ika
+never opens that database, reconstructs stored sub-DAGs, or polls a storage
+handle. It consumes commits and process-local progress through consensus APIs.
 
-1. **Starts with nothing.** Derived state is in memory, so opening the store
-   is the only state it can have. There is no deletion step and no
-   post-deletion invariant to assert, because there is nothing to delete:
-   the state that used to be wiped at boot is never written.
-2. **Replays** the epoch's commits from the consensus store, in bounded
-   batches of 250 — read a batch, fold it through the same
-   `handle_consensus_commit` that processes live commits, release it, read
-   the next. Memory is flat in the epoch's age for the commits themselves:
-   one batch of commits and their blocks is resident at a time. What the
-   fold ACCUMULATES is not flat, and is the subject of the memory section
-   below. The replay reads the store directly and does not go through
-   consensus-core's commit channel, which is unbounded and would otherwise
-   buffer the whole epoch between a producer that scans at disk speed and a
-   consumer that folds at handler speed.
-3. **Starts consensus** with the index the replay reached, as both
-   `replay_after_commit_index` and `consumer_last_processed_commit_index`,
-   and follows the live tail from there.
+On every startup:
 
-There is **no watermark**. The handler folds every commit of the epoch on
-every boot. Exactly-once is replaced by *deterministic fold from empty*: the
-double-apply failure shape requires surviving partial state, and a restart
-that keeps none removes the category rather than defending against it.
+1. The handler starts with empty derived state. There is no deletion pass or
+   durable execution watermark.
+2. `CommitConsumerArgs::new_with_full_replay()` requests history from index
+   zero. Consensus opens its own database and discovers the replay target.
+   Until it reports that target, replay readiness is unknown, not complete.
+3. Consensus publishes the target and the observed committed head, then sends
+   historical commits through its normal decoding and finalization path.
+   The same `ConsensusHandler` loop processes historical and live commits.
+4. The handler reports arrival to the liveness watchdog before folding, and
+   acknowledges the commit through `set_highest_handled_commit` only after
+   the fold completes. Consensus waits for those acknowledgements between
+   recovery batches of 250 commits. This bounds queued finalized replay data
+   across both the finalizer and output channels; scheduler yields alone do
+   not provide this bound.
+5. After consensus startup returns, Ika publishes the consumer monitor to the
+   replay waiters. They release only when the target is known and applied.
+   The MPC receive phase keeps draining throughout replay; operations that
+   submit to consensus and checkpoint builders remain behind that barrier.
 
-**The split is structural.** A `DBMap` field on `AuthorityEpochTables`
-survives restarts by definition; an in-memory field on
-`AuthorityPerEpochStore` is rebuilt by definition. There is no classification
-to declare, no registry to keep in step with the struct, and no way to get
-the two out of sync — which is the whole reason the earlier design's registry
-macro, its wipe, and the three tests that enforced the classification are
-gone rather than adapted. What remains is one test pinning the set of tables
-that stay on disk, so adding one is a deliberate act.
+The progress API also publishes newly committed heads independently of handler
+progress. `MysticetiConsensusHandler::spawn_progress_publisher` observes that
+watch channel on a separate task, keeping catch-up detection and replay
+metrics live even while the fold is blocked. This requires no database or
+consensus-authority handle in Ika.
 
-## Why this is sound
+There is one primary open, owned by consensus-core. The former manual replay
+opened and closed a primary before consensus opened it again; typed-store's
+metrics workers could retain the first handle and cause a same-process lock
+failure. That extra open, its lock-release probe, and Ika's duplicate commit
+decoder are removed.
 
-Deterministic derivation from the commit stream is already a hard
-cross-node requirement — every validator must reach identical checkpoints
-and identical convictions from the same commits, or the network forks.
-Relying on the same property *within* one node across restarts adds no new
-assumption. If a piece of state cannot be re-derived, that is not a replay
-problem; it was never a function of consensus, and it belongs on disk (see
-the audit).
+## Replay target and safety
 
-It is also not a new architecture. **Sui is already event-sourced**; what it
-keeps is a durable *snapshot* taken only at boundaries it has proven safe.
-Its consensus output is quarantined and flushed only once the checkpoint
-queue has drained below the certified watermark; everything above that
-watermark is re-replayed on boot through a deliberately side-effect-free
-path (`sui-core/src/consensus_handler.rs:1009`
-`handle_prior_consensus_commit`), and it even *rewinds* its replay point by
-`consensus_num_requested_prior_commits_at_startup`
-(`sui-protocol-config/src/lib.rs:2283`, used at
-`sui-core/src/consensus_manager/mod.rs:302`) to widen the window it
-re-derives rather than trusts. Consensus-core does the same thing in
-miniature for its own leader schedule: `LeaderScheduleV3::from_store`
-(`consensus/core/src/leader_schedule_v3.rs:83`) rebuilds live state from
-stored commits, and
-`test_recovery_replay_produces_same_state_as_live` (:1088) is the property
-test for it.
+The target is chosen by consensus-core using the same protocol configuration
+as live consensus:
 
-What this change does is remove the snapshot and set the replay horizon to
-the epoch. The cost is restart latency; what is bought is that there is no
-second record to disagree with the store.
+- **Voting off (Ika's current configuration):** all stored commits are final
+  on arrival, so replay covers the store's last commit even when there are no
+  finalized-commit rows.
+- **Voting on:** the readiness target is the last finalized commit. Recovery
+  still feeds the unfinalized tail through normal finalization, but does not
+  wait for that tail's application before starting live consensus; resolving
+  it can require live network progress.
 
-(Upstream anchors here and below are at the pinned rev — `mainnet-v1.77.2`,
-`51d177ad7d65102fc368b582408f466d97b31548`. Re-verify on a Sui bump; line
-numbers move.)
+The target is fixed for that startup. The reported committed head can continue
+advancing. Comparing the previous consumer's applied index with its fixed
+replay target distinguishes actual live participation from replay alone for
+the amnesia-recovery boot counter.
 
-## What the fold covers, and where it stops
+There is no second persisted cursor that can outrun a damaged consensus store.
+An empty store produces a target of zero; a shorter retained history produces
+its own shorter target. Consensus retains its checks for gaps, missing blocks,
+and inconsistent finalization order, and rejects a finalized target beyond
+its stored head. A consumer disappearing before acknowledging a replay batch
+fails startup instead of leaving recovery waiting indefinitely.
 
-**The replay target follows `transaction_voting_enabled`, and on ika that
-means the store's last commit.**
+## Why rebuilding is sound
 
-- **Voting OFF — ika at every protocol version.** Every commit is final on
-  arrival, so the target is `Store::read_last_commit`. No transaction is ever
-  rejected, which makes an unfinalized commit's rejected set empty *by
-  construction* rather than unknown; folding it is exactly as sound as
-  folding a finalized one. The fold therefore covers the whole epoch and
-  consensus re-delivers nothing.
-- **Voting ON.** The replay stops at the store's last **finalized** commit
-  (`Store::read_last_finalized_commit`), not its last commit. An unfinalized
-  commit has no stored set of rejected transaction indices; a validator that
-  folded one would treat as accepted a transaction its peers reject, and its
-  derived state would diverge from theirs on a technicality of when it
-  happened to restart. Those commits belong to consensus-core, which delivers
-  them through the commit finalizer once it starts. The tail consensus itself
-  has to recover is then bounded by how much finalization was in flight when
-  the process died, not by the epoch's age — which is also what keeps that
-  recovery clear of the unbounded-channel problem above.
+Every validator already has to derive identical checkpoints and convictions
+from the same ordered commits. Rebuilding from empty uses that same fold on
+restart. The handler does not restore partly applied derived state, so replay
+cannot double-apply surviving partial output.
 
-The gate is the protocol flag and **not** `read_last_finalized_commit() ==
-None`, because that `None` means two incompatible things. Under voting off
-consensus-core's `CommitFinalizer` takes its `already_finalized` branch for
-every commit and never reaches `add_finalized_commit`
-(`consensus/core/src/commit_finalizer.rs`), so the finalized-commits column
-family is never written at all and `None` means "this store does not record
-finalization". Under voting on the same `None` means "commits exist, none has
-finalized yet" — the case that must fold nothing.
+The split is structural: durable fields are `DBMap`s on `AuthorityEpochTables`;
+derived fields are in memory on `AuthorityPerEpochStore`. State that cannot be
+re-derived belongs in the durable audit linked above. Replay changes neither
+commit ordering nor transaction voting, rejection rules, or serialization.
 
-Reading that `None` as "nothing to replay" is what made this whole fold dead
-code in production: on every ika node, at every protocol version, the replay
-early-returned 0, the three `ika_consensus_boot_replay_*` gauges read 0
-forever, and the epoch was rebuilt by consensus-core's
-`CommitObserver::recover_and_send_commits` instead. That path is correct and
-memory-bounded — it scans in the same 250-commit batches and yields between
-commits — but it is not the path this spec describes and not the path the
-observability watches. Measured on a 4-validator net with real class-groups
-traffic: 72,592 and 74,388 commits, both restarts, deterministic (ika #2085,
-found during the ika #2064 release-validation measurements). Every unit test
-built its fixture with finalized commits, which is why CI stayed green
-through all of it; the
-regression test is now built the way production writes the store —
-`replay_folds_every_commit_when_transaction_voting_is_off`, with
-`replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized` pinning
-the other reading.
-
-The handoff under voting off is the equality case in
-`CommitObserver::recover_and_send_commits`: `last_commit_index ==
-replay_after_commit_index`, which returns early logging "Nothing to recover".
-The fold and consensus are disjoint — no commit is folded twice, and the
-first commit consensus delivers live is `replay_after + 1`.
-
-## Why the old watermark could brick a validator
-
-The index handed to consensus used to come from the per-epoch store's own
-record of how far the handler got. That put one logical fact — "how much of
-this epoch has been consumed" — in two databases with no shared fsync
-discipline, and `CommitObserver::recover_and_send_commits` asserts
-`last_commit_index > replay_after_commit_index`. A storage incident that
-cost the consensus store its unsynced tail while the per-epoch store kept
-its record left the two out of order, and every boot aborted on that
-assertion — a validator down for up to a full epoch (ika #2057).
-
-Reading the index from the consensus store closes it structurally, not
-tolerantly. **This one line is the fix**: `replay_after` now comes from the
-same database consensus is about to open (`Store::read_last_commit`, or
-`read_last_finalized_commit` under voting on — see the target rule above), so
-both of the upstream assertions become unreachable rather than merely
-unlikely — the store-behind one
-(`consensus/core/src/commit_observer.rs:162`,
-`assert!(last_commit_index > replay_after_commit_index)`) because the two
-numbers are the same number, and the store-empty one (:147, `assert_eq!(
-replay_after_commit_index, 0)`) because an empty store yields exactly 0.
-
-Nothing else in this change is load-bearing for #2057. In particular the
-replay's own gap assertion — that a batch scan returns as many commits as
-the range asked for — guards a *different* failure (a store pruned or
-truncated in the middle, which would silently drop a commit's effects from
-everything the fold derives). Useful, but not the #2057 guard; do not read
-it as one.
-
-The torn state is now unbuildable rather than merely handled: there is no
-second number left to be ahead of the consensus store's, which is what
-`a_consensus_store_that_lost_its_tail_replays_to_its_own_head` asserts.
+The consensus patch backports the full-replay API from
+[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909) to upstream `mainnet-v1.77.2`
+(`51d177ad7d65102fc368b582408f466d97b31548`). Ika patches only `consensus-core`;
+its companion Sui crates keep their existing upstream source identity.
 
 ## The determinism contract
 
@@ -333,17 +256,11 @@ entry threshold. A validator that fell a hundred thousand rounds behind
 collapse the gate exists to prevent; only a restart would rescue it, through
 the boot replay's head publication.
 
-The head is therefore published from the **consensus store**, which
-consensus-core writes as commits are decided and which nothing about that path
-makes wait on the fold (`MysticetiConsensusHandler::spawn_observed_head_publisher`,
-sampling `read_last_commit` every 5s). Two constraints on that task, both
-load-bearing:
-
-- it lives in the handler's own `JoinSet`, so `abort()` at the epoch boundary
-  is exactly its lifetime;
-- it holds the **store** handle from `ConsensusAuthority::store()`, never the
-  authority — `ConsensusManager::shutdown` does `Arc::try_unwrap` on the
-  authority and panics on any surviving reference.
+The head is published by **consensus-core**, through
+`CommitConsumerMonitor::subscribe_progress()`. Its producer runs independently
+of the application fold, so it can report the actual backlog while the fold
+is blocked. Ika's publisher lives in the handler's `JoinSet` and stops at the
+epoch boundary. It holds neither a database nor a consensus-authority handle.
 
 ### Where to draw the line
 
@@ -381,9 +298,13 @@ per-round tables it measured are two changes gone.)
 
 **Where the backlog goes instead — and why it is bounded.** The fold can no
 longer absorb a backlog, so it accumulates one queue upstream, in
-consensus-core's commit channel, which is unbounded. Two different paths feed
+consensus-core's commit channel, which is unbounded. Three different paths feed
 that queue and they have different bounds:
 
+- **Startup replay, bounded by application acknowledgements.** Consensus
+  waits after each 250-commit recovery batch until the handler has folded its
+  finalized prefix. Unfinalized history retains consensus's normal
+  finalization path rather than blocking network startup.
 - **Deep lag (sync-fetched), bounded.** `commit_syncer` stops scheduling
   fetches when `highest_handled_index + threshold < range_end`
   (`commit_syncer.rs:238`), reading `commit_consumer_monitor.highest_handled_commit()`
@@ -625,8 +546,10 @@ to delete — so restart-to-live is the replay and only the replay. Three
 gauges make it observable: `ika_consensus_boot_replay_target_commit_index`,
 `ika_consensus_boot_replay_folded_commit_index` (the two together are the
 remaining boot work) and `ika_consensus_boot_replay_latency_seconds`. The
-replay also logs progress per batch, because a boot that legitimately takes
-tens of minutes must be distinguishable from one that is stuck.
+consensus recovery logs its batch progress, and the handler publishes the
+applied cursor and completion latency from the consensus progress API. A boot
+that legitimately takes tens of minutes remains distinguishable from one
+that is stuck.
 
 What the boot pays instead is the memory it accumulates as it folds, which is
 the section above rather than a latency term.
@@ -828,24 +751,29 @@ In-process, in `ika-core`:
 | a folded transaction is marked processed before its waiter wakes | `a_folded_transaction_is_marked_processed_before_its_waiter_wakes` |
 | the `all_voted` count is the quorum-crossing membership, and a restart re-derives it | `the_pinned_all_voted_count_is_the_quorum_crossing_membership`, `a_restart_re_derives_the_same_pinned_count_and_grace_anchor` |
 | a restart resets the freeze gauges, and the re-fold re-publishes them | `freeze_metrics_reset_on_restart_and_republished_by_the_refold` |
-| the replay reaches the store head, stops below the unfinalized tail under voting on, crosses batch boundaries, and survives a lost tail | `consensus_manager::boot_replay::tests` |
-| the fold covers the epoch against the store production writes — commits, no finalized-commits rows | `replay_folds_every_commit_when_transaction_voting_is_off` |
-| the same empty finalized-commits column family folds NOTHING under voting on | `replay_folds_nothing_when_voting_is_on_and_no_commit_has_finalized` |
-| a finalization hole below the head stops the node | `a_finalization_hole_below_the_head_stops_the_replay` |
-| replayed commits arm the commit-liveness watchdog | `replayed_commits_feed_the_commit_liveness_sink` |
+| the real consensus authority replays through the same handler as live commits, with identical derived state and every round delivered | `consensus_owned_replay_matches_the_live_handler_and_reports_every_round` |
+| empty and shorter histories produce their own replay targets without a separate watermark | `consensus_owned_replay_discovers_empty_and_short_histories` |
+| the committed head remains visible while folding is blocked, and readiness waits for the final fold | `consensus_head_is_visible_while_the_handler_is_blocked_and_replay_waits` |
+| consensus recovery waits for applied commits between batches, including stores with no finalized rows | consensus-core: `full_replay_is_paced_by_applied_commits_even_without_finalized_rows` |
+| the unfinalized tail does not deadlock consensus startup | consensus-core: `full_replay_does_not_wait_for_an_unfinalized_tail` |
+| an undiscovered target cannot release replay waiters | consensus-core: `full_replay_waits_for_storage_and_for_the_consumer` |
+| a missing finalized record or a finalized target beyond stored history fails startup | consensus-core: `a_finalization_hole_below_the_replay_target_fails_startup`, `a_finalized_target_beyond_stored_history_fails_replay` |
+| a vanished replay consumer cannot leave startup waiting forever | consensus-core: `a_closed_full_replay_consumer_does_not_leave_startup_waiting` |
 | a settled checkpoint is not re-signed | `a_rebuilt_checkpoint_is_not_re_signed_once_a_quorum_has_certified_it` |
 | a replay longer than the channel completes, and its drain submits nothing | `a_replay_longer_than_the_channel_still_finishes` |
-| the catch-up head is published without folding anything | `the_head_publisher_reports_the_store_head_without_folding_anything` |
 | an aborted park releases the watchdog hold | `an_aborted_park_still_releases_the_watchdog_hold` |
 | a park still in progress already counts as blocked time | `a_wedged_drain_is_visible_only_on_the_blocked_time_gauge` |
 | blocked time does not dip when a park ends (what the delta-fed counter rests on) | `blocked_time_never_goes_backwards_when_a_park_ends` |
 | the watchdog holds off a real full round channel | `a_full_round_channel_holds_the_watchdog_while_commits_queue` (in `ika-node`) |
 
-Every one of these was validated by injecting the fault it claims to catch
-and confirming the predicted evidence (`../playbooks/test-testing.md`) — which
-is how the prune's two boundary conditions were found to need tests at all:
-neither the `<=` off-by-one nor the lost sequence-number cursor was visible
-from the design, only from the call sites.
+The derived-state tests were validated by injecting their faults and checking
+the predicted evidence (`../playbooks/test-testing.md`), including the prune's
+`<=` off-by-one and lost sequence-number cursor. The new replay guards use
+three temporary source faults: remove the recovery batch wait, acknowledge
+before folding, and remove the independent head publication. Each must fail
+its corresponding blocked-consumer assertion; restore the source and rerun
+the clean tests. Corrupt-history and closed-consumer tests inject those
+conditions directly into their fixtures.
 
 What in-process coverage cannot reach, and belongs on CI or a cluster:
 

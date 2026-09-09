@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::consensus_manager::ConsensusManagerMetrics;
 use crate::system_checkpoints::SystemCheckpointService;
 use crate::{
     authority::{
@@ -24,9 +25,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::storage::Store;
-use consensus_core::storage::rocksdb_store::RocksDBStore;
-use consensus_core::{CommitAPI, CommitConsumerMonitor};
+use consensus_core::CommitConsumerMonitor;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -37,12 +36,11 @@ use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use lru::LruCache;
 use mysten_metrics::{monitored_future, monitored_mpsc::UnboundedReceiver, monitored_scope};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::Instant;
 use sui_macros::{fail_point_async, fail_point_if};
 use sui_types::base_types::EpochId;
 use tokio::task::JoinSet;
-use tokio::time::sleep;
-use tracing::{debug, error, instrument, trace_span, warn};
+use tracing::{debug, error, info, instrument, trace_span, warn};
 
 /// Notified once for every consensus commit this node RECEIVES.
 ///
@@ -240,28 +238,13 @@ impl<C> ConsensusHandler<C> {
             sink.commit_received(round);
         }
     }
-
-    /// Publishes the consensus store's head before the boot replay folds
-    /// anything.
-    ///
-    /// Arrival reporting alone is not enough during replay: the replay's
-    /// arrivals ARE its folds, so under a blocking transport they advance
-    /// only as fast as the drain and the gate would see a gap no larger than
-    /// the channel. Publishing the target up front is what lets the gate see
-    /// the real backlog — the hundreds of thousands of rounds it exists for.
-    pub(crate) fn publish_observed_consensus_head(&self, round: u64) {
-        self.epoch_store.record_observed_consensus_head_round(round);
-    }
 }
 
 impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
     /// Folds one consensus commit into this epoch's derived state.
     ///
-    /// The same entry point serves live commits and the boot replay that
-    /// rebuilds the epoch from the consensus store
-    /// (`consensus_manager::boot_replay`) — deliberately, because the two must
-    /// produce identical state from identical commits, and a second fold
-    /// implementation is a second thing that can disagree.
+    /// Consensus-core delivers both historical and live commits through this
+    /// entry point, so replay and live processing derive the same state.
     #[instrument(level = "debug", skip_all)]
     pub(crate) async fn handle_consensus_commit(
         &mut self,
@@ -488,26 +471,17 @@ pub(crate) struct MysticetiConsensusHandler {
 }
 
 impl MysticetiConsensusHandler {
-    /// Starts the task that folds commits as consensus delivers them.
-    ///
-    /// There is no already-processed skip here any more, and no watermark to
-    /// drive one. The boot replay has already folded the consensus store up to
-    /// its replay target — the store's last commit, or its last finalized
-    /// commit where transaction voting is on
-    /// (`consensus_manager::boot_replay::replay_epoch_commits`) — and consensus
-    /// is started with that same index as its `replay_after_commit_index`, so
-    /// nothing consensus delivers has been folded before. On ika, where voting
-    /// is off at every protocol version, that target is the store head and
-    /// consensus re-delivers nothing at all. The watermark that used to gate
-    /// this loop was a second
-    /// record of the same fact as the consensus store's head, kept in a
-    /// different database — and when the two disagreed the node could not start
-    /// at all (ika #2057).
+    /// Folds the single stream of replayed and live commits from consensus-core.
+    /// Acknowledgements follow the fold so recovery and commit sync retain
+    /// consumer backpressure. Arrival still precedes the fold for liveness.
     pub(crate) fn new(
         mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
         commit_consumer_monitor: Arc<CommitConsumerMonitor>,
+        metrics: Arc<ConsensusManagerMetrics>,
     ) -> Self {
+        let epoch_store = consensus_handler.epoch_store.clone();
+        let progress_monitor = commit_consumer_monitor.clone();
         let mut tasks = JoinSet::new();
         tasks.spawn(monitored_future!(async move {
             // TODO: pause when execution is overloaded, so consensus can detect the backpressure.
@@ -523,59 +497,51 @@ impl MysticetiConsensusHandler {
                 commit_consumer_monitor.set_highest_handled_commit(commit_index);
             }
         }));
-        Self { tasks }
+        let mut handler = Self { tasks };
+        handler.spawn_progress_publisher(progress_monitor, epoch_store, metrics);
+        handler
     }
 
-    /// Publishes the consensus store's own head round, on a task of its own,
-    /// until the epoch ends.
-    ///
-    /// The catch-up gate needs to know how far behind the drain is. It cannot
-    /// learn that from the fold: the fold BLOCKS on the round channel, so the
-    /// arrivals stamped in the loop above stop the moment the drain falls a
-    /// channel's-worth behind. Everything the fold can report is therefore
-    /// pinned within the capacity (1,024) of the drain's own cursor, always
-    /// far below the gate's entry threshold — and a validator that fell a
-    /// hundred thousand rounds behind WITHOUT restarting would never enter
-    /// catch-up at all, which is precisely the collapse the gate was built for
-    /// (#2023). Only a restart would fix it, via the boot replay's head
-    /// publication.
-    ///
-    /// The consensus store is the one place the true backlog is visible: it is
-    /// written by consensus-core as commits are decided, and nothing about
-    /// that path waits on the fold. `ConsensusAuthority::store()` hands out the
-    /// RUNNING instance's own handle, so this is not a second RocksDB open and
-    /// cannot contend for the lock.
-    ///
-    /// This shares the handler's `JoinSet` deliberately: the set is shut down
-    /// by `abort()` at the epoch boundary, which is exactly this task's
-    /// lifetime. It must NOT hold the `ConsensusAuthority` itself — shutdown
-    /// `Arc::try_unwrap`s that and panics on a surviving reference — and it
-    /// does not need to; the store handle is a separate `Arc`.
-    pub(crate) fn spawn_observed_head_publisher(
+    /// Observe consensus progress independently of a fold blocked on its MPC
+    /// drain. The metadata comes from consensus-core's watch channel, so Ika
+    /// needs neither a storage handle nor a second interpretation of commits.
+    fn spawn_progress_publisher(
         &mut self,
-        store: Arc<RocksDBStore>,
+        monitor: Arc<CommitConsumerMonitor>,
         epoch_store: Arc<AuthorityPerEpochStore>,
+        metrics: Arc<ConsensusManagerMetrics>,
     ) {
-        const PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+        let mut progress = monitor.subscribe_progress();
+        metrics.boot_replay_target_commit_index.set(0);
+        metrics.boot_replay_folded_commit_index.set(0);
+        metrics.boot_replay_latency_seconds.set(0);
         self.tasks.spawn(monitored_future!(async move {
+            let started = Instant::now();
+            let mut replay_completed = false;
             loop {
-                match store.read_last_commit() {
-                    Ok(Some(commit)) => {
-                        epoch_store
-                            .record_observed_consensus_head_round(commit.leader().round as u64);
-                    }
-                    // An epoch whose consensus store has no commit yet: there
-                    // is no head to report and no backlog to be behind.
-                    Ok(None) => {}
-                    Err(e) => {
-                        warn!(
-                            error = ?e,
-                            "failed to read the consensus store's head; the catch-up gate will \
-                             keep the last head it was given until this recovers"
+                let current = *progress.borrow_and_update();
+                epoch_store
+                    .record_observed_consensus_head_round(current.highest_committed_round.into());
+                if let Some(target) = current.replay_target {
+                    metrics.boot_replay_target_commit_index.set(target.into());
+                    metrics
+                        .boot_replay_folded_commit_index
+                        .set(current.highest_handled_commit.min(target).into());
+                    if !replay_completed && current.highest_handled_commit >= target {
+                        metrics
+                            .boot_replay_latency_seconds
+                            .set(started.elapsed().as_secs() as i64);
+                        info!(
+                            replayed_through = target,
+                            elapsed_secs = started.elapsed().as_secs_f64(),
+                            "consensus handler completed startup replay"
                         );
+                        replay_completed = true;
                     }
                 }
-                sleep(PUBLISH_INTERVAL).await;
+                if progress.changed().await.is_err() {
+                    return;
+                }
             }
         }));
     }

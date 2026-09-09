@@ -11,7 +11,7 @@ use consensus_config::{
     ChainType, Committee, ConsensusProtocolConfig, NetworkKeyPair, Parameters, ProtocolKeyPair,
 };
 use consensus_core::{
-    Clock, CommitConsumerArgs, CommitConsumerMonitor, CommitIndex, ConsensusAuthority, NetworkType,
+    Clock, CommitConsumerArgs, CommitConsumerMonitor, ConsensusAuthority, NetworkType,
 };
 use fastcrypto::traits::KeyPair as _;
 use ika_config::{ConsensusConfig, NodeConfig};
@@ -29,22 +29,13 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::time::sleep;
 use tracing::{error, info};
 
-mod boot_replay;
+#[cfg(test)]
+mod replay_tests;
 
 #[derive(PartialEq)]
 enum Running {
     True(EpochId, ProtocolVersion),
     False,
-}
-
-/// The commit-consumer monitor created by one `start()`, paired with the commit
-/// index the boot replay had already folded when it was created.
-///
-/// Both halves are needed to answer "did this consumer handle a live commit?",
-/// because the monitor's initial reading is the replay floor, not zero.
-struct StartedCommitConsumer {
-    monitor: Arc<CommitConsumerMonitor>,
-    replay_floor: CommitIndex,
 }
 
 /// Build the consensus-core [`ConsensusProtocolConfig`] from ika's
@@ -124,7 +115,7 @@ pub struct ConsensusManager {
 
     consensus_handler: Mutex<Option<MysticetiConsensusHandler>>,
 
-    consumer_monitor: ArcSwapOption<StartedCommitConsumer>,
+    consumer_monitor: ArcSwapOption<CommitConsumerMonitor>,
     consumer_monitor_sender: broadcast::Sender<Arc<CommitConsumerMonitor>>,
 
     running: Mutex<Running>,
@@ -253,60 +244,34 @@ impl ConsensusManager {
         // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
         let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
-        let mut consensus_handler = consensus_handler_initializer.new_consensus_handler();
-
+        let consensus_handler = consensus_handler_initializer.new_consensus_handler();
         let chain = epoch_store.get_chain_identifier().chain();
-        // Built once, here, and handed to BOTH the replay and consensus: the
-        // replay's target depends on `transaction_voting_enabled` (see
-        // `boot_replay::replay_epoch_commits`), so the two reading it from
-        // different values is exactly the class of disagreement this pipeline
-        // exists to make unbuildable.
         let consensus_protocol_config = to_consensus_protocol_config(ika_protocol_config, chain);
 
-        // Rebuild this epoch's derived state before consensus starts. The
-        // per-epoch store was opened with its derived tables deleted, so the
-        // handler begins from nothing and folds every commit the consensus
-        // store holds up to the replay target. `replay_after` is then read from
-        // the consensus store itself — not from a watermark kept beside it —
-        // which is what makes `CommitObserver::recover_and_send_commits` unable
-        // to find the two out of order (ika #2057).
-        let replayed_through = boot_replay::replay_epoch_commits(
-            &parameters.db_path,
-            &consensus_protocol_config,
-            &mut consensus_handler,
-            &self.metrics,
-        )
-        .await;
-
-        let (commit_consumer, commit_receiver) =
-            CommitConsumerArgs::new(replayed_through, replayed_through);
+        // Consensus owns storage, decoding, and replay. The handler starts from
+        // empty and acknowledges each commit only after the fold completes.
+        let (commit_consumer, commit_receiver) = CommitConsumerArgs::new_with_full_replay();
         let monitor = commit_consumer.monitor();
-
-        let handler =
-            MysticetiConsensusHandler::new(consensus_handler, commit_receiver, monitor.clone());
-
+        let handler = MysticetiConsensusHandler::new(
+            consensus_handler,
+            commit_receiver,
+            monitor.clone(),
+            self.metrics.clone(),
+        );
         let mut consensus_handler = self.consensus_handler.lock().await;
         *consensus_handler = Some(handler);
 
-        // If there is a previous consumer monitor, it indicates that the consensus engine has been restarted, due to an epoch change. However, that on its
-        // own doesn't tell us much whether it participated on an active epoch or an old one. We need to check if it has handled any commits to determine this.
-        // If indeed any commits did happen, then we assume that node did participate on previous run.
-        //
-        // "Any commits" means any commit beyond the one the boot replay had
-        // already folded when that consumer was created: the monitor starts at
-        // the replay floor, so comparing against zero would report every node
-        // that merely replayed an existing store as having participated, and
-        // suppress the amnesia recovery a node that handled nothing live needs.
-        let started_consumer = Arc::new(StartedCommitConsumer {
-            monitor: monitor.clone(),
-            replay_floor: replayed_through,
-        });
-        let participated_on_previous_run =
-            if let Some(previous) = self.consumer_monitor.swap(Some(started_consumer)) {
-                previous.monitor.highest_handled_commit() > previous.replay_floor
-            } else {
-                false
-            };
+        // Replayed history alone is not live participation. The boundary is
+        // discovered by consensus from its own store, never persisted by Ika.
+        let participated_on_previous_run = self
+            .consumer_monitor
+            .swap(Some(monitor.clone()))
+            .is_some_and(|previous| {
+                let progress = previous.progress();
+                progress
+                    .replay_target
+                    .is_some_and(|target| progress.highest_handled_commit > target)
+            });
 
         // Increment the boot counter only if the consensus successfully participated in the previous run.
         // This is typical during normal epoch changes, where the node restarts as expected, and the boot counter is incremented to prevent amnesia recovery on the next start.
@@ -348,13 +313,6 @@ impl ConsensusManager {
         )
         .await;
         let client = authority.transaction_client();
-        // The store handle, taken BEFORE the authority is sealed into its Arc:
-        // `shutdown` does `Arc::try_unwrap` on that and panics on a surviving
-        // reference, so the head publisher must hold the store rather than the
-        // authority. Feeds the catch-up gate the one backlog measure the fold
-        // cannot supply — see `spawn_observed_head_publisher`.
-        let consensus_store = authority.store();
-
         let registry_id = self.registry_service.add(registry.clone());
 
         let registered_authority = Arc::new((authority, registry_id));
@@ -362,10 +320,6 @@ impl ConsensusManager {
 
         // Initialize the client to send transactions to this Mysticeti instance.
         self.client.set(client);
-
-        if let Some(handler) = consensus_handler.as_mut() {
-            handler.spawn_observed_head_publisher(consensus_store, epoch_store.clone());
-        }
 
         // Send the consumer monitor to the replay waiter.
         let _ = self.consumer_monitor_sender.send(monitor);
@@ -572,9 +526,7 @@ impl Clone for ReplayWaiter {
 pub struct ConsensusManagerMetrics {
     start_latency: IntGauge,
     shutdown_latency: IntGauge,
-    /// The commit index the boot replay set out to reach for this epoch: the
-    /// consensus store's last commit, or its last FINALIZED commit where
-    /// transaction voting is on (`boot_replay::replay_epoch_commits`).
+    /// The startup replay target reported by consensus-core from its own store.
     pub(crate) boot_replay_target_commit_index: IntGauge,
     /// How far the boot replay has folded. Equal to the target once the node
     /// is live; the distance between the two is the remaining boot work, which
