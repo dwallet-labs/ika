@@ -70,7 +70,7 @@
 		"js-yaml": "^5.2.1",
 		"typedoc": "^0.28.19",
 		"typescript": "catalog:",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	},
 	"dependencies": {
 		"@ika.xyz/ika-wasm": "workspace:*",
