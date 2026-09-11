@@ -4,7 +4,7 @@ Decentralized MPC signing network built on Sui. dWallets provide zero-trust mult
 
 ## Collaboration Style
 
-Act as a critical intellectual sparring partner, not a yes-man. Evaluate every idea on its merits—the user is a collaborator who can be wrong, not an authority to defer to. Question assumptions, point out flaws, logical errors, unstated premises, and potential bugs immediately and directly. Be skeptical by default; each claim must prove itself. No opening praise or "you're right" unless genuinely warranted after scrutiny. Prioritize truth over harmony. Be ruthless with constructive criticism.
+Evaluate every idea on its merits — the user is a collaborator who can be wrong. Point out flaws, unstated premises, and likely bugs directly and early, with the reasoning; agree only after checking. Skip flattery and opening praise; when a claim holds up, say so plainly and move on.
 
 ## Working Principles (Karpathy's four)
 
@@ -214,20 +214,16 @@ trivial/mechanical tests where vacuous-pass isn't a risk.
 
 ## When to Stop and Ask
 
-**IMPORTANT:** When given a task with a specific approach, follow that approach. If you encounter issues:
-
-1. **Don't pivot to a different solution** - Ask first
-2. **Don't assume the requested approach won't work** - It likely can and should be done that way
-3. **Don't waste time implementing an alternative** - You'll just have to redo it
-
-**Stop and consult the user when:**
+When a task specifies an approach, implement that approach. If it hits an
+obstacle, or you believe a different approach is better, stop and ask
+before switching — an unrequested alternative gets redone, and the
+requested way usually works once the obstacle is named. Stop and consult
+the user when:
 
 - The specified approach hits an unexpected obstacle
 - You're tempted to "simplify" by doing something different
 - You think there's a "better" way than what was requested
 - You're about to make architectural changes not explicitly requested
-
-**Trust the user's direction.** If you don't know how to do it the requested way - ASK, don't improvise.
 
 ## Git Workflow
 
@@ -276,54 +272,42 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   the commit/round semantics ika's freeze and epoch-close logic rely on
   (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
   in ika (see the upstream reference above)
-- **Protocol v7 only (`MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 7`)**:
-  **v7 is LIVE on both mainnet and testnet.** There is exactly ONE
-  supported version, so **no protocol transition exists to cross** and
-  every formerly gated behavior is unconditional —
-  off-chain validator metadata, the cross-epoch handoff, deferred epoch
-  close, aggregated (V4-tagged) network-key outputs, the STRICT
-  equality-of-coefficients discrete-log bound, and short `AuthorityName`s.
-  Do not add a `protocol_config.<flag>()` check for any of them.
-  `noa_checkpoints` is the next flag, planned for v8 and off everywhere.
-  When you introduce v8, the transition gates below have to be REBUILT —
-  they were deleted, not merely disabled.
-  **`AuthorityName` IS the Ed25519 consensus key, emitted as raw 32
-  bytes.** The 48-byte zero-padded container (which the BLS protocol key
-  occupied through v5) is no longer emitted by any supported version, so
-  the ambient-width process global, the dual-width cross-epoch retry in
-  handoff-cert verification, and the transition gates around them are all
-  GONE. DECODING stays lenient on purpose: records written before the
-  boundary hold the padded form and a node must keep reading its own
-  history. The BLS protocol key still exists on chain and on `Committee`
-  for BLS checkpoint-certificate verification, but it is NOT recoverable
-  from a name — it is carried explicitly via
-  `Committee::new_with_protocol_keys`, and a committee built through
-  `Committee::new` has an empty map and fails closed at `public_key()`.
-  **The inkrypto revision is strict-only**: the relaxed `-10` bound and
-  the `backward_compatible` selector no longer EXIST, along with the
-  backward-compatible (class-groups-only) DKG/reconfiguration parties and
-  pre-aggregation (V3-tagged) output production. This binary is not
-  wire-compatible with a pre-v7 committee even where older state survives.
-  The `FeatureFlags` fields and the per-version arms in `get_for_version`
-  stay for versions below MIN — the flag set is BCS-serialized into the
-  `ProtocolConfig` digest that rides `AuthorityCapabilitiesV1` through
-  consensus, so dropping a field would move every supported version's
-  digest relative to deployed binaries.
-  What REMAINS constrained: the networks persist pre-v7 state, so old
-  `Versioned*` enum variants must stay (BCS variant indices are wire
-  format). V1-tagged chain DKG anchors must remain DECODABLE (never
-  rewritten on chain; they decode via the still-current
-  `class_groups::dkg::PublicOutput`), and V2-tagged outputs still decode as
-  `PublicOutputCore` where only the core is needed. **V3-tagged
-  (pre-aggregation) outputs and the bwd-compat party outputs are NO LONGER
-  decodable anywhere** — inkrypto removed their types — so any key whose
-  live state is still V3-tagged must have migrated to V4 before running
-  this binary, and their decode arms are hard errors. And MPC outputs must
-  reach byte-identical quorum across a mixed-binary committee, so
-  serialization changes to active paths need a new protocol version gate,
-  never a binary-driven flip — including anything that verifies a
-  RE-SERIALIZED cross-epoch payload, which is what the deleted dual-width
-  retry existed to handle.
+- **Protocol v7 is the only supported version** (`MIN_PROTOCOL_VERSION =
+  MAX_PROTOCOL_VERSION = 7`, live on mainnet and testnet). Off-chain
+  validator metadata, the cross-epoch handoff, deferred epoch close,
+  aggregated (V4-tagged) network-key outputs, the strict
+  equality-of-coefficients discrete-log bound, and short `AuthorityName`s
+  are unconditional — never gate them on a `protocol_config.<flag>()`
+  check. `noa_checkpoints` is the next flag (v8, off everywhere); a v8
+  boundary needs its transition gates written from scratch, because none
+  exist in the tree.
+  **`AuthorityName` is the Ed25519 consensus key, emitted as raw 32
+  bytes.** Decoding is deliberately lenient: records written before v7
+  hold a 48-byte zero-padded form, and a node must keep reading its own
+  history. The BLS protocol key exists on chain and on `Committee` for
+  BLS checkpoint-certificate verification but is not derivable from a
+  name — it is carried via `Committee::new_with_protocol_keys`; a
+  committee built with `Committee::new` has an empty map and fails
+  closed at `public_key()`.
+  **The inkrypto revision is strict-only** (no relaxed bound, no
+  backward-compatible DKG/reconfiguration parties, no pre-aggregation
+  output production): this binary is not wire-compatible with a pre-v7
+  committee.
+  **Wire-format constraints that stay:** `FeatureFlags` fields and the
+  per-version arms in `get_for_version` remain for versions below MIN —
+  the flag set is BCS-serialized into the `ProtocolConfig` digest that
+  rides `AuthorityCapabilitiesV1` through consensus, so removing a field
+  moves every supported version's digest. Old `Versioned*` enum variants
+  stay (BCS variant indices are wire format). V1-tagged chain DKG anchors
+  decode via `class_groups::dkg::PublicOutput` and V2-tagged outputs as
+  `PublicOutputCore` where only the core is needed; V3-tagged
+  (pre-aggregation) outputs are undecodable — inkrypto has no type for
+  them — so their decode arms are hard errors and any key still V3-tagged
+  must have migrated to V4 before running this binary. MPC outputs must
+  reach byte-identical quorum across a mixed-binary committee, so any
+  serialization change on an active path — including how a re-serialized
+  cross-epoch payload is verified — needs a new protocol version gate,
+  never a binary-driven flip.
 - **NOA not live**: the network-owned-address (NOA) system — both NOA
   signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
   — is under active development and not deployed at all. No backward

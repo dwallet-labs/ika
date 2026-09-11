@@ -23,6 +23,6 @@ the cheap checks (co-resident bugs have occurred):
 
 Report: stall onset timestamp, the first check that fired, the
 mechanism with log-line evidence, and whether it matches a known class —
-issue #1736 (epoch-entry stale-mpc_data race) or a fixed class in
+the epoch-entry wedge (playbook section 3) or a fixed class in
 `dev-docs/learnings/pitfalls.md`. State explicitly what the evidence
 CANNOT determine (e.g. debug-level lines absent at info-level logging).

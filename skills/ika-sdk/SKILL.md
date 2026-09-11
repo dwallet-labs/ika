@@ -44,7 +44,7 @@ Requires: `@mysten/sui` ^2.5.0, Node >=18
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 
-// Public Sui fullnodes no longer serve JSON-RPC — use gRPC.
+// Public Sui fullnodes serve gRPC only.
 const suiClient = new SuiGrpcClient({
     baseUrl: 'https://fullnode.testnet.sui.io:443',
     network: 'testnet',
