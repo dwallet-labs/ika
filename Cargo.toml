@@ -370,3 +370,8 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+
+# Full replay API from https://github.com/MystenLabs/sui/pull/27909,
+# backported to mainnet-v1.77.2 to preserve the existing Sui dependency graph.
+[patch."https://github.com/MystenLabs/sui"]
+consensus-core = { git = "https://github.com/dwallet-labs/sui", rev = "d0877859cbcab27008b2691c4fffae8bf796b8c9" }
