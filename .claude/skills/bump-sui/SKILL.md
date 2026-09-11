@@ -10,7 +10,7 @@ tag). Full checklist: `dev-docs/conventions/sui-version-bump.md`. Work
 on a dedicated branch.
 
 1. Read the CURRENT tag (single distinct value) from root `Cargo.toml`.
-2. Replace it in every root `Cargo.toml` pin (~90 occurrences, one sed),
+2. Replace it in every root `Cargo.toml` pin (~45 occurrences, one sed),
    then `cargo update`.
 3. Excluded workspaces: `(cd sdk/ika-wasm && cargo update)` (and any
    other excluded package with its own lock).
