@@ -85,3 +85,13 @@ the locations below and runs in CI; it fails the build on drift.
   ```bash
   ./scripts/check-sui-version-consistency.sh
   ```
+
+## Consensus replay patch
+
+Ika patches `consensus-core` from `dwallet-labs/sui` while its companion Sui
+crates keep the upstream source. A Sui upgrade must rebase that patch on the
+new release, update the fork crate's upstream companion dependency tags, and
+pin the new fork revision in Ika's Cargo patch table. Verify the resolved
+crate sources in `Cargo.lock`; changing the workspace tag alone does not
+update the consensus implementation. Revalidate full replay pacing, readiness,
+committed-head reporting, and rolling restarts against that exact revision.

@@ -3638,7 +3638,7 @@ dependencies = [
 [[package]]
 name = "consensus-core"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/sui?tag=mainnet-v1.77.2#51d177ad7d65102fc368b582408f466d97b31548"
+source = "git+https://github.com/dwallet-labs/sui?rev=7d65f601c39542ddc47d4aecba9c672a74134588#7d65f601c39542ddc47d4aecba9c672a74134588"
 dependencies = [
  "anyhow",
  "arc-swap",

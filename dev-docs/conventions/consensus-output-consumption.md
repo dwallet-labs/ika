@@ -33,6 +33,14 @@ cursor — consensus-core holds the store as a RocksDB primary, and some of what
 a consumer needs (checkpoint message sets) is fold *output*, not a projection
 of the commit.
 
+Consensus-core owns the database and feeds historical and live commits into
+that fold. Ika requests full replay from zero and observes replay readiness
+and committed-head metadata through `CommitConsumerMonitor`. It does not
+open the consensus database, decode a parallel replay, or poll a store handle.
+The metadata publisher runs separately from the fold so a blocked consumer
+cannot hide backlog. Replay acknowledgements follow the completed fold and
+pace consensus's recovery batches.
+
 A new consumer is a new channel receiver, and its derived state is an
 in-memory field on `AuthorityPerEpochStore`. There is no registry to join and
 no classification to declare: a `DBMap` field survives every restart by

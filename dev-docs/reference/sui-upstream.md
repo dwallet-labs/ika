@@ -9,51 +9,39 @@ inherited.
 
 ## Where the source is
 
-- **Pinned version:** whatever release tag the root `Cargo.toml` pins —
-  read it there (`grep 'tag = ' Cargo.toml`); it's a `mainnet-v*`
-  (sometimes `testnet-v*`) tag of `https://github.com/MystenLabs/sui`.
-  This page deliberately doesn't restate the number, so it can't drift out
-  of sync: `Cargo.toml` is the source of truth (with a human-readable note
-  in `CLAUDE.md`). Older/newer Sui differs, so always read the version ika
-  actually pins.
-- **Browse online:** github.com/MystenLabs/sui at that tag — the stable
-  way to reference a specific file/line.
-- **Local checkout** (fetched by cargo for the git dependencies):
-  `~/.cargo/git/checkouts/sui-<hash>/<rev>/`. **Do not pick by eye** —
-  every prior version bump leaves its own `<rev>` behind, so several
-  structurally identical Sui checkouts usually coexist (this machine has
-  three) and reading a stale one means reasoning about year-old upstream
-  behavior. Derive the right one from the lockfile:
+`Cargo.lock` is authoritative for each crate. Most Sui crates use the upstream
+release tag in root `Cargo.toml`. **`consensus-core` is patched from the
+`dwallet-labs/sui` fork** to provide consensus-owned, consumer-paced full replay.
+Its companion crates retain the upstream source identity. Do not infer the
+consensus implementation from the first Sui entry or the workspace dependency's
+tag without checking Cargo's patch table.
 
-  ```bash
-  # the rev cargo actually resolved, then the matching checkout dir
-  REV=$(grep -m1 -oE 'MystenLabs/sui\?tag=[^#]*#[0-9a-f]+' Cargo.lock | cut -d'#' -f2)
-  ls -d ~/.cargo/git/checkouts/sui-*/"${REV:0:7}"/
-  ```
+Resolve the crate's actual source before reading it:
 
-  (The `sui-rust-sdk-*` checkouts are a different dependency — the one you
-  want has `consensus/`, `crates/`, `sui-execution/` at its root.) If it's
-  absent, a `cargo fetch` / build populates it.
+```bash
+python3 - <<'PYTHON'
+import tomllib
+with open('Cargo.lock', 'rb') as lock:
+    packages = tomllib.load(lock)['package']
+for name in ['consensus-core', 'consensus-config', 'sui-core']:
+    for package in packages:
+        if package['name'] == name:
+            print(name, package.get('source', 'local path'))
+PYTHON
+```
 
-  **Derive it every time, including for "just one line".** The failure mode
-  is silent by construction: a stale checkout is structurally identical, the
-  file is where you expect, the symbol is there, and the code reads
-  plausibly — nothing errors and nothing looks wrong. Reading a neighbouring
-  revision usually AGREES with the pinned one, so "what I read matched what
-  the code does" is not evidence you read the right tree; it is the
-  most likely outcome either way, right up until the one detail that moved.
-  Worked example: #2058 was implemented against `433212f` while the lockfile
-  resolved `51d177a`. Every claim happened to hold at both, so the mistake
-  cost only a re-verification pass — but that was luck, not method.
+The source records both the repository and resolved revision. Match that
+revision against `~/.cargo/git/checkouts/sui-*/<rev-prefix>/`; several upstream
+and fork checkouts can coexist. If absent, `cargo fetch` populates it. For web
+references, use the recorded repository and exact revision.
 
-  Two consequences worth internalising:
+The `sui-rust-sdk-*` directories are a separate dependency. The Sui checkout
+has `consensus/`, `crates/`, and `sui-execution/` at its root.
 
-  - **`Cargo.toml`'s tag is not enough to pick a directory.** It names the
-    tag; checkouts are named by REV. Resolve the rev from `Cargo.lock`, as
-    above, and check the directory prefix against it.
-  - **Cite the rev, not just the path,** when a line number lands in a
-    comment or a spec — `commit_observer.rs:162 (51d177a)` survives the next
-    bump as a checkable claim, where a bare line number silently rots.
+**Derive the source every time, including for a one-line check.** Nearby
+revisions look alike until the detail that changed matters. Reading a plausible
+file is not proof that Cargo uses it. Cite the revision with source anchors so
+reviewers can verify claims after a dependency bump.
 
 ## What to read for what
 
