@@ -267,10 +267,9 @@ impl ConsensusManager {
             .consumer_monitor
             .swap(Some(monitor.clone()))
             .is_some_and(|previous| {
-                let progress = previous.progress();
-                progress
-                    .replay_target
-                    .is_some_and(|target| progress.highest_handled_commit > target)
+                previous
+                    .replay_target()
+                    .is_some_and(|target| previous.highest_handled_commit() > target)
             });
 
         // Increment the boot counter only if the consensus successfully participated in the previous run.
