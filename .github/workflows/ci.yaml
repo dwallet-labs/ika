@@ -279,7 +279,7 @@ jobs:
           cargo test --locked --release -p ika-core --lib \
             consensus_manager::replay_tests -- --test-threads=1 \
             | tee "$RUNNER_TEMP/consensus-replay.log"
-          grep -qE '^test result: ok\. 3 passed' "$RUNNER_TEMP/consensus-replay.log"
+          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/consensus-replay.log"
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7

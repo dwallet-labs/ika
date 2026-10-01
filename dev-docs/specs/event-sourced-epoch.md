@@ -38,11 +38,12 @@ On every startup:
    The MPC receive phase keeps draining throughout replay; operations that
    submit to consensus and checkpoint builders remain behind that barrier.
 
-The progress API also publishes newly committed heads independently of handler
-progress. `MysticetiConsensusHandler::spawn_progress_publisher` observes that
-watch channel on a separate task, keeping catch-up detection and replay
-metrics live even while the fold is blocked. This requires no database or
-consensus-authority handle in Ika.
+The progress API publishes committed heads and application acknowledgements on
+separate watch channels, with replay-target discovery supplied once through
+`wait_for_replay_target`. `MysticetiConsensusHandler::spawn_progress_publisher`
+observes all three on a separate task, keeping catch-up detection live while
+the fold is blocked and refreshing replay metrics even when no new commits
+arrive. This requires no database or consensus-authority handle in Ika.
 
 There is one primary open, owned by consensus-core. The former manual replay
 opened and closed a primary before consensus opened it again; typed-store's
@@ -88,7 +89,8 @@ re-derived belongs in the durable audit linked above. Replay changes neither
 commit ordering nor transaction voting, rejection rules, or serialization.
 
 The consensus patch backports the full-replay API from
-[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909) to upstream `mainnet-v1.77.2`
+[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909), merged as
+`3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`, to upstream `mainnet-v1.77.2`
 (`51d177ad7d65102fc368b582408f466d97b31548`). Ika patches only `consensus-core`;
 its companion Sui crates keep their existing upstream source identity.
 

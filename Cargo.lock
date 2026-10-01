@@ -3638,7 +3638,7 @@ dependencies = [
 [[package]]
 name = "consensus-core"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/sui?rev=d0877859cbcab27008b2691c4fffae8bf796b8c9#d0877859cbcab27008b2691c4fffae8bf796b8c9"
+source = "git+https://github.com/dwallet-labs/sui?rev=932a3b79e3ecf9499f67e7d8497773963482c0b7#932a3b79e3ecf9499f67e7d8497773963482c0b7"
 dependencies = [
  "anyhow",
  "arc-swap",

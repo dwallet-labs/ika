@@ -236,7 +236,7 @@ async fn consensus_owned_replay_matches_the_live_handler_and_reports_every_round
     monitor
         .replay_to_consumer_last_processed_commit_complete()
         .await;
-    assert_eq!(monitor.progress().replay_target, Some(7));
+    assert_eq!(monitor.replay_target(), Some(7));
     assert_eq!(monitor.highest_handled_commit(), 7);
     assert_eq!(
         epoch
@@ -291,7 +291,7 @@ async fn consensus_owned_replay_discovers_empty_and_short_histories() {
         let epoch = test_epoch_store(epoch_dir.path());
         let (consumer, receiver) = CommitConsumerArgs::new_with_full_replay();
         let monitor = consumer.monitor();
-        assert_eq!(monitor.progress().replay_target, None);
+        assert_eq!(monitor.replay_target(), None);
         let mut handler = MysticetiConsensusHandler::new(
             test_handler(epoch.clone(), &fixture.context),
             receiver,
@@ -304,7 +304,7 @@ async fn consensus_owned_replay_discovers_empty_and_short_histories() {
         monitor
             .replay_to_consumer_last_processed_commit_complete()
             .await;
-        assert_eq!(monitor.progress().replay_target, Some(commits));
+        assert_eq!(monitor.replay_target(), Some(commits));
         assert_eq!(monitor.highest_handled_commit(), commits);
         assert_eq!(
             epoch
@@ -371,4 +371,39 @@ async fn consensus_head_is_visible_while_the_handler_is_blocked_and_replay_waits
         authority.stop().await;
         handler.abort().await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_metrics_follow_acknowledgements_without_new_commits() {
+    let fixture = Fixture::new(0);
+    let epoch_dir = TempDir::new().unwrap();
+    let epoch = test_epoch_store(epoch_dir.path());
+    let metrics = Arc::new(ConsensusManagerMetrics::new(&Registry::new()));
+    let (consumer, receiver) = CommitConsumerArgs::new(0, 3);
+    let monitor = consumer.monitor();
+    let mut handler = MysticetiConsensusHandler::new(
+        test_handler(epoch, &fixture.context),
+        receiver,
+        monitor.clone(),
+        metrics.clone(),
+    );
+    timeout(Duration::from_secs(2), async {
+        while metrics.boot_replay_target_commit_index.get() != 3 {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the publisher must observe the supplied replay target");
+    for applied in [1, 2, 3] {
+        monitor.set_highest_handled_commit(applied);
+        timeout(Duration::from_secs(2), async {
+            while metrics.boot_replay_folded_commit_index.get() != i64::from(applied) {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("acknowledgements must refresh replay metrics without committed-head updates");
+        assert_eq!(monitor.progress().highest_committed_index, 0);
+    }
+    handler.abort().await;
 }

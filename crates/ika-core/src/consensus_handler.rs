@@ -503,7 +503,7 @@ impl MysticetiConsensusHandler {
     }
 
     /// Observe consensus progress independently of a fold blocked on its MPC
-    /// drain. The metadata comes from consensus-core's watch channel, so Ika
+    /// drain. The metadata comes from consensus-core's progress APIs, so Ika
     /// needs neither a storage handle nor a second interpretation of commits.
     fn spawn_progress_publisher(
         &mut self,
@@ -512,22 +512,25 @@ impl MysticetiConsensusHandler {
         metrics: Arc<ConsensusManagerMetrics>,
     ) {
         let mut progress = monitor.subscribe_progress();
+        let mut handled = monitor.subscribe_handled_commit();
         metrics.boot_replay_target_commit_index.set(0);
         metrics.boot_replay_folded_commit_index.set(0);
         metrics.boot_replay_latency_seconds.set(0);
         self.tasks.spawn(monitored_future!(async move {
             let started = Instant::now();
             let mut replay_completed = false;
+            let mut replay_target = monitor.replay_target();
             loop {
                 let current = *progress.borrow_and_update();
                 epoch_store
                     .record_observed_consensus_head_round(current.highest_committed_round.into());
-                if let Some(target) = current.replay_target {
+                let highest_handled_commit = *handled.borrow_and_update();
+                if let Some(target) = replay_target {
                     metrics.boot_replay_target_commit_index.set(target.into());
                     metrics
                         .boot_replay_folded_commit_index
-                        .set(current.highest_handled_commit.min(target).into());
-                    if !replay_completed && current.highest_handled_commit >= target {
+                        .set(highest_handled_commit.min(target).into());
+                    if !replay_completed && highest_handled_commit >= target {
                         metrics
                             .boot_replay_latency_seconds
                             .set(started.elapsed().as_secs() as i64);
@@ -539,8 +542,20 @@ impl MysticetiConsensusHandler {
                         replay_completed = true;
                     }
                 }
-                if progress.changed().await.is_err() {
-                    return;
+                tokio::select! {
+                    changed = progress.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                    }
+                    changed = handled.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                    }
+                    target = monitor.wait_for_replay_target(), if replay_target.is_none() => {
+                        replay_target = Some(target);
+                    }
                 }
             }
         }));

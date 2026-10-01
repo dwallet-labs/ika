@@ -14,7 +14,9 @@ release tag in root `Cargo.toml`. **`consensus-core` is patched from the
 `dwallet-labs/sui` fork** to provide consensus-owned, consumer-paced full replay.
 This is a compatibility backport of
 [MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909) to Ika's
-pinned Sui release, not a switch to the newer Sui main branch.
+pinned Sui release, derived from the merged upstream commit
+`3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`. It is not a switch to the newer
+Sui main branch.
 Its companion crates retain the upstream source identity. Do not infer the
 consensus implementation from the first Sui entry or the workspace dependency's
 tag without checking Cargo's patch table.
