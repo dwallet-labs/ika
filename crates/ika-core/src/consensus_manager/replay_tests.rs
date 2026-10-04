@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use consensus_config::{ConsensusProtocolConfig, NetworkKeyPair, ProtocolKeyPair};
+use consensus_config::{
+    AuthorityName, Committee as ConsensusCommittee, ConsensusProtocolConfig, NetworkKeyPair,
+    ProtocolKeyPair,
+};
 use consensus_core::storage::rocksdb_store::RocksDBStore;
 use consensus_core::storage::{Store, WriteBatch};
 use consensus_core::{
@@ -69,6 +72,19 @@ impl Fixture {
     fn new(commits: u32) -> Self {
         let directory = TempDir::new().unwrap();
         let (mut context, mut keys) = Context::new_for_test(CONSENSUS_COMMITTEE_SIZE);
+        // Exercise production's 32-byte names during real consensus startup and replay.
+        let authorities = context
+            .committee
+            .authorities()
+            .map(|(_, authority)| {
+                let mut authority = authority.clone();
+                authority.authority_name =
+                    AuthorityName::from_bytes(authority.protocol_key.to_bytes());
+                assert_eq!(authority.authority_name.len(), 32);
+                authority
+            })
+            .collect();
+        context.committee = ConsensusCommittee::new(context.committee.epoch(), authorities);
         context.parameters.db_path = directory.path().to_path_buf();
         context.parameters.sync_last_known_own_block_timeout = Duration::ZERO;
         context.protocol_config = ConsensusProtocolConfig::default();
