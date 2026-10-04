@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use enum_dispatch::enum_dispatch;
+use fastcrypto::traits::ToFromBytes;
 use std::collections::HashMap;
 
 use crate::committee::{Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit};
@@ -303,17 +304,9 @@ fn build_consensus_committee(
             stake: *stake as consensus_config::Stake,
             address: active_validator.consensus_address.clone(),
             hostname: active_validator.hostname.clone(),
-            // Mysticeti's own authority label stays derived from the BLS
-            // protocol key — it is Sui's consensus-config
-            // namespace, not ika's `AuthorityName`, and the consensus layer
-            // authenticates via `protocol_key` (the Ed25519 consensus key)
-            // regardless.
+            // Use the same raw Ed25519 consensus-key identity as the Ika committee.
             authority_name: consensus_config::AuthorityName::from_bytes(
-                &[
-                    [0u8; 48],
-                    active_validator.protocol_pubkey.pubkey.to_bytes(),
-                ]
-                .concat(),
+                active_validator.consensus_pubkey.as_bytes(),
             ),
             protocol_key: consensus_config::ProtocolPublicKey::new(
                 active_validator.consensus_pubkey.clone(),
@@ -606,6 +599,67 @@ mod tests {
             voting_power: 2_500,
             hostname: format!("validator-{index}"),
             name: format!("validator-{index}"),
+        }
+    }
+
+    #[test]
+    fn consensus_committee_uses_raw_consensus_key_names() {
+        let mut validators: Vec<_> = (0..4)
+            .map(|index| {
+                let mut validator = validator_with_mpc_data(index, None);
+                validator.voting_power = u64::from(index + 1) * 1_000;
+                validator
+            })
+            .collect();
+        validators.sort_by_key(validator_authority_name);
+
+        let systems = [
+            EpochStartSystem::new_v1(7, 7, 0, 1_000, validators.clone(), 6_667, 3_334),
+            EpochStartSystem::new_v2(7, 7, 0, 1_000, validators.clone(), 6_667, 3_334),
+        ];
+        for system in systems {
+            let ika_committee = system.get_ika_committee();
+            assert_eq!(ika_committee.num_members(), validators.len());
+            let errors = ErrorEventCounter::default();
+            let consensus_committee = tracing::subscriber::with_default(errors.clone(), || {
+                system.get_consensus_committee()
+            });
+            assert_eq!(errors.count(), 0);
+            assert_eq!(consensus_committee.epoch(), 7);
+            assert_eq!(consensus_committee.size(), validators.len());
+
+            for (((index, authority), (name, stake)), validator) in consensus_committee
+                .authorities()
+                .zip(ika_committee.members())
+                .zip(&validators)
+            {
+                assert_eq!(
+                    index.value() as u32,
+                    ika_committee.authority_index(name).unwrap()
+                );
+                assert_eq!(authority.authority_name.len(), 32);
+                assert_eq!(authority.authority_name.to_bytes(), name.as_ref());
+                assert_eq!(
+                    authority.authority_name.to_bytes(),
+                    validator.consensus_pubkey.as_bytes()
+                );
+                assert_eq!(authority.protocol_key.to_bytes(), name.as_ref());
+                assert_eq!(
+                    authority.network_key.to_bytes().as_slice(),
+                    validator.network_pubkey.as_bytes()
+                );
+                assert_eq!(authority.stake, *stake);
+                assert_eq!(authority.hostname, validator.hostname);
+                assert_eq!(authority.address, validator.consensus_address);
+
+                let encoded = bcs::to_bytes(&authority.authority_name).unwrap();
+                assert_eq!(encoded[0], 32);
+                assert_eq!(&encoded[1..], validator.consensus_pubkey.as_bytes());
+                assert_eq!(
+                    bcs::from_bytes::<consensus_config::AuthorityName>(&encoded).unwrap(),
+                    authority.authority_name
+                );
+            }
         }
     }
 

@@ -3626,7 +3626,7 @@ checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 [[package]]
 name = "consensus-config"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/sui?tag=mainnet-v1.77.2#51d177ad7d65102fc368b582408f466d97b31548"
+source = "git+https://github.com/dwallet-labs/sui?rev=bfc11468c1c134480855cfe97cad128fcacc177c#bfc11468c1c134480855cfe97cad128fcacc177c"
 dependencies = [
  "fastcrypto",
  "mysten-network",
@@ -3638,7 +3638,7 @@ dependencies = [
 [[package]]
 name = "consensus-core"
 version = "0.1.0"
-source = "git+https://github.com/dwallet-labs/sui?rev=932a3b79e3ecf9499f67e7d8497773963482c0b7#932a3b79e3ecf9499f67e7d8497773963482c0b7"
+source = "git+https://github.com/dwallet-labs/sui?rev=bfc11468c1c134480855cfe97cad128fcacc177c#bfc11468c1c134480855cfe97cad128fcacc177c"
 dependencies = [
  "anyhow",
  "arc-swap",

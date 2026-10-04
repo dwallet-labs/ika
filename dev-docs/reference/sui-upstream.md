@@ -10,15 +10,19 @@ inherited.
 ## Where the source is
 
 `Cargo.lock` is authoritative for each crate. Most Sui crates use the upstream
-release tag in root `Cargo.toml`. **`consensus-core` is patched from the
-`dwallet-labs/sui` fork** to provide consensus-owned, consumer-paced full replay.
-This is a compatibility backport of
-[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909) to Ika's
-pinned Sui release, derived from the merged upstream commit
-`3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`. It is not a switch to the newer
-Sui main branch.
-Its companion crates retain the upstream source identity. Do not infer the
-consensus implementation from the first Sui entry or the workspace dependency's
+release tag in root `Cargo.toml`. **`consensus-core` and `consensus-config`
+are patched from the
+`dwallet-labs/sui` fork**. These compatibility backports provide
+consensus-owned, consumer-paced full replay from
+[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909)
+(merged as `3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`) and variable-length
+authority names from
+[MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595)
+(merged as `e44f9afd907856c8eadaede621576793a906a9df`). Ika constructs
+Mysticeti labels from raw 32-byte Ed25519 consensus keys, with no global
+length setting or BLS padding. This keeps the pinned release rather than
+switching to Sui main; other companion crates retain their upstream
+source identity. Do not infer the consensus implementation from the first Sui entry or the workspace dependency's
 tag without checking Cargo's patch table.
 
 Resolve the crate's actual source before reading it:

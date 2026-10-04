@@ -91,8 +91,11 @@ commit ordering nor transaction voting, rejection rules, or serialization.
 The consensus patch backports the full-replay API from
 [MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909), merged as
 `3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`, to upstream `mainnet-v1.77.2`
-(`51d177ad7d65102fc368b582408f466d97b31548`). Ika patches only `consensus-core`;
-its companion Sui crates keep their existing upstream source identity.
+(`51d177ad7d65102fc368b582408f466d97b31548`). Ika patches `consensus-core`
+and `consensus-config`; the latter also
+backports the variable-length authority labels from
+[MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595).
+Other companion Sui crates keep their existing upstream source identity.
 
 ## The determinism contract
 

@@ -280,6 +280,13 @@ jobs:
             consensus_manager::replay_tests -- --test-threads=1 \
             | tee "$RUNNER_TEMP/consensus-replay.log"
           grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/consensus-replay.log"
+      - name: Run consensus authority identity regression
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-types --lib -- --exact \
+            sui::epoch_start_system::tests::consensus_committee_uses_raw_consensus_key_names \
+            --test-threads=1 | tee "$RUNNER_TEMP/consensus-authority-names.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/consensus-authority-names.log"
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -289,6 +296,7 @@ jobs:
             ${{ runner.temp }}/noa-*.log
             ${{ runner.temp }}/epoch-preparation.log
             ${{ runner.temp }}/consensus-replay.log
+            ${{ runner.temp }}/consensus-authority-names.log
 
   cargo-check:
     name: Cargo Test Check
