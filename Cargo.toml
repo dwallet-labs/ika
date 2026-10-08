@@ -370,3 +370,9 @@ der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
+
+# Backport full replay (#27909), variable-length names (#27595), and recovery fixes (#28243)
+# to mainnet-v1.77.2 while preserving the other Sui dependency sources.
+[patch."https://github.com/MystenLabs/sui"]
+consensus-core = { git = "https://github.com/dwallet-labs/sui", rev = "eeab973a742d2ee620f440641e85978edc3d797c" }
+consensus-config = { git = "https://github.com/dwallet-labs/sui", rev = "eeab973a742d2ee620f440641e85978edc3d797c" }
