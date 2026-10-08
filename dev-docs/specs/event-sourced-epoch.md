@@ -97,6 +97,19 @@ backports the variable-length authority labels from
 [MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595).
 Other companion Sui crates keep their existing upstream source identity.
 
+The compatibility patch also includes the shutdown and commit-sync recovery
+fixes from [MystenLabs/sui#28243](https://github.com/MystenLabs/sui/pull/28243),
+merged as `414d176ec4b56d9d38236b4623a75d498107dcc3`:
+
+- When transaction voting is enabled, cancellation of an indirect acceptance
+  search stops finalization. Unfinished commits remain in storage for recovery;
+  cancellation must not become a persisted transaction rejection. Ika keeps
+  transaction voting disabled, so its normal finalizer bypasses this search.
+- Commit sync accepts and inserts each certified commit before accepting the
+  next commit's blocks. A concurrent finalizer flush therefore cannot persist
+  a later subdag without the preceding commit that establishes its GC boundary.
+  This ordering is required with transaction voting disabled as well.
+
 ## The determinism contract
 
 Everything the fold does must be a function of the commits it folds.
