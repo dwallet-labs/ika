@@ -43,6 +43,22 @@ describe('historical WASM sampling', () => {
 		'16792bc6cf9e8c9921c8433e562a99d7ca1ea38684d1d9bc7a550b1b047abb5b',
 		'16792bc6cf9e8c9921c8433e562a99d7ca1ea38684d1d9bc7a550b1b047abb5b',
 	];
+	// Captured on native 64-bit from cryptography-private 0d5046df / crypto-bigint 8aabcee5,
+	// seeded with keccak256(ASCII("CLASS_GROUPS_DECRYPTION_KEY_V1") || 0 || rootSeed).
+	const legacyHashNativePublicFingerprints = [
+		'31954113b6dcf62d8267c441f4f5e8167a9fcc51b32663730ee644884594554e',
+		'290cc3f65b6c54595cce24b95e8fa71230916cf0b60115173bd60ada2e94b0e7',
+		'8d2b87c7472760c3eb1fc48552fa53c1021cb98b1465d4bce93568e5095b7967',
+		'8d2b87c7472760c3eb1fc48552fa53c1021cb98b1465d4bce93568e5095b7967',
+	];
+	// Computed independently from the original SDK's signing-seed formula and
+	// Ed25519Keypair.deriveKeypairFromSeed; both samplers must keep these identities.
+	const signingPublicFingerprints = [
+		'e3d8d641a37b0c696dd22748ca648490d0cc63ebf27d4f57831c3f9320371f23',
+		'579593c40cc52aaea5cacec7696650db5a8b2bca59fabd5d79b79e00dd12c7cf',
+		'61774a8f676390d39356693f6ffc814aec02e56d32d389c45a8c173b92795fe1',
+		'9c6c840f430e7f1b62389698898fcaf01c78e45ec2f082c2e667b744b24535f0',
+	];
 	// Captured from the portable 64-bit constructor before introducing the deprecated default.
 	const nativeFingerprints = [
 		[
@@ -68,11 +84,31 @@ describe('historical WASM sampling', () => {
 		const [publicFingerprint, privateFingerprint] = nativeFingerprints[curves.indexOf(curve)];
 		expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
 		expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+		expect(toHex(sha256(keys.getSigningPublicKeyBytes()))).toBe(
+			signingPublicFingerprints[curves.indexOf(curve)],
+		);
 		expect(keys.legacyHash).toBe(false);
 		const recovered = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, {
 			legacySample32Bit: false,
 		});
 		expect(recovered.toShareEncryptionKeysBytes()).toEqual(keys.toShareEncryptionKeysBytes());
+		const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
+			keys.toShareEncryptionKeysBytes(),
+		);
+		expect(restored.toShareEncryptionKeysBytes()).toEqual(keys.toShareEncryptionKeysBytes());
+	});
+
+	it.each(curves)('recovers native 64-bit keys with the legacy hash for %s', async (curve) => {
+		const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, {
+			legacyHash: true,
+			legacySample32Bit: false,
+		});
+		expect(toHex(sha256(keys.encryptionKey))).toBe(
+			legacyHashNativePublicFingerprints[curves.indexOf(curve)],
+		);
+		expect(toHex(sha256(keys.decryptionKey))).toBe(nativeFingerprints[0][1]);
+		expect(toHex(sha256(keys.getSigningPublicKeyBytes()))).toBe(signingPublicFingerprints[0]);
+		expect(keys.legacyHash).toBe(true);
 		const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
 			keys.toShareEncryptionKeysBytes(),
 		);
@@ -92,6 +128,9 @@ describe('historical WASM sampling', () => {
 					: fixedHashFingerprints[index];
 				expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
 				expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+				expect(toHex(sha256(keys.getSigningPublicKeyBytes()))).toBe(
+					signingPublicFingerprints[legacyHash ? 0 : index],
+				);
 				expect(keys.legacyHash).toBe(legacyHash);
 				const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
 					keys.toShareEncryptionKeysBytes(),
