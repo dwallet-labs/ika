@@ -235,9 +235,10 @@ const sessionId = ikaTx.createSessionIdentifier();
 `UserShareEncryptionKeys` manages class-groups encryption/decryption keys and an Ed25519 signing
 keypair derived from a root seed.
 
-New keys use portable 64-bit sampling. `fromRootSeedKeyWasm32` reproduces the historical
-32-bit WASM sampling; `legacyHash` independently selects the old curve-byte hash. Serialized
-key bundles retain the key bytes and use the existing format for either sampler.
+New keys use portable 64-bit sampling. The `legacySample32Bit` option reproduces the historical
+32-bit WASM sampling; `legacyHash` independently selects the old curve-byte hash. Both options
+default to `false`. Serialized key bundles retain the key bytes and use the existing format
+for either sampler.
 
 ```ts
 import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
@@ -246,13 +247,15 @@ import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1);
 
 // Recover keys created with the historical 32-bit WASM sampler.
-const wasm32Keys = await UserShareEncryptionKeys.fromRootSeedKeyWasm32(rootSeed, Curve.SECP256K1);
+const wasm32Keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1, {
+	legacySample32Bit: true,
+});
 
 // Combine WASM32 sampling with the older curve-byte hash when needed.
-const wasm32OldHashKeys = await UserShareEncryptionKeys.fromRootSeedKeyWasm32(
+const wasm32OldHashKeys = await UserShareEncryptionKeys.fromRootSeedKey(
 	rootSeed,
 	Curve.SECP256R1,
-	{ legacyHash: true },
+	{ legacyHash: true, legacySample32Bit: true },
 );
 
 // Serialize / deserialize
@@ -286,7 +289,7 @@ const { encryptionKey, decryptionKey } = await createClassGroupsKeypair(seed, Cu
 
 // Recover a keypair from a seed using historical 32-bit WASM sampling.
 const wasm32Keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1, {
-	wasm32Sampling: true,
+	legacySample32Bit: true,
 });
 ```
 

@@ -47,8 +47,9 @@ describe('historical WASM sampling', () => {
 	it.each(curves)('recovers historical WASM keys for %s with both hash versions', async (curve) => {
 		const index = curves.indexOf(curve);
 		for (const legacyHash of [false, true]) {
-			const keys = await UserShareEncryptionKeys.fromRootSeedKeyWasm32(rootSeed, curve, {
+			const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, {
 				legacyHash,
+				legacySample32Bit: true,
 			});
 			const [publicFingerprint, privateFingerprint] = legacyHash
 				? [legacyHashPublicFingerprints[index], fixedHashFingerprints[0][1]]

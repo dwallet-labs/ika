@@ -76,14 +76,14 @@ export interface ImportDWalletVerificationRequestInput {
  *
  * @param seed - The seed bytes to generate the keypair from
  * @param curve - The curve to use for key generation
- * @param options.wasm32Sampling - Recover keys derived with the historical 32-bit WASM sampler.
+ * @param options.legacySample32Bit - Recover keys derived with the historical 32-bit WASM sampler.
  * Defaults to the portable 64-bit sampler for new keys.
  * @returns Object containing the encryption key (public) and decryption key (private)
  */
 export async function createClassGroupsKeypair(
 	seed: Uint8Array,
 	curve: Curve,
-	{ wasm32Sampling = false }: { wasm32Sampling?: boolean } = {},
+	{ legacySample32Bit = false }: { legacySample32Bit?: boolean } = {},
 ): Promise<{
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
@@ -101,7 +101,7 @@ export async function createClassGroupsKeypair(
 		curve === Curve.RISTRETTO ||
 		curve === Curve.ED25519
 	) {
-		const generate = wasm32Sampling
+		const generate = legacySample32Bit
 			? generate_secp_cg_keypair_from_seed_wasm32
 			: generate_secp_cg_keypair_from_seed;
 		[encryptionKey, decryptionKey] = await generate(fromCurveToNumber(curve), seed);

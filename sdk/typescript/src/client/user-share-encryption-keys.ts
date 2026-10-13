@@ -65,13 +65,15 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
  * This only matters for non-SECP256K1 curves (whose curve number is
  * already `0`).
  *
- * - Use {@link fromRootSeedKey} for new registrations (fixed hash).
- * - Use {@link fromRootSeedKeyLegacyHash} only to reproduce keys that
- *   were registered on-chain before the fix.
+ * - Use {@link fromRootSeedKey} for new registrations (fixed hash and portable 64-bit sampling).
+ * - Set `legacyHash: true` to reproduce the hash used before the curve-byte fix.
+ * - Set `legacySample32Bit: true` to recover keys derived with historical 32-bit WASM sampling.
+ *   These options are independent and can be combined.
  *
- * Serialization via {@link toShareEncryptionKeysBytes} records which
- * derivation was used (BCS `V1` = legacy, `V2` = fixed), so
- * {@link fromShareEncryptionKeysBytes} always picks the right one.
+ * Serialization via {@link toShareEncryptionKeysBytes} records which hash
+ * was used (BCS `V1` = legacy, `V2` = fixed) and stores the derived key bytes.
+ * {@link fromShareEncryptionKeysBytes} restores those bytes without needing
+ * the sampling option.
  */
 export class UserShareEncryptionKeys {
 	/** Class-groups public encryption key (encrypts secret shares). */
@@ -113,17 +115,28 @@ export class UserShareEncryptionKeys {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Derives encryption keys from a root seed using the **fixed** hash
-	 * (`keccak256(domain || curveNumber || seed)`).
+	 * Derives encryption keys from a root seed. By default, uses the fixed
+	 * hash (`keccak256(domain || curveNumber || seed)`) and portable 64-bit sampling.
 	 *
-	 * This is the default and recommended constructor for all new key
-	 * registrations.
+	 * Set `legacyHash` to reproduce the old curve-byte hash, and
+	 * `legacySample32Bit` to reproduce historical 32-bit WASM sampling.
+	 * Both default to `false` for new key registrations. The sampling option
+	 * does not change signing-key derivation.
 	 */
 	static async fromRootSeedKey(
 		rootSeedKey: Uint8Array,
 		curve: Curve,
+		{
+			legacyHash = false,
+			legacySample32Bit = false,
+		}: { legacyHash?: boolean; legacySample32Bit?: boolean } = {},
 	): Promise<UserShareEncryptionKeys> {
-		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, false);
+		return UserShareEncryptionKeys.#createFromSeed(
+			rootSeedKey,
+			curve,
+			legacyHash,
+			legacySample32Bit,
+		);
 	}
 
 	/**
@@ -141,21 +154,7 @@ export class UserShareEncryptionKeys {
 		rootSeedKey: Uint8Array,
 		curve: Curve,
 	): Promise<UserShareEncryptionKeys> {
-		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, true);
-	}
-
-	/**
-	 * Recovers encryption keys derived with the historical 32-bit WASM sampler.
-	 * Set `legacyHash: true` as well for keys created before the curve-byte hash fix.
-	 * The signing key derivation is unchanged by the sampling choice.
-	 * Use {@link fromRootSeedKey} for new registrations.
-	 */
-	static async fromRootSeedKeyWasm32(
-		rootSeedKey: Uint8Array,
-		curve: Curve,
-		{ legacyHash = false }: { legacyHash?: boolean } = {},
-	): Promise<UserShareEncryptionKeys> {
-		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, legacyHash, true);
+		return UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, curve, { legacyHash: true });
 	}
 
 	/**
@@ -166,7 +165,7 @@ export class UserShareEncryptionKeys {
 		rootSeedKey: Uint8Array,
 		curve: Curve,
 		legacyHash: boolean,
-		wasm32Sampling: boolean = false,
+		legacySample32Bit: boolean = false,
 	): Promise<UserShareEncryptionKeys> {
 		const hashFn = legacyHash ? UserShareEncryptionKeys.hashLegacy : UserShareEncryptionKeys.hash;
 
@@ -183,7 +182,7 @@ export class UserShareEncryptionKeys {
 		);
 
 		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve, {
-			wasm32Sampling,
+			legacySample32Bit,
 		});
 		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
 			toHex(encryptionSignerKeySeed),
