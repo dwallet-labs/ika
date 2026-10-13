@@ -3434,7 +3434,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "bcs 0.1.6",
  "commitment",
@@ -3557,7 +3557,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "crypto-bigint 0.7.5",
  "group 0.2.0",
@@ -6228,7 +6228,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "blake2b_simd",
  "crypto-bigint 0.7.5",
@@ -6555,7 +6555,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "criterion",
  "crypto-bigint 0.7.5",
@@ -8703,7 +8703,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.5",
@@ -9826,7 +9826,7 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "aead 0.6.1",
  "bcs 0.1.6",
@@ -11569,7 +11569,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.5",
@@ -11586,7 +11586,7 @@ dependencies = [
 [[package]]
 name = "proof_aggregation"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.5",
@@ -17778,7 +17778,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=195ced805d482a1e39f8bd2d8913fca23412e520#195ced805d482a1e39f8bd2d8913fca23412e520"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=06083c60706d09675f9679b1b622d66ec558ff7d#06083c60706d09675f9679b1b622d66ec558ff7d"
 dependencies = [
  "class_groups",
  "commitment",
