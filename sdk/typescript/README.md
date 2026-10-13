@@ -235,21 +235,19 @@ const sessionId = ikaTx.createSessionIdentifier();
 `UserShareEncryptionKeys` manages class-groups encryption/decryption keys and an Ed25519 signing
 keypair derived from a root seed.
 
-New keys use portable 64-bit sampling. The `legacySample32Bit` option reproduces the historical
-32-bit WASM sampling; `legacyHash` independently selects the old curve-byte hash. Both options
-default to `false`. Serialized key bundles retain the key bytes and use the existing format
-for either sampler.
+Create new keys with `fromRootSeedKey64Bit`, which uses portable 64-bit sampling and the current
+curve-byte hash. The deprecated `fromRootSeedKey` preserves historical WASM32 sampling by
+default (`legacySample32Bit: true`); its independent `legacyHash` option defaults to `false`.
+Serialized key bundles retain the key bytes and use the existing format for either sampler.
 
 ```ts
 import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
-// Create from a root seed
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1);
+// Create new keys with the current hash and portable 64-bit sampler.
+const keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(rootSeed, Curve.SECP256K1);
 
-// Recover keys created with the historical 32-bit WASM sampler.
-const wasm32Keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1, {
-	legacySample32Bit: true,
-});
+// Deprecated: recover existing WASM32 keys (the default sampler).
+const wasm32Keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1);
 
 // Combine WASM32 sampling with the older curve-byte hash when needed.
 const wasm32OldHashKeys = await UserShareEncryptionKeys.fromRootSeedKey(
@@ -277,6 +275,19 @@ const outputSig = await keys.getUserOutputSignature(dWallet, userPublicOutput);
 const address = keys.getSuiAddress();
 const pubkey = keys.getSigningPublicKeyBytes();
 ```
+
+Use `fromRootSeedKey64Bit` for every new encryption-key registration. The deprecated
+`fromRootSeedKey` defaults to `legacySample32Bit: true` for recovering existing keys;
+set `legacySample32Bit: false` only to recover keys originally created with 64-bit sampling.
+Its independent `legacyHash` option defaults to `false` and reproduces the old curve-byte hash.
+Serialized bundles restore their stored key bytes without either option.
+
+To rotate existing keys, recover them, derive new keys with `fromRootSeedKey64Bit` from a
+fresh seed, register the new keys, and re-encrypt each user share with
+`requestReEncryptUserShareFor` to the new encryption-key address. After network verification,
+accept and verify the new encrypted shares with the new keys before switching to them.
+Re-encryption does not revoke access to existing encrypted copies. See the
+[recovery and rotation guide](../../docs/content/docs/sdk/user-share-encryption-keys.mdx).
 
 ## Cryptography helpers
 

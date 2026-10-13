@@ -78,7 +78,7 @@ import {
 } from '@ika.xyz/sdk';
 
 // Create user encryption keys
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('your-seed'),
 	Curve.SECP256K1,
 );

@@ -64,7 +64,7 @@ const privateKey = new Uint8Array([
 ]);
 
 // Create encryption keys
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('your-seed'),
 	Curve.SECP256K1,
 );

@@ -48,7 +48,7 @@ const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTR
 
 // Note: You still need UserShareEncryptionKeys for the DKG protocol itself,
 // but not for the encrypted user share storage
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('seed'),
 	curve,
 );
@@ -114,7 +114,7 @@ const globalPresign = await ikaClient.getPresignInParticularState(
 	'Completed',
 );
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -195,7 +195,7 @@ const dWallet = await ikaClient.getDWalletInParticularState(
 // Verify it's a shared dWallet
 expect(dWallet.public_user_secret_key_share).toBeDefined();
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -262,7 +262,7 @@ expect(dWallet.public_user_secret_key_share).toBeDefined();
 
 const presign = await ikaClient.getPresignInParticularState('presign id', 'Completed');
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -356,7 +356,7 @@ const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeySha
 	'encrypted user secret key share id',
 );
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('test seed'),
 	curve,
 );

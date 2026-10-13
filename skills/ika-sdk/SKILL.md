@@ -111,7 +111,7 @@ Hash.Merlin        // SchnorrkelSubstrate
 ```typescript
 import { UserShareEncryptionKeys, Curve } from '@ika.xyz/sdk';
 
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+const keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
     new TextEncoder().encode('your-seed'),
     Curve.SECP256K1,
 );
@@ -271,8 +271,8 @@ All `*InParticularState` methods accept:
 ```typescript
 import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
-// Create from seed (correct curve byte in hash)
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
+// New keys: current curve-byte hash and portable 64-bit sampling
+const keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seed, curve);
 
 // Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
 const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(seed, curve);
@@ -294,6 +294,8 @@ await keys.getEncryptionKeySignature();     // Proof of ownership
 await keys.getUserOutputSignature(dWallet, userPublicOutput); // Authorize dWallet
 await keys.decryptUserShare(dWallet, encShare, pp); // Decrypt secret share
 ```
+
+**Existing keys:** `fromRootSeedKey` is deprecated and defaults to historical WASM32 sampling (`legacySample32Bit: true`). Use it only to recover existing keys; use `fromRootSeedKey64Bit` for all new registrations. Rotate existing keys by deriving new keys from a fresh seed, registering them, and re-encrypting and accepting each user share under the new keys. Restore serialized bundles directly when available.
 
 **Legacy Hash:** The legacy hash had a bug where the curve byte was always 0 regardless of curve (only affects non-SECP256K1 curves). If you registered encryption keys before the fix with a non-SECP256K1 curve, use `fromRootSeedKeyLegacyHash` to reproduce the legacy keys.
 

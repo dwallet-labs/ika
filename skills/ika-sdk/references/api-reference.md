@@ -527,9 +527,15 @@ reconfigurationPublicOutputToProtocolPublicParameters(
 ### Creation
 
 ```typescript
-// From seed (deterministic, correct curve byte in hash)
-static fromRootSeedKey(
+// New keys: current curve-byte hash and portable 64-bit sampling.
+static fromRootSeedKey64Bit(
     rootSeedKey: Uint8Array, curve: Curve
+): Promise<UserShareEncryptionKeys>
+
+// Deprecated: recover existing keys. WASM32 sampling defaults to true.
+static fromRootSeedKey(
+    rootSeedKey: Uint8Array, curve: Curve,
+    options?: { legacyHash?: boolean; legacySample32Bit?: boolean }
 ): Promise<UserShareEncryptionKeys>
 
 // Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)

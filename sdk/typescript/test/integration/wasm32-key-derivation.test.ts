@@ -43,26 +43,70 @@ describe('historical WASM sampling', () => {
 		'16792bc6cf9e8c9921c8433e562a99d7ca1ea38684d1d9bc7a550b1b047abb5b',
 		'16792bc6cf9e8c9921c8433e562a99d7ca1ea38684d1d9bc7a550b1b047abb5b',
 	];
+	// Captured from the portable 64-bit constructor before introducing the deprecated default.
+	const nativeFingerprints = [
+		[
+			'31954113b6dcf62d8267c441f4f5e8167a9fcc51b32663730ee644884594554e',
+			'5081aeac56553c1f96fe3946572a885f519c040fd955e4a325f5b5a71d513825',
+		],
+		[
+			'09a1625220c0efd485261b00d66a5562641516dd3eb7a0e560670487d2cc3763',
+			'b2146bc80a068668340118d9e27ed6ca578aba522f95f3fa423da3ea39130628',
+		],
+		[
+			'ac1dfa23ae6ee46748b118d7dd3d4d7087c3a7f205eac241b9a8945db94d2ab1',
+			'ab02e2f0d50de0d5240611da0f2de3a47c917996e826f12805dee604bb975e3b',
+		],
+		[
+			'f24f180de661bf694cb3ef83bd4b77010b982208e1297d8a8bc1141e678f929f',
+			'33cf9d62e857e4ea39930057484be7ca66c27745b6340f2833e605cc04dcc3f7',
+		],
+	];
 
-	it.each(curves)('recovers historical WASM keys for %s with both hash versions', async (curve) => {
-		const index = curves.indexOf(curve);
-		for (const legacyHash of [false, true]) {
-			const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, {
-				legacyHash,
-				legacySample32Bit: true,
-			});
-			const [publicFingerprint, privateFingerprint] = legacyHash
-				? [legacyHashPublicFingerprints[index], fixedHashFingerprints[0][1]]
-				: fixedHashFingerprints[index];
-			expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
-			expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
-			expect(keys.legacyHash).toBe(legacyHash);
-			const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
-				keys.toShareEncryptionKeysBytes(),
-			);
-			expect(restored.encryptionKey).toEqual(keys.encryptionKey);
-			expect(restored.decryptionKey).toEqual(keys.decryptionKey);
-			expect(restored.legacyHash).toBe(legacyHash);
-		}
+	it.each(curves)('creates portable 64-bit keys with the new constructor for %s', async (curve) => {
+		const keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(rootSeed, curve);
+		const [publicFingerprint, privateFingerprint] = nativeFingerprints[curves.indexOf(curve)];
+		expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
+		expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+		expect(keys.legacyHash).toBe(false);
+		const recovered = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, {
+			legacySample32Bit: false,
+		});
+		expect(recovered.toShareEncryptionKeysBytes()).toEqual(keys.toShareEncryptionKeysBytes());
+		const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
+			keys.toShareEncryptionKeysBytes(),
+		);
+		expect(restored.toShareEncryptionKeysBytes()).toEqual(keys.toShareEncryptionKeysBytes());
 	});
+
+	it.each(curves)(
+		'defaults to historical WASM keys for %s with both hash versions',
+		async (curve) => {
+			const index = curves.indexOf(curve);
+			for (const legacyHash of [false, true]) {
+				const keys = legacyHash
+					? await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve, { legacyHash: true })
+					: await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, curve);
+				const [publicFingerprint, privateFingerprint] = legacyHash
+					? [legacyHashPublicFingerprints[index], fixedHashFingerprints[0][1]]
+					: fixedHashFingerprints[index];
+				expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
+				expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+				expect(keys.legacyHash).toBe(legacyHash);
+				const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(
+					keys.toShareEncryptionKeysBytes(),
+				);
+				expect(restored.encryptionKey).toEqual(keys.encryptionKey);
+				expect(restored.decryptionKey).toEqual(keys.decryptionKey);
+				expect(restored.legacyHash).toBe(legacyHash);
+				if (legacyHash) {
+					const recovered = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+						rootSeed,
+						curve,
+					);
+					expect(recovered.toShareEncryptionKeysBytes()).toEqual(keys.toShareEncryptionKeysBytes());
+				}
+			}
+		},
+	);
 });

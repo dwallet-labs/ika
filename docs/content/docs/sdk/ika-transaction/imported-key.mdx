@@ -84,7 +84,7 @@ const privateKey = Uint8Array.from(
 );
 
 // Generate encryption keys for protecting your user share
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('your-seed-phrase'),
 	curve,
 );
@@ -371,7 +371,7 @@ console.log(dWallet.public_user_secret_key_share === null); // true
 
 const presign = await ikaClient.getPresignInParticularState('presign id', 'Completed');
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
 	new TextEncoder().encode('your-seed-phrase'),
 	curve,
 );
