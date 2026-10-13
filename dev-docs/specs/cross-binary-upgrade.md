@@ -306,12 +306,15 @@ scheduling race). The scenario instead classifies each boundary:
   legitimate), but quorum-only progress is never accepted as compatibility
   proof.
 
-The scenario as a whole must witness conclusive candidate byte-equality on at
-least one reconfiguration boundary or it fails with "insufficient
-cross-version compatibility evidence". Every boundary still requires healthy
-validators, correct local epochs, protocol v7, quorum output convergence,
-zero malicious actors, zero rejected envelopes, no self-malicious logs, and
-no stranded sessions.
+Before swapping the remaining OLD validators, the rollout must witness
+conclusive candidate byte-equality on at least one mixed reconfiguration
+boundary or its evidence checkpoint fails with "insufficient cross-version
+compatibility evidence". Evidence from a later all-current boundary cannot
+rescue an unevidenced mixed phase. The final scenario-wide evidence check
+remains in place for every validator observed by its convergence steps.
+Every boundary still requires healthy validators, correct local epochs,
+protocol v7, quorum output convergence, zero malicious actors, zero rejected
+envelopes, no self-malicious logs, and no stranded sessions.
 
 The current validator's per-authority output observations and pending-session
 counts are collected protocol-generically and labeled by protocol name. This

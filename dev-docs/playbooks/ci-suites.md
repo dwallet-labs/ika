@@ -231,7 +231,9 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 # THE DEPLOYED-RELEASE GATE (also the PR default, and the scenario to run
 # by hand on every release tag): boot the literal v1.4.1 release, upgrade
 # one validator to current, converge two mixed aggregated reshares
-# (per-authority byte-equality, zero malicious), then swap the rest.
+# (per-authority byte-equality, zero malicious), require candidate byte-equality
+# evidence from at least one mixed boundary, then swap the rest. Later
+# all-current evidence cannot rescue an unevidenced mixed phase.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v141_rollout
 #   override the old side:  -f old_ref=release/mainnet-v1.4.1 -f old_bin_name=ika-validator
 

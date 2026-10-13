@@ -194,6 +194,9 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("the node has identified itself as malicious")
         .run_workload("mixed-v7-after-second-reshare")
+        // Require candidate byte-equality while the quorum still runs OLD;
+        // an all-NEW reshare must not rescue an unevidenced mixed phase.
+        .expect_network_key_output_evidence()
         // ── Rollout: swap the remaining validators to NEW. ─────────────────
         .wait_for_epoch(4)
         .wait_for_all_validators_local_epoch(4)
