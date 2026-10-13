@@ -145,6 +145,20 @@ export class UserShareEncryptionKeys {
 	}
 
 	/**
+	 * Recovers encryption keys derived with the historical 32-bit WASM sampler.
+	 * Set `legacyHash: true` as well for keys created before the curve-byte hash fix.
+	 * The signing key derivation is unchanged by the sampling choice.
+	 * Use {@link fromRootSeedKey} for new registrations.
+	 */
+	static async fromRootSeedKeyWasm32(
+		rootSeedKey: Uint8Array,
+		curve: Curve,
+		{ legacyHash = false }: { legacyHash?: boolean } = {},
+	): Promise<UserShareEncryptionKeys> {
+		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, legacyHash, true);
+	}
+
+	/**
 	 * Shared construction logic — derives class-groups and Ed25519 keypairs
 	 * from a root seed, using either the fixed or legacy hash function.
 	 */
@@ -152,6 +166,7 @@ export class UserShareEncryptionKeys {
 		rootSeedKey: Uint8Array,
 		curve: Curve,
 		legacyHash: boolean,
+		wasm32Sampling: boolean = false,
 	): Promise<UserShareEncryptionKeys> {
 		const hashFn = legacyHash ? UserShareEncryptionKeys.hashLegacy : UserShareEncryptionKeys.hash;
 
@@ -167,7 +182,9 @@ export class UserShareEncryptionKeys {
 			curve,
 		);
 
-		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve);
+		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve, {
+			wasm32Sampling,
+		});
 		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
 			toHex(encryptionSignerKeySeed),
 		);

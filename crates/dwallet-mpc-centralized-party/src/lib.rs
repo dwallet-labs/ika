@@ -1254,27 +1254,55 @@ pub fn generate_cg_keypair_from_seed(
     crrve: u32,
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    match try_into_curve(crrve)? {
-        DWalletCurve::Secp256k1 => {
-            generate_cg_keypair_from_seed_inner::<Secp256k1DKGProtocol>(seed)
-        }
-        DWalletCurve::Ristretto => {
-            generate_cg_keypair_from_seed_inner::<RistrettoDKGProtocol>(seed)
-        }
-        DWalletCurve::Curve25519 => {
-            generate_cg_keypair_from_seed_inner::<Curve25519DKGProtocol>(seed)
-        }
-        DWalletCurve::Secp256r1 => {
-            generate_cg_keypair_from_seed_inner::<Secp256r1DKGProtocol>(seed)
-        }
+    generate_cg_keypair_from_seed_with_sampling(crrve, seed, false)
+}
+
+/// Recover class-groups keys derived with the historical 32-bit WASM sampler.
+/// New keys should use [`generate_cg_keypair_from_seed`].
+pub fn generate_cg_keypair_from_seed_wasm_thirty_two(
+    curve: u32,
+    seed: [u8; 32],
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    generate_cg_keypair_from_seed_with_sampling(curve, seed, true)
+}
+
+fn generate_cg_keypair_from_seed_with_sampling(
+    curve: u32,
+    seed: [u8; 32],
+    wasm_thirty_two: bool,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    match try_into_curve(curve)? {
+        DWalletCurve::Secp256k1 => generate_cg_keypair_from_seed_with_sampling_inner::<
+            Secp256k1DKGProtocol,
+        >(seed, wasm_thirty_two),
+        DWalletCurve::Ristretto => generate_cg_keypair_from_seed_with_sampling_inner::<
+            RistrettoDKGProtocol,
+        >(seed, wasm_thirty_two),
+        DWalletCurve::Curve25519 => generate_cg_keypair_from_seed_with_sampling_inner::<
+            Curve25519DKGProtocol,
+        >(seed, wasm_thirty_two),
+        DWalletCurve::Secp256r1 => generate_cg_keypair_from_seed_with_sampling_inner::<
+            Secp256r1DKGProtocol,
+        >(seed, wasm_thirty_two),
     }
 }
 
 pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    generate_cg_keypair_from_seed_with_sampling_inner::<P>(seed, false)
+}
+
+fn generate_cg_keypair_from_seed_with_sampling_inner<P: Protocol>(
+    seed: [u8; 32],
+    wasm_thirty_two: bool,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let decryption_key = P::generate_decryption_key(&mut rng)?;
+    let decryption_key = if wasm_thirty_two {
+        P::generate_decryption_key_wasm_thirty_two(&mut rng)?
+    } else {
+        P::generate_decryption_key(&mut rng)?
+    };
     let encryption_key_value = P::encryption_key_from_decryption_key(decryption_key.clone())?;
     Ok((
         bcs::to_bytes(&VersionedEncryptionKeyValue::V1(bcs::to_bytes(
@@ -1584,5 +1612,44 @@ pub fn parse_signature_from_sign_output_inner(
             let signature: SchnorrkelSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
+    }
+}
+
+#[cfg(test)]
+mod key_derivation_tests {
+    use hex::encode;
+    use sha2::{Digest, Sha256};
+
+    use super::{generate_cg_keypair_from_seed, generate_cg_keypair_from_seed_wasm_thirty_two};
+
+    // Captured from cryptography-private 0d5046df with crypto-bigint 8aabcee5 on WASM32.
+    #[test]
+    fn wasm_thirty_two_key_bytes_match_historical_keys_on_every_curve() {
+        let public_key_fingerprints = [
+            "5f22ad9b35f92368d6c2e9b2721219f91adb734097eeaaccb4942bf15f1248c1",
+            "74a4cb3c6aad3db7df17ff60225fe3d75b6cce5de88004514e91a9c511eb87d3",
+            "8b4557e15aa9a92b7059d2481fc85517457cf2a123abb6e5edc59ca9128763bc",
+            "8b4557e15aa9a92b7059d2481fc85517457cf2a123abb6e5edc59ca9128763bc",
+        ];
+        for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
+            let curve = u32::try_from(curve).unwrap();
+            let (public_key, private_key) =
+                generate_cg_keypair_from_seed_wasm_thirty_two(curve, [42; 32]).unwrap();
+            assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
+            assert_eq!(
+                encode(Sha256::digest(private_key)),
+                "3f84e124733d5bc3d6e74c53b6a21466113fd70753678e04857e26c834aeb898"
+            );
+            let (_, native_private_key) = generate_cg_keypair_from_seed(curve, [42; 32]).unwrap();
+            assert_eq!(
+                encode(Sha256::digest(native_private_key)),
+                "a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc"
+            );
+        }
+    }
+
+    #[test]
+    fn wasm_thirty_two_rejects_unsupported_curves() {
+        assert!(generate_cg_keypair_from_seed_wasm_thirty_two(u32::MAX, [42; 32]).is_err());
     }
 }

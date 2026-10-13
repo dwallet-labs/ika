@@ -25,6 +25,10 @@ log = "0.4.27"
 console_log = "1.0.0"
 crypto-bigint.workspace = true
 
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true
+
 [features]
 # No default features: the INSECURE `dwallet-mpc-unsafe-mock` below must be opt-in only.
 default = []

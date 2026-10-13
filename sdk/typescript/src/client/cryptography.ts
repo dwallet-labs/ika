@@ -30,6 +30,7 @@ import {
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
+	generate_secp_cg_keypair_from_seed_wasm32,
 	network_dkg_public_output_to_protocol_pp,
 	parse_signature_from_sign_output,
 	public_key_from_centralized_dkg_output,
@@ -75,11 +76,14 @@ export interface ImportDWalletVerificationRequestInput {
  *
  * @param seed - The seed bytes to generate the keypair from
  * @param curve - The curve to use for key generation
+ * @param options.wasm32Sampling - Recover keys derived with the historical 32-bit WASM sampler.
+ * Defaults to the portable 64-bit sampler for new keys.
  * @returns Object containing the encryption key (public) and decryption key (private)
  */
 export async function createClassGroupsKeypair(
 	seed: Uint8Array,
 	curve: Curve,
+	{ wasm32Sampling = false }: { wasm32Sampling?: boolean } = {},
 ): Promise<{
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
@@ -97,10 +101,10 @@ export async function createClassGroupsKeypair(
 		curve === Curve.RISTRETTO ||
 		curve === Curve.ED25519
 	) {
-		[encryptionKey, decryptionKey] = await generate_secp_cg_keypair_from_seed(
-			fromCurveToNumber(curve),
-			seed,
-		);
+		const generate = wasm32Sampling
+			? generate_secp_cg_keypair_from_seed_wasm32
+			: generate_secp_cg_keypair_from_seed;
+		[encryptionKey, decryptionKey] = await generate(fromCurveToNumber(curve), seed);
 	} else {
 		throw new Error(
 			'Only SECP256K1, SECP256R1, RISTRETTO, and ED25519 curves are supported for now',
