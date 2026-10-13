@@ -23,6 +23,7 @@ use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
 use move_core_types::language_storage::StructTag;
+use rand::Rng;
 use serde::Serialize;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::Coin;
@@ -1054,7 +1055,6 @@ fn hex_decode(s: &str) -> Result<Vec<u8>> {
 
 /// Generate a random 32-byte value.
 fn random_bytes() -> [u8; 32] {
-    use rand::RngCore;
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     bytes

@@ -3293,6 +3293,7 @@ dependencies = [
  "cfg-if",
  "cipher 0.5.2",
  "cpufeatures 0.3.1",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -6907,7 +6908,7 @@ dependencies = [
  "ika-types",
  "move-core-types",
  "msim",
- "rand 0.9.5",
+ "rand 0.10.3",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -7022,7 +7023,7 @@ dependencies = [
  "mysten-network",
  "parking_lot 0.12.5",
  "prometheus",
- "rand 0.9.5",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",
  "rayon",
@@ -7126,7 +7127,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "sui-macros",
  "sui-metrics-push-client",
  "sui-simulator",
@@ -11967,6 +11968,8 @@ version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
 dependencies = [
+ "chacha20",
+ "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
 
