@@ -259,7 +259,7 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   at its root) and browsable at github.com/MystenLabs/sui at the pinned
   tag. How to locate it + what to read for what:
   `dev-docs/reference/sui-upstream.md`.
-- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.77.2`;
+- **Sui version is pinned in MULTIPLE places** (currently `testnet-v1.82.1`;
   sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
   PR — root `Cargo.toml` (~45 tag pins), excluded wasm workspace locks,
   the sui-binary downloads in the TS CI workflows, this file, and every

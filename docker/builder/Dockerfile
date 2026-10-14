@@ -55,6 +55,7 @@ WORKDIR ${WORKDIR}/ika
 # Copy source for dependency resolution and build
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+COPY vendor vendor
 COPY contracts contracts
 COPY deployed_contracts deployed_contracts
 

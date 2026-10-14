@@ -112,6 +112,7 @@ on:
       # every bump to them.)
       - "Cargo.toml"
       - "Cargo.lock"
+      - "vendor/digest/**"
       # ika-core and ika-node are the only closure crates whose manifest carries
       # feature flags this workflow itself toggles (enforce-minimum-cpu,
       # dwallet-mpc-unsafe-mock, test-testing, jemalloc), so those two are

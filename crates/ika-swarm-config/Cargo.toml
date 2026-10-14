@@ -37,7 +37,7 @@ sui-sdk.workspace = true
 sui-types.workspace = true
 ika-move-contracts.workspace = true
 move-core-types.workspace = true
-move-package-alt-compilation.workspace = true
+move-package-compilation.workspace = true
 dwallet-mpc-types.workspace = true
 
 [target.'cfg(msim)'.dependencies]
