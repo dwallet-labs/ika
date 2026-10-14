@@ -9,24 +9,12 @@ inherited.
 
 ## Where the source is
 
-`Cargo.lock` is authoritative for each crate. Most Sui crates use the upstream
-release tag in root `Cargo.toml`. **`consensus-core` and `consensus-config`
-are patched from the
-`dwallet-labs/sui` fork**. These compatibility backports provide
-consensus-owned, consumer-paced full replay from
-[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909)
-(merged as `3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`) and variable-length
-authority names from
-[MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595)
-(merged as `e44f9afd907856c8eadaede621576793a906a9df`). The backport also
-includes shutdown and commit-sync recovery fixes from
-[MystenLabs/sui#28243](https://github.com/MystenLabs/sui/pull/28243)
-(merged as `414d176ec4b56d9d38236b4623a75d498107dcc3`). Ika constructs
-Mysticeti labels from raw 32-byte Ed25519 consensus keys, with no global
-length setting or BLS padding. This keeps the pinned release rather than
-switching to Sui main; other companion crates retain their upstream
-source identity. Do not infer the consensus implementation from the first Sui entry or the workspace dependency's
-tag without checking Cargo's patch table.
+`Cargo.lock` is authoritative for each crate. All Sui crates, including
+`consensus-core` and `consensus-config`, use upstream `mainnet-v1.82.3` from
+root `Cargo.toml`; there is no consensus fork override. This release includes
+consumer-paced full replay, variable-length authority labels, and shutdown
+and commit-sync recovery fixes. Ika constructs Mysticeti labels from raw
+32-byte Ed25519 consensus keys, with no global length setting or BLS padding.
 
 Resolve the crate's actual source before reading it:
 
