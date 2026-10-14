@@ -4,9 +4,8 @@ use group::{CsRng, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use merlin::Transcript;
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::{Rng, SeedableRng, TryCryptoRng, TryRng};
+use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::fmt;
 use zeroize::ZeroizeOnDrop;
 
@@ -239,7 +238,7 @@ impl RootSeed {
 ///
 /// # How It Works
 ///
-/// This RNG implements the [`Rng`] and [`TryCryptoRng`] traits from `rand_core`,
+/// This RNG implements the [`RngCore`] and [`CryptoRng`] traits from `rand_core`,
 /// which makes it compatible with the [`group::CsRng`] trait alias used by the
 /// twopc_mpc library. However, instead of generating random bytes, it always
 /// fills buffers with zeros.
@@ -297,15 +296,14 @@ impl ZeroRng {
     }
 }
 
-impl TryRng for ZeroRng {
-    type Error = Infallible;
+impl RngCore for ZeroRng {
     /// Returns zero.
     ///
     /// # ⚠️ Warning
     /// This always returns 0, providing no randomness.
     #[inline]
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(0)
+    fn next_u32(&mut self) -> u32 {
+        0
     }
 
     /// Returns zero.
@@ -313,8 +311,8 @@ impl TryRng for ZeroRng {
     /// # ⚠️ Warning
     /// This always returns 0, providing no randomness.
     #[inline]
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(0)
+    fn next_u64(&mut self) -> u64 {
+        0
     }
 
     /// Fills the destination buffer with zeros.
@@ -322,9 +320,8 @@ impl TryRng for ZeroRng {
     /// # ⚠️ Warning
     /// This fills the entire buffer with zeros, providing no randomness.
     #[inline]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
         dest.fill(0);
-        Ok(())
     }
 }
 
@@ -335,12 +332,12 @@ impl TryRng for ZeroRng {
 /// **THIS IS A LIE.** This RNG is NOT cryptographically secure in any meaningful sense.
 ///
 /// This trait is implemented ONLY to satisfy the type system requirements of the
-/// twopc_mpc library, which requires [`TryCryptoRng`] bounds. The actual cryptographic
+/// twopc_mpc library, which requires [`CryptoRng`] bounds. The actual cryptographic
 /// security for network-owned-address signing comes from the network's threshold signature,
 /// NOT from this RNG.
 ///
 /// **NEVER** use this RNG in any context where randomness is expected to provide security.
-impl TryCryptoRng for ZeroRng {}
+impl CryptoRng for ZeroRng {}
 
 /// Implementation of [`group::CsRng`] for [`ZeroRng`].
 ///

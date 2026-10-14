@@ -23,7 +23,7 @@ use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
 use move_core_types::language_storage::StructTag;
-use rand::Rng;
+use rand::RngCore;
 use serde::Serialize;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::Coin;
