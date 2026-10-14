@@ -88,18 +88,15 @@ derived fields are in memory on `AuthorityPerEpochStore`. State that cannot be
 re-derived belongs in the durable audit linked above. Replay changes neither
 commit ordering nor transaction voting, rejection rules, or serialization.
 
-The consensus patch backports the full-replay API from
-[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909), merged as
-`3a2b792be713c243b53dc3f2d6e896c7f7b2dbff`, to upstream `mainnet-v1.77.2`
-(`51d177ad7d65102fc368b582408f466d97b31548`). Ika patches `consensus-core`
-and `consensus-config`; the latter also
-backports the variable-length authority labels from
-[MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595).
-Other companion Sui crates keep their existing upstream source identity.
-
-The compatibility patch also includes the shutdown and commit-sync recovery
-fixes from [MystenLabs/sui#28243](https://github.com/MystenLabs/sui/pull/28243),
-merged as `414d176ec4b56d9d38236b4623a75d498107dcc3`:
+Sui `testnet-v1.82.1` supplies the full-replay API from
+[MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909),
+variable-length authority labels from
+[MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595), and
+shutdown and commit-sync recovery fixes from
+[MystenLabs/sui#28243](https://github.com/MystenLabs/sui/pull/28243).
+All Sui crates, including consensus, use this upstream release without a fork
+patch. Slim block propagation remains disabled to preserve the existing
+subscription wire format; enabling it requires a protocol-version rollout.
 
 - When transaction voting is enabled, cancellation of an indirect acceptance
   search stops finalization. Unfinished commits remain in storage for recovery;

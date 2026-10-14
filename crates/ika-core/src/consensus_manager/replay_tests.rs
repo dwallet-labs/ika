@@ -43,7 +43,7 @@ const CONSENSUS_COMMITTEE_SIZE: usize = 4;
 
 struct AcceptEmptyTransactions;
 impl TransactionVerifier for AcceptEmptyTransactions {
-    fn verify_batch(&self, batch: &[&[u8]]) -> Result<(), ValidationError> {
+    fn verify_batch(&self, _block: &BlockRef, batch: &[&[u8]]) -> Result<(), ValidationError> {
         assert!(
             batch.is_empty(),
             "the replay fixture carries no application transactions"
@@ -52,10 +52,10 @@ impl TransactionVerifier for AcceptEmptyTransactions {
     }
     fn verify_and_vote_batch(
         &self,
-        _block: &BlockRef,
+        block: &BlockRef,
         batch: &[&[u8]],
     ) -> Result<Vec<TransactionIndex>, ValidationError> {
-        self.verify_batch(batch)?;
+        self.verify_batch(block, batch)?;
         Ok(Vec::new())
     }
 }

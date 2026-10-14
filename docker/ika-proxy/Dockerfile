@@ -35,6 +35,7 @@ WORKDIR ${WORKDIR}/ika
 # Copy Cargo manifests and crate folders for dependency resolution
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+COPY vendor vendor
 COPY contracts contracts
 COPY deployed_contracts deployed_contracts
 

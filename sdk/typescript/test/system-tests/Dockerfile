@@ -24,6 +24,7 @@ WORKDIR ${WORKDIR}/ika
 # Copy Cargo manifests and crate folders for dependency resolution
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+COPY vendor vendor
 COPY contracts contracts
 COPY deployed_contracts deployed_contracts
 RUN git config --global url."https://x-access-token:$GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"

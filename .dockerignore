@@ -2,6 +2,7 @@
 *.swp
 **/.terraform/
 target/
+vendor/digest/target/
 **/*Dockerfile
 *.md
 build/

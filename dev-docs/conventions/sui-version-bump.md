@@ -12,8 +12,7 @@ the locations below and runs in CI; it fails the build on drift.
 ## Checklist (current tag: the single `mainnet-v*` or `testnet-v*` pin in root Cargo.toml)
 
 1. **Root `Cargo.toml`** — every Sui git dependency carries the
-   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin (43 occurrences at
-   `mainnet-v1.77.2`; sed them together):
+   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin; replace them together:
    ```bash
    sed -i "" "s/mainnet-v<OLD>/mainnet-v<NEW>/g" Cargo.toml   # adjust flavor if moving to/from testnet-v
    cargo update   # refresh Cargo.lock for the new revs
@@ -21,7 +20,10 @@ the locations below and runs in CI; it fails the build on drift.
    Also copy the `sui-rust-sdk` revision used by that Sui tag into `sui-crypto`,
    `sui-rpc`, `sui-sdk-types`, and `sui-transaction-builder`. Keeping the old SDK revision
    can compile while silently desynchronizing the client protobuf/BCS and
-   transaction-building surfaces from the fullnode implementation.
+   transaction-building surfaces from the fullnode implementation. Align the
+   FastCrypto revision and the existing async-graphql patch revision with
+   the release lockfile as well; stale companion revisions can break types
+   or APIs even when every Sui tag agrees.
 2. **Excluded workspaces** — `sdk/ika-wasm` (and any other
    workspace-excluded package) has its own `Cargo.lock` that must be
    regenerated; its manifests resolve `workspace = true` deps against
@@ -86,15 +88,19 @@ the locations below and runs in CI; it fails the build on drift.
   ./scripts/check-sui-version-consistency.sh
   ```
 
-## Consensus replay patch
+## Consensus replay validation
 
-Ika backports [MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909)
-and patches `consensus-core` from `dwallet-labs/sui` while its companion Sui
-crates keep the upstream source. A Sui upgrade must rebase that patch on the
-new release, update the fork crate's upstream companion dependency tags, and
-pin the new fork revision in Ika's Cargo patch table. Verify the resolved
-crate sources in `Cargo.lock`; changing the workspace tag alone does not
-update the consensus implementation. Revalidate full replay pacing, readiness,
-committed-head reporting, and rolling restarts against that exact revision.
-When upgrading to a release that includes the upstream replay API, remove the
-fork override and verify these same properties against the release revision.
+Sui `testnet-v1.82.1` includes the upstream replay API, so Ika no longer
+patches consensus crates from a fork. Verify that all Sui sources in
+`Cargo.lock` resolve to the release revision. Revalidate full replay pacing,
+readiness, committed-head reporting, and rolling restarts against that exact
+revision after every upgrade.
+
+## RustCrypto compatibility
+
+The root and WASM workspaces patch `digest` to `vendor/digest`, an upstream
+0.11.3 copy with only the `crypto_common` re-export restored. Sui's argon2
+requires stable digest, while inkrypto pins curve25519-dalek 5.0.0-pre.1,
+which imports that old alias. Keep both workspaces on the same hashing and
+cipher versions. See [`../../vendor/digest/IKA-PATCH.md`](../../vendor/digest/IKA-PATCH.md)
+for provenance and the condition for removing the override.

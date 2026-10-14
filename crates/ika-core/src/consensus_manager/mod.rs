@@ -63,6 +63,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.consensus_max_transactions_in_block_bytes(),
         config.consensus_max_num_transactions_in_block(),
         config.gc_depth(),
+        config.consensus_slim_block_propagation(),
         // `transaction_voting_enabled`: ika runs this OFF (false at every
         // supported protocol version), unlike Sui, which hardcodes `true`.
         // Keep it flag-sourced rather than adopting upstream's constant:
@@ -78,7 +79,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
         // `enable_v3`: hardcoded `false` to match upstream exactly. At the
-        // pinned mainnet-v1.77.2, Sui's own `to_consensus_protocol_config` also
+        // pinned testnet-v1.82.1, Sui's own `to_consensus_protocol_config` also
         // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
         // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
         // getter to source it from. When Sui gates it behind the protocol config
@@ -89,7 +90,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         false,
         // `leader_schedule_window_size` / `leader_schedule_update_interval`:
         // hardcoded to match upstream's `to_consensus_protocol_config` at the
-        // pinned mainnet-v1.77.2 (300 / 12). These only take effect under the
+        // pinned testnet-v1.82.1 (300 / 12). These only take effect under the
         // Mysticeti v3 leader schedule, which is gated off above (`enable_v3 =
         // false`), so they are inert today; mirror upstream exactly so enabling
         // v3 later (via a version-gated getter) does not silently fork.
