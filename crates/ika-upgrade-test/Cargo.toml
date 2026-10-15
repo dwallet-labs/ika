@@ -14,12 +14,19 @@ name = "upgrade-test"
 path = "src/bin/upgrade-test.rs"
 
 [dependencies]
+anemo.workspace = true
 anyhow.workspace = true
 bcs.workspace = true
+class_groups.workspace = true
 clap.workspace = true
+dwallet-classgroups-types.workspace = true
+dwallet-mpc-types.workspace = true
+dwallet-rng.workspace = true
 fastcrypto.workspace = true
 futures.workspace = true
+group.workspace = true
 hex.workspace = true
+mpc.workspace = true
 move-core-types.workspace = true
 rand = "0.8"
 shared-crypto.workspace = true
@@ -33,6 +40,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
 ika-config.workspace = true
+ika-network.workspace = true
 ika-protocol-config.workspace = true
 ika-sui-client.workspace = true
 ika-swarm-config.workspace = true

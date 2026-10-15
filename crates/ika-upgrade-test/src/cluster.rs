@@ -39,7 +39,7 @@ use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes, KeypairTraits};
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKey, DWalletNetworkEncryptionKeyState, IkaNetworkConfig,
 };
-use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
+use ika_types::sui::{DWalletCoordinatorInner, EpochStartSystemTrait, SystemInner};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_sdk::wallet_context::WalletContext;
@@ -48,6 +48,7 @@ use sui_types::crypto::SuiKeyPair;
 
 use crate::process::ValidatorProcess;
 use crate::sui::SuiLocalnet;
+use crate::validator_keys::ValidatorKeyRotation;
 use crate::{DEFAULT_EPOCH_DURATION_MS, DEFAULT_NUM_VALIDATORS};
 
 // Must equal `NetworkEncryptionKeyReconfigurationData`'s `Display` in ika-core
@@ -618,7 +619,7 @@ fn parse_metric_samples(body: &str, metric: &str) -> Result<Vec<PrometheusSample
         .collect()
 }
 
-fn required_unlabeled_metric(
+pub(crate) fn required_unlabeled_metric(
     body: &str,
     metric_names: &[&str],
     validator: &ValidatorProcess,
@@ -657,7 +658,7 @@ fn required_unlabeled_metric(
     )
 }
 
-fn required_labeled_metric(
+pub(crate) fn required_labeled_metric(
     body: &str,
     metric: &str,
     expected_labels: &[(&str, &str)],
@@ -1307,6 +1308,53 @@ fn canonical_network_key_outputs(
 }
 
 impl ClusterOfProcesses {
+    /// Cache both samplers' public identities before the timed rollout boundaries.
+    pub(crate) async fn prepare_validator_key_rotation(&self) -> Result<ValidatorKeyRotation> {
+        let (_, system) = self.ika_client.get_system_inner().await?;
+        let committee = self
+            .ika_client
+            .get_epoch_start_system(&system)
+            .await?
+            .get_ika_committee();
+        let configs = self
+            .validators
+            .iter()
+            .zip(&self.validator_authorities)
+            .map(|(process, authority)| {
+                Ok((process.index, authority.consensus, process.read_config()?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ValidatorKeyRotation::prepare(configs, committee).await
+    }
+
+    /// Authenticate the active handoff and every original validator's public keys.
+    pub(crate) async fn assert_validator_key_derivation(
+        &self,
+        expected: &ValidatorKeyRotation,
+        active_epoch: u64,
+        current: bool,
+    ) -> Result<()> {
+        let (_, system) = self.ika_client.get_system_inner().await?;
+        let epoch_start = self.ika_client.get_epoch_start_system(&system).await?;
+        ensure!(
+            epoch_start.epoch() == active_epoch,
+            "chain epoch {} does not match validator-key checkpoint epoch {active_epoch}",
+            epoch_start.epoch()
+        );
+        expected.check_committee(&epoch_start.get_ika_committee())?;
+        expected
+            .assert_derivation(&self.validators, active_epoch, current)
+            .await?;
+        let (_, system) = self.ika_client.get_system_inner().await?;
+        let epoch_start = self.ika_client.get_epoch_start_system(&system).await?;
+        ensure!(
+            epoch_start.epoch() == active_epoch,
+            "chain advanced to epoch {} during validator-key checkpoint epoch {active_epoch}",
+            epoch_start.epoch()
+        );
+        expected.check_committee(&epoch_start.get_ika_committee())
+    }
+
     /// Current on-chain ika epoch (read from the system object).
     pub async fn current_epoch(&self) -> Result<u64> {
         let (_, SystemInner::V1(inner)) = self

@@ -24,6 +24,7 @@ pub mod mpc_timings;
 pub mod process;
 pub mod scenario;
 pub mod sui;
+pub(crate) mod validator_keys;
 pub mod workload;
 
 pub use binary::BinarySpec;

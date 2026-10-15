@@ -316,6 +316,32 @@ Every boundary still requires healthy validators, correct local epochs,
 protocol v7, quorum output convergence, zero malicious actors, zero rejected
 envelopes, no self-malicious logs, and no stranded sessions.
 
+The sampler transition has a separate **validator encryption-key activation
+checkpoint** in `v141_rollout`. Before the first swap, the harness verifies
+that the certified handoff into epoch 2 contains every original validator's
+legacy public keys. It independently derives both public key sets from each
+validator's configured root seed, without regenerating the certificate's
+proofs. After the remaining swaps in epoch 4, epoch 5 runs entirely on the
+candidate. The handoff produced in epoch 5 must activate every validator's
+current-sampler keys in epoch 6; an announcement that missed the epoch-4
+freeze cannot make the test pass prematurely.
+
+At each checkpoint, every original validator must serve the same attestation
+for the preceding epoch. The harness verifies its committee signatures,
+quorum, exact epoch and membership, then hash-checks the certified blobs and
+compares all seven public keys for every validator. All six class-group keys
+(three CRT and three PVSS) must differ from their legacy values. The VSS HPKE
+key is unaffected by this sampler change and must equal its expected value.
+A different blob digest or different proof bytes alone is not rotation.
+
+The epoch-6 checkpoint also requires every validator's exact-epoch
+`derivation=Current` selection log and active seed-identity metric. Merely
+opening the epoch store does not establish that key preparation finished.
+The full user workload runs again after this checkpoint, with zero malicious
+reports on all four validators. This proves activation of the sampler-derived
+validator encryption keys; it does not claim rotation of consensus keys,
+protocol keys, network identity keys, or users' encryption keys.
+
 The current validator's per-authority output observations and pending-session
 counts are collected protocol-generically and labeled by protocol name. This
 scenario filters that data to network-key reconfiguration because that is the

@@ -33,6 +33,7 @@ use crate::cluster::{
     evaluate_healthy_drain, evaluate_wedged_drain,
 };
 use crate::mpc_timings::{self, TimingSnapshot};
+use crate::validator_keys::ValidatorKeyRotation;
 use crate::workload::WorkloadDriver;
 
 const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -154,6 +155,13 @@ pub enum Step {
     /// preceding convergence steps. Place before a full binary swap so later
     /// same-binary evidence cannot satisfy a mixed-binary compatibility gate.
     ExpectNetworkKeyOutputEvidence,
+    /// Derive both expected public key sets before the bounded upgrade window.
+    PrepareValidatorKeyRotation,
+    /// Check the certified keys entering this exact epoch on every validator.
+    ExpectValidatorKeyDerivation {
+        epoch: u64,
+        current: bool,
+    },
     ExpectNoPendingNetworkKeyReconfiguration {
         epoch: u64,
         observer_indices: Vec<usize>,
@@ -313,6 +321,11 @@ impl std::fmt::Display for Step {
             ),
             Step::ExpectNetworkKeyOutputEvidence => {
                 write!(f, "expect_network_key_output_evidence")
+            }
+            Step::PrepareValidatorKeyRotation => write!(f, "prepare_validator_key_rotation"),
+            Step::ExpectValidatorKeyDerivation { epoch, current } => {
+                let derivation = if *current { "Current" } else { "Legacy" };
+                write!(f, "expect_validator_key_derivation({epoch}, {derivation})")
             }
             Step::ExpectNoPendingNetworkKeyReconfiguration {
                 epoch,
@@ -677,6 +690,27 @@ impl Scenario {
         self
     }
 
+    pub fn prepare_validator_key_rotation(mut self) -> Self {
+        self.steps.push(Step::PrepareValidatorKeyRotation);
+        self
+    }
+
+    pub fn expect_legacy_validator_keys(mut self, epoch: u64) -> Self {
+        self.steps.push(Step::ExpectValidatorKeyDerivation {
+            epoch,
+            current: false,
+        });
+        self
+    }
+
+    pub fn expect_rotated_validator_keys(mut self, epoch: u64) -> Self {
+        self.steps.push(Step::ExpectValidatorKeyDerivation {
+            epoch,
+            current: true,
+        });
+        self
+    }
+
     pub fn expect_no_pending_network_key_reconfiguration(
         mut self,
         epoch: u64,
@@ -842,6 +876,7 @@ impl Scenario {
         // least one boundary each, enforced at explicit evidence checkpoints
         // and after the step loop.
         let mut network_key_evidence: Vec<NetworkKeyBoundaryEvidence> = Vec::new();
+        let mut validator_key_rotation: Option<ValidatorKeyRotation> = None;
         // The parked validator's LAST wedge sample, carried to the recovery
         // step. Comparing the recovery against this rather than against a
         // fresh baseline is what closes the gap between the two steps: a
@@ -1172,6 +1207,26 @@ impl Scenario {
                     tracing::info!(
                         "network-key output evidence checkpoint: every validator under test demonstrated byte-equality with a finalizing quorum before this step"
                     );
+                }
+                Step::PrepareValidatorKeyRotation => {
+                    let c = cluster
+                        .as_ref()
+                        .context("PrepareValidatorKeyRotation before StartAll")?;
+                    ensure!(
+                        validator_key_rotation.is_none(),
+                        "validator keys already prepared"
+                    );
+                    validator_key_rotation = Some(c.prepare_validator_key_rotation().await?);
+                }
+                Step::ExpectValidatorKeyDerivation { epoch, current } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectValidatorKeyDerivation before StartAll")?;
+                    let expected = validator_key_rotation
+                        .as_ref()
+                        .context("validator key assertion before PrepareValidatorKeyRotation")?;
+                    c.assert_validator_key_derivation(expected, *epoch, *current)
+                        .await?;
                 }
                 Step::ExpectNoPendingNetworkKeyReconfiguration {
                     epoch,

@@ -10,7 +10,7 @@
 //! compatibility assertion real.
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, read_to_string};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -124,6 +124,12 @@ impl ValidatorProcess {
     /// so nothing is shared between co-located validators by accident.
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// Read the generated config locally; the admin snapshot masks key material.
+    pub(crate) fn read_config(&self) -> Result<NodeConfig> {
+        let yaml = read_to_string(&self.config_path).context("read generated node config")?;
+        serde_yaml::from_str(&yaml).context("parse generated node config")
     }
 
     /// Add environment for every subsequent [`Self::start`]. Takes effect at
