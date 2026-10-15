@@ -49,7 +49,7 @@ You can register an encryption key during the DKG process (thanks to PTBs) or be
 const signerAddress = '0xabcdef1234567890';
 const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTRETTO
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('seed'),
 	curve,
 );
@@ -105,7 +105,7 @@ const globalPresign = await ikaClient.getPresignInParticularState(
 	'Completed',
 );
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -167,7 +167,7 @@ After creating a zero-trust dWallet through the DKG process, you must accept you
 ```typescript
 const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTRETTO
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -212,7 +212,7 @@ const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeySha
 	'encrypted user secret key share id',
 );
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -347,7 +347,7 @@ const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeySha
 	'encrypted user secret key share id',
 );
 
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('test seed'),
 	curve,
 );
@@ -431,7 +431,7 @@ Before accepting a transferred share, you must register your encryption key with
 const curve = Curve.SECP256R1; // or Curve.SECP256K1, Curve.ED25519, Curve.RISTRETTO
 
 // Register your encryption key if you haven't already
-const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 	new TextEncoder().encode('test seed'),
 	curve,
 );

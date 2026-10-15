@@ -44,6 +44,8 @@ use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
 use arc_swap::ArcSwap;
 use commitment::CommitmentSizedNumber;
+#[cfg(any(test, feature = "test-utils"))]
+use dwallet_classgroups_types::ValidatorKeyDerivation;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(any(test, feature = "test-utils"))]
@@ -331,6 +333,7 @@ impl DWalletMPCService {
             committee.clone(),
             epoch_id,
             root_seed,
+            seed_resolution.key_derivation(),
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
@@ -480,6 +483,7 @@ impl DWalletMPCService {
                 Arc::new(committee.clone()),
                 1,
                 seed,
+                ValidatorKeyDerivation::Current,
                 0,
                 0,
                 0,
@@ -3547,28 +3551,34 @@ impl DWalletMPCService {
                 }
             });
 
-        // The certificate names validators by their CONSENSUS key, which is
-        // `epoch_store.name` — not the BLS `protocol_pubkey_bytes` used for
-        // the raw-record self-lookup above. A read failure is treated as
-        // "no certified digest": it is a local storage fault, not evidence
-        // about which seed this node is running, and resolving it as a
-        // mismatch would take a validator out of MPC over a corrupt local
-        // DB read.
-        let certified_digest_for_self = match epoch_store.prior_epoch_mpc_data_digests() {
-            Ok(digests) => digests.get(&epoch_store.name).copied(),
-            Err(err) => {
-                warn!(
-                    error = ?err,
-                    "could not read the prior epoch's handoff certificate for the epoch \
-                     seed resolution; proceeding on the current root seed and leaving \
-                     seed identity to the per-tick off-chain check"
-                );
-                None
-            }
-        };
-        let resolution =
-            EpochSeedResolution::resolve(root_seed, previous_root_seed, certified_digest_for_self)
-                .map_err(DwalletMPCError::IkaError)?;
+        // Startup's handoff barrier has already authenticated the certificate
+        // and hydrated its blobs. Storage failures must not select a different
+        // key derivation from the one the handoff actually names.
+        let certified_digest_for_self = epoch_store
+            .prior_epoch_mpc_data_digests()
+            .map_err(DwalletMPCError::IkaError)?
+            .get(&epoch_store.name)
+            .copied();
+        let certified_blob = certified_digest_for_self
+            .map(|digest| {
+                let perpetual =
+                    epoch_store
+                        .perpetual_tables_handle()
+                        .ok_or_else(|| IkaError::Generic {
+                            error: "missing perpetual store for certified validator keys".into(),
+                        })?;
+                perpetual.get_mpc_artifact_blob(&digest)
+            })
+            .transpose()
+            .map_err(DwalletMPCError::IkaError)?
+            .flatten();
+        let resolution = EpochSeedResolution::resolve(
+            root_seed,
+            previous_root_seed,
+            certified_digest_for_self,
+            certified_blob.as_deref(),
+        )
+        .map_err(DwalletMPCError::IkaError)?;
 
         // NOTE (#2119): the on-chain `mpc_data_bytes` field is DEPRECATED and
         // is no longer read here. It used to be decoded as a bare

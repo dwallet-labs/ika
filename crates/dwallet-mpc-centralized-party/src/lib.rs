@@ -1257,9 +1257,12 @@ pub fn generate_cg_keypair_from_seed(
     generate_cg_keypair_from_seed_with_sampling(crrve, seed, false)
 }
 
-/// Recover class-groups keys derived with the historical 32-bit WASM sampler.
+/// Recover class-groups keys using the deployed target-native sampler.
+///
+/// This reproduces historical 64-bit keys on native targets and historical
+/// 32-bit keys on WASM. Restore serialized key bytes when moving between them.
 /// New keys should use [`generate_cg_keypair_from_seed`].
-pub fn generate_cg_keypair_from_seed_wasm_thirty_two(
+pub fn generate_cg_keypair_from_seed_legacy(
     curve: u32,
     seed: [u8; 32],
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
@@ -1269,21 +1272,21 @@ pub fn generate_cg_keypair_from_seed_wasm_thirty_two(
 fn generate_cg_keypair_from_seed_with_sampling(
     curve: u32,
     seed: [u8; 32],
-    wasm_thirty_two: bool,
+    legacy_sampling: bool,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     match try_into_curve(curve)? {
         DWalletCurve::Secp256k1 => generate_cg_keypair_from_seed_with_sampling_inner::<
             Secp256k1DKGProtocol,
-        >(seed, wasm_thirty_two),
+        >(seed, legacy_sampling),
         DWalletCurve::Ristretto => generate_cg_keypair_from_seed_with_sampling_inner::<
             RistrettoDKGProtocol,
-        >(seed, wasm_thirty_two),
+        >(seed, legacy_sampling),
         DWalletCurve::Curve25519 => generate_cg_keypair_from_seed_with_sampling_inner::<
             Curve25519DKGProtocol,
-        >(seed, wasm_thirty_two),
+        >(seed, legacy_sampling),
         DWalletCurve::Secp256r1 => generate_cg_keypair_from_seed_with_sampling_inner::<
             Secp256r1DKGProtocol,
-        >(seed, wasm_thirty_two),
+        >(seed, legacy_sampling),
     }
 }
 
@@ -1295,12 +1298,12 @@ pub fn generate_cg_keypair_from_seed_inner<P: Protocol>(
 
 fn generate_cg_keypair_from_seed_with_sampling_inner<P: Protocol>(
     seed: [u8; 32],
-    wasm_thirty_two: bool,
+    legacy_sampling: bool,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
-    let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
-    let decryption_key = if wasm_thirty_two {
-        P::generate_decryption_key_wasm_thirty_two(&mut rng)?
+    let decryption_key = if legacy_sampling {
+        P::generate_decryption_key_legacy(seed)?
     } else {
+        let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed);
         P::generate_decryption_key(&mut rng)?
     };
     let encryption_key_value = P::encryption_key_from_decryption_key(decryption_key.clone())?;
@@ -1617,14 +1620,42 @@ pub fn parse_signature_from_sign_output_inner(
 
 #[cfg(test)]
 mod key_derivation_tests {
+    #[cfg(target_pointer_width = "64")]
+    use hex::decode;
     use hex::encode;
     use sha2::{Digest, Sha256};
 
-    use super::{generate_cg_keypair_from_seed, generate_cg_keypair_from_seed_wasm_thirty_two};
+    use super::{generate_cg_keypair_from_seed, generate_cg_keypair_from_seed_legacy};
 
-    // Captured from cryptography-private 0d5046df with crypto-bigint 8aabcee5 on WASM32.
+    // Captured from cryptography-private 0d5046df / crypto-bigint 8aabcee5 on native 64-bit.
+    #[cfg(target_pointer_width = "64")]
     #[test]
-    fn wasm_thirty_two_key_bytes_match_historical_keys_on_every_curve() {
+    fn legacy_native_key_bytes_match_historical_keys_on_every_curve() {
+        let seed = decode("9537748a81bc5307c0d28b1d859feae090ca2b0bff5e7adca9c56b847d42f67d")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let public_key_fingerprints = [
+            "31954113b6dcf62d8267c441f4f5e8167a9fcc51b32663730ee644884594554e",
+            "290cc3f65b6c54595cce24b95e8fa71230916cf0b60115173bd60ada2e94b0e7",
+            "8d2b87c7472760c3eb1fc48552fa53c1021cb98b1465d4bce93568e5095b7967",
+            "8d2b87c7472760c3eb1fc48552fa53c1021cb98b1465d4bce93568e5095b7967",
+        ];
+        for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
+            let (public_key, private_key) =
+                generate_cg_keypair_from_seed_legacy(u32::try_from(curve).unwrap(), seed).unwrap();
+            assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
+            assert_eq!(
+                encode(Sha256::digest(private_key)),
+                "5081aeac56553c1f96fe3946572a885f519c040fd955e4a325f5b5a71d513825"
+            );
+        }
+    }
+
+    // Captured from the same historical revisions on WASM32.
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn legacy_wasm_key_bytes_match_historical_keys_on_every_curve() {
         let public_key_fingerprints = [
             "5f22ad9b35f92368d6c2e9b2721219f91adb734097eeaaccb4942bf15f1248c1",
             "74a4cb3c6aad3db7df17ff60225fe3d75b6cce5de88004514e91a9c511eb87d3",
@@ -1632,24 +1663,41 @@ mod key_derivation_tests {
             "8b4557e15aa9a92b7059d2481fc85517457cf2a123abb6e5edc59ca9128763bc",
         ];
         for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
-            let curve = u32::try_from(curve).unwrap();
             let (public_key, private_key) =
-                generate_cg_keypair_from_seed_wasm_thirty_two(curve, [42; 32]).unwrap();
+                generate_cg_keypair_from_seed_legacy(u32::try_from(curve).unwrap(), [42; 32])
+                    .unwrap();
             assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
                 encode(Sha256::digest(private_key)),
                 "3f84e124733d5bc3d6e74c53b6a21466113fd70753678e04857e26c834aeb898"
             );
-            let (_, native_private_key) = generate_cg_keypair_from_seed(curve, [42; 32]).unwrap();
+        }
+    }
+
+    // Captured by calling Protocol directly at cryptography-private c07d93b6 on native.
+    // The real SDK/WASM test checks these same fingerprints on wasm32.
+    #[test]
+    fn new_sampler_key_bytes_match_native_reference_on_every_curve() {
+        let public_key_fingerprints = [
+            "9049878c07ceb26854668ddccaa6c8d59b7419dd8dedf4d9f9943273838ace08",
+            "65ba7314f65f9506919532c6e14af8963b9f4789bf7f20f2fe6c4aa319fdc6bb",
+            "d0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f",
+            "d0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f",
+        ];
+        for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
+            let (public_key, private_key) =
+                generate_cg_keypair_from_seed(u32::try_from(curve).unwrap(), [42; 32]).unwrap();
+            assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
-                encode(Sha256::digest(native_private_key)),
-                "a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc"
+                encode(Sha256::digest(private_key)),
+                "4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe"
             );
         }
     }
 
     #[test]
-    fn wasm_thirty_two_rejects_unsupported_curves() {
-        assert!(generate_cg_keypair_from_seed_wasm_thirty_two(u32::MAX, [42; 32]).is_err());
+    fn key_derivation_rejects_unsupported_curves() {
+        assert!(generate_cg_keypair_from_seed(u32::MAX, [42; 32]).is_err());
+        assert!(generate_cg_keypair_from_seed_legacy(u32::MAX, [42; 32]).is_err());
     }
 }

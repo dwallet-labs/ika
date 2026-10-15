@@ -63,7 +63,7 @@ There are several ways to create a `UserShareEncryptionKeys` instance depending 
 
 ### Creating New Keys
 
-Use `fromRootSeedKey64Bit` for all new encryption keys. It deterministically derives keys from a root seed using the current curve-byte hash and portable 64-bit sampling, with no legacy options:
+Use `fromRootSeedKeyV2` for all new encryption keys. It deterministically derives keys from a root seed using the current curve-byte hash and the new platform-independent sampler, with no legacy options:
 
 ```typescript
 import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
@@ -74,10 +74,7 @@ crypto.getRandomValues(rootSeedKey);
 
 // Create UserShareEncryptionKeys from the seed
 // IMPORTANT: Use the curve that matches your dWallet's curve
-const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
-	rootSeedKey,
-	Curve.SECP256K1,
-);
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(rootSeedKey, Curve.SECP256K1);
 
 console.log('Sui address:', userShareKeys.getSuiAddress());
 ```
@@ -86,21 +83,21 @@ console.log('Sui address:', userShareKeys.getSuiAddress());
 
 ```typescript
 // For ECDSASecp256k1 or Taproot signature algorithms
-const secp256k1Keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seed, Curve.SECP256K1);
+const secp256k1Keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, Curve.SECP256K1);
 
 // For EdDSA signature algorithm
-const ed25519Keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seed, Curve.ED25519);
+const ed25519Keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, Curve.ED25519);
 
 // For ECDSASecp256r1 signature algorithm
-const secp256r1Keys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seed, Curve.SECP256R1);
+const secp256r1Keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, Curve.SECP256R1);
 
 // For SchnorrkelSubstrate signature algorithm
-const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seed, Curve.RISTRETTO);
+const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, Curve.RISTRETTO);
 ```
 
 ### Recovering Existing Keys
 
-`fromRootSeedKey` is deprecated and is only for recovering existing encryption keys. Its `legacySample32Bit` option defaults to `true`, preserving the historical WASM32 derivation. Use the original root seed and curve:
+`fromRootSeedKey` is deprecated and is only for recovering existing encryption keys. It always uses the deployed WASM32 sampler, in both browsers and Node.js. Use the original root seed and curve:
 
 ```typescript
 const existingKeys = await UserShareEncryptionKeys.fromRootSeedKey(savedRootSeed, curve);
@@ -109,23 +106,20 @@ const existingKeys = await UserShareEncryptionKeys.fromRootSeedKey(savedRootSeed
 const oldHashKeys = await UserShareEncryptionKeys.fromRootSeedKey(savedRootSeed, curve, {
 	legacyHash: true,
 });
-
-// Recover existing keys that were created with 64-bit sampling.
-const existing64BitKeys = await UserShareEncryptionKeys.fromRootSeedKey(savedRootSeed, curve, {
-	legacySample32Bit: false,
-});
 ```
 
-`legacyHash` defaults to `false`. Select it only when the original keys used the old hash, which always encoded the curve byte as `0`. It is independent of `legacySample32Bit`, so both can be combined. `fromRootSeedKeyLegacyHash` remains a deprecated recovery helper using the old hash and WASM32 sampling.
+`legacyHash` defaults to `false`. Select it only when the original keys used the old hash, which always encoded the curve byte as `0`. `fromRootSeedKeyLegacyHash` remains a deprecated recovery helper using the old hash and WASM32 sampling.
 
-If you saved serialized keys, restore them with `fromShareEncryptionKeysBytes` instead of deriving them again. Serialization stores the actual encryption/decryption key bytes, so restoration does not require a sampler option. The BCS V1/V2 distinction records the hash version, not the sampler.
+If you saved serialized keys, restore them with `fromShareEncryptionKeysBytes` instead of deriving them again. Serialization stores the actual encryption/decryption key bytes, so restoration does not depend on the sampler or the platform that created them. The BCS V1/V2 distinction records the hash version, not the sampler. For seed-only backups, record whether you used `fromRootSeedKey` or `fromRootSeedKeyV2`, the curve, and whether `legacyHash` was enabled.
+
+The native Rust legacy API reproduces historical 64-bit keys; the TypeScript SDK always uses WASM and reproduces historical 32-bit keys. To move existing native keys into the SDK, restore a complete SDK-format key bundle rather than deriving them with `fromRootSeedKey`. This bundle must include the encryption and decryption keys, Ed25519 signing secret, curve, and hash-version envelope. Raw class-groups keypair bytes returned by the Rust helper cannot be passed directly to `fromShareEncryptionKeysBytes`.
 
 ### Rotating Existing Encryption Keys
 
 Existing encryption keys can be rotated by creating new keys and re-encrypting the user shares:
 
 1. Recover the existing keys with `fromRootSeedKey` and the original derivation options, or restore their serialized bytes. Keep them available while migrating the shares.
-2. Generate a fresh root seed and call `fromRootSeedKey64Bit` with the dWallet's curve. Register the new keys with `IkaTransaction.registerEncryptionKey` and wait until they are active. A fresh seed also gives the new keys a new signing address; changing only the sampler keeps the old signing address, which already has a registered encryption key.
+2. Generate a fresh root seed and call `fromRootSeedKeyV2` with the dWallet's curve. Register the new keys with `IkaTransaction.registerEncryptionKey` and wait until they are active. A fresh seed also gives the new keys a new signing address; changing only the sampler keeps the old signing address, which already has a registered encryption key.
 3. Use an `IkaTransaction` configured with the existing keys to call `requestReEncryptUserShareFor`, passing the existing encrypted share and `newKeys.getSuiAddress()` as `destinationEncryptionKeyAddress`.
 4. Wait for network verification, then accept the new encrypted share with `acceptEncryptedUserShare` using the new keys. Verify that you can decrypt it, and save the new keys and encrypted-share ID before switching subsequent operations to them. Repeat for every share protected by the old encryption keys.
 
@@ -153,10 +147,7 @@ const userShareKeys = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(seria
 You can serialize keys for persistent storage:
 
 ```typescript
-const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
-	rootSeedKey,
-	Curve.SECP256K1,
-);
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(rootSeedKey, Curve.SECP256K1);
 
 // Serialize keys to bytes for storage
 const serializedBytes = userShareKeys.toShareEncryptionKeysBytes();
@@ -177,10 +168,7 @@ await secureStorage.store('user-share-keys', serializedBytes);
 Access basic information about your keys:
 
 ```typescript
-const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(
-	rootSeedKey,
-	Curve.SECP256K1,
-);
+const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(rootSeedKey, Curve.SECP256K1);
 
 // Get the Ed25519 public key
 const publicKey = userShareKeys.getPublicKey();

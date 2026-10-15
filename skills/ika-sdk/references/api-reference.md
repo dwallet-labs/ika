@@ -527,15 +527,15 @@ reconfigurationPublicOutputToProtocolPublicParameters(
 ### Creation
 
 ```typescript
-// New keys: current curve-byte hash and portable 64-bit sampling.
-static fromRootSeedKey64Bit(
+// New keys: current curve-byte hash and the new platform-independent sampler.
+static fromRootSeedKeyV2(
     rootSeedKey: Uint8Array, curve: Curve
 ): Promise<UserShareEncryptionKeys>
 
-// Deprecated: recover existing keys. WASM32 sampling defaults to true.
+// Deprecated: recover existing keys with the deployed WASM32 sampler.
 static fromRootSeedKey(
     rootSeedKey: Uint8Array, curve: Curve,
-    options?: { legacyHash?: boolean; legacySample32Bit?: boolean }
+    options?: { legacyHash?: boolean }
 ): Promise<UserShareEncryptionKeys>
 
 // Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
@@ -543,14 +543,14 @@ static fromRootSeedKeyLegacyHash(
     rootSeedKey: Uint8Array, curve: Curve
 ): Promise<UserShareEncryptionKeys>
 
-// From serialized bytes (auto-detects legacy vs fixed)
+// Restores stored key bytes; BCS V1/V2 records the hash, not the sampler.
 static fromShareEncryptionKeysBytes(bytes: Uint8Array): UserShareEncryptionKeys
 ```
 
 ### Serialization
 
 ```typescript
-toShareEncryptionKeysBytes(): Uint8Array  // Preserves legacy/fixed distinction via BCS variant
+toShareEncryptionKeysBytes(): Uint8Array  // Preserves actual key bytes and hash version
 ```
 
 ### Properties

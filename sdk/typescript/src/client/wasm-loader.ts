@@ -73,12 +73,12 @@ export async function generate_secp_cg_keypair_from_seed(
 	return wasm.generate_secp_cg_keypair_from_seed(curve, seed);
 }
 
-export async function generate_secp_cg_keypair_from_seed_wasm32(
+export async function generate_secp_cg_keypair_from_seed_legacy(
 	curve: number,
 	seed: Uint8Array,
 ): Promise<[Uint8Array, Uint8Array]> {
 	const wasm = await getWasmModule();
-	return wasm.generate_secp_cg_keypair_from_seed_wasm32(curve, seed);
+	return wasm.generate_secp_cg_keypair_from_seed_legacy(curve, seed);
 }
 
 export async function create_dkg_centralized_output_v1(

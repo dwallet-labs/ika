@@ -26,8 +26,11 @@ Commands that derive encryption keys accept these flags:
 | `--address <ADDR>` | Derive seed from a specific Sui keystore address (default: active address) |
 | `--encryption-key-index <N>` | Key derivation index (default: `0`). Used with address-based derivation |
 | `--legacy-hash` | Use legacy V1 hash (curve byte always 0). Only needed for keys registered before the V2 hash fix |
+| `--legacy-sampling` | Recover existing keys with the target-native historical sampler (64-bit on the native CLI) |
 
 **Seed derivation:** When `--seed-file` is omitted, the seed is derived from the active Sui keystore address (or `--address`) using `keccak256(keypair_bytes || index_le_bytes)`. Use `--legacy-hash` for encryption keys registered before the V2 hash fix (only affects non-SECP256K1 curves, since SECP256K1 has curve number 0 in both versions).
+
+New keys use the current hash and platform-independent sampler by default. To recover existing native 64-bit keys, pass `--legacy-sampling`; add `--legacy-hash` independently if the original keys used the old hash. The native CLI flag does not emulate historical WASM32 sampling. Recover seed-only WASM32 keys with the SDK/WASM `UserShareEncryptionKeys.fromRootSeedKey` method and the original hash option.
 
 ### Payment Args
 
@@ -62,7 +65,7 @@ ika dwallet create \
 | `--public-share` | No | Create shared dWallet (public user key share) |
 | `--sign-message <HEX>` | No | Sign during DKG |
 | `--hash-scheme <HASH>` | No | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
-| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash`, `--legacy-sampling` |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
@@ -258,7 +261,7 @@ The secret key file format depends on the curve:
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
 | `--secret-key <PATH>` | Yes | Path to the secret key file to import |
 | `--output-secret <PATH>` | No | Where to save user secret share (default: `imported_dwallet_secret_share.bin`) |
-| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash`, `--legacy-sampling` |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
@@ -275,7 +278,7 @@ ika dwallet register-encryption-key --curve secp256k1
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash`, `--legacy-sampling` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
@@ -354,7 +357,7 @@ ika dwallet generate-keypair --curve secp256k1
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash`, `--legacy-sampling` |
 
 ---
 
@@ -413,7 +416,7 @@ ika dwallet decrypt --dwallet-id <ID> --output-secret ./decrypted_share.bin
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--output-secret <PATH>` | No | Save decrypted secret share to this file |
-| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash`, `--legacy-sampling` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---

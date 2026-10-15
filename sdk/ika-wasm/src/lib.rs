@@ -7,7 +7,7 @@ use dwallet_mpc_centralized_party::{
     centralized_and_decentralized_parties_dkg_output_match_inner, create_dkg_output_by_curve_v2,
     create_dkg_output_v1, create_imported_dwallet_centralized_step_inner_v2, decrypt_user_share_v2,
     dwallet_version_inner, encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
-    generate_cg_keypair_from_seed_wasm_thirty_two, network_dkg_public_output_to_protocol_pp_inner,
+    generate_cg_keypair_from_seed_legacy, network_dkg_public_output_to_protocol_pp_inner,
     network_key_version_inner, parse_signature_from_sign_output_inner,
     public_key_from_centralized_dkg_output_by_curve, public_key_from_dwallet_output_by_curve,
     reconfiguration_public_output_to_protocol_pp_inner, sample_dwallet_keypair_inner,
@@ -108,8 +108,8 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
 }
 
 /// Recover class-groups keys derived with the historical 32-bit WASM sampler.
-#[wasm_bindgen(js_name = generate_secp_cg_keypair_from_seed_wasm32)]
-pub fn generate_secp_cg_keypair_from_seed_wasm_thirty_two(
+#[wasm_bindgen]
+pub fn generate_secp_cg_keypair_from_seed_legacy(
     curve: u32,
     seed: &[u8],
 ) -> Result<JsValue, JsError> {
@@ -117,7 +117,7 @@ pub fn generate_secp_cg_keypair_from_seed_wasm_thirty_two(
         .try_into()
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
     let (public_key, private_key) =
-        generate_cg_keypair_from_seed_wasm_thirty_two(curve, seed).map_err(to_js_err)?;
+        generate_cg_keypair_from_seed_legacy(curve, seed).map_err(to_js_err)?;
     Ok(serde_wasm_bindgen::to_value(&(public_key, private_key))?)
 }
 

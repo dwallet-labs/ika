@@ -9,7 +9,7 @@ use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, create_dkg_output_by_curve_v2,
     create_imported_dwallet_centralized_step_inner_v2, decrypt_user_share_v2,
     encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
-    generate_cg_keypair_from_seed_wasm_thirty_two, network_dkg_public_output_to_protocol_pp_inner,
+    generate_cg_keypair_from_seed_legacy, network_dkg_public_output_to_protocol_pp_inner,
     reconfiguration_public_output_to_protocol_pp_inner,
 };
 use fastcrypto::ed25519::Ed25519KeyPair;
@@ -23,7 +23,7 @@ use ika_sui_client::transaction_context::TransactionContext;
 use ika_sui_client::transport::ExecutedTransaction;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
 use move_core_types::language_storage::StructTag;
-use rand::RngCore;
+use rand::Rng;
 use serde::Serialize;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::coin::Coin;
@@ -73,9 +73,9 @@ pub struct SeedArgs {
     /// Use legacy V1 hash (curve byte always 0). Only needed for keys registered before the fix.
     #[arg(long)]
     pub legacy_hash: bool,
-    /// Recover encryption keys derived with the historical 32-bit WASM sampler.
-    #[arg(long = "wasm32-sampling")]
-    pub wasm_thirty_two_sampling: bool,
+    /// Recover encryption keys derived with the historical sampler for this platform.
+    #[arg(long)]
+    pub legacy_sampling: bool,
 }
 
 /// Future sign subcommands: create (partial signature) and fulfill (complete signature).
@@ -1181,12 +1181,12 @@ fn on_chain_session_preimage(sender: &SuiAddress, user_bytes: &[u8]) -> [u8; 32]
 ///
 /// By default uses the numeric curve byte (matching TS SDK V2 hash).
 /// With `legacy_hash = true`, uses 0x00 as curve byte (matching TS SDK V1 bug).
-/// `wasm_thirty_two` independently selects the historical 32-bit sampler.
+/// `legacy_sampling` independently selects the historical sampler for this platform.
 fn derive_encryption_keys(
     curve: u32,
     seed: [u8; 32],
     legacy_hash: bool,
-    wasm_thirty_two: bool,
+    legacy_sampling: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, Ed25519KeyPair)> {
     let curve_byte = if legacy_hash {
         0u8
@@ -1219,8 +1219,8 @@ fn derive_encryption_keys(
         signing_seed
     };
 
-    let (encryption_key, decryption_key) = if wasm_thirty_two {
-        generate_cg_keypair_from_seed_wasm_thirty_two(curve, cg_seed)
+    let (encryption_key, decryption_key) = if legacy_sampling {
+        generate_cg_keypair_from_seed_legacy(curve, cg_seed)
     } else {
         generate_cg_keypair_from_seed(curve, cg_seed)
     }
@@ -1686,7 +1686,7 @@ impl IkaDWalletCommand {
                     curve_id,
                     seed_bytes,
                     seed.legacy_hash,
-                    seed.wasm_thirty_two_sampling,
+                    seed.legacy_sampling,
                 )?;
                 let signer_public_key = signing_keypair.public().as_bytes().to_vec();
                 let encryption_key_address: SuiAddress = signing_keypair.public().into();
@@ -2529,7 +2529,7 @@ impl IkaDWalletCommand {
                     curve_id,
                     seed_bytes,
                     seed.legacy_hash,
-                    seed.wasm_thirty_two_sampling,
+                    seed.legacy_sampling,
                 )?;
                 let signer_public_key = signing_keypair.public().as_bytes().to_vec();
                 let encryption_key_address: SuiAddress = signing_keypair.public().into();
@@ -2673,7 +2673,7 @@ impl IkaDWalletCommand {
                     curve_id,
                     seed_bytes,
                     seed.legacy_hash,
-                    seed.wasm_thirty_two_sampling,
+                    seed.legacy_sampling,
                 )?;
 
                 let sig: fastcrypto::ed25519::Ed25519Signature =
@@ -2784,7 +2784,7 @@ impl IkaDWalletCommand {
                     curve_id,
                     seed_bytes,
                     seed.legacy_hash,
-                    seed.wasm_thirty_two_sampling,
+                    seed.legacy_sampling,
                 )?;
 
                 IkaDWalletCommandResponse::Keypair {
@@ -2947,7 +2947,7 @@ impl IkaDWalletCommand {
                     metadata.curve,
                     seed_bytes,
                     seed.legacy_hash,
-                    seed.wasm_thirty_two_sampling,
+                    seed.legacy_sampling,
                 )?;
 
                 let secret_share = decrypt_user_share_v2(
@@ -3285,12 +3285,8 @@ async fn resolve_secret_share(
             .await?;
 
     let seed_bytes = resolve_seed(context, seed.seed_file.clone(), seed.address, seed.index)?;
-    let (_encryption_key, decryption_key, _signing_keypair) = derive_encryption_keys(
-        curve_id,
-        seed_bytes,
-        seed.legacy_hash,
-        seed.wasm_thirty_two_sampling,
-    )?;
+    let (_encryption_key, decryption_key, _signing_keypair) =
+        derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash, seed.legacy_sampling)?;
 
     decrypt_user_share_v2(
         curve_id,
@@ -3319,12 +3315,8 @@ async fn fetch_encrypted_share_for_dwallet(
 ) -> Result<Vec<u8>> {
     // Compute the encryption_key_address from the user's seed
     let seed_bytes = resolve_seed(context, seed.seed_file.clone(), seed.address, seed.index)?;
-    let (_encryption_key, _decryption_key, signing_keypair) = derive_encryption_keys(
-        curve_id,
-        seed_bytes,
-        seed.legacy_hash,
-        seed.wasm_thirty_two_sampling,
-    )?;
+    let (_encryption_key, _decryption_key, signing_keypair) =
+        derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash, seed.legacy_sampling)?;
     let encryption_key_address: SuiAddress = signing_keypair.public().into();
 
     // 1. Get the dWallet object to find the ObjectTable ID

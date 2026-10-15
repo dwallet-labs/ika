@@ -150,7 +150,7 @@ impl RateTracker {
 mod tests {
     use super::*;
 
-    use rand::Rng;
+    use rand::RngExt;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
     use tokio::time::advance;

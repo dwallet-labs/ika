@@ -43,7 +43,7 @@ const ikaClient = new IkaClient({...});
 await ikaClient.initialize();
 
 // Optional: Set up user share encryption keys for encrypted operations
-const userKeys = await UserShareEncryptionKeys.fromRootSeedKey64Bit(seedKey, Curve.SECP256K1); // or other supported curves
+const userKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seedKey, Curve.SECP256K1); // or other supported curves
 
 // Get user's IKA coin for transaction fees
 const userIkaCoin = tx.object('0x...'); // User's IKA coin object ID
