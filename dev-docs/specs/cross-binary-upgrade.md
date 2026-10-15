@@ -334,6 +334,11 @@ compares all seven public keys for every validator. All six class-group keys
 key is unaffected by this sampler change and must equal its expected value.
 A different blob digest or different proof bytes alone is not rotation.
 
+The checkpoint client resolves the generated YAML's on-chain identity using
+the node's config resolver before selecting its Anemo chain namespace.
+Deserialization alone leaves the runtime object IDs unset; connecting with
+those IDs fails the TLS handshake before any certified key can be checked.
+
 The epoch-6 checkpoint also requires every validator's exact-epoch
 `derivation=Current` selection log and active seed-identity metric. Merely
 opening the epoch store does not establish that key preparation finished.

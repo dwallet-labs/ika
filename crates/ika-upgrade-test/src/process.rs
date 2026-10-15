@@ -129,7 +129,13 @@ impl ValidatorProcess {
     /// Read the generated config locally; the admin snapshot masks key material.
     pub(crate) fn read_config(&self) -> Result<NodeConfig> {
         let yaml = read_to_string(&self.config_path).context("read generated node config")?;
-        serde_yaml::from_str(&yaml).context("parse generated node config")
+        let mut config: NodeConfig =
+            serde_yaml::from_str(&yaml).context("parse generated node config")?;
+        config
+            .sui_connector_config
+            .resolve_ika_on_chain_identity()
+            .context("resolve generated node config's on-chain identity")?;
+        Ok(config)
     }
 
     /// Add environment for every subsequent [`Self::start`]. Takes effect at
@@ -458,5 +464,134 @@ impl ValidatorProcess {
             bail!("admin POST {url} -> {status}: {body}");
         }
         resp.text().await.context("read admin response")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::write;
+
+    use anemo::{Network, Router};
+    use ika_swarm_config::node_config_builder::ValidatorConfigBuilder;
+    use ika_swarm_config::validator_initialization_config::ValidatorInitializationConfigBuilder;
+    use ika_types::digests::ChainIdentifier;
+    use rand::thread_rng;
+    use sui_types::base_types::ObjectID;
+    use tempfile::tempdir;
+    use tokio::time::timeout;
+
+    use super::*;
+
+    fn generated_config(directory: &Path) -> NodeConfig {
+        let validator = ValidatorInitializationConfigBuilder::new()
+            .with_ip("127.0.0.1".to_owned())
+            .with_deterministic_ports(20_000)
+            .build(&mut thread_rng());
+        ValidatorConfigBuilder::new()
+            .with_config_directory(directory.to_owned())
+            .build(
+                &validator,
+                "http://unused:9000".to_owned(),
+                ObjectID::new([1; 32]),
+                ObjectID::new([2; 32]),
+                ObjectID::new([3; 32]),
+                ObjectID::new([4; 32]),
+                ObjectID::new([5; 32]),
+                ObjectID::new([6; 32]),
+            )
+    }
+
+    fn process_with_config(directory: &Path, config: &NodeConfig) -> Result<ValidatorProcess> {
+        let config_path = directory.join("node-config.yaml");
+        write(&config_path, serde_yaml::to_string(config)?)?;
+        Ok(ValidatorProcess::new(
+            0,
+            directory.join("unused-validator"),
+            config_path,
+            directory.to_owned(),
+            "127.0.0.1:0".parse()?,
+            0,
+            directory.join("node.log"),
+            1,
+        ))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn read_config_resolves_identity_for_key_checkpoint_connection() -> Result<()> {
+        let directory = tempdir()?;
+        let mut config = generated_config(directory.path());
+        let system_object_id = config.sui_connector_config.ika_system_object_id;
+        // Current binaries must use the override, even if old flat YAML fields disagree.
+        config.sui_connector_config.ika_system_object_id = ObjectID::new([7; 32]);
+        let unresolved: NodeConfig = serde_yaml::from_str(&serde_yaml::to_string(&config)?)?;
+        assert_eq!(
+            unresolved.sui_connector_config.ika_system_object_id,
+            ObjectID::ZERO
+        );
+        let process = process_with_config(directory.path(), &config)?;
+        let resolved = process.read_config()?;
+        let server = Network::bind("127.0.0.1:0")
+            .server_name(format!("ika-{}", ChainIdentifier::from(system_object_id)))
+            .private_key([1; 32])
+            .start(Router::new())?;
+        let client = Network::bind("127.0.0.1:0")
+            .server_name(format!(
+                "ika-{}",
+                ChainIdentifier::from(resolved.sui_connector_config.ika_system_object_id)
+            ))
+            .private_key([2; 32])
+            .start(Router::new())?;
+        timeout(
+            Duration::from_secs(5),
+            client.connect_with_peer_id(server.local_addr(), server.peer_id()),
+        )
+        .await??;
+        assert_eq!(
+            resolved.sui_connector_config.ika_system_object_id,
+            system_object_id
+        );
+
+        let wrong_chain = Network::bind("127.0.0.1:0")
+            .server_name(format!(
+                "ika-{}",
+                ChainIdentifier::from(unresolved.sui_connector_config.ika_system_object_id)
+            ))
+            .private_key([3; 32])
+            .start(Router::new())?;
+        let error = timeout(
+            Duration::from_secs(5),
+            wrong_chain.connect_with_peer_id(server.local_addr(), server.peer_id()),
+        )
+        .await?
+        .expect_err("an unresolved chain identity must not connect to the validator");
+        assert!(
+            error
+                .to_string()
+                .contains("no server certificate chain resolved"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_rejects_missing_or_invalid_local_identity() -> Result<()> {
+        let directory = tempdir()?;
+        let mut config = generated_config(directory.path());
+        let mut invalid_override = config.sui_connector_config.ika_unsafe_identity_override;
+        invalid_override.as_mut().unwrap().ika_system_object_id = ObjectID::ZERO;
+        for identity in [None, invalid_override] {
+            config.sui_connector_config.ika_unsafe_identity_override = identity;
+            let process = process_with_config(directory.path(), &config)?;
+            let error = process
+                .read_config()
+                .expect_err("invalid identity must fail before dialing");
+            assert!(
+                error
+                    .to_string()
+                    .contains("resolve generated node config's on-chain identity"),
+                "{error}"
+            );
+        }
+        Ok(())
     }
 }
