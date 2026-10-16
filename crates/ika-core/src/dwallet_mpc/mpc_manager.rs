@@ -43,7 +43,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::network_key_id_mapping::network_key_id_for;
 use crate::validator_metadata::{OffChainMpcDataAssembly, assemble_committee_mpc_data_off_chain};
 use arc_swap::ArcSwap;
-use dwallet_classgroups_types::ValidatorMPCSecrets;
+use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, MPCPrivateInput,
     NetworkEncryptionKeyPublicData, NetworkKeyId, VersionedPresignOutput,
@@ -736,6 +736,7 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         root_seed: RootSeed,
+        key_derivation: ValidatorKeyDerivation,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         schnorr_presign_second_round_delay: u64,
@@ -753,6 +754,7 @@ impl DWalletMPCManager {
             committee,
             epoch_id,
             root_seed,
+            key_derivation,
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
@@ -777,6 +779,7 @@ impl DWalletMPCManager {
         committee: Arc<Committee>,
         epoch_id: EpochId,
         root_seed: RootSeed,
+        key_derivation: ValidatorKeyDerivation,
         network_dkg_third_round_delay: u64,
         decryption_key_reconfiguration_third_round_delay: u64,
         schnorr_presign_second_round_delay: u64,
@@ -793,6 +796,7 @@ impl DWalletMPCManager {
 
         let mpc_computations_orchestrator = CryptographicComputationsOrchestrator::try_new(
             root_seed.clone(),
+            key_derivation,
             max_computation_cores,
         )?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
@@ -805,7 +809,8 @@ impl DWalletMPCManager {
         // halves without re-running `from_seed` per network key. Secrets and
         // publics are deliberately split into separate structs so the secret
         // type never shares a struct with public material.
-        let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
+        let (validator_mpc_secrets, validator_publics) =
+            ValidatorMPCSecrets::from_seed_with_derivation(&root_seed, key_derivation);
         let validator_pvss_secrets_for_vss =
             crate::dwallet_mpc::network_dkg::ValidatorPvssSecretsForVss {
                 secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,

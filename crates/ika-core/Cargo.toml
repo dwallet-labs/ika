@@ -22,7 +22,7 @@ dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 commitment.workspace = true
 k256.workspace = true
-rand_core = "0.9"
+rand_core.workspace = true
 dwallet-mpc-types.workspace = true
 anyhow = { workspace = true, features = ["backtrace"] }
 arc-swap.workspace = true

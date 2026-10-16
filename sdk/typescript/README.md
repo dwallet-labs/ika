@@ -235,11 +235,24 @@ const sessionId = ikaTx.createSessionIdentifier();
 `UserShareEncryptionKeys` manages class-groups encryption/decryption keys and an Ed25519 signing
 keypair derived from a root seed.
 
+Create new keys with `fromRootSeedKeyV2`, which uses the new platform-independent sampler and the
+current curve-byte hash. The deprecated `fromRootSeedKey` always uses historical WASM32 sampling, in
+browsers and Node.js; its `legacyHash` option defaults to `false`. Serialized key bundles retain the
+key bytes and use the existing format for either sampler.
+
 ```ts
 import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
-// Create from a root seed
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1);
+// Create new keys with the current hash and new sampler.
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(rootSeed, Curve.SECP256K1);
+
+// Deprecated: recover existing WASM32 keys.
+const wasm32Keys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256K1);
+
+// Combine WASM32 sampling with the older curve-byte hash when needed.
+const wasm32OldHashKeys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeed, Curve.SECP256R1, {
+	legacyHash: true,
+});
 
 // Serialize / deserialize
 const bytes = keys.toShareEncryptionKeysBytes();
@@ -261,6 +274,21 @@ const address = keys.getSuiAddress();
 const pubkey = keys.getSigningPublicKeyBytes();
 ```
 
+Use `fromRootSeedKeyV2` for every new encryption-key registration. The deprecated `fromRootSeedKey`
+recovers existing WASM32 keys. Its `legacyHash` option defaults to `false` and reproduces the old
+curve-byte hash when enabled. Native Rust legacy derivation instead reproduces historical 64-bit
+keys; importing those keys requires a complete SDK-format bundle, including the signing secret,
+curve, and hash version. Raw Rust class-groups keypair bytes are not an SDK bundle. Serialized
+bundles restore their stored key bytes without choosing a sampler. For seed-only backups, record
+the constructor, curve, and hash option used to derive the keys.
+
+To rotate existing keys, recover them, derive new keys with `fromRootSeedKeyV2` from a fresh seed,
+register the new keys, and re-encrypt each user share with `requestReEncryptUserShareFor` to the new
+encryption-key address. After network verification, accept and verify the new encrypted shares with
+the new keys before switching to them. Re-encryption does not revoke access to existing encrypted
+copies. See the
+[recovery and rotation guide](../../docs/content/docs/sdk/user-share-encryption-keys.mdx).
+
 ## Cryptography helpers
 
 ### Key generation
@@ -269,6 +297,11 @@ const pubkey = keys.getSigningPublicKeyBytes();
 import { createClassGroupsKeypair } from '@ika.xyz/sdk';
 
 const { encryptionKey, decryptionKey } = await createClassGroupsKeypair(seed, Curve.SECP256K1);
+
+// Recover a keypair from a seed using historical 32-bit WASM sampling.
+const wasm32Keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1, {
+	legacySampling: true,
+});
 ```
 
 ### DKG preparation

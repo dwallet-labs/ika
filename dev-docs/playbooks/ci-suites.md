@@ -231,7 +231,9 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
 # THE DEPLOYED-RELEASE GATE (also the PR default, and the scenario to run
 # by hand on every release tag): boot the literal v1.4.1 release, upgrade
 # one validator to current, converge two mixed aggregated reshares
-# (per-authority byte-equality, zero malicious), then swap the rest.
+# (per-authority byte-equality, zero malicious), require candidate byte-equality
+# evidence from at least one mixed boundary, then swap the rest. Later
+# all-current evidence cannot rescue an unevidenced mixed phase.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=v141_rollout
 #   override the old side:  -f old_ref=release/mainnet-v1.4.1 -f old_bin_name=ika-validator
 
@@ -264,6 +266,18 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v141_churn
 # The mid-epoch-restart gate (#1952). Current build only, but it runs at
 # production presign-pool sizing, so it is not a cheap scenario.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=restart_spectator
+
+# Upgrade during an identified reconfiguration session. Exact candidate,
+# literal OLD, real crypto; existing DEBUG round/receipt events are enabled
+# automatically. Uses 600000ms epochs and bounded process suspension.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v141_mid_session \
+  -f candidate_sha=<full-sha> -f old_ref=release/mainnet-v1.4.1 -f use_mocks=false
+
+# Negative control: withhold NEW, let the three OLD peers finish that same
+# session, and require the post-upgrade participation gate to FAIL. Preserve
+# this expected failure separately; inspect its specific evidence error.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v141_mid_session \
+  -f candidate_sha=<full-sha> -f use_mocks=false -f test_testing_fault=true
 
 # The wedged-but-alive MPC drain gate (#2102). Current build only. One
 # validator's drain is parked with a production-binary env hook while its
@@ -302,6 +316,7 @@ notifier + a validator committee:
 | `smoke` | current only | process harness reaches epoch 2 |
 | `workload` | current only | user DKG → Presign → Sign completes on-chain |
 | `v141_rollout` | **one current + three literal v1.4.1**, then all swapped | mixed aggregated reshares converge byte-identically with zero malicious reports; the fully-swapped committee converges and keeps serving |
+| `v141_mid_session` | one OLD→NEW during epoch-2 reconfiguration; fourth validator suspended | same identified session completes with fresh NEW round-three contribution and accepted output; OLD-only quorum cannot satisfy participation |
 | `v141_churn` | all swapped, then a mirrored joiner (4→5) and a removal (5→4) | the v1.4.1-origin key reshares to a party that never held it (OCS joiner trust-anchor path) and back down |
 | `malicious_v141` | three literal v1.4.1 + one FAULTY current (test-testing build) | honest committee convicts the faulty validator and reshares without it — detection is not vacuous |
 | `wedged_drain` | current only, ONE validator's MPC drain parked by env hook | the #2102 wedged-but-alive drain gate: with the drain stuck but the service alive, the fold parks on the full round channel and the commit-liveness watchdog HOLDS rather than exiting — blocked seconds climbing against a flat consumed round, depth pinned at capacity, silence held, committed-leader round still advancing, peers untouched; on release the drain resumes with no restart |

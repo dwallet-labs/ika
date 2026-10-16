@@ -22,6 +22,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::ComputationResultData;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
+use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -95,6 +96,7 @@ impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
     pub(crate) fn try_new(
         root_seed: RootSeed,
+        key_derivation: ValidatorKeyDerivation,
         max_computation_cores: Option<usize>,
     ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
@@ -121,8 +123,9 @@ impl CryptographicComputationsOrchestrator {
         );
 
         let vss_hpke_secret_key =
-            dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(
+            ValidatorMPCSecrets::vss_hpke_secret_key_from_seed_with_derivation(
                 &root_seed,
+                key_derivation,
             );
 
         Ok(CryptographicComputationsOrchestrator {

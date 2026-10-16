@@ -36,14 +36,37 @@
 //! panic (the state an operator reaches by following the documented rotation,
 //! which ends in deleting the old seed file).
 
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use std::array;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
+    construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,
+    construct_setup_parameters_per_crt_prime, verify_knowledge_of_decryption_key_proofs,
+};
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::verify_knowledge_of_decryption_key_uc_proof;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use class_groups::setup::DeriveFromPlaintextPublicParameters;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use class_groups::{
+    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, EquivalenceClass, RistrettoSetupParameters,
+    Secp256k1SetupParameters, Secp256r1SetupParameters,
+};
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
 use dwallet_rng::RootSeed;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use group::{GroupElement as _, curve25519, ristretto, secp256k1, secp256r1};
 use ika_config::NodeConfig;
 use ika_config::node::{
     AuthorityKeyPairWithPath, KeyPairWithPath, RootSeedWithPath, SuiConnectorConfig, SuiDataSource,
 };
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
@@ -53,11 +76,169 @@ use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochS
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use crate::dwallet_mpc::seed_rotation::decode_certified_mpc_keys;
 use crate::dwallet_mpc::seed_rotation::{DerivableDigests, EpochSeedDecision};
+use crate::validator_metadata::derive_mpc_data_blob;
 
 /// The epoch the store is opened at. Anything `>= 1`; the certificate goes to
 /// `EPOCH - 1`, which is the whole point of the indexing assertion.
 const EPOCH: u64 = 7;
+
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+const LEGACY_VALIDATOR_BLOB: &[u8] = include_bytes!("fixtures/legacy-validator-mpc-data.bcs");
+
+/// The original proof bytes remain protocol inputs after selecting legacy private keys.
+/// Exercise the production proof verifiers, rather than constructors that only store
+/// proofs, and ensure every key survives verification. Wrong statements are negative
+/// controls: accepting a bundle without verifying its proofs must fail this test.
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+#[test]
+fn frozen_legacy_validator_proofs_pass_current_verification() {
+    let digest = mpc_data_blob_hash(LEGACY_VALIDATOR_BLOB);
+    assert_eq!(
+        hex::encode(digest),
+        "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
+    );
+    let bundle = decode_certified_mpc_keys(&digest, LEGACY_VALIDATOR_BLOB).unwrap();
+
+    let crt_setup =
+        construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER).unwrap();
+    let crt_public_parameters =
+        construct_knowledge_of_decryption_key_public_parameters_per_crt_prime(crt_setup.each_ref())
+            .unwrap();
+    let crt_keys = array::from_fn(|index| {
+        let (key, proof) = &bundle.class_groups[index];
+        let key =
+            EquivalenceClass::new(*key, crt_setup[index].equivalence_class_public_parameters())
+                .unwrap();
+        (key, proof.clone())
+    });
+    let (rejected, verified) = verify_knowledge_of_decryption_key_proofs(
+        crt_public_parameters.clone(),
+        vec![],
+        HashMap::from([(1, crt_keys.clone())]),
+    )
+    .unwrap();
+    assert!(rejected.is_empty(), "a deployed CRT proof was rejected");
+    assert_eq!(verified.len(), 1, "the deployed CRT party was dropped");
+    assert_eq!(verified[&1], crt_keys.clone().map(|(key, _)| key));
+    for index in 0..crt_keys.len() {
+        let mut mismatched = crt_keys.clone();
+        mismatched[index].0 = mismatched[index].0 + mismatched[index].0;
+        let (rejected, verified) = verify_knowledge_of_decryption_key_proofs(
+            crt_public_parameters.clone(),
+            vec![],
+            HashMap::from([(1, mismatched)]),
+        )
+        .unwrap();
+        assert_eq!(rejected, vec![1], "CRT proof {index} must bind its key");
+        assert!(verified.is_empty(), "an invalid CRT key must be dropped");
+    }
+
+    let secp256k1_setup =
+        Secp256k1SetupParameters::derive_from_plaintext_parameters::<secp256k1::Scalar>(
+            secp256k1::scalar::PublicParameters::default(),
+            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+        )
+        .unwrap();
+    let (key, proof) = bundle.secp256k1_pvss;
+    let key =
+        EquivalenceClass::new(key, secp256k1_setup.equivalence_class_public_parameters()).unwrap();
+    assert_eq!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, secp256k1::GroupElement>(
+            key,
+            &proof,
+            &secp256k1_setup,
+        )
+        .expect("the deployed secp256k1 PVSS proof must verify"),
+        key
+    );
+    assert!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, secp256k1::GroupElement>(
+            key + key,
+            &proof,
+            &secp256k1_setup,
+        )
+        .is_err(),
+        "the secp256k1 PVSS proof must bind its key"
+    );
+
+    let secp256r1_setup =
+        Secp256r1SetupParameters::derive_from_plaintext_parameters::<secp256r1::Scalar>(
+            secp256r1::scalar::PublicParameters::default(),
+            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+        )
+        .unwrap();
+    let (key, proof) = bundle.secp256r1_pvss;
+    let key =
+        EquivalenceClass::new(key, secp256r1_setup.equivalence_class_public_parameters()).unwrap();
+    assert_eq!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, secp256r1::GroupElement>(
+            key,
+            &proof,
+            &secp256r1_setup,
+        )
+        .expect("the deployed secp256r1 PVSS proof must verify"),
+        key
+    );
+    assert!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, secp256r1::GroupElement>(
+            key + key,
+            &proof,
+            &secp256r1_setup,
+        )
+        .is_err(),
+        "the secp256r1 PVSS proof must bind its key"
+    );
+
+    let ristretto_setup =
+        RistrettoSetupParameters::derive_from_plaintext_parameters::<ristretto::Scalar>(
+            ristretto::scalar::PublicParameters::default(),
+            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
+        )
+        .unwrap();
+    let (key, proof) = bundle.ristretto_pvss;
+    let key =
+        EquivalenceClass::new(key, ristretto_setup.equivalence_class_public_parameters()).unwrap();
+    assert_eq!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, ristretto::GroupElement>(
+            key,
+            &proof,
+            &ristretto_setup,
+        )
+        .expect("the deployed ristretto PVSS proof must verify"),
+        key
+    );
+    assert!(
+        verify_knowledge_of_decryption_key_uc_proof::<_, _, _, _, ristretto::GroupElement>(
+            key + key,
+            &proof,
+            &ristretto_setup,
+        )
+        .is_err(),
+        "the ristretto PVSS proof must bind its key"
+    );
+
+    let (committee, _) = Committee::new_simple_test_committee_of_size(1);
+    let authority = committee.voting_rights[0].0;
+    let (key, proof) = bundle.vss_hpke_public_key_and_proof;
+    let verified = committee.verified_vss_hpke_party_encryption_key_values(&HashMap::from([(
+        authority,
+        (key, proof.clone()),
+    )]));
+    assert_eq!(
+        verified,
+        HashMap::from([(1, key)]),
+        "the deployed VSS party must survive proof verification"
+    );
+    let key = curve25519::GroupElement::new(key, &curve25519::PublicParameters::default()).unwrap();
+    let verified = committee.verified_vss_hpke_party_encryption_key_values(&HashMap::from([(
+        authority,
+        ((key + key).value(), proof),
+    )]));
+    assert!(verified.is_empty(), "the VSS proof must bind its key");
+}
 
 fn cert_naming(
     prior_epoch: u64,
@@ -231,10 +412,8 @@ async fn boot_seed_resolution_through_verify_validator_keys_and_a_real_cert_stor
 
     let certified_seed = RootSeed::new([31u8; 32]);
     let rotated_seed = RootSeed::new([32u8; 32]);
-    let certified_digest = DerivableDigests::derive(&certified_seed)
-        .expect("derive the certified seed's bundle")
-        .emitted()
-        .expect("one encoding");
+    let certified_blob = derive_mpc_data_blob(&certified_seed).expect("certified blob");
+    let certified_digest = mpc_data_blob_hash(&certified_blob);
     let rotated_digest = DerivableDigests::derive(&rotated_seed)
         .expect("derive the rotated seed's bundle")
         .emitted()
@@ -266,6 +445,9 @@ async fn boot_seed_resolution_through_verify_validator_keys_and_a_real_cert_stor
                 ),
             )
             .expect("insert the handoff cert");
+        perpetual
+            .insert_mpc_artifact_blob(certified_digest, &certified_blob)
+            .expect("persist the blob supplied by the startup barrier");
         let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config)
             .expect("key verification and seed resolution must not error");
         (
@@ -389,5 +571,80 @@ async fn an_authority_absent_from_the_cert_starts_normally() {
         }
     );
     assert!(resolution.mpc_active());
+    assert_eq!(resolution.mpc_seed(), &seed);
+}
+
+/// A frozen old-binary blob has different proof bytes even when the upgraded
+/// legacy generator recovers exactly the right private keys. Digest equality
+/// against a newly generated bundle must not disable this validator.
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn sampler_transition_uses_the_keys_in_the_last_handoff() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let seed = RootSeed::new([31; 32]);
+    let new_blob = derive_mpc_data_blob(&seed).unwrap();
+    let legacy_digest = mpc_data_blob_hash(LEGACY_VALIDATOR_BLOB);
+    assert_eq!(
+        hex::encode(legacy_digest),
+        "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
+    );
+    assert_ne!(legacy_digest, mpc_data_blob_hash(&new_blob));
+    let (_, regenerated_legacy) =
+        ValidatorMPCSecrets::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Legacy);
+    let certified_keys = decode_certified_mpc_keys(&legacy_digest, LEGACY_VALIDATOR_BLOB).unwrap();
+    assert_ne!(
+        certified_keys, regenerated_legacy,
+        "the old proof bytes must exercise the digest mismatch"
+    );
+
+    for (blob, expected) in [
+        (LEGACY_VALIDATOR_BLOB, ValidatorKeyDerivation::Legacy),
+        (new_blob.as_slice(), ValidatorKeyDerivation::Current),
+    ] {
+        let (config, record) =
+            config_and_validator_record(Some(RootSeedWithPath::new(seed.clone())), None);
+        let self_name = AuthorityName([3; 32]);
+        let (epoch_store, perpetual, _dirs) = epoch_store_with(self_name, record);
+        let digest = mpc_data_blob_hash(blob);
+        perpetual
+            .insert_certified_handoff_attestation(
+                EPOCH - 1,
+                &cert_naming(EPOCH - 1, &[(self_name, digest)]),
+            )
+            .unwrap();
+        assert!(
+            DWalletMPCService::verify_validator_keys(&epoch_store, &config).is_err(),
+            "a missing certified blob must not fall back to current keys"
+        );
+        perpetual.insert_mpc_artifact_blob(digest, blob).unwrap();
+        let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
+        assert!(resolution.mpc_active());
+        assert_eq!(
+            resolution.key_derivation(),
+            expected,
+            "the last handoff must select its matching sampler"
+        );
+        assert_eq!(resolution.mpc_seed(), &seed);
+    }
+
+    let rotated = RootSeed::new([32; 32]);
+    let (config, record) = config_and_validator_record(
+        Some(RootSeedWithPath::new(rotated)),
+        Some(RootSeedWithPath::new(seed.clone())),
+    );
+    let self_name = AuthorityName([3; 32]);
+    let (epoch_store, perpetual, _dirs) = epoch_store_with(self_name, record);
+    perpetual
+        .insert_certified_handoff_attestation(
+            EPOCH - 1,
+            &cert_naming(EPOCH - 1, &[(self_name, legacy_digest)]),
+        )
+        .unwrap();
+    perpetual
+        .insert_mpc_artifact_blob(legacy_digest, LEGACY_VALIDATOR_BLOB)
+        .unwrap();
+    let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
+    assert_eq!(resolution.decision(), EpochSeedDecision::RunOnPrevious);
+    assert_eq!(resolution.key_derivation(), ValidatorKeyDerivation::Legacy);
     assert_eq!(resolution.mpc_seed(), &seed);
 }

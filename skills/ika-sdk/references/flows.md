@@ -32,7 +32,7 @@ Most common flow. Network signs autonomously - no user participation at sign tim
 ### Step 1: Create Encryption Keys
 
 ```typescript
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
     new TextEncoder().encode('your-deterministic-seed'),
     Curve.SECP256K1,
 );
@@ -388,10 +388,10 @@ Derive cross-chain wallet from any authentication source.
 // - KDF output: any 32+ byte deterministic secret
 
 const seed = await wallet.signMessage('ika-keyspring-v1');
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
     new Uint8Array(seed), Curve.SECP256K1,
 );
 // Proceed with DKG → the resulting dWallet public key maps to an ETH address
 ```
 
-Key insight: `fromRootSeedKey` is deterministic. Same seed always produces same keys. The dWallet's public key deterministically maps to addresses on target chains.
+Key insight: `fromRootSeedKeyV2` is deterministic. Same seed always produces same keys. The dWallet's public key deterministically maps to addresses on target chains.

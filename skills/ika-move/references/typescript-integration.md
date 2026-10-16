@@ -35,7 +35,7 @@ import {
 import { Transaction } from '@mysten/sui/transactions';
 
 // 1. Create encryption keys from seed
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
     new TextEncoder().encode('your-seed'), Curve.SECP256K1,
 );
 
@@ -321,7 +321,7 @@ const config = getNetworkConfig('testnet'); // or 'mainnet'
 import { UserShareEncryptionKeys, Curve } from '@ika.xyz/sdk';
 
 // Create from seed
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
     new TextEncoder().encode('seed'), Curve.SECP256K1,
 );
 
@@ -345,7 +345,7 @@ Architecture: Use any wallet signature or passkey as seed -> derive encryption k
 Wallet/Passkey -> sign message -> seed bytes -> UserShareEncryptionKeys -> DKG -> ETH address
 ```
 
-Key insight: The seed for `UserShareEncryptionKeys.fromRootSeedKey()` can come from any deterministic source:
+Key insight: The seed for `UserShareEncryptionKeys.fromRootSeedKeyV2()` can come from any deterministic source:
 - Wallet signature of a fixed message
 - WebAuthn PRF extension output
 - Any deterministic 32+ byte secret

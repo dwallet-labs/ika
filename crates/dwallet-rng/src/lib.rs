@@ -4,8 +4,9 @@ use group::{CsRng, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use merlin::Transcript;
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
+use rand_chacha::rand_core::{Rng, SeedableRng, TryCryptoRng, TryRng};
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
 use std::fmt;
 use zeroize::ZeroizeOnDrop;
 
@@ -76,7 +77,7 @@ impl RootSeed {
     ///
     /// We don't use the root seed directly, as it would be used for other purposes.
     /// Instead, we derive a seed from it using a distinct hard-coded label.
-    fn class_groups_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    pub fn class_groups_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         // Add a distinct descriptive label, and the root seed itself.
         let mut transcript = Transcript::new(b"Class Groups Decryption Key Seed");
         transcript.append_message(b"root seed", &self.0);
@@ -122,7 +123,8 @@ impl RootSeed {
     // upstream's `decentralized_party::dkg::PublicInput::new` per-curve PVSS
     // encryption-keys-and-proofs HashMap arguments.
 
-    fn pvss_secp256k1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    /// Secret child seed for reproducing this key with its original RNG version.
+    pub fn pvss_secp256k1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (secp256k1)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -130,7 +132,8 @@ impl RootSeed {
         seed
     }
 
-    fn pvss_secp256r1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    /// Secret child seed for reproducing this key with its original RNG version.
+    pub fn pvss_secp256r1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (secp256r1)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -138,7 +141,8 @@ impl RootSeed {
         seed
     }
 
-    fn pvss_ristretto_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    /// Secret child seed for reproducing this key with its original RNG version.
+    pub fn pvss_ristretto_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (ristretto)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -170,7 +174,8 @@ impl RootSeed {
         ChaCha20Rng::from_seed(self.pvss_ristretto_decryption_key_seed())
     }
 
-    fn vss_hpke_secret_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    /// Secret child seed for reproducing this key with its original RNG version.
+    pub fn vss_hpke_secret_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"VSS HPKE Secret Key Seed (curve25519)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -238,7 +243,7 @@ impl RootSeed {
 ///
 /// # How It Works
 ///
-/// This RNG implements the [`RngCore`] and [`CryptoRng`] traits from `rand_core`,
+/// This RNG implements the [`TryRng`] and [`TryCryptoRng`] traits from `rand_core`,
 /// which makes it compatible with the [`group::CsRng`] trait alias used by the
 /// twopc_mpc library. However, instead of generating random bytes, it always
 /// fills buffers with zeros.
@@ -296,14 +301,16 @@ impl ZeroRng {
     }
 }
 
-impl RngCore for ZeroRng {
+impl TryRng for ZeroRng {
+    type Error = Infallible;
+
     /// Returns zero.
     ///
     /// # ⚠️ Warning
     /// This always returns 0, providing no randomness.
     #[inline]
-    fn next_u32(&mut self) -> u32 {
-        0
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(0)
     }
 
     /// Returns zero.
@@ -311,8 +318,8 @@ impl RngCore for ZeroRng {
     /// # ⚠️ Warning
     /// This always returns 0, providing no randomness.
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        0
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(0)
     }
 
     /// Fills the destination buffer with zeros.
@@ -320,8 +327,9 @@ impl RngCore for ZeroRng {
     /// # ⚠️ Warning
     /// This fills the entire buffer with zeros, providing no randomness.
     #[inline]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         dest.fill(0);
+        Ok(())
     }
 }
 
@@ -332,12 +340,12 @@ impl RngCore for ZeroRng {
 /// **THIS IS A LIE.** This RNG is NOT cryptographically secure in any meaningful sense.
 ///
 /// This trait is implemented ONLY to satisfy the type system requirements of the
-/// twopc_mpc library, which requires [`CryptoRng`] bounds. The actual cryptographic
+/// twopc_mpc library, which requires [`TryCryptoRng`] bounds. The actual cryptographic
 /// security for network-owned-address signing comes from the network's threshold signature,
 /// NOT from this RNG.
 ///
 /// **NEVER** use this RNG in any context where randomness is expected to provide security.
-impl CryptoRng for ZeroRng {}
+impl TryCryptoRng for ZeroRng {}
 
 /// Implementation of [`group::CsRng`] for [`ZeroRng`].
 ///

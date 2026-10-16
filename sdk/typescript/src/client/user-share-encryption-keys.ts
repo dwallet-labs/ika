@@ -21,9 +21,8 @@ import { decrypt_user_share } from './wasm-loader.js';
  * - `V1`: Keys derived with the legacy hash (curve byte always 0).
  * - `V2`: Keys derived with the fixed hash (correct curve byte).
  *
- * Both variants have the same fields; the variant tag is what distinguishes
- * which hash derivation was used, so deserialization can reconstruct
- * the keys with the right derivation function.
+ * The variant tag records which hash derivation was used. Deserialization
+ * restores the stored key bytes and hash flag without deriving keys again.
  */
 export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareEncryptionKeys', {
 	V1: bcs.struct('UserShareEncryptionKeysV1', {
@@ -57,7 +56,7 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
  * - **Ed25519 signing keypair** — signs the encryption key and dWallet
  *   public outputs to prove ownership and authorize operations.
  *
- * ## Legacy vs fixed hash
+ * ## Key derivation and recovery
  *
  * An earlier version had a bug where the curve byte was always `0`
  * regardless of the actual curve (the `Curve` string enum was passed to
@@ -65,13 +64,16 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
  * This only matters for non-SECP256K1 curves (whose curve number is
  * already `0`).
  *
- * - Use {@link fromRootSeedKey} for new registrations (fixed hash).
- * - Use {@link fromRootSeedKeyLegacyHash} only to reproduce keys that
- *   were registered on-chain before the fix.
+ * - Use {@link fromRootSeedKeyV2} for all new registrations (fixed hash and platform-independent sampling).
+ * - Use the deprecated {@link fromRootSeedKey} to recover existing keys. It uses
+ *   the deployed WASM32 sampler; set `legacyHash: true` for keys from before the curve-byte fix.
+ * - Rotate existing keys by creating fresh keys with {@link fromRootSeedKeyV2}, registering
+ *   them, and re-encrypting the user shares under the new keys.
  *
- * Serialization via {@link toShareEncryptionKeysBytes} records which
- * derivation was used (BCS `V1` = legacy, `V2` = fixed), so
- * {@link fromShareEncryptionKeysBytes} always picks the right one.
+ * Serialization via {@link toShareEncryptionKeysBytes} records which hash
+ * was used (BCS `V1` = legacy, `V2` = fixed) and stores the derived key bytes.
+ * {@link fromShareEncryptionKeysBytes} restores those bytes without needing
+ * the derivation method.
  */
 export class UserShareEncryptionKeys {
 	/** Class-groups public encryption key (encrypts secret shares). */
@@ -113,17 +115,40 @@ export class UserShareEncryptionKeys {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Derives encryption keys from a root seed using the **fixed** hash
-	 * (`keccak256(domain || curveNumber || seed)`).
+	 * Recovers existing encryption keys from a root seed. By default, uses the fixed
+	 * hash (`keccak256(domain || curveNumber || seed)`) and the deployed WASM32 sampler.
 	 *
-	 * This is the default and recommended constructor for all new key
-	 * registrations.
+	 * Set `legacyHash` to reproduce the old curve-byte hash. This SDK uses WASM
+	 * in both browsers and Node.js, so it reproduces historical 32-bit keys.
+	 * Restore a complete SDK-format key bundle for keys originally derived by native Rust;
+	 * raw class-groups keypair bytes alone are not a serialized SDK bundle.
+	 * The sampler does not change signing-key derivation.
+	 *
+	 * @deprecated Use only to recover existing keys. Create all new encryption keys with
+	 * {@link fromRootSeedKeyV2}. To rotate existing keys, register keys derived from a
+	 * fresh seed with that method and re-encrypt the user shares under the new keys.
 	 */
 	static async fromRootSeedKey(
 		rootSeedKey: Uint8Array,
 		curve: Curve,
+		{ legacyHash = false }: { legacyHash?: boolean } = {},
 	): Promise<UserShareEncryptionKeys> {
-		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, false);
+		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, legacyHash, true);
+	}
+
+	/**
+	 * Creates encryption keys from a root seed using the fixed curve-byte hash and
+	 * the current platform-independent sampler. Use for all new encryption-key registrations.
+	 *
+	 * Existing keys must be recovered with their original derivation or restored from
+	 * serialized bytes. To rotate them, use a fresh seed here, register the new keys,
+	 * and re-encrypt the user shares before switching to the new keys.
+	 */
+	static async fromRootSeedKeyV2(
+		rootSeedKey: Uint8Array,
+		curve: Curve,
+	): Promise<UserShareEncryptionKeys> {
+		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, false, false);
 	}
 
 	/**
@@ -135,13 +160,15 @@ export class UserShareEncryptionKeys {
 	 * already `0`), so this only matters for SECP256R1, ED25519, and
 	 * RISTRETTO keys.
 	 *
-	 * @deprecated Register new keys with {@link fromRootSeedKey} instead.
+	 * Uses historical 32-bit WASM sampling, matching the original SDK derivation.
+	 *
+	 * @deprecated Only use for existing keys. Register new keys with {@link fromRootSeedKeyV2}.
 	 */
 	static async fromRootSeedKeyLegacyHash(
 		rootSeedKey: Uint8Array,
 		curve: Curve,
 	): Promise<UserShareEncryptionKeys> {
-		return UserShareEncryptionKeys.#createFromSeed(rootSeedKey, curve, true);
+		return UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, curve, { legacyHash: true });
 	}
 
 	/**
@@ -152,6 +179,7 @@ export class UserShareEncryptionKeys {
 		rootSeedKey: Uint8Array,
 		curve: Curve,
 		legacyHash: boolean,
+		legacySampling: boolean,
 	): Promise<UserShareEncryptionKeys> {
 		const hashFn = legacyHash ? UserShareEncryptionKeys.hashLegacy : UserShareEncryptionKeys.hash;
 
@@ -167,7 +195,9 @@ export class UserShareEncryptionKeys {
 			curve,
 		);
 
-		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve);
+		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve, {
+			legacySampling,
+		});
 		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
 			toHex(encryptionSignerKeySeed),
 		);
@@ -378,8 +408,8 @@ export class UserShareEncryptionKeys {
 	 * Legacy hash: `keccak256(ASCII(domainSeparator) || 0 || rootSeed)`.
 	 *
 	 * Always uses `0` as the curve byte regardless of the actual curve,
-	 * matching the original buggy behavior. Only used internally by
-	 * {@link fromRootSeedKeyLegacyHash}.
+	 * matching the original buggy behavior. Used to recover existing keys with
+	 * `legacyHash: true` or {@link fromRootSeedKeyLegacyHash}.
 	 *
 	 * @deprecated Use {@link hash} for all new key derivations.
 	 */
