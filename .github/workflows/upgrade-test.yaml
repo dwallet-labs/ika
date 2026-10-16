@@ -46,6 +46,9 @@ name: Upgrade Test
 #                  mid_epoch_rollback was the only scenario that did it and
 #                  was retired once v1.4.0 shipped (see
 #                  dev-docs/specs/event-sourced-epoch.md, "Rolling back").
+#   v141_mid_session — upgrade one validator after its OLD round-two contribution;
+#                  require NEW round-three participation and output in that same
+#                  session, with the fourth validator suspended. Real crypto only.
 #   v141_churn   — v141_rollout's churn counterpart: full sequential swap
 #                  over the literal v1.4.1 committee, then a mirrored OCS
 #                  joiner folds into the reshared v1.4.1-origin key (4→5)
@@ -220,7 +223,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build a deliberately divergent candidate for v141_rollout"
+        description: "TEST ONLY: corrupt v141_rollout contributions or withhold the v141_mid_session candidate"
         type: boolean
         required: false
         default: false
@@ -275,7 +278,7 @@ on:
         required: false
         default: false
       test_testing_fault:
-        description: "TEST ONLY: build the current validator with the test-testing reconfiguration-message fault and run v141_rollout; the zero-malicious/convergence gate must fail."
+        description: "TEST ONLY: v141_rollout corrupts current reconfiguration messages; v141_mid_session withholds NEW while OLD peers finish. Both controls must fail their evidence gate."
         type: boolean
         required: false
         default: false
@@ -317,7 +320,7 @@ jobs:
           TEST: ${{ inputs.test || 'v141_rollout' }}
         run: |
           set -euo pipefail
-          ALL="smoke workload v141_rollout v141_churn malicious_v141 restart_spectator wedged_drain"
+          ALL="smoke workload v141_rollout v141_mid_session v141_churn malicious_v141 restart_spectator wedged_drain"
           if [ "$TEST" = "all" ]; then
             SELECTED="$ALL"
           else
@@ -431,6 +434,7 @@ jobs:
             smoke)        RUN_FLAG=RUN_UPGRADE_SMOKE ;;
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             v141_churn)   RUN_FLAG=RUN_V141_CHURN ;;
+            v141_mid_session) RUN_FLAG=RUN_V141_MID_SESSION ;;
             malicious_v141) RUN_FLAG=RUN_MALICIOUS_V141 ;;
             restart_spectator) RUN_FLAG=RUN_RESTART_SPECTATOR ;;
             wedged_drain) RUN_FLAG=RUN_WEDGED_DRAIN ;;
@@ -442,7 +446,7 @@ jobs:
           OLD_REF="$IN_OLD_REF"
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           case "$TEST" in
-            v141_churn | malicious_v141)
+            v141_churn | malicious_v141 | v141_mid_session)
               : "${OLD_REF:=release/mainnet-v1.4.1}"
               : "${OLD_BIN_NAME:=ika-validator}"
               ;;
@@ -486,24 +490,20 @@ jobs:
           # exists again — it is the run standing behind a version flip on a
           # live network, which is where mocked agreement is most misleading.
           case "$TEST_NAME" in
-            v141_rollout|v141_churn|malicious_v141)
+            v141_rollout|v141_churn|malicious_v141|v141_mid_session)
               if [ "$USE_MOCKS" = "true" ]; then
                 echo "$TEST_NAME is a cross-binary gate and must use real cryptography" >&2
                 exit 1
               fi
               ;;
           esac
-          # ONE scenario, deliberately. The two rollout gates this condition
-          # was originally written for are now a single one, and
-          # malicious_v141 is NOT a third: it builds its own faulty validator
-          # (below) rather than taking it from this input, and it is expected
-          # to PASS — the honest committee convicts the fault — whereas this
-          # input is expected to make its run FAIL CLOSED.
-          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v141_rollout" ]; then
-            echo "test_testing_fault is only supported by v141_rollout" >&2
+          # Both controls must fail their own evidence gate. Mid-session uses
+          # a harness-only missing-participant control, not a faulty binary.
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" != "v141_rollout" ] && [ "$TEST_NAME" != "v141_mid_session" ]; then
+            echo "test_testing_fault requires v141_rollout or v141_mid_session" >&2
             exit 1
           fi
-          if [ "$TEST_TESTING_FAULT" = "true" ]; then
+          if [ "$TEST_TESTING_FAULT" = "true" ] && [ "$TEST_NAME" = "v141_rollout" ]; then
             NODE_FAULT_FEATURES="--features test-testing"
             echo "building deliberately faulty current validator; this validation run must fail closed"
           else
@@ -537,7 +537,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ matrix.test == 'v141_rollout' || matrix.test == 'v141_churn' || matrix.test == 'malicious_v141' }}
+        if: ${{ matrix.test == 'v141_rollout' || matrix.test == 'v141_churn' || matrix.test == 'malicious_v141' || matrix.test == 'v141_mid_session' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -570,6 +570,8 @@ jobs:
 
       - name: Run ${{ matrix.test }}
         env:
+          USE_MOCKS: ${{ inputs.use_mocks }}
+          MID_SESSION_PARTICIPATION_CONTROL: ${{ inputs.test_testing_fault && matrix.test == 'v141_mid_session' }}
           # smoke/workload read IKA_VALIDATOR_BIN/
           # IKA_NOTIFIER_BIN/IKA_BIN; v141_rollout reads NEW_BIN/NOTIFIER_BIN/
           # OLD_BIN/IKA_BIN (OLD_BIN comes from the build step via
@@ -628,6 +630,12 @@ jobs:
           # not compatibility evidence.
           if [ "$TEST_NAME" = "v141_rollout" ] || [ "$TEST_NAME" = "restart_spectator" ]; then
             unset IKA_ENABLE_SMALL_PRESIGN_POOLS
+          fi
+          if [ "$TEST_NAME" = "v141_mid_session" ]; then
+            unset IKA_ENABLE_SMALL_PRESIGN_POOLS
+            # OLD already exposes these round/receipt events. Keep both
+            # binaries literal; the harness observes their existing logs.
+            export RUST_LOG="${RUST_LOG},ika_core::dwallet_mpc::crytographic_computation::request=debug,ika_core::dwallet_mpc::crytographic_computation::orchestrator=debug,ika_core::dwallet_mpc::dwallet_mpc_service=debug,ika_core::dwallet_mpc::mpc_manager=debug,ika_core::dwallet_mpc::mpc_session=debug"
           fi
           mkdir -p "$UPGRADE_TEST_DIR"
           echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"

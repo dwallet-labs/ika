@@ -20,6 +20,7 @@
 
 pub mod binary;
 pub mod cluster;
+pub mod mid_session_upgrade;
 pub mod mpc_timings;
 pub mod process;
 pub mod scenario;

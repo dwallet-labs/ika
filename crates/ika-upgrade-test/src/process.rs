@@ -13,10 +13,10 @@ use std::collections::BTreeMap;
 use std::fs::{OpenOptions, read_to_string};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command as SignalCommand, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use ika_config::node::{NodeConfig, SuiDataSource};
 use tokio::process::{Child, Command};
 
@@ -86,6 +86,7 @@ pub struct ValidatorProcess {
     /// `RAYON_NUM_THREADS`, so a key of that name would win — don't.
     extra_env: BTreeMap<String, String>,
     child: Option<Child>,
+    suspended: bool,
     http: reqwest::Client,
 }
 
@@ -111,6 +112,7 @@ impl ValidatorProcess {
             rayon_threads,
             extra_env: BTreeMap::new(),
             child: None,
+            suspended: false,
             http: reqwest::Client::new(),
         }
     }
@@ -222,6 +224,7 @@ impl ValidatorProcess {
     /// disk in a partial state that the next binary chokes on at replay. A
     /// binary swap is a planned restart, not a crash, so it must be graceful.
     pub async fn stop(&mut self) -> Result<()> {
+        self.resume().await?;
         if let Some(mut child) = self.child.take() {
             tracing::info!(index = self.index, "stopping ika-validator (SIGTERM)");
             if let Some(pid) = child.id() {
@@ -246,6 +249,91 @@ impl ValidatorProcess {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Stop execution without replacing the process or changing its persisted state.
+    /// The external signal utility keeps this harness free of unsafe signal calls.
+    pub async fn suspend(&mut self) -> Result<()> {
+        ensure!(
+            !self.suspended,
+            "validator {} already suspended",
+            self.index
+        );
+        let pid = self
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .with_context(|| format!("validator {} has no running child", self.index))?;
+        // Do not yield between marking the child and delivering SIGSTOP:
+        // cancellation must not let cleanup's SIGCONT overtake the stop signal.
+        self.suspended = true;
+        let status = SignalCommand::new("kill")
+            .arg("-STOP")
+            .arg(pid.to_string())
+            .status()
+            .context("send SIGSTOP")?;
+        ensure!(
+            status.success(),
+            "SIGSTOP failed for validator {}",
+            self.index
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let output = Command::new("ps")
+                .args(["-o", "stat=", "-p"])
+                .arg(pid.to_string())
+                .output()
+                .await
+                .context("acknowledge SIGSTOP with ps")?;
+            ensure!(
+                output.status.success(),
+                "suspended validator {} disappeared",
+                self.index
+            );
+            if String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .starts_with('T')
+            {
+                tracing::info!(
+                    index = self.index,
+                    pid,
+                    "validator suspended (SIGSTOP acknowledged)"
+                );
+                return Ok(());
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "SIGSTOP was not acknowledged for validator {}",
+                self.index
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Resume a suspended child; a running or already-stopped child is unchanged.
+    pub async fn resume(&mut self) -> Result<()> {
+        if !self.suspended {
+            return Ok(());
+        }
+        let pid = self
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .with_context(|| format!("suspended validator {} has no child", self.index))?;
+        let status = Command::new("kill")
+            .arg("-CONT")
+            .arg(pid.to_string())
+            .status()
+            .await
+            .context("send SIGCONT")?;
+        ensure!(
+            status.success(),
+            "SIGCONT failed for validator {}",
+            self.index
+        );
+        self.suspended = false;
+        tracing::info!(index = self.index, pid, "validator resumed (SIGCONT)");
         Ok(())
     }
 

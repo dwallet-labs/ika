@@ -569,15 +569,15 @@ fn parse_labelless_gauge(body: &str, metric: &str) -> Option<u64> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct PrometheusSample {
-    labels: BTreeMap<String, String>,
-    value: f64,
+pub(crate) struct PrometheusSample {
+    pub(crate) labels: BTreeMap<String, String>,
+    pub(crate) value: f64,
 }
 
 /// Parse exact Prometheus samples for one metric name. Prefix collisions are
 /// rejected (`metric_other` is not `metric`); labels used by this harness are
 /// hex/identifier strings and therefore never contain escaped commas.
-fn parse_metric_samples(body: &str, metric: &str) -> Result<Vec<PrometheusSample>> {
+pub(crate) fn parse_metric_samples(body: &str, metric: &str) -> Result<Vec<PrometheusSample>> {
     body.lines()
         .filter(|line| !line.starts_with('#'))
         .filter_map(|line| {
@@ -1308,6 +1308,44 @@ fn canonical_network_key_outputs(
 }
 
 impl ClusterOfProcesses {
+    /// With the fourth validator suspended, neither of the two OLD peers can
+    /// complete the session without the upgraded validator's voting weight.
+    pub(crate) async fn assert_mid_session_committee(&self) -> Result<()> {
+        let (_, system) = self.ika_client.get_system_inner().await?;
+        let committee = self
+            .ika_client
+            .get_epoch_start_system(&system)
+            .await?
+            .get_ika_committee();
+        let expected: BTreeSet<_> = self
+            .validator_authorities
+            .iter()
+            .map(|authority| authority.consensus)
+            .collect();
+        let actual: BTreeSet<_> = committee.names().copied().collect();
+        ensure!(
+            self.validators.len() == 4 && expected.len() == 4 && actual == expected,
+            "mid-session upgrade requires the original four-validator committee"
+        );
+        let weights: BTreeSet<_> = committee
+            .voting_rights
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect();
+        ensure!(
+            weights.len() == 1,
+            "mid-session upgrade requires equal stake"
+        );
+        let weight = u128::from(*weights.first().context("committee has no voting weight")?);
+        let quorum = u128::from(committee.quorum_threshold());
+        ensure!(
+            weight * 2 < quorum && weight * 3 >= quorum,
+            "mid-session upgrade requires exactly three validators for quorum"
+        );
+        tracing::info!(%weight, %quorum, "mid-session upgrade verified three-of-four quorum");
+        Ok(())
+    }
+
     /// Cache both samplers' public identities before the timed rollout boundaries.
     pub(crate) async fn prepare_validator_key_rotation(&self) -> Result<ValidatorKeyRotation> {
         let (_, system) = self.ika_client.get_system_inner().await?;

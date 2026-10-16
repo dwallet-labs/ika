@@ -50,11 +50,11 @@ serialization/schema change, MUST preserve all of the following.
 2. **Reconfiguration survives the swap.** The mid-epoch reconfiguration
    MPC (run at the ~50% epoch mark) must complete across a binary swap,
    and the next committee's encryption-key shares must be present at the
-   boundary. A swap whose downtime overlaps the reconfiguration window
-   stalls the epoch — rollouts must land each validator's swap clear of
-   that window (the harness uses long epochs and swaps well before the
-   50% mark for exactly this reason). The cross-epoch agreement on which
-   artifacts the next epoch inherits is the handoff; see
+   boundary. Downtime overlapping reconfiguration can delay its completion,
+   so the ordinary rollout uses long epochs and swaps before the 50% mark.
+   The dedicated active-session scenario below instead interrupts a known
+   round and verifies the upgraded validator resumes participating. The
+   cross-epoch agreement on which artifacts the next epoch inherits is the handoff; see
    [`handoff.md`](handoff.md) and
    [`validator-mpc-data-announcements.md`](validator-mpc-data-announcements.md).
 
@@ -367,3 +367,39 @@ discarded output, delays finalization, or re-activates a completed session.
 Run them on CI via the **Upgrade Test** workflow
 (`.github/workflows/upgrade-test.yaml`); see
 [`../playbooks/ci-suites.md`](../playbooks/ci-suites.md).
+
+## Binary upgrade during an active session
+
+`tests/v141_mid_session.rs` covers a different boundary from the rollout:
+OLD has already contributed to an identified epoch-2 network-key
+reconfiguration when its process is replaced. The harness waits for OLD's
+round-three computation to start and rejects any run where OLD already
+advanced that round or finalized before shutdown. NEW reopens the same
+configuration and database, replays OLD's committed rounds one and two,
+and must advance round three and finalize that exact session.
+
+The committee has four original, equal-stake validators, with its actual
+three-of-four quorum checked from chain state. Validator three is suspended
+before the session starts. At the interruption point the two remaining OLD
+peers are briefly suspended while the target shuts down, then resumed when
+NEW boots. Validator three remains suspended until the participation gate
+passes, so the two OLD peers cannot complete without the target. Pauses are
+bounded and resumed on error; neither historical source nor validator
+runtime scheduling parameters are changed. This is a controlled interruption
+scenario, not a measurement of an unattended deployment's timing.
+
+Evidence is scoped to one session identifier, epoch and validator identity.
+Pre-upgrade log evidence cannot satisfy the post-upgrade round/Finalize
+guards. The target's fresh advancement, OLD peers receiving its message,
+accepted matching output from the three participating authorities, same-epoch
+completion and zero malicious reports are required. Consensus-only recovery,
+a different completed session, or a late local output without participation
+cannot make this test pass. It covers the reconfiguration round-two/three
+boundary; it does not establish every protocol or interruption point.
+
+With `test_testing_fault=true`, this scenario deliberately withholds NEW and
+resumes all three OLD peers. They must complete the selected session, and
+the same participation gate must reject the absent upgraded contribution.
+This negative control is expected to fail, with evidence that OLD-only quorum
+completion was insufficient. It changes only harness process control and is
+never counted as a successful upgrade run.
