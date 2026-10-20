@@ -299,22 +299,71 @@ fn same_encryption_keys(
         && left.vss_hpke_public_key_and_proof.0 == right.vss_hpke_public_key_and_proof.0
 }
 
+/// Public-key matches against the authenticated handoff, excluding proof bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CertifiedKeyMatches {
+    class_group: usize,
+    vss_hpke: bool,
+}
+
+impl CertifiedKeyMatches {
+    fn between(
+        current: &ValidatorEncryptionKeysAndProofs,
+        certified: &ValidatorEncryptionKeysAndProofs,
+    ) -> Self {
+        let class_group = current
+            .class_groups
+            .iter()
+            .zip(&certified.class_groups)
+            .filter(|(current, certified)| current.0 == certified.0)
+            .count()
+            + [
+                current.secp256k1_pvss.0 == certified.secp256k1_pvss.0,
+                current.secp256r1_pvss.0 == certified.secp256r1_pvss.0,
+                current.ristretto_pvss.0 == certified.ristretto_pvss.0,
+            ]
+            .into_iter()
+            .filter(|matches| *matches)
+            .count();
+        Self {
+            class_group,
+            vss_hpke: current.vss_hpke_public_key_and_proof.0
+                == certified.vss_hpke_public_key_and_proof.0,
+        }
+    }
+}
+
+struct DerivedSeedIdentity {
+    digests: DerivableDigests,
+    derivation: Option<ValidatorKeyDerivation>,
+    certified_key_matches: Option<CertifiedKeyMatches>,
+}
+
 fn derive_seed_identity(
     seed: &RootSeed,
     certified_digest: Option<[u8; 32]>,
     certified_keys: Option<&ValidatorEncryptionKeysAndProofs>,
-) -> IkaResult<(DerivableDigests, Option<ValidatorKeyDerivation>)> {
+) -> IkaResult<DerivedSeedIdentity> {
     let blob = derive_mpc_data_blob(seed)?;
     let digest = mpc_data_blob_hash(&blob);
     let digests = DerivableDigests {
         digests: BTreeSet::from([digest]),
     };
     let Some(certified_keys) = certified_keys else {
-        return Ok((digests, None));
+        return Ok(DerivedSeedIdentity {
+            digests,
+            derivation: None,
+            certified_key_matches: None,
+        });
     };
     let current_keys = decode_certified_mpc_keys(&digest, &blob)?;
+    let certified_key_matches = Some(CertifiedKeyMatches::between(&current_keys, certified_keys));
     if certified_digest == Some(digest) || same_encryption_keys(&current_keys, certified_keys) {
-        return Ok((digests, Some(ValidatorKeyDerivation::Current)));
+        return Ok(DerivedSeedIdentity {
+            digests,
+            derivation: Some(ValidatorKeyDerivation::Current),
+            certified_key_matches,
+        });
     }
 
     // TODO: Remove this temporary legacy validator-key fallback in a later
@@ -325,7 +374,11 @@ fn derive_seed_identity(
         ValidatorMPCSecrets::from_seed_with_derivation(seed, ValidatorKeyDerivation::Legacy);
     let derivation = same_encryption_keys(&legacy_keys, certified_keys)
         .then_some(ValidatorKeyDerivation::Legacy);
-    Ok((digests, derivation))
+    Ok(DerivedSeedIdentity {
+        digests,
+        derivation,
+        certified_key_matches,
+    })
 }
 
 pub(crate) fn matching_key_derivation(
@@ -334,7 +387,7 @@ pub(crate) fn matching_key_derivation(
     blob: &[u8],
 ) -> IkaResult<Option<ValidatorKeyDerivation>> {
     let keys = decode_certified_mpc_keys(digest, blob)?;
-    derive_seed_identity(seed, Some(*digest), Some(&keys)).map(|(_, derivation)| derivation)
+    derive_seed_identity(seed, Some(*digest), Some(&keys)).map(|identity| identity.derivation)
 }
 
 /// A resolved epoch: the decision plus the seed the MPC manager must run with
@@ -347,6 +400,7 @@ pub struct EpochSeedResolution {
     current_digests: DerivableDigests,
     previous_digests: Option<DerivableDigests>,
     certified: Option<[u8; 32]>,
+    current_certified_key_matches: Option<CertifiedKeyMatches>,
 }
 
 impl EpochSeedResolution {
@@ -367,7 +421,7 @@ impl EpochSeedResolution {
                 decode_certified_mpc_keys(&digest, blob)
             })
             .transpose()?;
-        let (current_digests, current_derivation) = derive_seed_identity(
+        let current_identity = derive_seed_identity(
             &current_seed,
             certified_digest_for_self,
             certified_keys.as_ref(),
@@ -380,12 +434,12 @@ impl EpochSeedResolution {
             .transpose()?;
         let previous_digests = previous_identity
             .as_ref()
-            .map(|(digests, _)| digests.clone());
+            .map(|identity| identity.digests.clone());
         let decision = resolve_epoch_seed(
-            current_derivation.is_some(),
+            current_identity.derivation.is_some(),
             previous_identity
                 .as_ref()
-                .map(|(_, derivation)| derivation.is_some()),
+                .map(|identity| identity.derivation.is_some()),
             certified_digest_for_self.is_some(),
         );
         // `RunOnPrevious` is the only case that hands the manager anything but
@@ -397,18 +451,19 @@ impl EpochSeedResolution {
             current_seed
         };
         let key_derivation = if decision.uses_previous_seed() {
-            previous_identity.and_then(|(_, derivation)| derivation)
+            previous_identity.and_then(|identity| identity.derivation)
         } else {
-            current_derivation
+            current_identity.derivation
         }
         .unwrap_or(ValidatorKeyDerivation::Current);
         Ok(Self {
             decision,
             mpc_seed,
             key_derivation,
-            current_digests,
+            current_digests: current_identity.digests,
             previous_digests,
             certified: certified_digest_for_self,
+            current_certified_key_matches: current_identity.certified_key_matches,
         })
     }
 
@@ -441,8 +496,31 @@ impl EpochSeedResolution {
     /// deliberately set from OUTSIDE the MPC service (a subsystem cannot
     /// report its own stall, `dev-docs/conventions/metrics.md`).
     pub fn report(&self, metrics: &DWalletMPCMetrics, authority: &AuthorityName, epoch: EpochId) {
+        metrics.clear_seed_identity_state();
         metrics.set_seed_identity_state(self.state_label());
+        metrics
+            .validator_key_epoch
+            .with_label_values(&["selected"])
+            .set(epoch as i64);
+        if let Some(matches) = &self.current_certified_key_matches {
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["class_group"])
+                .set(matches.class_group as i64);
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["vss_hpke"])
+                .set(i64::from(matches.vss_hpke));
+        }
         if self.mpc_active() {
+            let derivation = match self.key_derivation {
+                ValidatorKeyDerivation::Current => "current",
+                ValidatorKeyDerivation::Legacy => "legacy",
+            };
+            metrics
+                .validator_key_derivation
+                .with_label_values(&[derivation])
+                .set(1);
             info!(?authority, epoch, derivation = ?self.key_derivation,
                 "selected validator key derivation from the certified handoff");
         }
@@ -542,6 +620,122 @@ impl EpochSeedResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prometheus::Registry;
+
+    fn metric(registry: &Registry, name: &str, label: &str) -> f64 {
+        registry
+            .gather()
+            .iter()
+            .find(|family| family.name() == name)
+            .expect("metric family must be exported")
+            .get_metric()
+            .iter()
+            .find(|metric| metric.get_label().iter().any(|pair| pair.value() == label))
+            .expect("bounded label must be exported")
+            .get_gauge()
+            .value()
+    }
+
+    #[test]
+    fn validator_key_metrics_clear_stale_selection_and_distinguish_unknown() {
+        let registry = Registry::new();
+        let metrics = DWalletMPCMetrics::new(&registry);
+        let epoch_metric = "ika_dwallet_mpc_validator_key_epoch";
+        let derivation_metric = "ika_dwallet_mpc_validator_key_derivation";
+        let matches_metric = "ika_dwallet_mpc_validator_current_key_certified_matches";
+        assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
+        assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
+        for (decision, derivation, matches, expected_matches, active) in [
+            (
+                EpochSeedDecision::RunOnPrevious,
+                ValidatorKeyDerivation::Legacy,
+                Some(CertifiedKeyMatches {
+                    class_group: 0,
+                    vss_hpke: false,
+                }),
+                0.0,
+                true,
+            ),
+            (
+                EpochSeedDecision::RunOnCurrent {
+                    previous_configured: true,
+                },
+                ValidatorKeyDerivation::Current,
+                Some(CertifiedKeyMatches {
+                    class_group: 6,
+                    vss_hpke: true,
+                }),
+                6.0,
+                true,
+            ),
+            (
+                EpochSeedDecision::NoParticipation {
+                    previous_configured: false,
+                },
+                ValidatorKeyDerivation::Current,
+                Some(CertifiedKeyMatches {
+                    class_group: 0,
+                    vss_hpke: false,
+                }),
+                0.0,
+                false,
+            ),
+            (
+                EpochSeedDecision::NoCertifiedDigest {
+                    previous_configured: false,
+                },
+                ValidatorKeyDerivation::Current,
+                None,
+                -1.0,
+                true,
+            ),
+        ] {
+            metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .set(6);
+            EpochSeedResolution {
+                decision,
+                mpc_seed: RootSeed::new([0; 32]),
+                key_derivation: derivation,
+                current_digests: DerivableDigests::from_digests([[0; 32]]),
+                previous_digests: None,
+                certified: matches.as_ref().map(|_| [0; 32]),
+                current_certified_key_matches: matches,
+            }
+            .report(&metrics, &AuthorityName([1; 32]), 7);
+            assert_eq!(metric(&registry, epoch_metric, "selected"), 7.0);
+            assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
+            assert_eq!(
+                metric(&registry, matches_metric, "class_group"),
+                expected_matches,
+                "uncertified current keys must not be reported as matching"
+            );
+            assert_eq!(
+                metric(&registry, derivation_metric, "current"),
+                f64::from(active && derivation == ValidatorKeyDerivation::Current)
+            );
+            assert_eq!(
+                metric(&registry, derivation_metric, "legacy"),
+                f64::from(active && derivation == ValidatorKeyDerivation::Legacy)
+            );
+        }
+        metrics.clear_seed_identity_state();
+        assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
+        for derivation in ["current", "legacy"] {
+            assert_eq!(metric(&registry, derivation_metric, derivation), 0.0);
+        }
+        for state in SEED_IDENTITY_STATES {
+            assert_eq!(
+                metric(&registry, "ika_dwallet_mpc_seed_identity_state", state),
+                0.0
+            );
+        }
+    }
 
     #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
     #[test]
@@ -551,12 +745,23 @@ mod tests {
         let certified = decode_certified_mpc_keys(&digest, blob).unwrap();
         let other = ValidatorMPCSecrets::from_seed(&RootSeed::new([32; 32])).1;
         assert!(same_encryption_keys(&certified, &certified));
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &certified),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: true
+            }
+        );
         for index in 0..certified.class_groups.len() {
             let mut changed = certified.clone();
             changed.class_groups[index].0 = other.class_groups[index].0;
             assert!(
                 !same_encryption_keys(&certified, &changed),
                 "every CRT key must match"
+            );
+            assert_eq!(
+                CertifiedKeyMatches::between(&certified, &changed).class_group,
+                5
             );
         }
         let mut changed = certified.clone();
@@ -565,11 +770,19 @@ mod tests {
             !same_encryption_keys(&certified, &changed),
             "secp256k1 PVSS key must match"
         );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
+        );
         let mut changed = certified.clone();
         changed.secp256r1_pvss.0 = other.secp256r1_pvss.0;
         assert!(
             !same_encryption_keys(&certified, &changed),
             "secp256r1 PVSS key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
         );
         let mut changed = certified.clone();
         changed.ristretto_pvss.0 = other.ristretto_pvss.0;
@@ -577,11 +790,43 @@ mod tests {
             !same_encryption_keys(&certified, &changed),
             "ristretto PVSS key must match"
         );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
+        );
         let mut changed = certified.clone();
         changed.vss_hpke_public_key_and_proof.0 = other.vss_hpke_public_key_and_proof.0;
         assert!(
             !same_encryption_keys(&certified, &changed),
             "VSS HPKE key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: false
+            }
+        );
+        let mut different_proofs = other.clone();
+        for (keys, original) in different_proofs
+            .class_groups
+            .iter_mut()
+            .zip(&certified.class_groups)
+        {
+            keys.0 = original.0;
+        }
+        different_proofs.secp256k1_pvss.0 = certified.secp256k1_pvss.0;
+        different_proofs.secp256r1_pvss.0 = certified.secp256r1_pvss.0;
+        different_proofs.ristretto_pvss.0 = certified.ristretto_pvss.0;
+        different_proofs.vss_hpke_public_key_and_proof.0 =
+            certified.vss_hpke_public_key_and_proof.0;
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &different_proofs),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: true
+            },
+            "proof changes must not look like key rotation"
         );
     }
 

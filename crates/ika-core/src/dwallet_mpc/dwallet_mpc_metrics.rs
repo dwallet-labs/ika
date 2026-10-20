@@ -516,6 +516,14 @@ pub struct DWalletMPCMetrics {
     /// subsystem cannot report its own stall
     /// (`dev-docs/conventions/metrics.md`).
     pub(crate) seed_identity_state: IntGaugeVec,
+    /// Epoch whose keys were selected or whose active MPC preparation completed.
+    /// -1 until the stage finishes; reset on every component start and role exit.
+    pub(crate) validator_key_epoch: IntGaugeVec,
+    /// One-hot selected sampler, all zero when MPC is inactive or unresolved.
+    pub(crate) validator_key_derivation: IntGaugeVec,
+    /// Configured CURRENT seed's public keys matching the certified handoff:
+    /// six class-group keys and one VSS HPKE key. -1 without a certified bundle.
+    pub(crate) validator_current_key_certified_matches: IntGaugeVec,
 }
 
 impl DWalletMPCMetrics {
@@ -1040,13 +1048,32 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
+            validator_key_epoch: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_validator_key_epoch",
+                "Epoch with resolved validator key selection or completed active MPC key preparation; -1 until that stage completes.",
+                &["stage"],
+                registry,
+            )
+            .unwrap(),
+            validator_key_derivation: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_validator_key_derivation",
+                "Selected validator key sampler: 1 for current or legacy; all zero when MPC is inactive or keys are unresolved.",
+                &["derivation"],
+                registry,
+            )
+            .unwrap(),
+            validator_current_key_certified_matches: register_int_gauge_vec_with_registry!(
+                "ika_dwallet_mpc_validator_current_key_certified_matches",
+                "Configured current seed's public keys matching the authenticated handoff, excluding proofs: class_group 0..6, vss_hpke 0..1; -1 without a certified bundle.",
+                &["key_type"],
+                registry,
+            )
+            .unwrap(),
         });
         // Materialize every declared seed-identity state at 0 so the family is
         // always exported and an alert can distinguish "healthy" from
         // "not scraped". The active state is set to 1 once per epoch.
-        for state in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
-            metrics.seed_identity_state.with_label_values(&[state]);
-        }
+        metrics.clear_seed_identity_state();
         // Same reasoning for `self_malicious_total` (#2119 review): an
         // `IntCounterVec` with no children is OMITTED from `gather()`, so a
         // test or alert asserting "this validator never convicted itself"
@@ -1092,7 +1119,7 @@ impl DWalletMPCMetrics {
         }
     }
 
-    /// Zeroes every `ika_dwallet_mpc_seed_identity_state` child.
+    /// Clears the seed-identity and validator key-selection/preparation metrics.
     ///
     /// The gauge is a one-hot SET once per epoch from the per-epoch validator
     /// start, and nothing else ever writes it — so a node that leaves the
@@ -1100,15 +1127,29 @@ impl DWalletMPCMetrics {
     /// process. If that state were `awaiting_certification`, the alert built
     /// on it would fire forever against a node that is no longer a validator
     /// and no longer has an epoch to participate in. Called on the
-    /// reconfiguration path that produces no validator components.
+    /// reconfiguration path that produces no validator components, and before
+    /// selecting keys for a new component start.
     ///
-    /// Zero on every child rather than removing them: the series must keep
-    /// existing so "healthy" stays distinguishable from "not scraped".
+    /// State children become zero; epochs and key comparisons become unknown
+    /// (-1). Keep every series so "unknown" differs from "not scraped".
     pub fn clear_seed_identity_state(&self) {
         for declared in crate::dwallet_mpc::seed_rotation::SEED_IDENTITY_STATES {
             self.seed_identity_state
                 .with_label_values(&[declared])
                 .set(0);
+        }
+        for stage in ["selected", "prepared"] {
+            self.validator_key_epoch.with_label_values(&[stage]).set(-1);
+        }
+        for derivation in ["current", "legacy"] {
+            self.validator_key_derivation
+                .with_label_values(&[derivation])
+                .set(0);
+        }
+        for key_type in ["class_group", "vss_hpke"] {
+            self.validator_current_key_certified_matches
+                .with_label_values(&[key_type])
+                .set(-1);
         }
     }
 

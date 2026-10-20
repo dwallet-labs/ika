@@ -865,8 +865,16 @@ impl DWalletMPCService {
     /// An uncertified local seed deliberately sits out MPC and must still be
     /// able to join consensus so the network can certify its replacement.
     pub async fn prepare_epoch(&mut self) -> DwalletMPCResult<()> {
+        self.dwallet_mpc_metrics
+            .validator_key_epoch
+            .with_label_values(&["prepared"])
+            .set(-1);
         if self.mpc_active {
             self.dwallet_mpc_manager.prepare_epoch().await?;
+            self.dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .set(self.epoch as i64);
         }
         Ok(())
     }
@@ -3633,7 +3641,21 @@ mod tests {
             .unwrap()
             .insert(services[0].epoch - 1, handoff_certificate());
         services[0].mpc_active = false;
+        services[0]
+            .dwallet_mpc_metrics
+            .validator_key_epoch
+            .with_label_values(&["prepared"])
+            .set(0);
         services[0].prepare_epoch().await.unwrap();
+        assert_eq!(
+            services[0]
+                .dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .get(),
+            -1,
+            "an inactive validator must not claim prepared keys"
+        );
         assert!(
             services[0]
                 .dwallet_mpc_manager
@@ -3642,6 +3664,17 @@ mod tests {
                 .is_empty()
         );
         assert!(services[0].dwallet_mpc_manager.sessions.is_empty());
+        services[0].mpc_active = true;
+        assert!(services[0].prepare_epoch().await.is_err());
+        assert_eq!(
+            services[0]
+                .dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .get(),
+            -1,
+            "failed inherited key preparation must not report completion"
+        );
     }
 
     fn handoff_certificate() -> CertifiedHandoffAttestation {

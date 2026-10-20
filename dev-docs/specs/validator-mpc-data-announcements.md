@@ -271,6 +271,40 @@ ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed
 paired with a once-per-epoch `error!` naming both local digests, the
 certified one, and the in-epoch repair.
 
+The same resolution publishes three bounded metric families per validator:
+
+- `ika_dwallet_mpc_validator_key_epoch{stage="selected"}` is the epoch of
+  the completed seed decision, including a decision not to participate.
+  `{stage="prepared"}` is set only after an active validator finishes inherited
+  key/share preparation. Each stage is `-1` until complete; preparation failure
+  or inactive MPC leaves `prepared=-1`. Genesis can complete preparation without
+  inherited keys, so this is not a count of decrypted shares.
+- `ika_dwallet_mpc_validator_key_derivation{derivation="current|legacy"}` is
+  one-hot for the selected sampler. Both children are zero when unresolved or
+  inactive. This is independent of whether the selected root seed is current
+  or previous; use the seed-identity state for that distinction.
+- `ika_dwallet_mpc_validator_current_key_certified_matches{key_type="class_group"}`
+  counts the configured **current** seed's current-sampler keys matching the
+  authenticated entering handoff: three CRT and three PVSS keys, from zero to
+  six. `key_type="vss_hpke"` is zero or one. Both are `-1` without a certified
+  bundle for this authority. Comparisons reuse the keys derived for resolution;
+  they add no key generation, and ignore proof bytes.
+
+All children exist from registration. Component startup, a new resolution, and
+committee departure reset them so an old successful epoch cannot masquerade as
+a new one. The selected/prepared epoch values must be compared with the node's
+current epoch. Metrics contain no seeds, key bytes, digests or authority labels.
+The scrape target identifies the validator.
+
+A root-seed rotation normally progresses from `rotating_on_previous_seed`
+with unmatched current keys to `rotation_complete`, six class-group matches,
+one HPKE match and completed preparation in the newly certified epoch.
+A binary upgrade preserving native keys instead stays at six/one throughout;
+a sampler label changing alone does not prove key rotation. These are local
+configuration/certification facts, not proof of successful MPC participation.
+See the [operator walkthrough](../playbooks/production-alerts.md#validator-encryption-key-rollout-walkthrough)
+for the announcement, freeze and subsequent MPC checks.
+
 The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
 also checks actual frozen public keys across the dependency upgrade.
 The current sampler preserves deployed native keys; the legacy fallback remains

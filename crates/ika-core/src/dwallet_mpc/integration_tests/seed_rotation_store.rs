@@ -71,10 +71,14 @@ use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartValidatorInfoV1};
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use prometheus::Registry;
 
 use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochStoreParams};
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 use crate::dwallet_mpc::seed_rotation::decode_certified_mpc_keys;
@@ -625,6 +629,37 @@ async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
             "the last handoff must select its matching sampler"
         );
         assert_eq!(resolution.mpc_seed(), &seed);
+        let metrics = DWalletMPCMetrics::new(&Registry::new());
+        resolution.report(&metrics, &self_name, EPOCH);
+        assert_eq!(
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["class_group"])
+                .get(),
+            6,
+            "all six deployed native keys must be reported as certified"
+        );
+        assert_eq!(
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["vss_hpke"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .validator_key_derivation
+                .with_label_values(&["current"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .validator_key_epoch
+                .with_label_values(&["selected"])
+                .get(),
+            EPOCH as i64
+        );
     }
 
     let rotated = RootSeed::new([32; 32]);
@@ -647,4 +682,28 @@ async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
     assert_eq!(resolution.decision(), EpochSeedDecision::RunOnPrevious);
     assert_eq!(resolution.key_derivation(), ValidatorKeyDerivation::Current);
     assert_eq!(resolution.mpc_seed(), &seed);
+    let metrics = DWalletMPCMetrics::new(&Registry::new());
+    resolution.report(&metrics, &self_name, EPOCH);
+    assert_eq!(
+        metrics
+            .seed_identity_state
+            .with_label_values(&["rotating_on_previous_seed"])
+            .get(),
+        1
+    );
+    assert_eq!(
+        metrics
+            .validator_current_key_certified_matches
+            .with_label_values(&["class_group"])
+            .get(),
+        0,
+        "pending replacement keys must not be reported as certified"
+    );
+    assert_eq!(
+        metrics
+            .validator_current_key_certified_matches
+            .with_label_values(&["vss_hpke"])
+            .get(),
+        0
+    );
 }
