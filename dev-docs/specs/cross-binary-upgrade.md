@@ -351,6 +351,14 @@ same 64-bit sampling as native; historical browser keys remain recoverable via
 the legacy WASM32 derivation. Neither path changes the protocol version or any
 contract.
 
+The TypeScript SDK preserves historical WASM32 derivation through its existing
+`createClassGroupsKeypair` and `fromRootSeedKey` entry points. Both are deprecated
+but retain their original seed-to-key behavior when the SDK is upgraded. Callers
+explicitly opt into current sampling with `createClassGroupsKeypairV2` or
+`fromRootSeedKeyV2`. The direct keypair API does not expose a sampler option.
+Real-WASM fixtures check both public entry points against captured historical
+keys and native current keys.
+
 The current validator's per-authority output observations and pending-session
 counts are collected protocol-generically and labeled by protocol name. This
 scenario filters that data to network-key reconfiguration because that is the

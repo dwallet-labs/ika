@@ -5,7 +5,12 @@ import { toHex } from '@mysten/bcs';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { describe, expect, it } from 'vitest';
 
-import { createClassGroupsKeypair, Curve, UserShareEncryptionKeys } from '../../src/index.js';
+import {
+	createClassGroupsKeypair,
+	createClassGroupsKeypairV2,
+	Curve,
+	UserShareEncryptionKeys,
+} from '../../src/index.js';
 
 const rootSeed = new Uint8Array(32).fill(42);
 
@@ -84,12 +89,30 @@ describe('new and historical key sampling', () => {
 			'33cf9d62e857e4ea39930057484be7ca66c27745b6340f2833e605cc04dcc3f7',
 		],
 	];
-	it.each(curves)('matches native new-sampler key bytes for %s', async (curve) => {
-		const keys = await createClassGroupsKeypair(rootSeed, curve);
-		const [publicFingerprint, privateFingerprint] = rawNewFingerprints[curves.indexOf(curve)];
-		expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
-		expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
-	});
+	it.each(curves)(
+		'preserves historical keys through the original direct API for %s',
+		async (curve) => {
+			const seed = UserShareEncryptionKeys.hash(
+				UserShareEncryptionKeys.domainSeparators.classGroups,
+				rootSeed,
+				curve,
+			);
+			const keys = await createClassGroupsKeypair(seed, curve);
+			const [publicFingerprint, privateFingerprint] = fixedHashFingerprints[curves.indexOf(curve)];
+			expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
+			expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+		},
+	);
+
+	it.each(curves)(
+		'matches native new-sampler key bytes through the direct V2 API for %s',
+		async (curve) => {
+			const keys = await createClassGroupsKeypairV2(rootSeed, curve);
+			const [publicFingerprint, privateFingerprint] = rawNewFingerprints[curves.indexOf(curve)];
+			expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
+			expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+		},
+	);
 
 	it.each(curves)('creates portable new keys with the V2 constructor for %s', async (curve) => {
 		const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(rootSeed, curve);

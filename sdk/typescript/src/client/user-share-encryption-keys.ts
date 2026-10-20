@@ -7,6 +7,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 
 import {
 	createClassGroupsKeypair,
+	createClassGroupsKeypairV2,
 	userAndNetworkDKGOutputMatch,
 	verifyAndGetDWalletDKGPublicOutput,
 } from './cryptography.js';
@@ -195,9 +196,8 @@ export class UserShareEncryptionKeys {
 			curve,
 		);
 
-		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve, {
-			legacySampling,
-		});
+		const createKeypair = legacySampling ? createClassGroupsKeypair : createClassGroupsKeypairV2;
+		const classGroupsKeypair = await createKeypair(classGroupsSeed, curve);
 		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
 			toHex(encryptionSignerKeySeed),
 		);

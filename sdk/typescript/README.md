@@ -294,15 +294,18 @@ copies. See the
 ### Key generation
 
 ```ts
-import { createClassGroupsKeypair } from '@ika.xyz/sdk';
+import { createClassGroupsKeypair, createClassGroupsKeypairV2, Curve } from '@ika.xyz/sdk';
 
-const { encryptionKey, decryptionKey } = await createClassGroupsKeypair(seed, Curve.SECP256K1);
+// Explicitly opt in to the current sampler for new keys.
+const { encryptionKey, decryptionKey } = await createClassGroupsKeypairV2(seed, Curve.SECP256K1);
 
-// Recover a keypair from a seed using historical 32-bit WASM sampling.
-const wasm32Keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1, {
-	legacySampling: true,
-});
+// Deprecated: existing calls keep historical 32-bit WASM sampling.
+const wasm32Keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1);
 ```
+
+Updating the SDK alone preserves the original function's seed-to-key derivation in both browsers and
+Node.js. Switching to the current sampler requires changing the call to
+`createClassGroupsKeypairV2`; it does not recover keys created by the original function.
 
 ### DKG preparation
 

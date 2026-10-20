@@ -488,7 +488,13 @@ verifyAndGetDWalletDKGPublicOutput(
 ### Encryption
 
 ```typescript
+// Deprecated: preserves historical WASM32 seed-to-key derivation.
 createClassGroupsKeypair(seed: Uint8Array, curve: Curve): Promise<{
+    encryptionKey: Uint8Array; decryptionKey: Uint8Array;
+}>
+
+// Explicit opt-in to current sampling, matching native Rust.
+createClassGroupsKeypairV2(seed: Uint8Array, curve: Curve): Promise<{
     encryptionKey: Uint8Array; decryptionKey: Uint8Array;
 }>
 

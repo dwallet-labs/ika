@@ -71,19 +71,51 @@ export interface ImportDWalletVerificationRequestInput {
 }
 
 /**
- * Create a class groups keypair from a seed for encryption/decryption operations.
- * Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
+ * Create a class groups keypair using historical WASM32 sampling.
+ * Preserves the original seed-to-key derivation in both browsers and Node.js.
  *
  * @param seed - The seed bytes to generate the keypair from
  * @param curve - The curve to use for key generation
- * @param options.legacySampling - Recover existing keys with the deployed WASM32 sampler.
- * Defaults to the current, platform-independent sampler for new keys.
  * @returns Object containing the encryption key (public) and decryption key (private)
+ * @deprecated Use {@link createClassGroupsKeypairV2} for new keys. Keep this function
+ * to reproduce existing keys; upgrading the SDK alone does not change their derivation.
  */
 export async function createClassGroupsKeypair(
 	seed: Uint8Array,
 	curve: Curve,
-	{ legacySampling = false }: { legacySampling?: boolean } = {},
+): Promise<{
+	encryptionKey: Uint8Array;
+	decryptionKey: Uint8Array;
+}> {
+	return createClassGroupsKeypairWithGenerator(
+		seed,
+		curve,
+		generate_secp_cg_keypair_from_seed_legacy,
+	);
+}
+
+/**
+ * Create a class groups keypair using the current platform-independent sampler.
+ * The same seed and curve produce the same keys as native Rust.
+ *
+ * @param seed - The seed bytes to generate the keypair from
+ * @param curve - The curve to use for key generation
+ * @returns Object containing the encryption key (public) and decryption key (private)
+ */
+export async function createClassGroupsKeypairV2(
+	seed: Uint8Array,
+	curve: Curve,
+): Promise<{
+	encryptionKey: Uint8Array;
+	decryptionKey: Uint8Array;
+}> {
+	return createClassGroupsKeypairWithGenerator(seed, curve, generate_secp_cg_keypair_from_seed);
+}
+
+async function createClassGroupsKeypairWithGenerator(
+	seed: Uint8Array,
+	curve: Curve,
+	generate: typeof generate_secp_cg_keypair_from_seed,
 ): Promise<{
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
@@ -101,9 +133,6 @@ export async function createClassGroupsKeypair(
 		curve === Curve.RISTRETTO ||
 		curve === Curve.ED25519
 	) {
-		const generate = legacySampling
-			? generate_secp_cg_keypair_from_seed_legacy
-			: generate_secp_cg_keypair_from_seed;
 		[encryptionKey, decryptionKey] = await generate(fromCurveToNumber(curve), seed);
 	} else {
 		throw new Error(

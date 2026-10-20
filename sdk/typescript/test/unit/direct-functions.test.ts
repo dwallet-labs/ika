@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
 	createClassGroupsKeypair,
+	createClassGroupsKeypairV2,
 	createDKGUserOutput,
 	createRandomSessionIdentifier,
 	encryptSecretShare,
@@ -15,12 +16,15 @@ import {
 import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
 
 describe('Cryptography Direct Functions', () => {
-	it('should reject invalid seed sizes', async () => {
+	it.each([
+		{ name: 'createClassGroupsKeypair', createKeypair: createClassGroupsKeypair },
+		{ name: 'createClassGroupsKeypairV2', createKeypair: createClassGroupsKeypairV2 },
+	])('$name should reject invalid seed sizes', async ({ createKeypair }) => {
 		// Test with wrong seed size
 		const invalidSeed = new Uint8Array(16); // Too small
 		crypto.getRandomValues(invalidSeed);
 
-		await expect(createClassGroupsKeypair(invalidSeed, Curve.SECP256K1)).rejects.toThrow(
+		await expect(createKeypair(invalidSeed, Curve.SECP256K1)).rejects.toThrow(
 			'Seed must be 32 bytes',
 		);
 
@@ -28,7 +32,7 @@ describe('Cryptography Direct Functions', () => {
 		const tooLargeSeed = new Uint8Array(64); // Too large
 		crypto.getRandomValues(tooLargeSeed);
 
-		await expect(createClassGroupsKeypair(tooLargeSeed, Curve.SECP256K1)).rejects.toThrow(
+		await expect(createKeypair(tooLargeSeed, Curve.SECP256K1)).rejects.toThrow(
 			'Seed must be 32 bytes',
 		);
 	});
