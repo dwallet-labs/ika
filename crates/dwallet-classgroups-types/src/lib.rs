@@ -32,7 +32,8 @@ use mpc::secret_sharing::shamir::known_order::generate_and_uc_prove_encryption_k
 /// Chooses the sampler used to recover a validator's encryption keys from its seed.
 /// Legacy recovery uses the original target-native word width.
 // TODO: Remove validator legacy derivation in a later binary after every validator's
-// new keys are certified and active. Keep the user legacy seed APIs available.
+// keys are verified against the deployed native derivation. Current and legacy
+// sampling now agree on native. Keep the browser legacy seed APIs available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidatorKeyDerivation {
     Current,
@@ -413,10 +414,10 @@ mod tests {
                 0x9a, 0x1e, 0xe2, 0x07
             ]
         );
-        assert_ne!(
+        assert_eq!(
             secrets.class_groups,
             ClassGroupsSecret::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Current).0,
-            "the fixture must distinguish deployed sampling from current sampling"
+            "the production sampler must preserve deployed native keys"
         );
         assert_eq!(
             secrets.vss_hpke_secret_key,

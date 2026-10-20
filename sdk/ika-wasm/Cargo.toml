@@ -77,4 +77,4 @@ serde-wasm-bindgen = "0.6.5"
 crate-type = ["cdylib", "rlib"]
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "58156d9affdb6b3ff29fa072c655990438dd7503" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8c6f911c366027e063953b0adfb2a78dfaeec293" }

@@ -316,23 +316,25 @@ Every boundary still requires healthy validators, correct local epochs,
 protocol v7, quorum output convergence, zero malicious actors, zero rejected
 envelopes, no self-malicious logs, and no stranded sessions.
 
-The sampler transition has a separate **validator encryption-key activation
+The dependency upgrade has a separate **validator encryption-key preservation
 checkpoint** in `v141_rollout`. Before the first swap, the harness verifies
 that the certified handoff into epoch 2 contains every original validator's
 legacy public keys. It independently derives both public key sets from each
 validator's configured root seed, without regenerating the certificate's
-proofs. After the remaining swaps in epoch 4, epoch 5 runs entirely on the
-candidate. The handoff produced in epoch 5 must activate every validator's
-current-sampler keys in epoch 6; an announcement that missed the epoch-4
-freeze cannot make the test pass prematurely.
+proofs. Production and legacy sampling must reproduce the same native keys.
+After the remaining swaps in epoch 4, epoch 5 runs entirely on the candidate.
+The handoff produced in epoch 5 must retain every validator's public keys in
+epoch 6, after a complete all-current epoch.
 
 At each checkpoint, every original validator must serve the same attestation
 for the preceding epoch. The harness verifies its committee signatures,
 quorum, exact epoch and membership, then hash-checks the certified blobs and
 compares all seven public keys for every validator. All six class-group keys
-(three CRT and three PVSS) must differ from their legacy values. The VSS HPKE
-key is unaffected by this sampler change and must equal its expected value.
-A different blob digest or different proof bytes alone is not rotation.
+(three CRT and three PVSS) and the VSS HPKE key must equal their legacy values.
+A different blob digest or different proof bytes does not change key identity.
+The guard's fault control changes each public-key slot in turn and requires
+its specific preservation error; unchanged identities with changed proof bytes
+must still pass the identity check.
 
 The checkpoint client resolves the generated YAML's on-chain identity using
 the node's config resolver before selecting its Anemo chain namespace.
@@ -343,9 +345,11 @@ The epoch-6 checkpoint also requires every validator's exact-epoch
 `derivation=Current` selection log and active seed-identity metric. Merely
 opening the epoch store does not establish that key preparation finished.
 The full user workload runs again after this checkpoint, with zero malicious
-reports on all four validators. This proves activation of the sampler-derived
-validator encryption keys; it does not claim rotation of consensus keys,
-protocol keys, network identity keys, or users' encryption keys.
+reports on all four validators. This proves preservation and continued use of
+native validator encryption keys across the upgrade. New browser keys use the
+same 64-bit sampling as native; historical browser keys remain recoverable via
+the legacy WASM32 derivation. Neither path changes the protocol version or any
+contract.
 
 The current validator's per-authority output observations and pending-session
 counts are collected protocol-generically and labeled by protocol name. This

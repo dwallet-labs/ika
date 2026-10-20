@@ -173,14 +173,14 @@ struct ExpectedValidator {
 
 /// Only public expected keys and the fixed original committee survive preparation.
 /// A successful legacy checkpoint is required before checking the current keys.
-pub(crate) struct ValidatorKeyRotation {
+pub(crate) struct ValidatorKeyPreservation {
     validators: Vec<ExpectedValidator>,
     committee: Committee,
     network: Network,
     baseline: Mutex<Option<BTreeMap<AuthorityName, PublicKeys>>>,
 }
 
-impl ValidatorKeyRotation {
+impl ValidatorKeyPreservation {
     pub(crate) async fn prepare(
         configs: Vec<(usize, AuthorityName, NodeConfig)>,
         committee: Committee,
@@ -211,7 +211,7 @@ impl ValidatorKeyRotation {
                         derive_public_keys_without_proofs(root, ValidatorKeyDerivation::Legacy)?;
                     let current =
                         derive_public_keys_without_proofs(root, ValidatorKeyDerivation::Current)?;
-                    assert_rotation(&legacy, &current, authority)?;
+                    assert_preservation(&legacy, &current, authority)?;
                     let address = config.p2p_config.listen_address;
                     let address = if address.ip().is_unspecified() {
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port())
@@ -242,7 +242,7 @@ impl ValidatorKeyRotation {
             .collect();
         ensure!(
             original == members && original.len() == validators.len(),
-            "key rotation requires exactly the original fixed committee"
+            "key preservation requires exactly the original fixed committee"
         );
         Ok(Self {
             validators,
@@ -256,7 +256,7 @@ impl ValidatorKeyRotation {
         ensure!(
             committee.voting_rights == self.committee.voting_rights
                 && committee.quorum_threshold() == self.committee.quorum_threshold(),
-            "validator-key rotation checkpoint requires the original fixed committee and stake"
+            "validator-key preservation checkpoint requires the original fixed committee and stake"
         );
         Ok(())
     }
@@ -330,9 +330,9 @@ impl ValidatorKeyRotation {
                             let baseline = self.baseline.lock().expect("key checkpoint mutex poisoned");
                             let baseline = baseline.as_ref().context("legacy baseline missing")?;
                             for (authority, keys) in &observed {
-                                assert_rotation(&baseline[authority], keys, *authority)?;
-                                tracing::info!(?authority, active_epoch, rotated_class_group_keys = 6,
-                                    unchanged_vss_hpke = true, "verified validator encryption-key rotation");
+                                assert_preservation(&baseline[authority], keys, *authority)?;
+                                tracing::info!(?authority, active_epoch, unchanged_class_group_keys = 6,
+                                    unchanged_vss_hpke = true, "verified validator encryption-key preservation");
                             }
                         } else {
                             *self.baseline.lock().expect("key checkpoint mutex poisoned") = Some(observed);
@@ -348,21 +348,17 @@ impl ValidatorKeyRotation {
     }
 }
 
-fn assert_rotation(
+fn assert_preservation(
     legacy: &PublicKeys,
     current: &PublicKeys,
     authority: AuthorityName,
 ) -> Result<()> {
-    for (index, name) in KEY_NAMES.iter().take(6).enumerate() {
+    for (index, name) in KEY_NAMES.iter().enumerate() {
         ensure!(
-            legacy[index] != current[index],
-            "validator {authority} {name} did not rotate"
+            legacy[index] == current[index],
+            "validator {authority} {name} unexpectedly changed across the binary upgrade"
         );
     }
-    ensure!(
-        legacy[6] == current[6],
-        "validator {authority} VSS HPKE key unexpectedly changed"
-    );
     Ok(())
 }
 
@@ -802,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_proof_bytes_do_not_count_as_key_rotation() {
+    fn changed_proof_bytes_do_not_change_key_identity() {
         let (committee, signers) = committee_and_signers();
         let expected = expected_keys(&committee, &decode_public_keys(LEGACY_FIXTURE).unwrap());
         let VersionedMPCData::V1(data) = bcs::from_bytes(LEGACY_FIXTURE).unwrap();
@@ -826,17 +822,25 @@ mod tests {
             .map(|(authority, _)| *authority)
             .min()
             .unwrap();
-        assert!(
-            assert_rotation(&expected[&authority], &observed[&authority], authority)
-                .unwrap_err()
-                .to_string()
-                .contains("CRT key 0 did not rotate")
-        );
+        assert_preservation(&expected[&authority], &observed[&authority], authority).unwrap();
+        for (index, name) in KEY_NAMES.iter().enumerate() {
+            let mut changed = observed[&authority].clone();
+            changed[index][0] ^= 1;
+            let error =
+                assert_preservation(&expected[&authority], &changed, authority).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "validator {authority} {name} unexpectedly changed across the binary upgrade"
+                )
+            );
+            eprintln!("key-preservation fault caught: {error}");
+        }
     }
 
     #[test]
     #[cfg(target_pointer_width = "64")]
-    fn frozen_legacy_bundle_matches_derived_keys_and_fails_current_checkpoint() {
+    fn frozen_legacy_bundle_matches_both_native_derivations() {
         let root = RootSeed::new([31; 32]);
         let legacy =
             derive_public_keys_without_proofs(&root, ValidatorKeyDerivation::Legacy).unwrap();
@@ -850,7 +854,7 @@ mod tests {
             .map(|(authority, _)| *authority)
             .min()
             .unwrap();
-        assert_rotation(&legacy, &current, authority).unwrap();
+        assert_preservation(&legacy, &current, authority).unwrap();
         let cert = certificate(&committee, &signers, LEGACY_FIXTURE);
         let blobs = BTreeMap::from([(mpc_data_blob_hash(LEGACY_FIXTURE), LEGACY_FIXTURE.to_vec())]);
         let legacy_expected = expected_keys(&committee, &legacy);
@@ -860,10 +864,8 @@ mod tests {
         );
         let current_expected = expected_keys(&committee, &current);
         assert_eq!(
-            verify_snapshot(&cert, &committee, 6, &current_expected, &blobs)
-                .unwrap_err()
-                .to_string(),
-            format!("validator {authority} class-groups CRT key 0 does not match expected sampler")
+            verify_snapshot(&cert, &committee, 6, &current_expected, &blobs).unwrap(),
+            current_expected
         );
     }
 

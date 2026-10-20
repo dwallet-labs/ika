@@ -48,7 +48,7 @@ use sui_types::crypto::SuiKeyPair;
 
 use crate::process::ValidatorProcess;
 use crate::sui::SuiLocalnet;
-use crate::validator_keys::ValidatorKeyRotation;
+use crate::validator_keys::ValidatorKeyPreservation;
 use crate::{DEFAULT_EPOCH_DURATION_MS, DEFAULT_NUM_VALIDATORS};
 
 // Must equal `NetworkEncryptionKeyReconfigurationData`'s `Display` in ika-core
@@ -1347,7 +1347,9 @@ impl ClusterOfProcesses {
     }
 
     /// Cache both samplers' public identities before the timed rollout boundaries.
-    pub(crate) async fn prepare_validator_key_rotation(&self) -> Result<ValidatorKeyRotation> {
+    pub(crate) async fn prepare_validator_key_preservation(
+        &self,
+    ) -> Result<ValidatorKeyPreservation> {
         let (_, system) = self.ika_client.get_system_inner().await?;
         let committee = self
             .ika_client
@@ -1362,13 +1364,13 @@ impl ClusterOfProcesses {
                 Ok((process.index, authority.consensus, process.read_config()?))
             })
             .collect::<Result<Vec<_>>>()?;
-        ValidatorKeyRotation::prepare(configs, committee).await
+        ValidatorKeyPreservation::prepare(configs, committee).await
     }
 
     /// Authenticate the active handoff and every original validator's public keys.
     pub(crate) async fn assert_validator_key_derivation(
         &self,
-        expected: &ValidatorKeyRotation,
+        expected: &ValidatorKeyPreservation,
         active_epoch: u64,
         current: bool,
     ) -> Result<()> {

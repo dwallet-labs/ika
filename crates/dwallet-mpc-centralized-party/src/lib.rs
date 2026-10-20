@@ -1644,6 +1644,11 @@ mod key_derivation_tests {
         for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
             let (public_key, private_key) =
                 generate_cg_keypair_from_seed_legacy(u32::try_from(curve).unwrap(), seed).unwrap();
+            assert_eq!(
+                generate_cg_keypair_from_seed(u32::try_from(curve).unwrap(), seed).unwrap(),
+                (public_key.clone(), private_key.clone()),
+                "production must reproduce the deployed native keys"
+            );
             assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
                 encode(Sha256::digest(private_key)),
@@ -1674,15 +1679,15 @@ mod key_derivation_tests {
         }
     }
 
-    // Captured by calling Protocol directly at cryptography-private c07d93b6 on native.
-    // The real SDK/WASM test checks these same fingerprints on wasm32.
+    // Captured through the pinned deployed sampler on native 64-bit and compared
+    // byte-for-byte with production derivation. The SDK/WASM test uses these too.
     #[test]
-    fn new_sampler_key_bytes_match_native_reference_on_every_curve() {
+    fn production_key_bytes_match_deployed_native_reference_on_every_curve() {
         let public_key_fingerprints = [
-            "9049878c07ceb26854668ddccaa6c8d59b7419dd8dedf4d9f9943273838ace08",
-            "65ba7314f65f9506919532c6e14af8963b9f4789bf7f20f2fe6c4aa319fdc6bb",
-            "d0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f",
-            "d0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f",
+            "7415d98b6969534c7100d9db1030c804089295974d705f44abbd8d4b0e3d2cf8",
+            "7cb749c22b960baf812086ea162cfa9d22f1f99a05e7c288e83958e5b7b578f1",
+            "ddf91a1b79eba0fa9a335627b5fca83baafeaaaad8f41e3f521ecd5fe1bf3eeb",
+            "ddf91a1b79eba0fa9a335627b5fca83baafeaaaad8f41e3f521ecd5fe1bf3eeb",
         ];
         for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
             let (public_key, private_key) =
@@ -1690,7 +1695,7 @@ mod key_derivation_tests {
             assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
                 encode(Sha256::digest(private_key)),
-                "4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe"
+                "a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc"
             );
         }
     }

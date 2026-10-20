@@ -79,18 +79,18 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.5", default-features = false, features = ["serde", "subtle"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0"}
 # NOTE: the `parallel` (rayon) feature on class_groups/twopc_mpc is enabled per
 # crate under `[target.'cfg(not(msim))'.dependencies]` (see dwallet-classgroups-types
 # and ika-core), NOT here — workspace-dependency features are inherited regardless of
 # cfg, so enabling `parallel` here would leak rayon into `cargo simtest` (cfg msim),
 # whose rayon workers have no msim node context and break determinism / panic.
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "e65c9b120f8299f0d00393c1d4d24327a449476b"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e65c9b120f8299f0d00393c1d4d24327a449476b"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "e5e161c266fb73a9ecb1d60851e832d9fc3328d0"}
 
 k256 = { version = "0.14.0", default-features = false }
 p256 = { version = "0.14.0", default-features = false }
@@ -365,7 +365,7 @@ ika-test-cluster = { path = "crates/ika-test-cluster" }
 ika-upgrade-test = { path = "crates/ika-upgrade-test" }
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "58156d9affdb6b3ff29fa072c655990438dd7503" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8c6f911c366027e063953b0adfb2a78dfaeec293" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }

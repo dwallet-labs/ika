@@ -574,12 +574,12 @@ async fn an_authority_absent_from_the_cert_starts_normally() {
     assert_eq!(resolution.mpc_seed(), &seed);
 }
 
-/// A frozen old-binary blob has different proof bytes even when the upgraded
-/// legacy generator recovers exactly the right private keys. Digest equality
-/// against a newly generated bundle must not disable this validator.
+/// The production sampler must reproduce the frozen deployed native bundle,
+/// including its proofs. Both configured-seed paths must recover those keys
+/// from the certified handoff without requiring a key rotation.
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_transition_uses_the_keys_in_the_last_handoff() {
+async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let seed = RootSeed::new([31; 32]);
     let new_blob = derive_mpc_data_blob(&seed).unwrap();
@@ -588,17 +588,17 @@ async fn sampler_transition_uses_the_keys_in_the_last_handoff() {
         hex::encode(legacy_digest),
         "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
     );
-    assert_ne!(legacy_digest, mpc_data_blob_hash(&new_blob));
+    assert_eq!(LEGACY_VALIDATOR_BLOB, new_blob.as_slice());
     let (_, regenerated_legacy) =
         ValidatorMPCSecrets::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Legacy);
     let certified_keys = decode_certified_mpc_keys(&legacy_digest, LEGACY_VALIDATOR_BLOB).unwrap();
-    assert_ne!(
+    assert_eq!(
         certified_keys, regenerated_legacy,
-        "the old proof bytes must exercise the digest mismatch"
+        "native legacy derivation must preserve the deployed keys and proofs"
     );
 
     for (blob, expected) in [
-        (LEGACY_VALIDATOR_BLOB, ValidatorKeyDerivation::Legacy),
+        (LEGACY_VALIDATOR_BLOB, ValidatorKeyDerivation::Current),
         (new_blob.as_slice(), ValidatorKeyDerivation::Current),
     ] {
         let (config, record) =
@@ -645,6 +645,6 @@ async fn sampler_transition_uses_the_keys_in_the_last_handoff() {
         .unwrap();
     let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
     assert_eq!(resolution.decision(), EpochSeedDecision::RunOnPrevious);
-    assert_eq!(resolution.key_derivation(), ValidatorKeyDerivation::Legacy);
+    assert_eq!(resolution.key_derivation(), ValidatorKeyDerivation::Current);
     assert_eq!(resolution.mpc_seed(), &seed);
 }

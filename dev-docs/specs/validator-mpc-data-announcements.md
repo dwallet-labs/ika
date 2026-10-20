@@ -217,7 +217,7 @@ Invariants:
    transition.** The startup barrier first authenticates the prior certificate
    and hydrates its hash-matching bundle. Seed resolution compares every CRT,
    all three PVSS, and the VSS HPKE public keys against locally derived keys.
-   For each configured root seed it tries the new sampler first, then the
+   For each configured root seed it tries the current sampler first, then the
    target-native legacy sampler. The current root takes priority over the
    optional previous root. The selected seed AND derivation are passed to
    the manager and cryptographic orchestrator. Regenerated proof bytes are
@@ -228,13 +228,14 @@ Invariants:
    malformed or hash-mismatching certified blob fails startup; it never means
    “no certificate” or “use new keys”.
 
-   This is a temporary validator migration path, marked with TODOs in code.
-   A later binary may remove legacy validator derivation only after every
-   validator's new keys are certified and active in a handoff. Announcements
-   alone do not meet that condition, because freeze or carry-forward may
-   still select the old bundle. No protocol-version flag or new wire field is
-   introduced; the certified public keys determine the local private key
-   choice. Legacy user encryption-key recovery remains supported independently.
+   This is a temporary validator fallback, marked with TODOs in code. The
+   current sampler now reproduces the deployed native keys, so those bundles
+   select Current even before all validators upgrade. A later binary may
+   remove legacy validator derivation after every validator is upgraded and
+   its certified keys have been verified against the native derivation. No
+   protocol-version flag or new wire field is introduced. Historical browser
+   encryption-key recovery remains supported independently.
+
 4. **An unreadable previous seed is treated as an absent one.** The
    descriptor is resolved through a FALLIBLE accessor
    (`RootSeedWithPath::try_root_seed`); `root_seed()` panics on an unreadable
@@ -271,7 +272,10 @@ paired with a once-per-epoch `error!` naming both local digests, the
 certified one, and the in-epoch repair.
 
 The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
-also checks actual frozen public keys during the sampler transition. A frozen
+also checks actual frozen public keys across the dependency upgrade.
+The current sampler preserves deployed native keys; the legacy fallback remains
+temporary and is not needed to recognize those native keys. Historical browser
+key recovery remains separate. A frozen
 bundle matching either configured seed through current or legacy derivation
 is `RotatedAfterFreeze` when its digest differs from the new announcement — a warning, not
 the `mpc_data_frozen_digest_seed_mismatch` invariant violation, because it

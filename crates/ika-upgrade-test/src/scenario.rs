@@ -33,7 +33,7 @@ use crate::cluster::{
     evaluate_healthy_drain, evaluate_wedged_drain,
 };
 use crate::mpc_timings::{self, TimingSnapshot};
-use crate::validator_keys::ValidatorKeyRotation;
+use crate::validator_keys::ValidatorKeyPreservation;
 use crate::workload::WorkloadDriver;
 
 const NETWORK_KEY_OUTPUT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -156,7 +156,7 @@ pub enum Step {
     /// same-binary evidence cannot satisfy a mixed-binary compatibility gate.
     ExpectNetworkKeyOutputEvidence,
     /// Derive both expected public key sets before the bounded upgrade window.
-    PrepareValidatorKeyRotation,
+    PrepareValidatorKeyPreservation,
     /// Check the certified keys entering this exact epoch on every validator.
     ExpectValidatorKeyDerivation {
         epoch: u64,
@@ -322,7 +322,9 @@ impl std::fmt::Display for Step {
             Step::ExpectNetworkKeyOutputEvidence => {
                 write!(f, "expect_network_key_output_evidence")
             }
-            Step::PrepareValidatorKeyRotation => write!(f, "prepare_validator_key_rotation"),
+            Step::PrepareValidatorKeyPreservation => {
+                write!(f, "prepare_validator_key_preservation")
+            }
             Step::ExpectValidatorKeyDerivation { epoch, current } => {
                 let derivation = if *current { "Current" } else { "Legacy" };
                 write!(f, "expect_validator_key_derivation({epoch}, {derivation})")
@@ -690,8 +692,8 @@ impl Scenario {
         self
     }
 
-    pub fn prepare_validator_key_rotation(mut self) -> Self {
-        self.steps.push(Step::PrepareValidatorKeyRotation);
+    pub fn prepare_validator_key_preservation(mut self) -> Self {
+        self.steps.push(Step::PrepareValidatorKeyPreservation);
         self
     }
 
@@ -703,7 +705,7 @@ impl Scenario {
         self
     }
 
-    pub fn expect_rotated_validator_keys(mut self, epoch: u64) -> Self {
+    pub fn expect_preserved_validator_keys(mut self, epoch: u64) -> Self {
         self.steps.push(Step::ExpectValidatorKeyDerivation {
             epoch,
             current: true,
@@ -876,7 +878,7 @@ impl Scenario {
         // least one boundary each, enforced at explicit evidence checkpoints
         // and after the step loop.
         let mut network_key_evidence: Vec<NetworkKeyBoundaryEvidence> = Vec::new();
-        let mut validator_key_rotation: Option<ValidatorKeyRotation> = None;
+        let mut validator_key_preservation: Option<ValidatorKeyPreservation> = None;
         // The parked validator's LAST wedge sample, carried to the recovery
         // step. Comparing the recovery against this rather than against a
         // fresh baseline is what closes the gap between the two steps: a
@@ -1208,23 +1210,24 @@ impl Scenario {
                         "network-key output evidence checkpoint: every validator under test demonstrated byte-equality with a finalizing quorum before this step"
                     );
                 }
-                Step::PrepareValidatorKeyRotation => {
+                Step::PrepareValidatorKeyPreservation => {
                     let c = cluster
                         .as_ref()
-                        .context("PrepareValidatorKeyRotation before StartAll")?;
+                        .context("PrepareValidatorKeyPreservation before StartAll")?;
                     ensure!(
-                        validator_key_rotation.is_none(),
+                        validator_key_preservation.is_none(),
                         "validator keys already prepared"
                     );
-                    validator_key_rotation = Some(c.prepare_validator_key_rotation().await?);
+                    validator_key_preservation =
+                        Some(c.prepare_validator_key_preservation().await?);
                 }
                 Step::ExpectValidatorKeyDerivation { epoch, current } => {
                     let c = cluster
                         .as_ref()
                         .context("ExpectValidatorKeyDerivation before StartAll")?;
-                    let expected = validator_key_rotation
-                        .as_ref()
-                        .context("validator key assertion before PrepareValidatorKeyRotation")?;
+                    let expected = validator_key_preservation.as_ref().context(
+                        "validator key assertion before PrepareValidatorKeyPreservation",
+                    )?;
                     c.assert_validator_key_derivation(expected, *epoch, *current)
                         .await?;
                 }

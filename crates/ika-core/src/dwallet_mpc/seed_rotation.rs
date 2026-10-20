@@ -318,9 +318,9 @@ fn derive_seed_identity(
     }
 
     // TODO: Remove this temporary legacy validator-key fallback in a later
-    // binary after every validator's new MPC keys are certified and active in
-    // the handoff. Announcements alone are insufficient. Keep legacy user-key
-    // recovery separate from this validator transition.
+    // binary after every validator's certified keys are verified against the
+    // deployed native derivation. Current and legacy now agree on native.
+    // Keep historical browser user-key recovery available.
     let (_, legacy_keys) =
         ValidatorMPCSecrets::from_seed_with_derivation(seed, ValidatorKeyDerivation::Legacy);
     let derivation = same_encryption_keys(&legacy_keys, certified_keys)

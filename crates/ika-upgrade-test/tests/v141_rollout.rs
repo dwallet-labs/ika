@@ -16,10 +16,10 @@
 //! (per-authority output-digest convergence witnessed on the NEW validator),
 //! reports no malicious actors, and keeps serving a full user DKG → Presign →
 //! Sign lifecycle across two reshares and a full binary swap. It also verifies
-//! every original validator's certified encryption keys transition from legacy
-//! sampling to current sampling, with every validator selecting Current in
-//! epoch 6 after one complete all-current epoch. Six class-group keys change;
-//! the VSS HPKE key is checked against its expected value but stays unchanged.
+//! every original validator's certified encryption keys remain identical to the
+//! deployed native keys, with every validator selecting Current in epoch 6
+//! after one complete all-current epoch. All six class-group keys and the
+//! VSS HPKE key must stay unchanged.
 //!
 //! **What the retarget removes from this gate's reach.** Retargeting from
 //! v1.4.0 moved the OLD side across everything that shipped in v1.4.1, so
@@ -154,7 +154,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
         .with_ika_cli(ika_cli)
         .start_all(old)
-        .prepare_validator_key_rotation()
+        .prepare_validator_key_preservation()
         // Epoch 2 guarantees the all-OLD committee completed the genesis network
         // DKG at v7 and crossed its first reconfiguration boundary.
         .wait_for_epoch(2)
@@ -229,13 +229,13 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_log_line_absent("the node has identified itself as malicious")
         .run_workload("all-new-v7-after-full-swap")
         // The epoch-4 swaps can miss that epoch's announcement freeze. Epoch
-        // 5 runs entirely on NEW; its certificate must activate every current
-        // key set in epoch 6, with no validator left on the legacy fallback.
+        // 5 runs entirely on NEW; its certificate must preserve every deployed
+        // key set in epoch 6, with every validator selecting Current.
         .wait_for_epoch(6)
         .wait_for_all_validators_local_epoch(6)
         .expect_all_validators_healthy()
-        .expect_rotated_validator_keys(6)
-        .run_workload("all-new-v7-after-key-rotation")
+        .expect_preserved_validator_keys(6)
+        .run_workload("all-new-v7-after-key-preservation")
         .expect_malicious_actors_exactly(&[0, 1, 2, 3], 0)
         .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
         .expect_log_line_absent("failed to submit an MPC output message to consensus")
@@ -243,13 +243,13 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .await
         .expect(
             "v1.4.1/candidate committee must converge across the mixed phase and the full binary \
-             swap at protocol v7, and every validator must activate its current encryption keys",
+             swap at protocol v7, and every validator must preserve its deployed native encryption keys",
         );
 
     tracing::info!(
         "v1.4.1 rollout PASSED: the mixed v1.4.1/candidate committee converged across two \
          reshares at v7, and the fully-upgraded committee converged and kept serving a full \
-         user lifecycle at each stage; all four validators activated their current encryption \
-         keys at epoch 6"
+         user lifecycle at each stage; all four validators preserved their deployed native encryption \
+         keys through epoch 6"
     );
 }

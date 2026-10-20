@@ -10,7 +10,8 @@ import { createClassGroupsKeypair, Curve, UserShareEncryptionKeys } from '../../
 const rootSeed = new Uint8Array(32).fill(42);
 
 // Legacy fixtures: cryptography-private 0d5046df / crypto-bigint 8aabcee5 on WASM32.
-// New fixtures: native Rust calling Protocol directly at cryptography-private c07d93b6,
+// New fixtures: native Rust using the pinned deployed sampler, checked byte-for-byte
+// against production derivation at cryptography-private e5e161c2,
 // with raw seeds or keccak256(ASCII("CLASS_GROUPS_DECRYPTION_KEY_V1") || curve || rootSeed).
 // The SDK uses real WASM, so the new fixtures also require native/WASM agreement.
 describe('new and historical key sampling', () => {
@@ -49,41 +50,40 @@ describe('new and historical key sampling', () => {
 	];
 	const rawNewFingerprints = [
 		[
-			'9049878c07ceb26854668ddccaa6c8d59b7419dd8dedf4d9f9943273838ace08',
-			'4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe',
+			'7415d98b6969534c7100d9db1030c804089295974d705f44abbd8d4b0e3d2cf8',
+			'a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc',
 		],
 		[
-			'65ba7314f65f9506919532c6e14af8963b9f4789bf7f20f2fe6c4aa319fdc6bb',
-			'4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe',
+			'7cb749c22b960baf812086ea162cfa9d22f1f99a05e7c288e83958e5b7b578f1',
+			'a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc',
 		],
 		[
-			'd0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f',
-			'4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe',
+			'ddf91a1b79eba0fa9a335627b5fca83baafeaaaad8f41e3f521ecd5fe1bf3eeb',
+			'a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc',
 		],
 		[
-			'd0572580aa52fee182072244eb009df28c607c17e202f4b198ff40b84167bd3f',
-			'4c550920ddecf4052f50b89a5a97d85df32577bfe74bb8ab41543395ffa981fe',
+			'ddf91a1b79eba0fa9a335627b5fca83baafeaaaad8f41e3f521ecd5fe1bf3eeb',
+			'a60572fa54a24f66fec043e5f4c47d652163dbfd1568671062288c5ad6ebaacc',
 		],
 	];
 	const currentHashNewFingerprints = [
 		[
-			'36870e856378c4aaf9f746563eed43fb442e4394fce99fdd387d97e1e640ec35',
-			'e1e025c13c4f8be3709511cf896768087ae5521cfe3eabba867c5997e46cd461',
+			'31954113b6dcf62d8267c441f4f5e8167a9fcc51b32663730ee644884594554e',
+			'5081aeac56553c1f96fe3946572a885f519c040fd955e4a325f5b5a71d513825',
 		],
 		[
-			'400ae8d6f321fe1cc274efce43fe0ff71cc5a6dce540ef1a55e6cd7c88ce2c7f',
-			'520ae9323430ee458cc5a58fc9fb8fc2c7279a611d56837fa12938a87170d62c',
+			'09a1625220c0efd485261b00d66a5562641516dd3eb7a0e560670487d2cc3763',
+			'b2146bc80a068668340118d9e27ed6ca578aba522f95f3fa423da3ea39130628',
 		],
 		[
-			'f196cf45499af9c355e2ad7737df42c08cf1e680e6663448e87854891b404358',
-			'dddf946584c9b4b3cfe8f7a29baee551818fd7a99e884cc18c999235cfaf66b6',
+			'ac1dfa23ae6ee46748b118d7dd3d4d7087c3a7f205eac241b9a8945db94d2ab1',
+			'ab02e2f0d50de0d5240611da0f2de3a47c917996e826f12805dee604bb975e3b',
 		],
 		[
-			'e040522e488781ca4dc62cee32d16384c402cd9f051c8296756b614d36110a32',
-			'8d884c3e80f4287822a2464f1e38d4315fba71819c54912f8c2b03db7cbbd9a3',
+			'f24f180de661bf694cb3ef83bd4b77010b982208e1297d8a8bc1141e678f929f',
+			'33cf9d62e857e4ea39930057484be7ca66c27745b6340f2833e605cc04dcc3f7',
 		],
 	];
-
 	it.each(curves)('matches native new-sampler key bytes for %s', async (curve) => {
 		const keys = await createClassGroupsKeypair(rootSeed, curve);
 		const [publicFingerprint, privateFingerprint] = rawNewFingerprints[curves.indexOf(curve)];
