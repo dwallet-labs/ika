@@ -17,9 +17,9 @@
 //! reports no malicious actors, and keeps serving a full user DKG → Presign →
 //! Sign lifecycle across two reshares and a full binary swap. It also verifies
 //! every original validator's certified encryption keys remain identical to the
-//! deployed native keys, with every validator selecting Current in epoch 6
-//! after one complete all-current epoch. All six class-group keys and the
-//! VSS HPKE key must stay unchanged.
+//! deployed native keys, with every validator using its configured seed and
+//! completing key preparation in epoch 6 after one complete all-current
+//! epoch. All six class-group keys and the VSS HPKE key must stay unchanged.
 //!
 //! **What the retarget removes from this gate's reach.** Retargeting from
 //! v1.4.0 moved the OLD side across everything that shipped in v1.4.1, so
@@ -35,9 +35,8 @@
 //!   the other side stubs — the compatibility hazard that made activation
 //!   order load-bearing on v1.4.0 (see
 //!   dev-docs/specs/validator-mpc-data-announcements.md);
-//! - the optional previous-root-seed rotation field (#2121). The candidate
-//!   additionally resolves legacy/current sampling against certified public
-//!   keys while announcing current-sampler keys;
+//! - the optional previous-root-seed field (#2121), which both binaries
+//!   support. This rollout keeps each validator's configured root seed unchanged;
 //! - the prepare-then-start handoff barrier on cold start and joiner
 //!   promotion (#2123), which both sides now run;
 //! - `ika_sui_client_sui_response_errors_total` split out of
