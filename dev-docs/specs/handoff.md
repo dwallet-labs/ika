@@ -64,7 +64,11 @@ next epoch inherits.
     seed, announce the current one) and what makes a validator whose
     seed the cert does not name sit `E`'s MPC out rather than abort or
     compute wrongly. See "Seed rotation and per-epoch seed resolution"
-    in the announcements spec.
+    in the announcements spec. Resolution compares all encryption public keys
+    in the hash-verified certified bundle against the production derivation for
+    each configured seed. There is no legacy validator sampler fallback. It
+    does not require regenerated proof bytes to match; the certified bundle and
+    its normal proof verification remain unchanged.
 - The attestation is built once per epoch when the validator's local
   view is complete (snapshot-ready), and it must be DETERMINISTIC
   across validators: every digest source above is consensus-anchored.

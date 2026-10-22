@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createClassGroupsKeypair,
+	createClassGroupsKeypairV2,
 	encodeToASCII,
 	getNetworkConfig,
 	IkaClient,
@@ -37,6 +38,8 @@ describe('Index Exports', () => {
 	it('should export cryptography functions', () => {
 		expect(createClassGroupsKeypair).toBeDefined();
 		expect(typeof createClassGroupsKeypair).toBe('function');
+		expect(createClassGroupsKeypairV2).toBeDefined();
+		expect(typeof createClassGroupsKeypairV2).toBe('function');
 	});
 
 	it('should export utility functions', () => {

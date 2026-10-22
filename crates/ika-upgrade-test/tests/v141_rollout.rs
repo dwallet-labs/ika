@@ -15,8 +15,11 @@
 //! OLD/NEW committee produces byte-identical aggregated reconfiguration outputs
 //! (per-authority output-digest convergence witnessed on the NEW validator),
 //! reports no malicious actors, and keeps serving a full user DKG → Presign →
-//! Sign lifecycle across two reshares and a full binary swap. That is the
-//! wire-no-op every candidate must be against the release the fleet is running.
+//! Sign lifecycle across two reshares and a full binary swap. It also verifies
+//! every original validator's certified encryption keys remain identical to the
+//! deployed native keys, with every validator using its configured seed and
+//! completing key preparation in epoch 6 after one complete all-current
+//! epoch. All six class-group keys and the VSS HPKE key must stay unchanged.
 //!
 //! **What the retarget removes from this gate's reach.** Retargeting from
 //! v1.4.0 moved the OLD side across everything that shipped in v1.4.1, so
@@ -32,8 +35,8 @@
 //!   the other side stubs — the compatibility hazard that made activation
 //!   order load-bearing on v1.4.0 (see
 //!   dev-docs/specs/validator-mpc-data-announcements.md);
-//! - per-epoch root-seed resolution with the optional previous-seed rotation
-//!   field (#2121) — both sides resolve the epoch's seed the same way;
+//! - the optional previous-root-seed field (#2121), which both binaries
+//!   support. This rollout keeps each validator's configured root seed unchanged;
 //! - the prepare-then-start handoff barrier on cold start and joiner
 //!   promotion (#2123), which both sides now run;
 //! - `ika_sui_client_sui_response_errors_total` split out of
@@ -150,6 +153,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
         .with_ika_cli(ika_cli)
         .start_all(old)
+        .prepare_validator_key_preservation()
         // Epoch 2 guarantees the all-OLD committee completed the genesis network
         // DKG at v7 and crossed its first reconfiguration boundary.
         .wait_for_epoch(2)
@@ -157,6 +161,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_all_validators_healthy()
         .expect_protocol_version_at_least(7)
         .expect_protocol_version_at_most(7)
+        .record_validator_keys(2)
         .expect_network_key_reconfiguration_not_started(2)
         // ── Mixed phase: 1 NEW + 3 OLD, all at v7. ─────────────────────────
         .stop_and_swap(&[0], current.clone())
@@ -194,6 +199,9 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("the node has identified itself as malicious")
         .run_workload("mixed-v7-after-second-reshare")
+        // Require candidate byte-equality while the quorum still runs OLD;
+        // an all-NEW reshare must not rescue an unevidenced mixed phase.
+        .expect_network_key_output_evidence()
         // ── Rollout: swap the remaining validators to NEW. ─────────────────
         .wait_for_epoch(4)
         .wait_for_all_validators_local_epoch(4)
@@ -219,18 +227,28 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_log_line_absent("node recognized itself as malicious")
         .expect_log_line_absent("the node has identified itself as malicious")
         .run_workload("all-new-v7-after-full-swap")
+        // The epoch-4 swaps can miss that epoch's announcement freeze. Epoch
+        // 5 runs entirely on NEW; its certificate must preserve every deployed
+        // key set in epoch 6, with every validator using its configured seed.
+        .wait_for_epoch(6)
+        .wait_for_all_validators_local_epoch(6)
+        .expect_all_validators_healthy()
+        .expect_preserved_validator_keys(6)
+        .run_workload("all-new-v7-after-key-preservation")
+        .expect_malicious_actors_exactly(&[0, 1, 2, 3], 0)
         .expect_log_line_absent("late network-key reconfiguration output DIVERGES")
         .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()
         .await
         .expect(
             "v1.4.1/candidate committee must converge across the mixed phase and the full binary \
-             swap at protocol v7",
+             swap at protocol v7, and every validator must preserve its deployed native encryption keys",
         );
 
     tracing::info!(
         "v1.4.1 rollout PASSED: the mixed v1.4.1/candidate committee converged across two \
          reshares at v7, and the fully-upgraded committee converged and kept serving a full \
-         user lifecycle at each stage"
+         user lifecycle at each stage; all four validators preserved their deployed native encryption \
+         keys through epoch 6"
     );
 }

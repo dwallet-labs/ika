@@ -133,8 +133,9 @@ which bytes* deterministic in consensus order.
 ## Data model
 
 - **Blob**: BCS-encoded `VersionedMPCData`, derived deterministically
-  from the validator's root seed (`derive_mpc_data_blob`) — the same
-  validator re-derives byte-identical blobs, so all references are
+  from the validator's root seed and derivation implementation
+  (`derive_mpc_data_blob`). Repeating that derivation gives byte-identical
+  blobs; upgrades can change keys or proofs. All references are
   content-addressed by `mpc_data_blob_hash` (Blake2b256). The canonical
   hash helper is `ika_network::mpc_artifacts::mpc_data_blob_hash`;
   producers and verifiers MUST hash identical bytes, so no inline
@@ -158,7 +159,8 @@ which bytes* deterministic in consensus order.
 
 ## Seed rotation and per-epoch seed resolution (#2119)
 
-A validator's blob is a pure function of its root seed, and the network
+Within a given derivation implementation, a validator's blob is a pure function
+of its root seed. The network
 deals epoch `E`'s shares to the bundle recorded in the `E-1 -> E` handoff
 certificate's `ValidatorMpcData` item for that validator. Rotating the seed
 therefore always lands the validator in an epoch whose shares were dealt to
@@ -171,18 +173,18 @@ descriptor — same type, same lazy unreadable-path semantics as
 `root_seed_key_pair`, discarded unread by notifier/fullnode preparation —
 that names the seed the validator was running before the rotation.
 
-**Resolution** (`dwallet_mpc::seed_rotation::resolve_epoch_seed`, called
+**Resolution** (`dwallet_mpc::seed_rotation::EpochSeedResolution::resolve`, called
 once per epoch from `DWalletMPCService::verify_validator_keys`, which is
 itself called at every per-epoch component start):
 
 | certified digest for this authority | decision | state label |
 |---|---|---|
-| absent (genesis / first-epoch joiner / cert not installed) | run the current seed | `no_certified_digest` |
-| derivable from the CURRENT seed, no previous configured | run the current seed | `matches` |
-| derivable from the CURRENT seed, previous still configured | run the current seed | `rotation_complete` |
-| derivable only from the PREVIOUS seed | run epoch `E`'s MPC on the PREVIOUS seed | `rotating_on_previous_seed` |
-| derivable from neither, no previous configured | **no MPC this epoch** | `awaiting_certification` |
-| derivable from neither, previous configured | **no MPC this epoch** | `previous_seed_mismatch` |
+| absent for this authority (genesis / first-epoch joiner) | run the current seed | `no_certified_digest` |
+| keys derived from the CURRENT seed, no previous configured | run the current seed | `matches` |
+| keys derived from the CURRENT seed, previous still configured | run the current seed | `rotation_complete` |
+| keys derived only from the PREVIOUS seed | run epoch `E`'s MPC on the PREVIOUS seed | `rotating_on_previous_seed` |
+| keys derived from neither seed, no previous configured | **no MPC this epoch** | `awaiting_certification` |
+| keys derived from neither seed, previous configured | **no MPC this epoch** | `previous_seed_mismatch` |
 
 Current is tested first, so pointing both fields at the same seed reads as
 "no rotation" rather than as a rotation.
@@ -190,8 +192,9 @@ Current is tested first, so pointing both fields at the same seed reads as
 Invariants:
 
 1. **The announcement sender ALWAYS announces the CURRENT seed's bundle**,
-   including while the epoch's MPC runs on the previous seed and while the
-   node is out of MPC entirely. That is the whole mechanism: it is what
+   using the production sampler, including while the epoch's MPC runs on the
+   previous seed and while the node is out of MPC entirely. That is the whole
+   mechanism: it is what
    makes `E`'s freeze capture the new bundle, so `E -> E+1` deals the next
    epoch's shares to the new key and the rotation completes. The sender is
    per-epoch and re-derives from the configured current seed at every
@@ -210,17 +213,24 @@ Invariants:
    to get a new bundle certified is to REACH the reconfiguration the abort
    refuses to boot into — the fail-closed version of this check made the
    documented rotation flow a crashloop.
-3. **The comparison is set membership, not equality.** The certified digest
-   covers the whole encoded bundle, so it is a function of the seed AND of
-   the bundle encoding. `DerivableDigests` is the set of digests this binary
-   can derive from one seed, and the certified digest is accepted if it is
-   in the set for either seed. Today the set has exactly one member
-   (`VersionedMPCData::V1`) and the tolerance is structural rather than
-   load-bearing. A future encoding bump MUST add the new digest to the set a
-   release BEFORE `derive_mpc_data_blob` starts emitting it — certificates
-   are written by the previous epoch's committee running the previous
-   binary, so accept-before-emit is what stops the whole fleet from
-   resolving to "neither seed matches" on the same upgrade.
+3. **The handoff selects the encryption keys.** The startup barrier first
+   authenticates the prior certificate and hydrates its hash-matching bundle.
+   Seed resolution compares every CRT, all three PVSS, and the VSS HPKE public
+   keys against the production derivation for each configured root seed. The
+   current root takes priority over the optional previous root. The selected
+   seed reaches the manager and cryptographic orchestrator before decryption.
+   Regenerated proof bytes are excluded from this local key-identity comparison;
+   the original certified bundle retains its proofs, hash authentication and
+   normal cryptographic input verification. A missing, malformed or
+   hash-mismatching certified blob fails startup; it never means “no
+   certificate” or “use new keys”.
+
+   The production sampler reproduces the deployed native validator keys.
+   Validators have no legacy sampler fallback and do not replace keys or root
+   seeds during this binary upgrade. Historical browser encryption-key recovery
+   remains supported independently through the existing SDK APIs; V2 APIs are
+   opt-in. No protocol-version flag or new wire field is introduced.
+
 4. **An unreadable previous seed is treated as an absent one.** The
    descriptor is resolved through a FALLIBLE accessor
    (`RootSeedWithPath::try_root_seed`); `root_seed()` panics on an unreadable
@@ -256,9 +266,40 @@ ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed
 paired with a once-per-epoch `error!` naming both local digests, the
 certified one, and the in-epoch repair.
 
+The same resolution publishes two bounded metric families per validator:
+
+- `ika_dwallet_mpc_validator_key_epoch{stage="selected"}` is the epoch of
+  the completed seed decision, including a decision not to participate.
+  `{stage="prepared"}` is set only after an active validator finishes inherited
+  key/share preparation. Each stage is `-1` until complete; preparation failure
+  or inactive MPC leaves `prepared=-1`. Genesis can complete preparation without
+  inherited keys, so this is not a count of decrypted shares.
+- `ika_dwallet_mpc_validator_current_key_certified_matches{key_type="class_group"}`
+  counts the configured **current** seed's current-sampler keys matching the
+  authenticated entering handoff: three CRT and three PVSS keys, from zero to
+  six. `key_type="vss_hpke"` is zero or one. Both are `-1` without a certified
+  bundle for this authority. Comparisons reuse the keys derived for resolution;
+  they add no key generation, and ignore proof bytes.
+
+All children exist from registration. Component startup, a new resolution, and
+committee departure reset them so an old successful epoch cannot masquerade as
+a new one. The selected/prepared epoch values must be compared with the node's
+current epoch. Metrics contain no seeds, key bytes, digests or authority labels.
+The scrape target identifies the validator.
+
+A root-seed rotation normally progresses from `rotating_on_previous_seed`
+with unmatched current keys to `rotation_complete`, six class-group matches,
+one HPKE match and completed preparation in the newly certified epoch.
+A binary upgrade preserving native keys instead stays at six/one throughout;
+these are local configuration/certification facts, not proof of successful MPC participation.
+See the [operator walkthrough](../playbooks/production-alerts.md#validator-encryption-key-rollout-walkthrough)
+for the announcement, freeze and subsequent MPC checks.
+
 The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
-is unchanged in purpose and gains one verdict: a frozen digest that the
-CONFIGURED PREVIOUS seed derives is `RotatedAfterFreeze` — a warning, not
+also checks actual frozen public keys across the dependency upgrade.
+The production sampler preserves deployed native keys. A frozen bundle matching
+either configured seed through that derivation is `RotatedAfterFreeze` when its
+digest differs from the new announcement — a warning, not
 the `mpc_data_frozen_digest_seed_mismatch` invariant violation, because it
 is the expected shape of a late rotation and self-heals.
 
@@ -439,8 +480,9 @@ is the expected shape of a late rotation and self-heals.
   sender's emit-gate deadline, consensus-clock seconds, `-1` before the
   epoch's first commit).
 - **Carry-forward (stable mpc_data)**: a validator's blob is a pure
-  function of its root seed (`derive_mpc_data_blob`), so a continuing
-  validator's blob is byte-identical every epoch. At the freeze, a
+  function of its root seed and derivation implementation
+  (`derive_mpc_data_blob`), so a continuing validator's blob is byte-identical
+  across epochs unless the seed or implementation changes. At the freeze, a
   committee member that was NOT freshly attested this epoch but IS
   present in the prior epoch's handoff certificate (its
   `ValidatorMpcData` items) is frozen at its prior-cert digest; the

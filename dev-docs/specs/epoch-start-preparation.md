@@ -15,7 +15,7 @@ startup/restart, continuing-validator reconfiguration, and fullnode promotion.
 | Input                                                         | Source and preparation                                                              | Before consensus starts                                                                                             |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Current committee, protocol configuration, root-seed decision | Epoch-start state and seed resolution                                               | Constructed and checked already                                                                                     |
-| Local VSS HPKE secret key                                     | Root seed in the cryptographic orchestrator constructor                             | Derived already                                                                                                     |
+| Local VSS HPKE secret key                                     | Selected root seed with the production sampler in the orchestrator constructor      | Derived already                                                                                                     |
 | Prior handoff certificate                                     | Durable store or verified peer fetch                                                | Verified and persisted; persistence failure cannot release the barrier                                              |
 | Network key identities                                        | Persisted mappings or identity derivation from chain-published blobs                | Every certified key must translate, including with NOA disabled                                                     |
 | Network key creation metadata                                 | Process-level syncer's chain overlay                                                | Every certified key's immutable `dkg_at_epoch` must be present                                                      |
@@ -38,6 +38,14 @@ The barrier fetches missing validator bundles inline using
 `fetch_missing_prior_cert_mpc_data_blobs`. Waiting for the epoch's periodic
 fetcher would deadlock because that task does not exist yet. A blob cached only
 in memory does not satisfy the durable read that manager ingestion uses.
+
+After the barrier, validator seed resolution reads its own certified bundle
+from the durable store and compares all encryption public keys against the
+production derivation. Both configured current and previous roots remain
+eligible. The selected seed reaches the manager and orchestrator before any
+decryption; there is no legacy validator sampler fallback. The production
+sampler preserves deployed native keys. Missing or corrupt certified bytes
+cannot select new keys.
 
 After the barrier, `DWalletMPCService::prepare_epoch` runs immediately before
 spawning `ConsensusManager::start`. It ingests the current validator keys,

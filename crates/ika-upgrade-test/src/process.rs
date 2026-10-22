@@ -10,13 +10,13 @@
 //! compatibility assertion real.
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, read_to_string};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command as SignalCommand, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use ika_config::node::{NodeConfig, SuiDataSource};
 use tokio::process::{Child, Command};
 
@@ -86,6 +86,7 @@ pub struct ValidatorProcess {
     /// `RAYON_NUM_THREADS`, so a key of that name would win — don't.
     extra_env: BTreeMap<String, String>,
     child: Option<Child>,
+    suspended: bool,
     http: reqwest::Client,
 }
 
@@ -111,6 +112,7 @@ impl ValidatorProcess {
             rayon_threads,
             extra_env: BTreeMap::new(),
             child: None,
+            suspended: false,
             http: reqwest::Client::new(),
         }
     }
@@ -124,6 +126,18 @@ impl ValidatorProcess {
     /// so nothing is shared between co-located validators by accident.
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    /// Read the generated config locally; the admin snapshot masks key material.
+    pub(crate) fn read_config(&self) -> Result<NodeConfig> {
+        let yaml = read_to_string(&self.config_path).context("read generated node config")?;
+        let mut config: NodeConfig =
+            serde_yaml::from_str(&yaml).context("parse generated node config")?;
+        config
+            .sui_connector_config
+            .resolve_ika_on_chain_identity()
+            .context("resolve generated node config's on-chain identity")?;
+        Ok(config)
     }
 
     /// Add environment for every subsequent [`Self::start`]. Takes effect at
@@ -210,6 +224,7 @@ impl ValidatorProcess {
     /// disk in a partial state that the next binary chokes on at replay. A
     /// binary swap is a planned restart, not a crash, so it must be graceful.
     pub async fn stop(&mut self) -> Result<()> {
+        self.resume().await?;
         if let Some(mut child) = self.child.take() {
             tracing::info!(index = self.index, "stopping ika-validator (SIGTERM)");
             if let Some(pid) = child.id() {
@@ -234,6 +249,91 @@ impl ValidatorProcess {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Stop execution without replacing the process or changing its persisted state.
+    /// The external signal utility keeps this harness free of unsafe signal calls.
+    pub async fn suspend(&mut self) -> Result<()> {
+        ensure!(
+            !self.suspended,
+            "validator {} already suspended",
+            self.index
+        );
+        let pid = self
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .with_context(|| format!("validator {} has no running child", self.index))?;
+        // Do not yield between marking the child and delivering SIGSTOP:
+        // cancellation must not let cleanup's SIGCONT overtake the stop signal.
+        self.suspended = true;
+        let status = SignalCommand::new("kill")
+            .arg("-STOP")
+            .arg(pid.to_string())
+            .status()
+            .context("send SIGSTOP")?;
+        ensure!(
+            status.success(),
+            "SIGSTOP failed for validator {}",
+            self.index
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let output = Command::new("ps")
+                .args(["-o", "stat=", "-p"])
+                .arg(pid.to_string())
+                .output()
+                .await
+                .context("acknowledge SIGSTOP with ps")?;
+            ensure!(
+                output.status.success(),
+                "suspended validator {} disappeared",
+                self.index
+            );
+            if String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .starts_with('T')
+            {
+                tracing::info!(
+                    index = self.index,
+                    pid,
+                    "validator suspended (SIGSTOP acknowledged)"
+                );
+                return Ok(());
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "SIGSTOP was not acknowledged for validator {}",
+                self.index
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Resume a suspended child; a running or already-stopped child is unchanged.
+    pub async fn resume(&mut self) -> Result<()> {
+        if !self.suspended {
+            return Ok(());
+        }
+        let pid = self
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .with_context(|| format!("suspended validator {} has no child", self.index))?;
+        let status = Command::new("kill")
+            .arg("-CONT")
+            .arg(pid.to_string())
+            .status()
+            .await
+            .context("send SIGCONT")?;
+        ensure!(
+            status.success(),
+            "SIGCONT failed for validator {}",
+            self.index
+        );
+        self.suspended = false;
+        tracing::info!(index = self.index, pid, "validator resumed (SIGCONT)");
         Ok(())
     }
 
@@ -452,5 +552,134 @@ impl ValidatorProcess {
             bail!("admin POST {url} -> {status}: {body}");
         }
         resp.text().await.context("read admin response")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::write;
+
+    use anemo::{Network, Router};
+    use ika_swarm_config::node_config_builder::ValidatorConfigBuilder;
+    use ika_swarm_config::validator_initialization_config::ValidatorInitializationConfigBuilder;
+    use ika_types::digests::ChainIdentifier;
+    use rand::thread_rng;
+    use sui_types::base_types::ObjectID;
+    use tempfile::tempdir;
+    use tokio::time::timeout;
+
+    use super::*;
+
+    fn generated_config(directory: &Path) -> NodeConfig {
+        let validator = ValidatorInitializationConfigBuilder::new()
+            .with_ip("127.0.0.1".to_owned())
+            .with_deterministic_ports(20_000)
+            .build(&mut thread_rng());
+        ValidatorConfigBuilder::new()
+            .with_config_directory(directory.to_owned())
+            .build(
+                &validator,
+                "http://unused:9000".to_owned(),
+                ObjectID::new([1; 32]),
+                ObjectID::new([2; 32]),
+                ObjectID::new([3; 32]),
+                ObjectID::new([4; 32]),
+                ObjectID::new([5; 32]),
+                ObjectID::new([6; 32]),
+            )
+    }
+
+    fn process_with_config(directory: &Path, config: &NodeConfig) -> Result<ValidatorProcess> {
+        let config_path = directory.join("node-config.yaml");
+        write(&config_path, serde_yaml::to_string(config)?)?;
+        Ok(ValidatorProcess::new(
+            0,
+            directory.join("unused-validator"),
+            config_path,
+            directory.to_owned(),
+            "127.0.0.1:0".parse()?,
+            0,
+            directory.join("node.log"),
+            1,
+        ))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn read_config_resolves_identity_for_key_checkpoint_connection() -> Result<()> {
+        let directory = tempdir()?;
+        let mut config = generated_config(directory.path());
+        let system_object_id = config.sui_connector_config.ika_system_object_id;
+        // Current binaries must use the override, even if old flat YAML fields disagree.
+        config.sui_connector_config.ika_system_object_id = ObjectID::new([7; 32]);
+        let unresolved: NodeConfig = serde_yaml::from_str(&serde_yaml::to_string(&config)?)?;
+        assert_eq!(
+            unresolved.sui_connector_config.ika_system_object_id,
+            ObjectID::ZERO
+        );
+        let process = process_with_config(directory.path(), &config)?;
+        let resolved = process.read_config()?;
+        let server = Network::bind("127.0.0.1:0")
+            .server_name(format!("ika-{}", ChainIdentifier::from(system_object_id)))
+            .private_key([1; 32])
+            .start(Router::new())?;
+        let client = Network::bind("127.0.0.1:0")
+            .server_name(format!(
+                "ika-{}",
+                ChainIdentifier::from(resolved.sui_connector_config.ika_system_object_id)
+            ))
+            .private_key([2; 32])
+            .start(Router::new())?;
+        timeout(
+            Duration::from_secs(5),
+            client.connect_with_peer_id(server.local_addr(), server.peer_id()),
+        )
+        .await??;
+        assert_eq!(
+            resolved.sui_connector_config.ika_system_object_id,
+            system_object_id
+        );
+
+        let wrong_chain = Network::bind("127.0.0.1:0")
+            .server_name(format!(
+                "ika-{}",
+                ChainIdentifier::from(unresolved.sui_connector_config.ika_system_object_id)
+            ))
+            .private_key([3; 32])
+            .start(Router::new())?;
+        let error = timeout(
+            Duration::from_secs(5),
+            wrong_chain.connect_with_peer_id(server.local_addr(), server.peer_id()),
+        )
+        .await?
+        .expect_err("an unresolved chain identity must not connect to the validator");
+        assert!(
+            error
+                .to_string()
+                .contains("no server certificate chain resolved"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_rejects_missing_or_invalid_local_identity() -> Result<()> {
+        let directory = tempdir()?;
+        let mut config = generated_config(directory.path());
+        let mut invalid_override = config.sui_connector_config.ika_unsafe_identity_override;
+        invalid_override.as_mut().unwrap().ika_system_object_id = ObjectID::ZERO;
+        for identity in [None, invalid_override] {
+            config.sui_connector_config.ika_unsafe_identity_override = identity;
+            let process = process_with_config(directory.path(), &config)?;
+            let error = process
+                .read_config()
+                .expect_err("invalid identity must fail before dialing");
+            assert!(
+                error
+                    .to_string()
+                    .contains("resolve generated node config's on-chain identity"),
+                "{error}"
+            );
+        }
+        Ok(())
     }
 }
