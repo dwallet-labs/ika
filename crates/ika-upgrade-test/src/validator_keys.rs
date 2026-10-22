@@ -40,7 +40,7 @@ use class_groups::{
     Secp256r1SetupParameters,
 };
 use dwallet_rng::RootSeed;
-use group::sampling::{LegacyCsRng, legacy_seeded_rng};
+use group::sampling::legacy_seeded_rng;
 use group::{GroupElement as _, ristretto, secp256k1, secp256r1};
 use mpc::hybrid_public_key_encryption::generate_encryption_keypair;
 
@@ -143,7 +143,7 @@ fn derive_public_keys_without_proofs(
         }
         ValidatorKeyDerivation::Legacy => {
             let mut rng = legacy_seeded_rng(root.vss_hpke_secret_key_seed());
-            generate_encryption_keypair(&mut LegacyCsRng(&mut rng))
+            generate_encryption_keypair(&mut rng)
         }
     }?;
 

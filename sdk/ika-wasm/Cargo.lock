@@ -4,12 +4,22 @@ version = 4
 
 [[package]]
 name = "aead"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
+dependencies = [
+ "crypto-common 0.1.7",
+ "generic-array",
+]
+
+[[package]]
+name = "aead"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1973cfbc1a2daf9cf550e74e1f088c28e7f7d8c1e1418fb6c9dc5184b7e84c99"
 dependencies = [
  "crypto-common 0.2.2",
- "inout",
+ "inout 0.2.2",
 ]
 
 [[package]]
@@ -18,7 +28,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
 dependencies = [
- "cipher",
+ "cipher 0.5.2",
  "cpubits",
  "cpufeatures 0.3.1",
 ]
@@ -29,9 +39,9 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
 dependencies = [
- "aead",
+ "aead 0.6.1",
  "aes",
- "cipher",
+ "cipher 0.5.2",
  "ctr",
  "ctutils",
  "ghash",
@@ -109,7 +119,7 @@ version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
 ]
 
 [[package]]
@@ -141,13 +151,37 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chacha20"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
+dependencies = [
+ "cfg-if",
+ "cipher 0.4.4",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "chacha20"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
- "cipher",
+ "cipher 0.5.2",
  "cpufeatures 0.3.1",
+]
+
+[[package]]
+name = "chacha20poly1305"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
+dependencies = [
+ "aead 0.5.2",
+ "chacha20 0.9.1",
+ "cipher 0.4.4",
+ "poly1305 0.8.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -156,10 +190,21 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
 dependencies = [
- "aead",
- "chacha20",
- "cipher",
- "poly1305",
+ "aead 0.6.1",
+ "chacha20 0.10.2",
+ "cipher 0.5.2",
+ "poly1305 0.9.1",
+]
+
+[[package]]
+name = "cipher"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+dependencies = [
+ "crypto-common 0.1.7",
+ "inout 0.1.4",
+ "zeroize",
 ]
 
 [[package]]
@@ -170,17 +215,17 @@ checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
 dependencies = [
  "block-buffer 0.12.1",
  "crypto-common 0.2.2",
- "inout",
+ "inout 0.2.2",
 ]
 
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "bcs 0.1.6",
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "crypto-primes",
  "group 0.2.0",
  "homomorphic_encryption",
@@ -190,10 +235,9 @@ dependencies = [
  "mpc",
  "proof",
  "rand",
- "rand_chacha 0.10.0",
+ "rand_chacha",
  "serde",
  "sha3",
- "subtle",
  "thiserror 2.0.20",
 ]
 
@@ -206,9 +250,9 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "group 0.2.0",
  "merlin",
  "serde",
@@ -274,6 +318,16 @@ source = "git+https://github.com/ycscaly/crypto-bigint.git?rev=8aabcee553b25f9f6
 dependencies = [
  "num-traits",
  "rand_core 0.9.5",
+ "subtle",
+]
+
+[[package]]
+name = "crypto-bigint"
+version = "0.7.0-rc.9"
+source = "git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050#c6a320508eb7fad2e80ed240c68c375983ee72fa"
+dependencies = [
+ "num-traits",
+ "rand_core 0.9.5",
  "serdect",
  "subtle",
 ]
@@ -281,14 +335,14 @@ dependencies = [
 [[package]]
 name = "crypto-bigint"
 version = "0.7.5"
-source = "git+https://github.com/ycscaly/crypto-bigint.git?rev=07f3c1091363be7d876da80d99ab6610f71f2404#07f3c1091363be7d876da80d99ab6610f71f2404"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
 dependencies = [
  "cpubits",
  "ctutils",
  "hybrid-array",
  "num-traits",
  "rand_core 0.10.1",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -299,7 +353,8 @@ version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
- "generic-array 0.14.7",
+ "generic-array",
+ "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -309,19 +364,19 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
- "getrandom",
+ "getrandom 0.4.3",
  "hybrid-array",
  "rand_core 0.10.1",
 ]
 
 [[package]]
 name = "crypto-primes"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3633a51a39c69ebbaa4feaa694bd83d241e4093901c84a0963b19d9bb3f0cf8f"
+version = "0.7.0-pre.3"
+source = "git+https://github.com/ycscaly/crypto-primes.git?rev=4ff67431#4ff67431a93c2c9861284184c2db60582e658617"
 dependencies = [
- "crypto-bigint 0.7.5",
- "rand_core 0.10.1",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
+ "libm",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -330,7 +385,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaca1c4b237092596f64d571e9db6ce4109c4ef9742e27590f1709594461f21"
 dependencies = [
- "cipher",
+ "cipher 0.5.2",
 ]
 
 [[package]]
@@ -430,15 +485,15 @@ dependencies = [
  "class_groups",
  "commitment",
  "console_log",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "dwallet-mpc-types",
- "getrandom",
+ "getrandom 0.4.3",
  "group 0.2.0",
  "homomorphic_encryption",
  "log",
  "mpc",
- "rand_chacha 0.10.0",
- "rand_core 0.10.1",
+ "rand_chacha",
+ "rand_core 0.9.5",
  "schemars",
  "serde",
  "tracing",
@@ -454,7 +509,7 @@ dependencies = [
  "anyhow",
  "bcs 0.2.1",
  "class_groups",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
  "enum_dispatch",
  "group 0.2.0",
@@ -600,13 +655,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "generic-array"
-version = "1.4.5"
+name = "getrandom"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "337d46834ee672ab3e48caca2cb0c78cc174fb12b3a68d0d88f99a0519a5e36e"
+checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
- "rustversion",
- "typenum",
+ "cfg-if",
+ "js-sys",
+ "libc",
+ "wasi",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "getrandom"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+dependencies = [
+ "cfg-if",
+ "js-sys",
+ "libc",
+ "r-efi 5.3.0",
+ "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -618,7 +690,7 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi",
+ "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
 ]
@@ -644,21 +716,21 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "blake2b_simd",
- "crypto-bigint 0.7.0-rc.9",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=8aabcee553b25f9f619722391de33edbe2f7412c)",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
- "getrandom",
+ "getrandom 0.3.4",
  "hash2curve",
  "itertools",
  "k256",
  "p256",
  "rand",
- "rand_chacha 0.10.0",
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.10.1",
+ "rand_core 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -716,24 +788,25 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "group 0.2.0",
  "serde",
- "subtle",
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "hpke"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5324110b02044183df000f0bd7d2d7e61f1000631508627e77f63983b6fdffb"
+version = "0.14.0-pre.1"
+source = "git+https://github.com/ycscaly/rust-hpke.git?rev=94b318c#94b318c8b131b8e3929a30fc6f4e8903ff1b8c8e"
 dependencies = [
- "aead",
+ "aead 0.6.1",
  "aes-gcm",
+ "chacha20poly1305 0.11.0",
+ "digest 0.11.3",
  "hkdf",
+ "hmac",
  "hybrid-array",
  "rand_core 0.10.1",
  "sha2 0.11.1",
@@ -751,6 +824,15 @@ dependencies = [
  "subtle",
  "typenum",
  "zeroize",
+]
+
+[[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array",
 ]
 
 [[package]]
@@ -836,6 +918,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -844,10 +932,10 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "group 0.2.0",
  "homomorphic_encryption",
  "merlin",
@@ -878,17 +966,18 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
- "aead",
+ "aead 0.5.2",
  "bcs 0.1.6",
- "chacha20poly1305",
+ "chacha20poly1305 0.10.1",
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
  "gcd",
- "generic-array 1.4.5",
- "getrandom",
+ "generic-array",
+ "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "group 0.2.0",
  "hpke",
  "itertools",
@@ -896,11 +985,10 @@ dependencies = [
  "merlin",
  "proof",
  "rand",
- "rand_chacha 0.10.0",
+ "rand_chacha",
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "subtle",
  "thiserror 2.0.20",
 ]
 
@@ -931,6 +1019,12 @@ dependencies = [
  "critical-section",
  "portable-atomic",
 ]
+
+[[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "p256"
@@ -965,12 +1059,23 @@ dependencies = [
 
 [[package]]
 name = "poly1305"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
+dependencies = [
+ "cpufeatures 0.2.17",
+ "opaque-debug",
+ "universal-hash 0.5.1",
+]
+
+[[package]]
+name = "poly1305"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c"
 dependencies = [
  "cpufeatures 0.3.1",
- "universal-hash",
+ "universal-hash 0.6.1",
 ]
 
 [[package]]
@@ -981,7 +1086,7 @@ checksum = "f0fa31d631f2b2cb2a544d0aa321ce847a94764d701ca2becc411138b93d49cd"
 dependencies = [
  "cpubits",
  "cpufeatures 0.3.1",
- "universal-hash",
+ "universal-hash 0.6.1",
 ]
 
 [[package]]
@@ -1038,10 +1143,10 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
  "group 0.2.0",
  "itertools",
@@ -1054,10 +1159,10 @@ dependencies = [
 [[package]]
 name = "proof_aggregation"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
  "group 0.2.0",
  "itertools",
@@ -1081,17 +1186,23 @@ dependencies = [
 
 [[package]]
 name = "r-efi"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
+name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.10.3"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_core 0.10.1",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -1105,26 +1216,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand_chacha"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.10.1",
-]
-
-[[package]]
 name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "rand_core"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+dependencies = [
+ "getrandom 0.3.4",
+]
 
 [[package]]
 name = "rand_core"
@@ -1538,11 +1645,11 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=18e346d0c7bd4806047cbaba46fa527259fb76a0#18e346d0c7bd4806047cbaba46fa527259fb76a0"
+source = "git+https://github.com/dwallet-labs/inkrypto?rev=8347fd40eb8d95ee6a1f59a0813381b3d81f62c3#8347fd40eb8d95ee6a1f59a0813381b3d81f62c3"
 dependencies = [
  "class_groups",
  "commitment",
- "crypto-bigint 0.7.5",
+ "crypto-bigint 0.7.0-rc.9 (git+https://github.com/ycscaly/crypto-bigint.git?rev=c6a32050)",
  "curve25519-dalek 5.0.0",
  "ecdsa",
  "ed25519",
@@ -1563,7 +1670,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "sha3",
- "subtle",
  "thiserror 2.0.20",
 ]
 
@@ -1578,6 +1684,16 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "universal-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
+dependencies = [
+ "crypto-common 0.1.7",
+ "subtle",
+]
 
 [[package]]
 name = "universal-hash"
@@ -1600,6 +1716,21 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
+
+[[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+dependencies = [
+ "wit-bindgen",
+]
 
 [[package]]
 name = "wasm-bindgen"
@@ -1685,6 +1816,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
 name = "wnaf"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1698,13 +1835,12 @@ dependencies = [
 
 [[package]]
 name = "x25519-dalek"
-version = "3.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
+checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
- "curve25519-dalek 5.0.0",
- "rand_core 0.10.1",
- "zeroize",
+ "curve25519-dalek 4.1.3",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
