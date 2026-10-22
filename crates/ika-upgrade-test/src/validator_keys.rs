@@ -5,7 +5,6 @@
 //! Expected identities contain public keys only; proof bytes never identify a key.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::read_to_string;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -24,139 +23,10 @@ use ika_types::digests::ChainIdentifier;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use rand::thread_rng;
-use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep, timeout_at};
 
-use crate::cluster::{required_labeled_metric, required_unlabeled_metric};
+use crate::cluster::{parse_metric_samples, required_labeled_metric, required_unlabeled_metric};
 use crate::process::ValidatorProcess;
-
-use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
-    SecretKeyShareCRTPrimeDecryptionKey, construct_setup_parameters_per_crt_prime,
-};
-use class_groups::setup::DeriveFromPlaintextPublicParameters;
-use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, RistrettoDecryptionKey, RistrettoSetupParameters,
-    Secp256k1DecryptionKey, Secp256k1SetupParameters, Secp256r1DecryptionKey,
-    Secp256r1SetupParameters,
-};
-use dwallet_rng::RootSeed;
-use group::sampling::legacy_seeded_rng;
-use group::{GroupElement as _, ristretto, secp256k1, secp256r1};
-use mpc::hybrid_public_key_encryption::generate_encryption_keypair;
-
-/// Harness-only comparison of deployed and current native key derivations.
-/// Validators use the production derivation exclusively.
-#[derive(Clone, Copy)]
-enum ValidatorKeyDerivation {
-    Current,
-    Legacy,
-}
-
-/// Public key BCS values in bundle order: three CRT keys, secp256k1 PVSS,
-/// secp256r1 PVSS, ristretto PVSS, VSS HPKE. No proofs are generated.
-/// Current and Legacy VSS keys are expected to be identical for one root.
-fn derive_public_keys_without_proofs(
-    root: &RootSeed,
-    derivation: ValidatorKeyDerivation,
-) -> Result<[Vec<u8>; 7]> {
-    let crt_setup =
-        construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER)?;
-    // The CRT generator samples all three secrets sequentially BEFORE proving
-    // any of them. Never re-seed this RNG separately for each CRT prime.
-    let mut current_crt_rng = root.class_groups_decryption_key_rng();
-    let mut legacy_crt_rng = legacy_seeded_rng(root.class_groups_decryption_key_seed());
-    let [first_crt, second_crt, third_crt] = crt_setup.map(|setup| -> Result<Vec<u8>> {
-        let (public_parameters, _) = match derivation {
-            ValidatorKeyDerivation::Current => {
-                SecretKeyShareCRTPrimeDecryptionKey::generate_with_setup_parameters(
-                    setup,
-                    &mut current_crt_rng,
-                )
-            }
-            ValidatorKeyDerivation::Legacy => {
-                SecretKeyShareCRTPrimeDecryptionKey::generate_with_setup_parameters_legacy(
-                    setup,
-                    &mut legacy_crt_rng,
-                )
-            }
-        }?;
-        Ok(bcs::to_bytes(&public_parameters.encryption_key.value())?)
-    });
-
-    let secp256k1_setup =
-        Secp256k1SetupParameters::derive_from_plaintext_parameters::<secp256k1::Scalar>(
-            secp256k1::scalar::PublicParameters::default(),
-            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-        )?;
-    let (secp256k1_public, _) = match derivation {
-        ValidatorKeyDerivation::Current => Secp256k1DecryptionKey::generate_with_setup_parameters(
-            secp256k1_setup,
-            &mut root.pvss_secp256k1_decryption_key_rng(),
-        ),
-        ValidatorKeyDerivation::Legacy => {
-            Secp256k1DecryptionKey::generate_with_setup_parameters_legacy(
-                secp256k1_setup,
-                &mut legacy_seeded_rng(root.pvss_secp256k1_decryption_key_seed()),
-            )
-        }
-    }?;
-
-    let secp256r1_setup =
-        Secp256r1SetupParameters::derive_from_plaintext_parameters::<secp256r1::Scalar>(
-            secp256r1::scalar::PublicParameters::default(),
-            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-        )?;
-    let (secp256r1_public, _) = match derivation {
-        ValidatorKeyDerivation::Current => Secp256r1DecryptionKey::generate_with_setup_parameters(
-            secp256r1_setup,
-            &mut root.pvss_secp256r1_decryption_key_rng(),
-        ),
-        ValidatorKeyDerivation::Legacy => {
-            Secp256r1DecryptionKey::generate_with_setup_parameters_legacy(
-                secp256r1_setup,
-                &mut legacy_seeded_rng(root.pvss_secp256r1_decryption_key_seed()),
-            )
-        }
-    }?;
-
-    let ristretto_setup =
-        RistrettoSetupParameters::derive_from_plaintext_parameters::<ristretto::Scalar>(
-            ristretto::scalar::PublicParameters::default(),
-            DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-        )?;
-    let (ristretto_public, _) = match derivation {
-        ValidatorKeyDerivation::Current => RistrettoDecryptionKey::generate_with_setup_parameters(
-            ristretto_setup,
-            &mut root.pvss_ristretto_decryption_key_rng(),
-        ),
-        ValidatorKeyDerivation::Legacy => {
-            RistrettoDecryptionKey::generate_with_setup_parameters_legacy(
-                ristretto_setup,
-                &mut legacy_seeded_rng(root.pvss_ristretto_decryption_key_seed()),
-            )
-        }
-    }?;
-
-    let (_, vss_public) = match derivation {
-        ValidatorKeyDerivation::Current => {
-            generate_encryption_keypair(&mut root.vss_hpke_secret_key_rng())
-        }
-        ValidatorKeyDerivation::Legacy => {
-            let mut rng = legacy_seeded_rng(root.vss_hpke_secret_key_seed());
-            generate_encryption_keypair(&mut rng)
-        }
-    }?;
-
-    Ok([
-        first_crt?,
-        second_crt?,
-        third_crt?,
-        bcs::to_bytes(&secp256k1_public.encryption_key.value())?,
-        bcs::to_bytes(&secp256r1_public.encryption_key.value())?,
-        bcs::to_bytes(&ristretto_public.encryption_key.value())?,
-        bcs::to_bytes(&vss_public.value())?,
-    ])
-}
 
 const KEY_NAMES: [&str; 7] = [
     "class-groups CRT key 0",
@@ -169,26 +39,24 @@ const KEY_NAMES: [&str; 7] = [
 ];
 type PublicKeys = [Vec<u8>; 7];
 
-struct ExpectedValidator {
+struct OriginalValidator {
     index: usize,
     authority: AuthorityName,
     peer: PeerId,
     address: SocketAddr,
-    legacy: PublicKeys,
-    current: PublicKeys,
 }
 
-/// Only public expected keys and the fixed original committee survive preparation.
-/// A successful legacy checkpoint is required before checking the current keys.
+/// Compare authenticated public keys across the existing live rollout.
+/// Native derivation against the deployed fixture is covered by ika-core tests.
 pub(crate) struct ValidatorKeyPreservation {
-    validators: Vec<ExpectedValidator>,
+    validators: Vec<OriginalValidator>,
     committee: Committee,
     network: Network,
     baseline: Mutex<Option<BTreeMap<AuthorityName, PublicKeys>>>,
 }
 
 impl ValidatorKeyPreservation {
-    pub(crate) async fn prepare(
+    pub(crate) fn prepare(
         configs: Vec<(usize, AuthorityName, NodeConfig)>,
         committee: Committee,
     ) -> Result<Self> {
@@ -205,39 +73,23 @@ impl ValidatorKeyPreservation {
             .private_key(keypair.copy().private().0.to_bytes())
             .config(config)
             .start(Router::new())?;
-        let validators = spawn_blocking(move || {
-            configs
-                .into_iter()
-                .map(|(index, authority, config)| {
-                    let root = config
-                        .root_seed_key_pair
-                        .as_ref()
-                        .context("validator root seed missing")?
-                        .try_root_seed()?;
-                    let legacy =
-                        derive_public_keys_without_proofs(root, ValidatorKeyDerivation::Legacy)?;
-                    let current =
-                        derive_public_keys_without_proofs(root, ValidatorKeyDerivation::Current)?;
-                    assert_preservation(&legacy, &current, authority)?;
-                    let address = config.p2p_config.listen_address;
-                    let address = if address.ip().is_unspecified() {
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port())
-                    } else {
-                        address
-                    };
-                    Ok(ExpectedValidator {
-                        index,
-                        authority,
-                        peer: PeerId(config.network_key_pair().public().0.to_bytes()),
-                        address,
-                        legacy,
-                        current,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .await
-        .context("derive expected validator public keys")??;
+        let validators = configs
+            .into_iter()
+            .map(|(index, authority, config)| {
+                let address = config.p2p_config.listen_address;
+                let address = if address.ip().is_unspecified() {
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port())
+                } else {
+                    address
+                };
+                OriginalValidator {
+                    index,
+                    authority,
+                    peer: PeerId(config.network_key_pair().public().0.to_bytes()),
+                    address,
+                }
+            })
+            .collect::<Vec<_>>();
         let original: BTreeSet<_> = validators
             .iter()
             .map(|validator| validator.authority)
@@ -268,7 +120,7 @@ impl ValidatorKeyPreservation {
         Ok(())
     }
 
-    pub(crate) async fn assert_derivation(
+    pub(crate) async fn assert_preserved(
         &self,
         processes: &[ValidatorProcess],
         active_epoch: u64,
@@ -294,7 +146,7 @@ impl ValidatorKeyPreservation {
                 for validator in &self.validators {
                     let process = processes.get(validator.index).context("original validator process missing")?;
                     ensure!(process.is_running(), "original validator {} is not running", validator.index);
-                    ready &= validator_ready(process, validator.authority, active_epoch, current).await?;
+                    ready &= validator_ready(process, active_epoch, current).await?;
                 }
                 if ready {
                     let mut certificates = Vec::new();
@@ -325,13 +177,12 @@ impl ValidatorKeyPreservation {
                         let first = certificates.first().context("no original validator served a certificate")?;
                         ensure!(certificates.len() == self.validators.len(), "missing original validator certificate");
                         ensure!(certificates.iter().all(|cert| cert.attestation == first.attestation), "original validators served different handoff attestations");
-                        let expected = self.validators.iter().map(|validator| (validator.authority, if current { validator.current.clone() } else { validator.legacy.clone() })).collect();
-                        let observed = verify_snapshot(first, &self.committee, active_epoch, &expected, &blobs)?;
+                        let observed = verify_snapshot(first, &self.committee, active_epoch, &blobs)?;
                         // All peers served the same authenticated attestation. Re-read
                         // every live epoch after the fetch to exclude an epoch-crossing snapshot.
                         for validator in &self.validators {
                             let process = &processes[validator.index];
-                            ensure!(validator_ready(process, validator.authority, active_epoch, current).await?, "validator {} lost exact epoch {active_epoch} readiness during key checkpoint", validator.index);
+                            ensure!(validator_ready(process, active_epoch, current).await?, "validator {} lost exact epoch {active_epoch} readiness during key checkpoint", validator.index);
                         }
                         if current {
                             let baseline = self.baseline.lock().expect("key checkpoint mutex poisoned");
@@ -468,7 +319,6 @@ fn verify_snapshot(
     cert: &CertifiedHandoffAttestation,
     committee: &Committee,
     active_epoch: u64,
-    expected: &BTreeMap<AuthorityName, PublicKeys>,
     blobs: &BTreeMap<[u8; 32], Vec<u8>>,
 ) -> Result<BTreeMap<AuthorityName, PublicKeys>> {
     verify_certificate(cert, committee, active_epoch)?
@@ -482,26 +332,12 @@ fn verify_snapshot(
                 "certified validator bundle hash mismatch"
             );
             let actual = decode_public_keys(blob)?;
-            let expected = expected
-                .get(&authority)
-                .context("original validator expected identity missing")?;
-            for (index, name) in KEY_NAMES.iter().enumerate() {
-                ensure!(
-                    actual[index] == expected[index],
-                    "validator {authority} {name} does not match expected sampler"
-                );
-            }
             Ok((authority, actual))
         })
         .collect()
 }
 
-async fn validator_ready(
-    process: &ValidatorProcess,
-    authority: AuthorityName,
-    epoch: u64,
-    current: bool,
-) -> Result<bool> {
+async fn validator_ready(process: &ValidatorProcess, epoch: u64, current: bool) -> Result<bool> {
     let metrics = process.metrics().await?;
     if !metrics
         .lines()
@@ -520,8 +356,7 @@ async fn validator_ready(
         return Ok(false);
     }
     if current {
-        let log = read_to_string(process.log_path()).context("read validator key-selection log")?;
-        if !selected_current(&log, authority, epoch)? {
+        if !key_preparation_complete(&metrics, epoch)? {
             return Ok(false);
         }
         if !metrics.contains("ika_dwallet_mpc_seed_identity_state{") {
@@ -541,38 +376,34 @@ async fn validator_ready(
     Ok(true)
 }
 
-fn selected_current(log: &str, authority: AuthorityName, epoch: u64) -> Result<bool> {
-    let expected_authority = authority.to_string();
-    let expected_epoch = epoch.to_string();
-    for raw in log.lines().rev() {
-        // Tracing's ANSI SGR sequences can appear when the child inherits color settings.
-        let line = raw
-            .split('\u{1b}')
-            .map(|part| {
-                part.strip_prefix('[')
-                    .and_then(|part| part.split_once('m').map(|(_, text)| text))
-                    .unwrap_or(part)
+fn key_preparation_complete(metrics: &str, epoch: u64) -> Result<bool> {
+    let samples = parse_metric_samples(metrics, "ika_dwallet_mpc_validator_key_epoch")?;
+    for stage in ["selected", "prepared"] {
+        let matching = samples
+            .iter()
+            .filter(|sample| {
+                sample
+                    .labels
+                    .get("stage")
+                    .is_some_and(|value| value == stage)
             })
-            .collect::<String>();
-        if !line.contains("selected validator key derivation from the certified handoff") {
-            continue;
-        }
-        let fields: BTreeMap<_, _> = line
-            .split_whitespace()
-            .filter_map(|word| word.split_once('='))
-            .collect();
-        if fields.get("authority").copied() != Some(expected_authority.as_str())
-            || fields.get("epoch").copied() != Some(expected_epoch.as_str())
-        {
-            continue;
-        }
+            .collect::<Vec<_>>();
         ensure!(
-            fields.get("derivation").copied() == Some("Current"),
-            "validator {authority} selected legacy or unknown derivation in active epoch {epoch}"
+            matching.len() <= 1,
+            "duplicate validator key epoch stage {stage}"
         );
-        return Ok(true);
+        let Some(sample) = matching.first() else {
+            return Ok(false);
+        };
+        ensure!(
+            sample.value.is_finite() && sample.value >= -1.0 && sample.value.fract() == 0.0,
+            "invalid validator key epoch stage {stage}"
+        );
+        if sample.value != epoch as f64 {
+            return Ok(false);
+        }
     }
-    Ok(false)
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -762,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_checks_blob_binding_and_every_public_key_slot() {
+    fn snapshot_checks_blob_binding_and_all_validators() {
         let (committee, signers) = committee_and_signers();
         let keys = decode_public_keys(LEGACY_FIXTURE).unwrap();
         let expected = expected_keys(&committee, &keys);
@@ -770,38 +601,22 @@ mod tests {
         let digest = mpc_data_blob_hash(LEGACY_FIXTURE);
         let blobs = BTreeMap::from([(digest, LEGACY_FIXTURE.to_vec())]);
         assert_eq!(
-            verify_snapshot(&cert, &committee, 6, &expected, &blobs).unwrap(),
+            verify_snapshot(&cert, &committee, 6, &blobs).unwrap(),
             expected
         );
         assert!(
-            verify_snapshot(&cert, &committee, 6, &expected, &BTreeMap::new())
+            verify_snapshot(&cert, &committee, 6, &BTreeMap::new())
                 .unwrap_err()
                 .to_string()
                 .contains("bundle missing")
         );
         let corrupt = BTreeMap::from([(digest, vec![0])]);
         assert!(
-            verify_snapshot(&cert, &committee, 6, &expected, &corrupt)
+            verify_snapshot(&cert, &committee, 6, &corrupt)
                 .unwrap_err()
                 .to_string()
                 .contains("hash mismatch")
         );
-        let authority = committee
-            .voting_rights
-            .iter()
-            .map(|(authority, _)| *authority)
-            .min()
-            .unwrap();
-        for (index, name) in KEY_NAMES.iter().enumerate() {
-            let mut changed = expected.clone();
-            changed.get_mut(&authority).unwrap()[index][0] ^= 1;
-            assert_eq!(
-                verify_snapshot(&cert, &committee, 6, &changed, &blobs)
-                    .unwrap_err()
-                    .to_string(),
-                format!("validator {authority} {name} does not match expected sampler")
-            );
-        }
     }
 
     #[test]
@@ -821,7 +636,7 @@ mod tests {
         );
         let cert = certificate(&committee, &signers, &blob);
         let blobs = BTreeMap::from([(mpc_data_blob_hash(&blob), blob)]);
-        let observed = verify_snapshot(&cert, &committee, 6, &expected, &blobs).unwrap();
+        let observed = verify_snapshot(&cert, &committee, 6, &blobs).unwrap();
         assert_eq!(observed, expected);
         let authority = committee
             .voting_rights
@@ -844,61 +659,16 @@ mod tests {
             eprintln!("key-preservation fault caught: {error}");
         }
     }
-
     #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn frozen_legacy_bundle_matches_both_native_derivations() {
-        let root = RootSeed::new([31; 32]);
-        let legacy =
-            derive_public_keys_without_proofs(&root, ValidatorKeyDerivation::Legacy).unwrap();
-        let current =
-            derive_public_keys_without_proofs(&root, ValidatorKeyDerivation::Current).unwrap();
-        assert_eq!(legacy, decode_public_keys(LEGACY_FIXTURE).unwrap());
-        let (committee, signers) = committee_and_signers();
-        let authority = committee
-            .voting_rights
-            .iter()
-            .map(|(authority, _)| *authority)
-            .min()
-            .unwrap();
-        assert_preservation(&legacy, &current, authority).unwrap();
-        let cert = certificate(&committee, &signers, LEGACY_FIXTURE);
-        let blobs = BTreeMap::from([(mpc_data_blob_hash(LEGACY_FIXTURE), LEGACY_FIXTURE.to_vec())]);
-        let legacy_expected = expected_keys(&committee, &legacy);
-        assert_eq!(
-            verify_snapshot(&cert, &committee, 6, &legacy_expected, &blobs).unwrap(),
-            legacy_expected
-        );
-        let current_expected = expected_keys(&committee, &current);
-        assert_eq!(
-            verify_snapshot(&cert, &committee, 6, &current_expected, &blobs).unwrap(),
-            current_expected
-        );
-    }
-
-    #[test]
-    fn selection_log_requires_exact_authority_epoch_and_current_mode() {
-        let authority = AuthorityName([1; 32]);
-        let other = AuthorityName([2; 32]);
-        let message = "selected validator key derivation from the certified handoff";
-        let current = format!("INFO {message} authority={authority:?} epoch=6 derivation=Current");
-        assert!(selected_current(&current, authority, 6).unwrap());
-        let colored = format!(
-            "INFO {message} \u{1b}[3mauthority\u{1b}[0m\u{1b}[2m=\u{1b}[0m{authority:?} epoch=6 derivation=Current"
-        );
-        assert!(selected_current(&colored, authority, 6).unwrap());
-        assert!(!selected_current(&current, authority, 60).unwrap());
-        assert!(!selected_current(&current, other, 6).unwrap());
-        let historical =
-            format!("{current}\nINFO {message} authority={authority:?} epoch=60 derivation=Legacy");
-        assert!(selected_current(&historical, authority, 6).unwrap());
-        let legacy =
-            format!("{current}\nINFO {message} authority={authority:?} epoch=6 derivation=Legacy");
-        assert!(
-            selected_current(&legacy, authority, 6)
-                .unwrap_err()
-                .to_string()
-                .contains("selected legacy or unknown derivation")
-        );
+    fn checkpoint_requires_exact_epoch_selection_and_preparation() {
+        let metrics = "ika_dwallet_mpc_validator_key_epoch{stage=\"selected\"} 6\nika_dwallet_mpc_validator_key_epoch{stage=\"prepared\"} 6";
+        assert!(key_preparation_complete(metrics, 6).unwrap());
+        assert!(!key_preparation_complete(metrics, 7).unwrap());
+        assert!(!key_preparation_complete("", 6).unwrap());
+        for stage in ["selected", "prepared"] {
+            let pending = metrics.replace(&format!("{stage}\"}} 6"), &format!("{stage}\"}} -1"));
+            assert!(!key_preparation_complete(&pending, 6).unwrap());
+        }
+        assert!(key_preparation_complete(&format!("{metrics}\n{metrics}"), 6).is_err());
     }
 }

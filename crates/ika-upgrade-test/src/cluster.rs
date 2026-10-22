@@ -1346,7 +1346,7 @@ impl ClusterOfProcesses {
         Ok(())
     }
 
-    /// Cache both samplers' public identities before the timed rollout boundaries.
+    /// Prepare the fixed committee's certified-key checkpoints.
     pub(crate) async fn prepare_validator_key_preservation(
         &self,
     ) -> Result<ValidatorKeyPreservation> {
@@ -1364,11 +1364,11 @@ impl ClusterOfProcesses {
                 Ok((process.index, authority.consensus, process.read_config()?))
             })
             .collect::<Result<Vec<_>>>()?;
-        ValidatorKeyPreservation::prepare(configs, committee).await
+        ValidatorKeyPreservation::prepare(configs, committee)
     }
 
     /// Authenticate the active handoff and every original validator's public keys.
-    pub(crate) async fn assert_validator_key_derivation(
+    pub(crate) async fn assert_validator_key_preservation(
         &self,
         expected: &ValidatorKeyPreservation,
         active_epoch: u64,
@@ -1383,7 +1383,7 @@ impl ClusterOfProcesses {
         );
         expected.check_committee(&epoch_start.get_ika_committee())?;
         expected
-            .assert_derivation(&self.validators, active_epoch, current)
+            .assert_preserved(&self.validators, active_epoch, current)
             .await?;
         let (_, system) = self.ika_client.get_system_inner().await?;
         let epoch_start = self.ika_client.get_epoch_start_system(&system).await?;

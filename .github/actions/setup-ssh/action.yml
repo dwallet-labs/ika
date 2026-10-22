@@ -27,12 +27,11 @@ runs:
         chmod 600 ~/.ssh/id_ed25519
         ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-    - name: Globally rewrite private GitHub HTTPS URLs to SSH
+    - name: Globally rewrite any GitHub HTTPS to SSH
       if: inputs.deploy-key != ''
       shell: bash
       run: |
         git config --global url."git@github.com:dwallet-labs/inkrypto".insteadOf "https://github.com/dwallet-labs/inkrypto"
-        git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
 
     - name: Authenticate public GitHub HTTPS fetches with the job token
       # The self-hosted runners share one egress address. Cargo (with
@@ -44,8 +43,8 @@ runs:
       # killing an 80-minute gate before any test body runs, on main as much
       # as on a branch. Authenticated fetches are limited per token, not per
       # address, so every git fetch of github.com goes out with the job
-      # token. The private-repo SSH rewrites above have longer prefixes, and
-      # git applies the longest matching insteadOf, so they still win.
+      # token. The private-repo SSH rewrite above is a longer prefix, and git
+      # applies the longest matching insteadOf, so it still wins for inkrypto.
       #
       # Two channels, because the Move package resolver (move_package_alt)
       # runs git with GIT_CONFIG_GLOBAL="" and so never reads ~/.gitconfig:

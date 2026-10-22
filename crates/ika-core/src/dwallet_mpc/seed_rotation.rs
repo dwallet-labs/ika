@@ -485,15 +485,6 @@ impl EpochSeedResolution {
                 .with_label_values(&["vss_hpke"])
                 .set(i64::from(matches.vss_hpke));
         }
-        if self.mpc_active() {
-            metrics
-                .validator_key_derivation
-                .with_label_values(&["current"])
-                .set(1);
-            info!(?authority, epoch, derivation = %"Current",
-                "selected validator key derivation from the certified handoff");
-        }
-
         let certified = self
             .certified
             .map(hex::encode)
@@ -612,13 +603,12 @@ mod tests {
         let registry = Registry::new();
         let metrics = DWalletMPCMetrics::new(&registry);
         let epoch_metric = "ika_dwallet_mpc_validator_key_epoch";
-        let derivation_metric = "ika_dwallet_mpc_validator_key_derivation";
         let matches_metric = "ika_dwallet_mpc_validator_current_key_certified_matches";
         assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
         assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
-        for (decision, matches, expected_matches, active) in [
+        for (decision, matches, expected_matches) in [
             (
                 EpochSeedDecision::RunOnPrevious,
                 Some(CertifiedKeyMatches {
@@ -626,7 +616,6 @@ mod tests {
                     vss_hpke: false,
                 }),
                 0.0,
-                true,
             ),
             (
                 EpochSeedDecision::RunOnCurrent {
@@ -637,7 +626,6 @@ mod tests {
                     vss_hpke: true,
                 }),
                 6.0,
-                true,
             ),
             (
                 EpochSeedDecision::NoParticipation {
@@ -648,7 +636,6 @@ mod tests {
                     vss_hpke: false,
                 }),
                 0.0,
-                false,
             ),
             (
                 EpochSeedDecision::NoCertifiedDigest {
@@ -656,17 +643,12 @@ mod tests {
                 },
                 None,
                 -1.0,
-                true,
             ),
         ] {
             metrics
                 .validator_key_epoch
                 .with_label_values(&["prepared"])
                 .set(6);
-            metrics
-                .validator_key_derivation
-                .with_label_values(&["legacy"])
-                .set(1);
             EpochSeedResolution {
                 decision,
                 mpc_seed: RootSeed::new([0; 32]),
@@ -683,19 +665,11 @@ mod tests {
                 expected_matches,
                 "uncertified current keys must not be reported as matching"
             );
-            assert_eq!(
-                metric(&registry, derivation_metric, "current"),
-                f64::from(active)
-            );
-            assert_eq!(metric(&registry, derivation_metric, "legacy"), 0.0);
         }
         metrics.clear_seed_identity_state();
         assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
-        for derivation in ["current", "legacy"] {
-            assert_eq!(metric(&registry, derivation_metric, derivation), 0.0);
-        }
         for state in SEED_IDENTITY_STATES {
             assert_eq!(
                 metric(&registry, "ika_dwallet_mpc_seed_identity_state", state),

@@ -1,6 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import {
+	generate_secp_cg_keypair_from_seed,
+	generate_secp_cg_keypair_from_seed_v2,
+} from '@ika.xyz/ika-wasm';
 import { toHex } from '@mysten/bcs';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { describe, expect, it } from 'vitest';
@@ -101,6 +105,12 @@ describe('new and historical key sampling', () => {
 			const [publicFingerprint, privateFingerprint] = fixedHashFingerprints[curves.indexOf(curve)];
 			expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
 			expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);
+			const [publicKey, privateKey] = generate_secp_cg_keypair_from_seed(
+				curves.indexOf(curve),
+				seed,
+			);
+			expect(toHex(sha256(Uint8Array.from(publicKey)))).toBe(publicFingerprint);
+			expect(toHex(sha256(Uint8Array.from(privateKey)))).toBe(privateFingerprint);
 		},
 	);
 
@@ -108,6 +118,12 @@ describe('new and historical key sampling', () => {
 		'matches native new-sampler key bytes through the direct V2 API for %s',
 		async (curve) => {
 			const keys = await createClassGroupsKeypairV2(rootSeed, curve);
+			const [publicKey, privateKey] = generate_secp_cg_keypair_from_seed_v2(
+				curves.indexOf(curve),
+				rootSeed,
+			);
+			expect(Uint8Array.from(publicKey)).toEqual(keys.encryptionKey);
+			expect(Uint8Array.from(privateKey)).toEqual(keys.decryptionKey);
 			const [publicFingerprint, privateFingerprint] = rawNewFingerprints[curves.indexOf(curve)];
 			expect(toHex(sha256(keys.encryptionKey))).toBe(publicFingerprint);
 			expect(toHex(sha256(keys.decryptionKey))).toBe(privateFingerprint);

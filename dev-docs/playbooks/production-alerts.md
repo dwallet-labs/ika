@@ -7,14 +7,12 @@ below.
 
 ## Validator encryption-key rollout walkthrough
 
-Inspect every validator's scrape target separately. Validators use the production
-sampler: `validator_key_derivation{derivation="current"}` is 1 when MPC is active,
-and the retained `legacy` child stays 0. `seed_identity_state` distinguishes the
-configured current root from an optional previous root.
+Inspect every validator's scrape target separately. `seed_identity_state`
+distinguishes the configured current root from an optional previous root.
+The binary upgrade preserves existing validator keys and requires no seed rotation.
 
 1. Before the change, record `ika_current_epoch`,
-   `ika_dwallet_mpc_seed_identity_state`,
-   `ika_dwallet_mpc_validator_key_derivation` and
+   `ika_dwallet_mpc_seed_identity_state` and
    `ika_dwallet_mpc_validator_key_epoch`. Both `selected` and `prepared` stages
    should reach the current epoch for an active validator.
 2. After restart, check
@@ -36,8 +34,8 @@ configured current root from an optional previous root.
    key epoch stages equal to `ika_current_epoch`. For a root-seed rotation,
    `rotation_complete=1` means the current seed is usable and the previous-seed
    config can be removed at a convenient restart. It is not a rotation counter:
-   configuring the same seed twice can also produce that state. A sampler
-   change or changed proof bytes alone does not mean public keys rotated.
+   configuring the same seed twice can also produce that state. Changed proof
+   bytes alone do not mean public keys rotated.
 5. Confirm real MPC progress after preparation: inspect session output
    participation, completed workloads and `ika_dwallet_mpc_malicious_actors_count`,
    with no increase in `ika_dwallet_mpc_self_malicious_total`. Key selection and
@@ -51,12 +49,12 @@ using the preparation logs and the handoff barrier signals.
 (ika_dwallet_mpc_validator_key_epoch{stage="prepared"} < 0)
 and ignoring(stage)
 (ika_dwallet_mpc_validator_key_epoch{stage="selected"} >= 0)
-and ignoring(stage, derivation)
-(ika_dwallet_mpc_validator_key_derivation == 1)
+and ignoring(stage, state)
+(ika_dwallet_mpc_seed_identity_state{state=~"matches|rotation_complete|rotating_on_previous_seed|no_certified_digest"} == 1)
 ```
 
 The existing seed-mismatch alert remains necessary: inactive validators
-deliberately leave preparation unset and both sampler children zero.
+deliberately leave preparation unset.
 
 ```promql
 ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1

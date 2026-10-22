@@ -519,8 +519,6 @@ pub struct DWalletMPCMetrics {
     /// Epoch whose keys were selected or whose active MPC preparation completed.
     /// -1 until the stage finishes; reset on every component start and role exit.
     pub(crate) validator_key_epoch: IntGaugeVec,
-    /// Current derivation is one when MPC is active; legacy remains zero.
-    pub(crate) validator_key_derivation: IntGaugeVec,
     /// Configured CURRENT seed's public keys matching the certified handoff:
     /// six class-group keys and one VSS HPKE key. -1 without a certified bundle.
     pub(crate) validator_current_key_certified_matches: IntGaugeVec,
@@ -1055,13 +1053,6 @@ impl DWalletMPCMetrics {
                 registry,
             )
             .unwrap(),
-            validator_key_derivation: register_int_gauge_vec_with_registry!(
-                "ika_dwallet_mpc_validator_key_derivation",
-                "Validator key sampler: current is 1 when MPC is active; legacy remains 0. All zero when MPC is inactive or keys are unresolved.",
-                &["derivation"],
-                registry,
-            )
-            .unwrap(),
             validator_current_key_certified_matches: register_int_gauge_vec_with_registry!(
                 "ika_dwallet_mpc_validator_current_key_certified_matches",
                 "Configured current seed's public keys matching the authenticated handoff, excluding proofs: class_group 0..6, vss_hpke 0..1; -1 without a certified bundle.",
@@ -1140,11 +1131,6 @@ impl DWalletMPCMetrics {
         }
         for stage in ["selected", "prepared"] {
             self.validator_key_epoch.with_label_values(&[stage]).set(-1);
-        }
-        for derivation in ["current", "legacy"] {
-            self.validator_key_derivation
-                .with_label_values(&[derivation])
-                .set(0);
         }
         for key_type in ["class_group", "vss_hpke"] {
             self.validator_current_key_certified_matches

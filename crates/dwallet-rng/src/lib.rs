@@ -76,7 +76,7 @@ impl RootSeed {
     ///
     /// We don't use the root seed directly, as it would be used for other purposes.
     /// Instead, we derive a seed from it using a distinct hard-coded label.
-    pub fn class_groups_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn class_groups_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         // Add a distinct descriptive label, and the root seed itself.
         let mut transcript = Transcript::new(b"Class Groups Decryption Key Seed");
         transcript.append_message(b"root seed", &self.0);
@@ -122,8 +122,7 @@ impl RootSeed {
     // upstream's `decentralized_party::dkg::PublicInput::new` per-curve PVSS
     // encryption-keys-and-proofs HashMap arguments.
 
-    /// Secret child seed for reproducing this key with its original RNG version.
-    pub fn pvss_secp256k1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn pvss_secp256k1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (secp256k1)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -131,8 +130,7 @@ impl RootSeed {
         seed
     }
 
-    /// Secret child seed for reproducing this key with its original RNG version.
-    pub fn pvss_secp256r1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn pvss_secp256r1_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (secp256r1)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -140,8 +138,7 @@ impl RootSeed {
         seed
     }
 
-    /// Secret child seed for reproducing this key with its original RNG version.
-    pub fn pvss_ristretto_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn pvss_ristretto_decryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"PVSS HPKE Decryption Key Seed (ristretto)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -173,8 +170,7 @@ impl RootSeed {
         ChaCha20Rng::from_seed(self.pvss_ristretto_decryption_key_seed())
     }
 
-    /// Secret child seed for reproducing this key with its original RNG version.
-    pub fn vss_hpke_secret_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn vss_hpke_secret_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"VSS HPKE Secret Key Seed (curve25519)");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];

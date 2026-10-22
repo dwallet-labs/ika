@@ -300,8 +300,7 @@ states the metric exists to report, and a subsystem cannot report its own
 stall.
 
 The accompanying `ika_dwallet_mpc_validator_key_epoch{stage}` distinguishes
-selection from completed preparation. `ika_dwallet_mpc_validator_key_derivation`
-reports `current=1` while MPC is active and retains `legacy=0`;
+selection from completed preparation.
 `ika_dwallet_mpc_validator_current_key_certified_matches` reports six class-group
 and one HPKE public-key matches for the configured current seed against the
 entering certificate. Their closed labels are pre-materialized;
@@ -724,7 +723,6 @@ ika_dwallet_mpc_user_session_self_output_consensus_round
 ika_dwallet_mpc_user_session_state
 ika_dwallet_mpc_user_sessions_active_without_local_output
 ika_dwallet_mpc_validator_current_key_certified_matches
-ika_dwallet_mpc_validator_key_derivation
 ika_dwallet_mpc_validator_key_epoch
 ika_dwallet_native_calls
 ika_dwallet_native_completions

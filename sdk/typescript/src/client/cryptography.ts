@@ -30,7 +30,7 @@ import {
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
 	generate_secp_cg_keypair_from_seed,
-	generate_secp_cg_keypair_from_seed_legacy,
+	generate_secp_cg_keypair_from_seed_v2,
 	network_dkg_public_output_to_protocol_pp,
 	parse_signature_from_sign_output,
 	public_key_from_centralized_dkg_output,
@@ -87,11 +87,7 @@ export async function createClassGroupsKeypair(
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
 }> {
-	return createClassGroupsKeypairWithGenerator(
-		seed,
-		curve,
-		generate_secp_cg_keypair_from_seed_legacy,
-	);
+	return createClassGroupsKeypairWithGenerator(seed, curve, generate_secp_cg_keypair_from_seed);
 }
 
 /**
@@ -109,13 +105,13 @@ export async function createClassGroupsKeypairV2(
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;
 }> {
-	return createClassGroupsKeypairWithGenerator(seed, curve, generate_secp_cg_keypair_from_seed);
+	return createClassGroupsKeypairWithGenerator(seed, curve, generate_secp_cg_keypair_from_seed_v2);
 }
 
 async function createClassGroupsKeypairWithGenerator(
 	seed: Uint8Array,
 	curve: Curve,
-	generate: typeof generate_secp_cg_keypair_from_seed,
+	generate: typeof generate_secp_cg_keypair_from_seed_v2,
 ): Promise<{
 	encryptionKey: Uint8Array;
 	decryptionKey: Uint8Array;

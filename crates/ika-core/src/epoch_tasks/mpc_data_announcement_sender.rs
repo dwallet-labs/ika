@@ -835,10 +835,10 @@ impl MpcDataAnnouncementSender {
                         local_digest = %hex::encode(local_digest),
                         frozen_digest = ?frozen_digest_for_self.map(hex::encode),
                         "this epoch's FROZEN MPC keys are still available from a configured \
-                         seed, but differ from the new announcement: a seed or sampler \
-                         transition landed after the freeze. Keep the previous seed, if \
+                         seed, but differ from the new announcement: a seed change or new proof \
+                         encoding landed after the freeze. Keep the previous seed, if \
                          configured, until the new keys are certified and active. The \
-                         sender continues announcing the current seed with the new sampler."
+                         sender continues announcing the current seed."
                     );
                 }
             }

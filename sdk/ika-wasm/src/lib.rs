@@ -97,8 +97,9 @@ pub fn dwallet_version(dwallet_output_bytes: Vec<u8>) -> Result<JsValue, JsError
 /// of the respective elliptic curve.
 /// The secret decryption key may be the same in terms of correctness,
 /// but to simplify security analysis and implementation current version maintain distinct key-pairs.
+/// Create portable keys matching native Rust; callers opt in explicitly.
 #[wasm_bindgen]
-pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsValue, JsError> {
+pub fn generate_secp_cg_keypair_from_seed_v2(curve: u32, seed: &[u8]) -> Result<JsValue, JsError> {
     let seed: [u8; 32] = seed
         .try_into()
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;
@@ -109,10 +110,7 @@ pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsV
 
 /// Recover class-groups keys derived with the historical 32-bit WASM sampler.
 #[wasm_bindgen]
-pub fn generate_secp_cg_keypair_from_seed_legacy(
-    curve: u32,
-    seed: &[u8],
-) -> Result<JsValue, JsError> {
+pub fn generate_secp_cg_keypair_from_seed(curve: u32, seed: &[u8]) -> Result<JsValue, JsError> {
     let seed: [u8; 32] = seed
         .try_into()
         .map_err(|_| JsError::new("seed must be 32 bytes long"))?;

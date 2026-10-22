@@ -162,7 +162,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .expect_all_validators_healthy()
         .expect_protocol_version_at_least(7)
         .expect_protocol_version_at_most(7)
-        .expect_legacy_validator_keys(2)
+        .record_validator_keys(2)
         .expect_network_key_reconfiguration_not_started(2)
         // ── Mixed phase: 1 NEW + 3 OLD, all at v7. ─────────────────────────
         .stop_and_swap(&[0], current.clone())
@@ -230,7 +230,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .run_workload("all-new-v7-after-full-swap")
         // The epoch-4 swaps can miss that epoch's announcement freeze. Epoch
         // 5 runs entirely on NEW; its certificate must preserve every deployed
-        // key set in epoch 6, with every validator selecting Current.
+        // key set in epoch 6, with every validator using its configured seed.
         .wait_for_epoch(6)
         .wait_for_all_validators_local_epoch(6)
         .expect_all_validators_healthy()

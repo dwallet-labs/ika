@@ -57,8 +57,6 @@ use class_groups::{
     DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, EquivalenceClass, RistrettoSetupParameters,
     Secp256k1SetupParameters, Secp256r1SetupParameters,
 };
-#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
-use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_rng::RootSeed;
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 use group::{GroupElement as _, curve25519, ristretto, secp256k1, secp256r1};
@@ -71,13 +69,11 @@ use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartValidatorInfoV1};
-#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 use prometheus::Registry;
 
 use crate::authority::authority_per_epoch_store::{AuthorityPerEpochStore, EpochStoreParams};
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
-#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
@@ -92,7 +88,7 @@ const EPOCH: u64 = 7;
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 const LEGACY_VALIDATOR_BLOB: &[u8] = include_bytes!("fixtures/legacy-validator-mpc-data.bcs");
 
-/// The original proof bytes remain protocol inputs after selecting legacy private keys.
+/// The deployed proof bytes remain protocol inputs after a binary upgrade.
 /// Exercise the production proof verifiers, rather than constructors that only store
 /// proofs, and ensure every key survives verification. Wrong statements are negative
 /// controls: accepting a bundle without verifying its proofs must fail this test.
@@ -418,6 +414,17 @@ async fn boot_seed_resolution_through_verify_validator_keys_and_a_real_cert_stor
     let rotated_seed = RootSeed::new([32u8; 32]);
     let certified_blob = derive_mpc_data_blob(&certified_seed).expect("certified blob");
     let certified_digest = mpc_data_blob_hash(&certified_blob);
+    // The existing store-backed boot cases also pin the entire deployed native
+    // bundle, including all seven public keys and proofs, across crypto upgrades.
+    #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+    {
+        assert_eq!(
+            hex::encode(mpc_data_blob_hash(LEGACY_VALIDATOR_BLOB)),
+            "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
+        );
+        assert_eq!(certified_blob.as_slice(), LEGACY_VALIDATOR_BLOB);
+    }
+
     let rotated_digest = DerivableDigests::derive(&rotated_seed)
         .expect("derive the rotated seed's bundle")
         .emitted()
@@ -449,11 +456,44 @@ async fn boot_seed_resolution_through_verify_validator_keys_and_a_real_cert_stor
                 ),
             )
             .expect("insert the handoff cert");
+        assert!(
+            DWalletMPCService::verify_validator_keys(&epoch_store, &config).is_err(),
+            "a missing certified blob must not fall back to current keys"
+        );
         perpetual
             .insert_mpc_artifact_blob(certified_digest, &certified_blob)
             .expect("persist the blob supplied by the startup barrier");
         let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config)
             .expect("key verification and seed resolution must not error");
+        let metrics = DWalletMPCMetrics::new(&Registry::new());
+        resolution.report(&metrics, &self_name, EPOCH);
+        let current_matches = matches!(
+            resolution.decision(),
+            EpochSeedDecision::RunOnCurrent { .. }
+        );
+        assert_eq!(
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["class_group"])
+                .get(),
+            if current_matches { 6 } else { 0 },
+            "only the certified current seed can report all six deployed class-group keys"
+        );
+        assert_eq!(
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["vss_hpke"])
+                .get(),
+            i64::from(current_matches)
+        );
+        assert_eq!(
+            metrics
+                .validator_key_epoch
+                .with_label_values(&["selected"])
+                .get(),
+            EPOCH as i64
+        );
+
         (
             resolution.decision(),
             resolution.mpc_active(),
@@ -576,124 +616,4 @@ async fn an_authority_absent_from_the_cert_starts_normally() {
     );
     assert!(resolution.mpc_active());
     assert_eq!(resolution.mpc_seed(), &seed);
-}
-
-/// The production sampler must reproduce the frozen deployed native bundle,
-/// including its proofs. Both configured-seed paths must recover those keys
-/// from the certified handoff without requiring a key rotation.
-#[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
-#[tokio::test(flavor = "multi_thread")]
-async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let seed = RootSeed::new([31; 32]);
-    let new_blob = derive_mpc_data_blob(&seed).unwrap();
-    let legacy_digest = mpc_data_blob_hash(LEGACY_VALIDATOR_BLOB);
-    assert_eq!(
-        hex::encode(legacy_digest),
-        "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
-    );
-    assert_eq!(LEGACY_VALIDATOR_BLOB, new_blob.as_slice());
-    let (_, regenerated) = ValidatorMPCSecrets::from_seed(&seed);
-    let certified_keys = decode_certified_mpc_keys(&legacy_digest, LEGACY_VALIDATOR_BLOB).unwrap();
-    assert_eq!(
-        certified_keys, regenerated,
-        "production derivation must preserve the deployed keys and proofs"
-    );
-
-    for blob in [LEGACY_VALIDATOR_BLOB, new_blob.as_slice()] {
-        let (config, record) =
-            config_and_validator_record(Some(RootSeedWithPath::new(seed.clone())), None);
-        let self_name = AuthorityName([3; 32]);
-        let (epoch_store, perpetual, _dirs) = epoch_store_with(self_name, record);
-        let digest = mpc_data_blob_hash(blob);
-        perpetual
-            .insert_certified_handoff_attestation(
-                EPOCH - 1,
-                &cert_naming(EPOCH - 1, &[(self_name, digest)]),
-            )
-            .unwrap();
-        assert!(
-            DWalletMPCService::verify_validator_keys(&epoch_store, &config).is_err(),
-            "a missing certified blob must not fall back to current keys"
-        );
-        perpetual.insert_mpc_artifact_blob(digest, blob).unwrap();
-        let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
-        assert!(resolution.mpc_active());
-        assert_eq!(resolution.mpc_seed(), &seed);
-        let metrics = DWalletMPCMetrics::new(&Registry::new());
-        resolution.report(&metrics, &self_name, EPOCH);
-        assert_eq!(
-            metrics
-                .validator_current_key_certified_matches
-                .with_label_values(&["class_group"])
-                .get(),
-            6,
-            "all six deployed native keys must be reported as certified"
-        );
-        assert_eq!(
-            metrics
-                .validator_current_key_certified_matches
-                .with_label_values(&["vss_hpke"])
-                .get(),
-            1
-        );
-        assert_eq!(
-            metrics
-                .validator_key_derivation
-                .with_label_values(&["current"])
-                .get(),
-            1
-        );
-        assert_eq!(
-            metrics
-                .validator_key_epoch
-                .with_label_values(&["selected"])
-                .get(),
-            EPOCH as i64
-        );
-    }
-
-    let rotated = RootSeed::new([32; 32]);
-    let (config, record) = config_and_validator_record(
-        Some(RootSeedWithPath::new(rotated)),
-        Some(RootSeedWithPath::new(seed.clone())),
-    );
-    let self_name = AuthorityName([3; 32]);
-    let (epoch_store, perpetual, _dirs) = epoch_store_with(self_name, record);
-    perpetual
-        .insert_certified_handoff_attestation(
-            EPOCH - 1,
-            &cert_naming(EPOCH - 1, &[(self_name, legacy_digest)]),
-        )
-        .unwrap();
-    perpetual
-        .insert_mpc_artifact_blob(legacy_digest, LEGACY_VALIDATOR_BLOB)
-        .unwrap();
-    let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
-    assert_eq!(resolution.decision(), EpochSeedDecision::RunOnPrevious);
-    assert_eq!(resolution.mpc_seed(), &seed);
-    let metrics = DWalletMPCMetrics::new(&Registry::new());
-    resolution.report(&metrics, &self_name, EPOCH);
-    assert_eq!(
-        metrics
-            .seed_identity_state
-            .with_label_values(&["rotating_on_previous_seed"])
-            .get(),
-        1
-    );
-    assert_eq!(
-        metrics
-            .validator_current_key_certified_matches
-            .with_label_values(&["class_group"])
-            .get(),
-        0,
-        "pending replacement keys must not be reported as certified"
-    );
-    assert_eq!(
-        metrics
-            .validator_current_key_certified_matches
-            .with_label_values(&["vss_hpke"])
-            .get(),
-        0
-    );
 }

@@ -155,10 +155,10 @@ pub enum Step {
     /// preceding convergence steps. Place before a full binary swap so later
     /// same-binary evidence cannot satisfy a mixed-binary compatibility gate.
     ExpectNetworkKeyOutputEvidence,
-    /// Derive both expected public key sets before the bounded upgrade window.
+    /// Prepare authenticated key checkpoints for the original fixed committee.
     PrepareValidatorKeyPreservation,
     /// Check the certified keys entering this exact epoch on every validator.
-    ExpectValidatorKeyDerivation {
+    ExpectValidatorKeyPreservation {
         epoch: u64,
         current: bool,
     },
@@ -325,9 +325,12 @@ impl std::fmt::Display for Step {
             Step::PrepareValidatorKeyPreservation => {
                 write!(f, "prepare_validator_key_preservation")
             }
-            Step::ExpectValidatorKeyDerivation { epoch, current } => {
-                let derivation = if *current { "Current" } else { "Legacy" };
-                write!(f, "expect_validator_key_derivation({epoch}, {derivation})")
+            Step::ExpectValidatorKeyPreservation { epoch, current } => {
+                let checkpoint = if *current { "preserved" } else { "baseline" };
+                write!(
+                    f,
+                    "expect_validator_key_preservation({epoch}, {checkpoint})"
+                )
             }
             Step::ExpectNoPendingNetworkKeyReconfiguration {
                 epoch,
@@ -697,8 +700,8 @@ impl Scenario {
         self
     }
 
-    pub fn expect_legacy_validator_keys(mut self, epoch: u64) -> Self {
-        self.steps.push(Step::ExpectValidatorKeyDerivation {
+    pub fn record_validator_keys(mut self, epoch: u64) -> Self {
+        self.steps.push(Step::ExpectValidatorKeyPreservation {
             epoch,
             current: false,
         });
@@ -706,7 +709,7 @@ impl Scenario {
     }
 
     pub fn expect_preserved_validator_keys(mut self, epoch: u64) -> Self {
-        self.steps.push(Step::ExpectValidatorKeyDerivation {
+        self.steps.push(Step::ExpectValidatorKeyPreservation {
             epoch,
             current: true,
         });
@@ -1221,14 +1224,14 @@ impl Scenario {
                     validator_key_preservation =
                         Some(c.prepare_validator_key_preservation().await?);
                 }
-                Step::ExpectValidatorKeyDerivation { epoch, current } => {
+                Step::ExpectValidatorKeyPreservation { epoch, current } => {
                     let c = cluster
                         .as_ref()
-                        .context("ExpectValidatorKeyDerivation before StartAll")?;
+                        .context("ExpectValidatorKeyPreservation before StartAll")?;
                     let expected = validator_key_preservation.as_ref().context(
                         "validator key assertion before PrepareValidatorKeyPreservation",
                     )?;
-                    c.assert_validator_key_derivation(expected, *epoch, *current)
+                    c.assert_validator_key_preservation(expected, *epoch, *current)
                         .await?;
                 }
                 Step::ExpectNoPendingNetworkKeyReconfiguration {

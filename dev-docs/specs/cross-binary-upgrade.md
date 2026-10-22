@@ -319,9 +319,10 @@ envelopes, no self-malicious logs, and no stranded sessions.
 The dependency upgrade has a separate **validator encryption-key preservation
 checkpoint** in `v141_rollout`. Before the first swap, the harness verifies
 that the certified handoff into epoch 2 contains every original validator's
-legacy public keys. It independently derives both public key sets from each
-validator's configured root seed, without regenerating the certificate's
-proofs. Production and legacy sampling must reproduce the same native keys.
+public keys. That authenticated snapshot is the baseline for the upgraded
+committee. The existing store-backed seed-recovery regression separately
+requires production derivation to reproduce the frozen deployed native bundle,
+including all keys and proofs; the rollout does not duplicate that derivation.
 After the remaining swaps in epoch 4, epoch 5 runs entirely on the candidate.
 The handoff produced in epoch 5 must retain every validator's public keys in
 epoch 6, after a complete all-current epoch.
@@ -341,21 +342,24 @@ the node's config resolver before selecting its Anemo chain namespace.
 Deserialization alone leaves the runtime object IDs unset; connecting with
 those IDs fails the TLS handshake before any certified key can be checked.
 
-The epoch-6 checkpoint also requires every validator's exact-epoch
-`derivation=Current` selection log and active seed-identity metric. Merely
-opening the epoch store does not establish that key preparation finished.
+The epoch-6 checkpoint also requires every validator's selected and prepared
+key epochs to equal the active epoch, plus its matching seed-identity metric.
+Merely opening the epoch store does not establish that key preparation finished.
 The full user workload runs again after this checkpoint, with zero malicious
 reports on all four validators. This proves preservation and continued use of
-native validator encryption keys across the upgrade. New browser keys use the
-same 64-bit sampling as native; historical browser keys remain recoverable via
-the legacy WASM32 derivation. Neither path changes the protocol version or any
+native validator encryption keys across the upgrade. New browser keys created
+through the V2 APIs use the same sampling as native; the original APIs retain
+historical WASM32 derivation. Neither path changes the protocol version or any
 contract.
 
 The TypeScript SDK preserves historical WASM32 derivation through its existing
 `createClassGroupsKeypair` and `fromRootSeedKey` entry points. Both are deprecated
 but retain their original seed-to-key behavior when the SDK is upgraded. Callers
 explicitly opt into current sampling with `createClassGroupsKeypairV2` or
-`fromRootSeedKeyV2`. The direct keypair API does not expose a sampler option.
+`fromRootSeedKeyV2`. The original direct WASM export
+`generate_secp_cg_keypair_from_seed` also preserves historical sampling; its `_v2`
+counterpart opts into portable sampling.
+The direct keypair API does not expose a sampler option.
 Real-WASM fixtures check both public entry points against captured historical
 keys and native current keys.
 
