@@ -192,9 +192,9 @@ Current is tested first, so pointing both fields at the same seed reads as
 Invariants:
 
 1. **The announcement sender ALWAYS announces the CURRENT seed's bundle**,
-   using the new sampler, including while the epoch's MPC runs on legacy keys,
-   the previous seed, and while the
-   node is out of MPC entirely. That is the whole mechanism: it is what
+   using the production sampler, including while the epoch's MPC runs on the
+   previous seed and while the node is out of MPC entirely. That is the whole
+   mechanism: it is what
    makes `E`'s freeze capture the new bundle, so `E -> E+1` deals the next
    epoch's shares to the new key and the rotation completes. The sender is
    per-epoch and re-derives from the configured current seed at every
@@ -213,28 +213,23 @@ Invariants:
    to get a new bundle certified is to REACH the reconfiguration the abort
    refuses to boot into — the fail-closed version of this check made the
    documented rotation flow a crashloop.
-3. **The handoff selects the encryption keys, including during a sampler
-   transition.** The startup barrier first authenticates the prior certificate
-   and hydrates its hash-matching bundle. Seed resolution compares every CRT,
-   all three PVSS, and the VSS HPKE public keys against locally derived keys.
-   For each configured root seed it tries the current sampler first, then the
-   target-native legacy sampler. The current root takes priority over the
-   optional previous root. The selected seed AND derivation are passed to
-   the manager and cryptographic orchestrator. Regenerated proof bytes are
-   excluded from this local identity comparison: the upgraded proof generator
-   can produce a different valid proof for the same encryption key. The
-   original certified bundle remains unchanged, including its proofs, hash
-   authentication and normal cryptographic input verification. A missing,
-   malformed or hash-mismatching certified blob fails startup; it never means
-   “no certificate” or “use new keys”.
+3. **The handoff selects the encryption keys.** The startup barrier first
+   authenticates the prior certificate and hydrates its hash-matching bundle.
+   Seed resolution compares every CRT, all three PVSS, and the VSS HPKE public
+   keys against the production derivation for each configured root seed. The
+   current root takes priority over the optional previous root. The selected
+   seed reaches the manager and cryptographic orchestrator before decryption.
+   Regenerated proof bytes are excluded from this local key-identity comparison;
+   the original certified bundle retains its proofs, hash authentication and
+   normal cryptographic input verification. A missing, malformed or
+   hash-mismatching certified blob fails startup; it never means “no
+   certificate” or “use new keys”.
 
-   This is a temporary validator fallback, marked with TODOs in code. The
-   current sampler now reproduces the deployed native keys, so those bundles
-   select Current even before all validators upgrade. A later binary may
-   remove legacy validator derivation after every validator is upgraded and
-   its certified keys have been verified against the native derivation. No
-   protocol-version flag or new wire field is introduced. Historical browser
-   encryption-key recovery remains supported independently.
+   The production sampler reproduces the deployed native validator keys.
+   Validators have no legacy sampler fallback and do not replace keys or root
+   seeds during this binary upgrade. Historical browser encryption-key recovery
+   remains supported independently through the existing SDK APIs; V2 APIs are
+   opt-in. No protocol-version flag or new wire field is introduced.
 
 4. **An unreadable previous seed is treated as an absent one.** The
    descriptor is resolved through a FALLIBLE accessor
@@ -280,9 +275,10 @@ The same resolution publishes three bounded metric families per validator:
   or inactive MPC leaves `prepared=-1`. Genesis can complete preparation without
   inherited keys, so this is not a count of decrypted shares.
 - `ika_dwallet_mpc_validator_key_derivation{derivation="current|legacy"}` is
-  one-hot for the selected sampler. Both children are zero when unresolved or
-  inactive. This is independent of whether the selected root seed is current
-  or previous; use the seed-identity state for that distinction.
+  1 for `current` when MPC is active; the retained `legacy` child is always 0.
+  Both children are zero when unresolved or inactive. This is independent of
+  whether the selected root seed is current or previous; use the seed-identity
+  state for that distinction.
 - `ika_dwallet_mpc_validator_current_key_certified_matches{key_type="class_group"}`
   counts the configured **current** seed's current-sampler keys matching the
   authenticated entering handoff: three CRT and three PVSS keys, from zero to
@@ -307,11 +303,9 @@ for the announcement, freeze and subsequent MPC checks.
 
 The per-tick off-chain check (`MpcDataAnnouncementSender::check_seed_identity`)
 also checks actual frozen public keys across the dependency upgrade.
-The current sampler preserves deployed native keys; the legacy fallback remains
-temporary and is not needed to recognize those native keys. Historical browser
-key recovery remains separate. A frozen
-bundle matching either configured seed through current or legacy derivation
-is `RotatedAfterFreeze` when its digest differs from the new announcement — a warning, not
+The production sampler preserves deployed native keys. A frozen bundle matching
+either configured seed through that derivation is `RotatedAfterFreeze` when its
+digest differs from the new announcement — a warning, not
 the `mpc_data_frozen_digest_seed_mismatch` invariant violation, because it
 is the expected shape of a late rotation and self-heals.
 

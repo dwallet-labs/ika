@@ -43,7 +43,6 @@
 
 use std::collections::BTreeSet;
 
-use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
 use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
@@ -335,7 +334,7 @@ impl CertifiedKeyMatches {
 
 struct DerivedSeedIdentity {
     digests: DerivableDigests,
-    derivation: Option<ValidatorKeyDerivation>,
+    matches_certified_keys: bool,
     certified_key_matches: Option<CertifiedKeyMatches>,
 }
 
@@ -352,42 +351,28 @@ fn derive_seed_identity(
     let Some(certified_keys) = certified_keys else {
         return Ok(DerivedSeedIdentity {
             digests,
-            derivation: None,
+            matches_certified_keys: false,
             certified_key_matches: None,
         });
     };
     let current_keys = decode_certified_mpc_keys(&digest, &blob)?;
     let certified_key_matches = Some(CertifiedKeyMatches::between(&current_keys, certified_keys));
-    if certified_digest == Some(digest) || same_encryption_keys(&current_keys, certified_keys) {
-        return Ok(DerivedSeedIdentity {
-            digests,
-            derivation: Some(ValidatorKeyDerivation::Current),
-            certified_key_matches,
-        });
-    }
-
-    // TODO: Remove this temporary legacy validator-key fallback in a later
-    // binary after every validator's certified keys are verified against the
-    // deployed native derivation. Current and legacy now agree on native.
-    // Keep historical browser user-key recovery available.
-    let (_, legacy_keys) =
-        ValidatorMPCSecrets::from_seed_with_derivation(seed, ValidatorKeyDerivation::Legacy);
-    let derivation = same_encryption_keys(&legacy_keys, certified_keys)
-        .then_some(ValidatorKeyDerivation::Legacy);
     Ok(DerivedSeedIdentity {
         digests,
-        derivation,
+        matches_certified_keys: certified_digest == Some(digest)
+            || same_encryption_keys(&current_keys, certified_keys),
         certified_key_matches,
     })
 }
 
-pub(crate) fn matching_key_derivation(
+pub(crate) fn matches_certified_keys(
     seed: &RootSeed,
     digest: &[u8; 32],
     blob: &[u8],
-) -> IkaResult<Option<ValidatorKeyDerivation>> {
+) -> IkaResult<bool> {
     let keys = decode_certified_mpc_keys(digest, blob)?;
-    derive_seed_identity(seed, Some(*digest), Some(&keys)).map(|identity| identity.derivation)
+    derive_seed_identity(seed, Some(*digest), Some(&keys))
+        .map(|identity| identity.matches_certified_keys)
 }
 
 /// A resolved epoch: the decision plus the seed the MPC manager must run with
@@ -396,7 +381,6 @@ pub(crate) fn matching_key_derivation(
 pub struct EpochSeedResolution {
     decision: EpochSeedDecision,
     mpc_seed: RootSeed,
-    key_derivation: ValidatorKeyDerivation,
     current_digests: DerivableDigests,
     previous_digests: Option<DerivableDigests>,
     certified: Option<[u8; 32]>,
@@ -404,7 +388,7 @@ pub struct EpochSeedResolution {
 }
 
 impl EpochSeedResolution {
-    /// Resolves the seed and sampler from the authenticated certified keys.
+    /// Resolves the seed from the authenticated certified keys.
     /// Key derivation is expensive, so the previous seed is only derived when
     /// it is configured — i.e. never outside a rotation.
     pub fn resolve(
@@ -436,10 +420,10 @@ impl EpochSeedResolution {
             .as_ref()
             .map(|identity| identity.digests.clone());
         let decision = resolve_epoch_seed(
-            current_identity.derivation.is_some(),
+            current_identity.matches_certified_keys,
             previous_identity
                 .as_ref()
-                .map(|identity| identity.derivation.is_some()),
+                .map(|identity| identity.matches_certified_keys),
             certified_digest_for_self.is_some(),
         );
         // `RunOnPrevious` is the only case that hands the manager anything but
@@ -450,16 +434,9 @@ impl EpochSeedResolution {
         } else {
             current_seed
         };
-        let key_derivation = if decision.uses_previous_seed() {
-            previous_identity.and_then(|identity| identity.derivation)
-        } else {
-            current_identity.derivation
-        }
-        .unwrap_or(ValidatorKeyDerivation::Current);
         Ok(Self {
             decision,
             mpc_seed,
-            key_derivation,
             current_digests: current_identity.digests,
             previous_digests,
             certified: certified_digest_for_self,
@@ -475,10 +452,6 @@ impl EpochSeedResolution {
     /// Meaningless (and unused) when [`Self::mpc_active`] is false.
     pub fn mpc_seed(&self) -> &RootSeed {
         &self.mpc_seed
-    }
-
-    pub fn key_derivation(&self) -> ValidatorKeyDerivation {
-        self.key_derivation
     }
 
     /// Whether the MPC service should run this epoch's protocol at all.
@@ -513,15 +486,11 @@ impl EpochSeedResolution {
                 .set(i64::from(matches.vss_hpke));
         }
         if self.mpc_active() {
-            let derivation = match self.key_derivation {
-                ValidatorKeyDerivation::Current => "current",
-                ValidatorKeyDerivation::Legacy => "legacy",
-            };
             metrics
                 .validator_key_derivation
-                .with_label_values(&[derivation])
+                .with_label_values(&["current"])
                 .set(1);
-            info!(?authority, epoch, derivation = ?self.key_derivation,
+            info!(?authority, epoch, derivation = %"Current",
                 "selected validator key derivation from the certified handoff");
         }
 
@@ -620,6 +589,8 @@ impl EpochSeedResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+    use dwallet_classgroups_types::ValidatorMPCSecrets;
     use prometheus::Registry;
 
     fn metric(registry: &Registry, name: &str, label: &str) -> f64 {
@@ -647,10 +618,9 @@ mod tests {
         assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
         assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
-        for (decision, derivation, matches, expected_matches, active) in [
+        for (decision, matches, expected_matches, active) in [
             (
                 EpochSeedDecision::RunOnPrevious,
-                ValidatorKeyDerivation::Legacy,
                 Some(CertifiedKeyMatches {
                     class_group: 0,
                     vss_hpke: false,
@@ -662,7 +632,6 @@ mod tests {
                 EpochSeedDecision::RunOnCurrent {
                     previous_configured: true,
                 },
-                ValidatorKeyDerivation::Current,
                 Some(CertifiedKeyMatches {
                     class_group: 6,
                     vss_hpke: true,
@@ -674,7 +643,6 @@ mod tests {
                 EpochSeedDecision::NoParticipation {
                     previous_configured: false,
                 },
-                ValidatorKeyDerivation::Current,
                 Some(CertifiedKeyMatches {
                     class_group: 0,
                     vss_hpke: false,
@@ -686,7 +654,6 @@ mod tests {
                 EpochSeedDecision::NoCertifiedDigest {
                     previous_configured: false,
                 },
-                ValidatorKeyDerivation::Current,
                 None,
                 -1.0,
                 true,
@@ -696,10 +663,13 @@ mod tests {
                 .validator_key_epoch
                 .with_label_values(&["prepared"])
                 .set(6);
+            metrics
+                .validator_key_derivation
+                .with_label_values(&["legacy"])
+                .set(1);
             EpochSeedResolution {
                 decision,
                 mpc_seed: RootSeed::new([0; 32]),
-                key_derivation: derivation,
                 current_digests: DerivableDigests::from_digests([[0; 32]]),
                 previous_digests: None,
                 certified: matches.as_ref().map(|_| [0; 32]),
@@ -715,12 +685,9 @@ mod tests {
             );
             assert_eq!(
                 metric(&registry, derivation_metric, "current"),
-                f64::from(active && derivation == ValidatorKeyDerivation::Current)
+                f64::from(active)
             );
-            assert_eq!(
-                metric(&registry, derivation_metric, "legacy"),
-                f64::from(active && derivation == ValidatorKeyDerivation::Legacy)
-            );
+            assert_eq!(metric(&registry, derivation_metric, "legacy"), 0.0);
         }
         metrics.clear_seed_identity_state();
         assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);

@@ -2,43 +2,21 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::{
-    CRT_DECRYPTION_KEY_WITNESS_LIMBS, CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES, SecretKeyShareCRTPrimeDecryptionKey,
-    construct_knowledge_of_decryption_key_public_parameters_per_crt_prime,
-    construct_setup_parameters_per_crt_prime, generate_class_groups_keypair,
-    generate_knowledge_of_decryption_key_proofs_per_crt_prime,
+    CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS, CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, MAX_PRIMES,
+    generate_class_groups_keypair,
 };
-use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::{
-    generate_and_prove_encryption_keypair_legacy, generate_pvss_keypairs,
-};
-use class_groups::setup::DeriveFromPlaintextPublicParameters;
+use class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::generate_pvss_keypairs;
 use class_groups::{
-    CompactIbqf, DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-    RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS, RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    RistrettoSetupParameters, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, Secp256k1SetupParameters,
-    Secp256r1SetupParameters,
+    CompactIbqf, RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
-use crypto_bigint::{U1024, U4096, Uint};
+use crypto_bigint::Uint;
 use dwallet_rng::RootSeed;
-use group::sampling::{LegacyCsRng, legacy_seeded_rng};
-use group::{GroupElement as _, ristretto, secp256k1, secp256r1};
+use group::GroupElement as _;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, ValidatorEncryptionKeysAndProofs,
 };
 use mpc::secret_sharing::shamir::known_order::generate_and_uc_prove_encryption_keypair;
-
-/// Chooses the sampler used to recover a validator's encryption keys from its seed.
-/// Legacy recovery uses the original target-native word width.
-// TODO: Remove validator legacy derivation in a later binary after every validator's
-// keys are verified against the deployed native derivation. Current and legacy
-// sampling now agree on native. Keep the browser legacy seed APIs available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidatorKeyDerivation {
-    Current,
-    Legacy,
-}
 
 pub type ClassGroupsDecryptionKey = [Uint<{ CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS }>; MAX_PRIMES];
 type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
@@ -84,55 +62,9 @@ impl ClassGroupsSecret {
     ///
     /// The seed must be cryptographically secure and kept confidential.
     pub fn from_seed(root_seed: &RootSeed) -> (Self, ClassGroupsEncryptionKeyAndProof) {
-        Self::from_seed_with_derivation(root_seed, ValidatorKeyDerivation::Current)
-    }
-
-    /// Recover the selected CRT keys and generate valid proofs for them.
-    /// Legacy proof bytes need not match proofs generated before the upgrade.
-    pub fn from_seed_with_derivation(
-        root_seed: &RootSeed,
-        derivation: ValidatorKeyDerivation,
-    ) -> (Self, ClassGroupsEncryptionKeyAndProof) {
-        let derivation = if cfg!(feature = "dwallet-mpc-unsafe-mock") {
-            ValidatorKeyDerivation::Current
-        } else {
-            derivation
-        };
-        let (decryption_key, encryption_key_and_proof) = match derivation {
-            ValidatorKeyDerivation::Current => {
-                generate_class_groups_keypair(&mut root_seed.class_groups_decryption_key_rng())
-                    .unwrap()
-            }
-            ValidatorKeyDerivation::Legacy => {
-                let setup_parameters = construct_setup_parameters_per_crt_prime(
-                    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-                )
+        let (decryption_key, encryption_key_and_proof) =
+            generate_class_groups_keypair(&mut root_seed.class_groups_decryption_key_rng())
                 .unwrap();
-                let language_public_parameters =
-                    construct_knowledge_of_decryption_key_public_parameters_per_crt_prime(
-                        setup_parameters.each_ref(),
-                    )
-                    .unwrap();
-                let mut rng = legacy_seeded_rng(root_seed.class_groups_decryption_key_seed());
-                let decryption_key = setup_parameters.map(|setup_parameters| {
-                    SecretKeyShareCRTPrimeDecryptionKey::generate_with_setup_parameters_legacy(
-                        setup_parameters,
-                        &mut rng,
-                    )
-                    .unwrap()
-                    .1
-                    .decryption_key
-                });
-                let encryption_key_and_proof =
-                    generate_knowledge_of_decryption_key_proofs_per_crt_prime(
-                        language_public_parameters,
-                        decryption_key,
-                        &mut LegacyCsRng(&mut rng),
-                    )
-                    .unwrap();
-                (decryption_key, encryption_key_and_proof)
-            }
-        };
 
         (
             ClassGroupsSecret { decryption_key },
@@ -201,115 +133,27 @@ impl ValidatorMPCSecrets {
     /// randomness during keypair generation, so the public payload must be
     /// captured here — it can't be recomputed from the secrets alone.
     pub fn from_seed(root_seed: &RootSeed) -> (Self, ValidatorEncryptionKeysAndProofs) {
-        Self::from_seed_with_derivation(root_seed, ValidatorKeyDerivation::Current)
-    }
-
-    /// Recover validator keys with the selected derivation and generate valid proofs.
-    /// Match their public keys against authenticated committee metadata; regenerated
-    /// legacy proofs are valid but need not reproduce the original proof bytes.
-    pub fn from_seed_with_derivation(
-        root_seed: &RootSeed,
-        derivation: ValidatorKeyDerivation,
-    ) -> (Self, ValidatorEncryptionKeysAndProofs) {
-        let derivation = if cfg!(feature = "dwallet-mpc-unsafe-mock") {
-            ValidatorKeyDerivation::Current
-        } else {
-            derivation
-        };
         let (class_groups, class_groups_encryption_key_and_proof) =
-            ClassGroupsSecret::from_seed_with_derivation(root_seed, derivation);
+            ClassGroupsSecret::from_seed(root_seed);
 
         let (
             (secp256k1_enc, secp256k1_proof, secp256k1_dec),
             (secp256r1_enc, secp256r1_proof, secp256r1_dec),
             (ristretto_enc, ristretto_proof, ristretto_dec),
-        ) = match derivation {
-            ValidatorKeyDerivation::Current => generate_pvss_keypairs(
-                &mut root_seed.pvss_secp256k1_decryption_key_rng(),
-                &mut root_seed.pvss_secp256r1_decryption_key_rng(),
-                &mut root_seed.pvss_ristretto_decryption_key_rng(),
-            )
-            .unwrap(),
-            ValidatorKeyDerivation::Legacy => {
-                let secp256k1_setup = Secp256k1SetupParameters::derive_from_plaintext_parameters::<
-                    secp256k1::Scalar,
-                >(
-                    secp256k1::scalar::PublicParameters::default(),
-                    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-                )
-                .unwrap();
-                let secp256r1_setup = Secp256r1SetupParameters::derive_from_plaintext_parameters::<
-                    secp256r1::Scalar,
-                >(
-                    secp256r1::scalar::PublicParameters::default(),
-                    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-                )
-                .unwrap();
-                let ristretto_setup = RistrettoSetupParameters::derive_from_plaintext_parameters::<
-                    ristretto::Scalar,
-                >(
-                    ristretto::scalar::PublicParameters::default(),
-                    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-                )
-                .unwrap();
-                (
-                    generate_and_prove_encryption_keypair_legacy::<
-                        { secp256k1::SCALAR_LIMBS },
-                        SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U1024::LIMBS },
-                        SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U4096::LIMBS },
-                        CRT_DECRYPTION_KEY_WITNESS_LIMBS,
-                        secp256k1::GroupElement,
-                    >(
-                        &secp256k1_setup,
-                        root_seed.pvss_secp256k1_decryption_key_seed(),
-                    )
-                    .unwrap(),
-                    generate_and_prove_encryption_keypair_legacy::<
-                        { secp256r1::SCALAR_LIMBS },
-                        SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U1024::LIMBS },
-                        SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U4096::LIMBS },
-                        CRT_DECRYPTION_KEY_WITNESS_LIMBS,
-                        secp256r1::GroupElement,
-                    >(
-                        &secp256r1_setup,
-                        root_seed.pvss_secp256r1_decryption_key_seed(),
-                    )
-                    .unwrap(),
-                    generate_and_prove_encryption_keypair_legacy::<
-                        { ristretto::SCALAR_LIMBS },
-                        RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U1024::LIMBS },
-                        RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                        { U4096::LIMBS },
-                        CRT_DECRYPTION_KEY_WITNESS_LIMBS,
-                        ristretto::GroupElement,
-                    >(
-                        &ristretto_setup,
-                        root_seed.pvss_ristretto_decryption_key_seed(),
-                    )
-                    .unwrap(),
-                )
-            }
-        };
+        ) = generate_pvss_keypairs(
+            &mut root_seed.pvss_secp256k1_decryption_key_rng(),
+            &mut root_seed.pvss_secp256r1_decryption_key_rng(),
+            &mut root_seed.pvss_ristretto_decryption_key_rng(),
+        )
+        .unwrap();
 
         // Fast Schnorr (VSS) HPKE keypair: a single curve25519 keypair (not
         // class groups, not per-curve) used as the known-order
         // threshold-encryption-to-sharing transport for the VSS Schnorr
         // presign. One curve25519 keypair serves all VSS signing curves.
-        let (vss_hpke_secret, vss_hpke_public, vss_hpke_proof) = match derivation {
-            ValidatorKeyDerivation::Current => {
-                generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
-                    .unwrap()
-            }
-            ValidatorKeyDerivation::Legacy => {
-                let mut rng = legacy_seeded_rng(root_seed.vss_hpke_secret_key_seed());
-                generate_and_uc_prove_encryption_keypair(&mut LegacyCsRng(&mut rng)).unwrap()
-            }
-        };
+        let (vss_hpke_secret, vss_hpke_public, vss_hpke_proof) =
+            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
+                .unwrap();
 
         let publics = ValidatorEncryptionKeysAndProofs {
             class_groups: class_groups_encryption_key_and_proof,
@@ -336,27 +180,9 @@ impl ValidatorMPCSecrets {
     /// `vss_hpke_secret_key` field on a `ValidatorMPCSecrets` from
     /// [`Self::from_seed`].
     pub fn vss_hpke_secret_key_from_seed(root_seed: &RootSeed) -> group::curve25519::Scalar {
-        Self::vss_hpke_secret_key_from_seed_with_derivation(
-            root_seed,
-            ValidatorKeyDerivation::Current,
-        )
-    }
-
-    /// Recover the VSS secret using the selected validator derivation.
-    pub fn vss_hpke_secret_key_from_seed_with_derivation(
-        root_seed: &RootSeed,
-        derivation: ValidatorKeyDerivation,
-    ) -> group::curve25519::Scalar {
-        let (secret, _public, _proof) = match derivation {
-            ValidatorKeyDerivation::Current => {
-                generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
-                    .unwrap()
-            }
-            ValidatorKeyDerivation::Legacy => {
-                let mut rng = legacy_seeded_rng(root_seed.vss_hpke_secret_key_seed());
-                generate_and_uc_prove_encryption_keypair(&mut LegacyCsRng(&mut rng)).unwrap()
-            }
-        };
+        let (secret, _public, _proof) =
+            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
+                .unwrap();
         secret
     }
 }
@@ -380,10 +206,9 @@ mod tests {
     /// using the same root-seed labels. Proofs are deliberately excluded from key identity.
     #[cfg(all(target_pointer_width = "64", not(feature = "dwallet-mpc-unsafe-mock")))]
     #[test]
-    fn legacy_validator_keys_match_deployed_native_fixture() {
+    fn validator_keys_match_deployed_native_fixture() {
         let seed = RootSeed::new([0xA5u8; 32]);
-        let (secrets, publics) =
-            ValidatorMPCSecrets::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Legacy);
+        let (secrets, publics) = ValidatorMPCSecrets::from_seed(&seed);
         let public_keys = (
             publics.class_groups.map(|(key, _proof)| key),
             publics.secp256k1_pvss.0,
@@ -416,15 +241,12 @@ mod tests {
         );
         assert_eq!(
             secrets.class_groups,
-            ClassGroupsSecret::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Current).0,
+            ClassGroupsSecret::from_seed(&seed).0,
             "the production sampler must preserve deployed native keys"
         );
         assert_eq!(
             secrets.vss_hpke_secret_key,
-            ValidatorMPCSecrets::vss_hpke_secret_key_from_seed_with_derivation(
-                &seed,
-                ValidatorKeyDerivation::Legacy,
-            ),
+            ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(&seed),
         );
     }
 

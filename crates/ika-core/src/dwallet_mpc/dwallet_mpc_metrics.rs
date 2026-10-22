@@ -519,7 +519,7 @@ pub struct DWalletMPCMetrics {
     /// Epoch whose keys were selected or whose active MPC preparation completed.
     /// -1 until the stage finishes; reset on every component start and role exit.
     pub(crate) validator_key_epoch: IntGaugeVec,
-    /// One-hot selected sampler, all zero when MPC is inactive or unresolved.
+    /// Current derivation is one when MPC is active; legacy remains zero.
     pub(crate) validator_key_derivation: IntGaugeVec,
     /// Configured CURRENT seed's public keys matching the certified handoff:
     /// six class-group keys and one VSS HPKE key. -1 without a certified bundle.
@@ -1057,7 +1057,7 @@ impl DWalletMPCMetrics {
             .unwrap(),
             validator_key_derivation: register_int_gauge_vec_with_registry!(
                 "ika_dwallet_mpc_validator_key_derivation",
-                "Selected validator key sampler: 1 for current or legacy; all zero when MPC is inactive or keys are unresolved.",
+                "Validator key sampler: current is 1 when MPC is active; legacy remains 0. All zero when MPC is inactive or keys are unresolved.",
                 &["derivation"],
                 registry,
             )

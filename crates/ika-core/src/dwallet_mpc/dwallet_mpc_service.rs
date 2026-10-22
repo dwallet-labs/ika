@@ -44,8 +44,6 @@ use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
 use arc_swap::ArcSwap;
 use commitment::CommitmentSizedNumber;
-#[cfg(any(test, feature = "test-utils"))]
-use dwallet_classgroups_types::ValidatorKeyDerivation;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(any(test, feature = "test-utils"))]
@@ -333,7 +331,6 @@ impl DWalletMPCService {
             committee.clone(),
             epoch_id,
             root_seed,
-            seed_resolution.key_derivation(),
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
@@ -483,7 +480,6 @@ impl DWalletMPCService {
                 Arc::new(committee.clone()),
                 1,
                 seed,
-                ValidatorKeyDerivation::Current,
                 0,
                 0,
                 0,

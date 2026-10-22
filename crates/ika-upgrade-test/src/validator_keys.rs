@@ -39,11 +39,18 @@ use class_groups::{
     Secp256k1DecryptionKey, Secp256k1SetupParameters, Secp256r1DecryptionKey,
     Secp256r1SetupParameters,
 };
-use dwallet_classgroups_types::ValidatorKeyDerivation;
 use dwallet_rng::RootSeed;
 use group::sampling::{LegacyCsRng, legacy_seeded_rng};
 use group::{GroupElement as _, ristretto, secp256k1, secp256r1};
 use mpc::hybrid_public_key_encryption::generate_encryption_keypair;
+
+/// Harness-only comparison of deployed and current native key derivations.
+/// Validators use the production derivation exclusively.
+#[derive(Clone, Copy)]
+enum ValidatorKeyDerivation {
+    Current,
+    Legacy,
+}
 
 /// Public key BCS values in bundle order: three CRT keys, secp256k1 PVSS,
 /// secp256r1 PVSS, ristretto PVSS, VSS HPKE. No proofs are generated.

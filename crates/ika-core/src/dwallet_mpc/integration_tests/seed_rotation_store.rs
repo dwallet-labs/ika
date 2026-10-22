@@ -58,7 +58,7 @@ use class_groups::{
     Secp256k1SetupParameters, Secp256r1SetupParameters,
 };
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
-use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_rng::RootSeed;
 #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
 use group::{GroupElement as _, curve25519, ristretto, secp256k1, secp256r1};
@@ -593,18 +593,14 @@ async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
         "c30c04b8799e93fe512df873bd1d464f336c160d50636c9389f57cf7f46d3219"
     );
     assert_eq!(LEGACY_VALIDATOR_BLOB, new_blob.as_slice());
-    let (_, regenerated_legacy) =
-        ValidatorMPCSecrets::from_seed_with_derivation(&seed, ValidatorKeyDerivation::Legacy);
+    let (_, regenerated) = ValidatorMPCSecrets::from_seed(&seed);
     let certified_keys = decode_certified_mpc_keys(&legacy_digest, LEGACY_VALIDATOR_BLOB).unwrap();
     assert_eq!(
-        certified_keys, regenerated_legacy,
-        "native legacy derivation must preserve the deployed keys and proofs"
+        certified_keys, regenerated,
+        "production derivation must preserve the deployed keys and proofs"
     );
 
-    for (blob, expected) in [
-        (LEGACY_VALIDATOR_BLOB, ValidatorKeyDerivation::Current),
-        (new_blob.as_slice(), ValidatorKeyDerivation::Current),
-    ] {
+    for blob in [LEGACY_VALIDATOR_BLOB, new_blob.as_slice()] {
         let (config, record) =
             config_and_validator_record(Some(RootSeedWithPath::new(seed.clone())), None);
         let self_name = AuthorityName([3; 32]);
@@ -623,11 +619,6 @@ async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
         perpetual.insert_mpc_artifact_blob(digest, blob).unwrap();
         let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
         assert!(resolution.mpc_active());
-        assert_eq!(
-            resolution.key_derivation(),
-            expected,
-            "the last handoff must select its matching sampler"
-        );
         assert_eq!(resolution.mpc_seed(), &seed);
         let metrics = DWalletMPCMetrics::new(&Registry::new());
         resolution.report(&metrics, &self_name, EPOCH);
@@ -680,7 +671,6 @@ async fn current_sampler_recovers_deployed_keys_from_the_last_handoff() {
         .unwrap();
     let resolution = DWalletMPCService::verify_validator_keys(&epoch_store, &config).unwrap();
     assert_eq!(resolution.decision(), EpochSeedDecision::RunOnPrevious);
-    assert_eq!(resolution.key_derivation(), ValidatorKeyDerivation::Current);
     assert_eq!(resolution.mpc_seed(), &seed);
     let metrics = DWalletMPCMetrics::new(&Registry::new());
     resolution.report(&metrics, &self_name, EPOCH);

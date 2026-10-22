@@ -7,9 +7,10 @@ below.
 
 ## Validator encryption-key rollout walkthrough
 
-Inspect every validator's scrape target separately. The sampler and root seed
-are different choices: `validator_key_derivation` describes the former;
-`seed_identity_state` describes the latter.
+Inspect every validator's scrape target separately. Validators use the production
+sampler: `validator_key_derivation{derivation="current"}` is 1 when MPC is active,
+and the retained `legacy` child stays 0. `seed_identity_state` distinguishes the
+configured current root from an optional previous root.
 
 1. Before the change, record `ika_current_epoch`,
    `ika_dwallet_mpc_seed_identity_state`,

@@ -22,7 +22,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_session::ComputationResultData;
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::runtime::IkaRuntimes;
-use dwallet_classgroups_types::{ValidatorKeyDerivation, ValidatorMPCSecrets};
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_rng::RootSeed;
 use group::PartyID;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -96,7 +96,6 @@ impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
     pub(crate) fn try_new(
         root_seed: RootSeed,
-        key_derivation: ValidatorKeyDerivation,
         max_computation_cores: Option<usize>,
     ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
@@ -122,11 +121,7 @@ impl CryptographicComputationsOrchestrator {
             "Available CPU cores for Rayon cryptographic computations"
         );
 
-        let vss_hpke_secret_key =
-            ValidatorMPCSecrets::vss_hpke_secret_key_from_seed_with_derivation(
-                &root_seed,
-                key_derivation,
-            );
+        let vss_hpke_secret_key = ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(&root_seed);
 
         Ok(CryptographicComputationsOrchestrator {
             available_cores_for_cryptographic_computations: available_cores_for_computations,

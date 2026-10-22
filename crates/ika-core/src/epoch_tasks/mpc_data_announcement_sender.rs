@@ -36,7 +36,7 @@ use crate::authority::authority_per_epoch_store::{
 use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::consensus_handler::SequencedConsensusTransactionKey;
-use crate::dwallet_mpc::seed_rotation::{DerivableDigests, matching_key_derivation};
+use crate::dwallet_mpc::seed_rotation::{DerivableDigests, matches_certified_keys};
 use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, derive_mpc_data_blob, now_ms,
 };
@@ -442,7 +442,7 @@ pub struct MpcDataAnnouncementSender {
     /// invariant counter records the incident once per epoch instead of
     /// once per tick.
     seed_identity_violation_reported: AtomicBool,
-    /// Frozen keys are immutable; avoid repeating legacy derivation each tick.
+    /// Frozen keys are immutable; avoid repeating key derivation each tick.
     frozen_key_match: Mutex<Option<([u8; 32], bool)>>,
 }
 
@@ -685,10 +685,8 @@ impl MpcDataAnnouncementSender {
                 .map(|announcement| announcement.blob_hash),
             previous_digests.as_ref(),
         );
-        // TODO: Remove this temporary sampler-transition check in the later
-        // binary once all validators' new keys are certified and active.
-        // A carried-forward legacy bundle can legitimately have different
-        // proof bytes from anything this binary regenerates.
+        // Proof bytes are authenticated as part of the frozen bundle, but
+        // public keys determine whether the configured seed can decrypt it.
         let verdict = if verdict == SeedIdentity::FrozenMismatch {
             let digest = frozen_for_self.expect("a frozen mismatch has a frozen digest");
             match self.matches_frozen_keys(digest) {
@@ -710,15 +708,14 @@ impl MpcDataAnnouncementSender {
             return Some(matches);
         }
         let blob = self.blob_cache.get(&digest)?;
-        let matches =
-            matching_key_derivation(&self.root_seed, &digest, &blob).and_then(|current| {
-                if current.is_some() {
-                    return Ok(true);
-                }
-                self.previous_root_seed.as_ref().map_or(Ok(false), |seed| {
-                    matching_key_derivation(seed, &digest, &blob).map(|previous| previous.is_some())
-                })
-            });
+        let matches = matches_certified_keys(&self.root_seed, &digest, &blob).and_then(|current| {
+            if current {
+                return Ok(true);
+            }
+            self.previous_root_seed.as_ref().map_or(Ok(false), |seed| {
+                matches_certified_keys(seed, &digest, &blob)
+            })
+        });
         match matches {
             Ok(matches) => {
                 *cached = Some((digest, matches));
@@ -1393,7 +1390,7 @@ mod tests {
 
     #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
     #[tokio::test(flavor = "multi_thread")]
-    async fn legacy_frozen_keys_remain_usable_while_announcing_new_keys() {
+    async fn deployed_native_keys_match_the_frozen_bundle_and_announcement() {
         let blob = include_bytes!(
             "../dwallet_mpc/integration_tests/fixtures/legacy-validator-mpc-data.bcs"
         );
@@ -1403,9 +1400,9 @@ mod tests {
         sender.blob_cache.insert(digest, blob.to_vec()).unwrap();
         assert_eq!(sender.matches_frozen_keys(digest), Some(true));
         let announcement = sender.cached_or_build_announcement().unwrap();
-        assert_ne!(
+        assert_eq!(
             announcement.blob_hash, digest,
-            "must announce the new sampler during legacy recovery"
+            "the production sampler must preserve the deployed native bundle"
         );
         assert_eq!(
             announcement.blob_hash,

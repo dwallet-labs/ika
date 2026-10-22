@@ -301,9 +301,10 @@ stall.
 
 The accompanying `ika_dwallet_mpc_validator_key_epoch{stage}` distinguishes
 selection from completed preparation. `ika_dwallet_mpc_validator_key_derivation`
-reports the selected sampler; `ika_dwallet_mpc_validator_current_key_certified_matches`
-reports six class-group and one HPKE public-key matches for the configured current
-seed against the entering certificate. Their closed labels are pre-materialized;
+reports `current=1` while MPC is active and retains `legacy=0`;
+`ika_dwallet_mpc_validator_current_key_certified_matches` reports six class-group
+and one HPKE public-key matches for the configured current seed against the
+entering certificate. Their closed labels are pre-materialized;
 unresolved epochs and unavailable comparisons use `-1`, not a healthy-looking zero.
 They reset with the seed-identity family on component startup and committee exit.
 No root seeds, public keys, digests, authority names or epoch labels are exported.
