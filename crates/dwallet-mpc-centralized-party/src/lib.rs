@@ -1620,12 +1620,47 @@ pub fn parse_signature_from_sign_output_inner(
 
 #[cfg(test)]
 mod key_derivation_tests {
+    use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, VersionedEncryptionKeyValue};
     #[cfg(target_pointer_width = "64")]
     use hex::decode;
     use hex::encode;
     use sha2::{Digest, Sha256};
+    use twopc_mpc::dkg::Protocol;
 
-    use super::{generate_cg_keypair_from_seed, generate_cg_keypair_from_seed_legacy};
+    use super::{
+        Curve25519DKGProtocol, RistrettoDKGProtocol, Secp256k1DKGProtocol, Secp256r1DKGProtocol,
+        generate_cg_keypair_from_seed, generate_cg_keypair_from_seed_legacy, try_into_curve,
+    };
+
+    fn assert_saved_keypair_matches(curve: usize, public_key: &[u8], private_key: &[u8]) {
+        match try_into_curve(u32::try_from(curve).unwrap()).unwrap() {
+            DWalletCurve::Secp256k1 => {
+                assert_saved_keypair_matches_inner::<Secp256k1DKGProtocol>(public_key, private_key)
+            }
+            DWalletCurve::Secp256r1 => {
+                assert_saved_keypair_matches_inner::<Secp256r1DKGProtocol>(public_key, private_key)
+            }
+            DWalletCurve::Curve25519 => {
+                assert_saved_keypair_matches_inner::<Curve25519DKGProtocol>(public_key, private_key)
+            }
+            DWalletCurve::Ristretto => {
+                assert_saved_keypair_matches_inner::<RistrettoDKGProtocol>(public_key, private_key)
+            }
+        }
+    }
+
+    fn assert_saved_keypair_matches_inner<P: Protocol>(public_key: &[u8], private_key: &[u8]) {
+        let decryption_key = bcs::from_bytes::<P::DecryptionKey>(private_key).unwrap();
+        let encryption_key = P::encryption_key_from_decryption_key(decryption_key).unwrap();
+        let restored_public_key = bcs::to_bytes(&VersionedEncryptionKeyValue::V1(
+            bcs::to_bytes(&encryption_key).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(
+            public_key, restored_public_key,
+            "saved private key must regenerate the saved public key"
+        );
+    }
 
     // Captured from cryptography-private 0d5046df / crypto-bigint 8aabcee5 on native 64-bit.
     #[cfg(target_pointer_width = "64")]
@@ -1644,6 +1679,7 @@ mod key_derivation_tests {
         for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
             let (public_key, private_key) =
                 generate_cg_keypair_from_seed_legacy(u32::try_from(curve).unwrap(), seed).unwrap();
+            assert_saved_keypair_matches(curve, &public_key, &private_key);
             assert_eq!(
                 generate_cg_keypair_from_seed(u32::try_from(curve).unwrap(), seed).unwrap(),
                 (public_key.clone(), private_key.clone()),
@@ -1671,6 +1707,7 @@ mod key_derivation_tests {
             let (public_key, private_key) =
                 generate_cg_keypair_from_seed_legacy(u32::try_from(curve).unwrap(), [42; 32])
                     .unwrap();
+            assert_saved_keypair_matches(curve, &public_key, &private_key);
             assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
                 encode(Sha256::digest(private_key)),
@@ -1692,6 +1729,7 @@ mod key_derivation_tests {
         for (curve, expected_public_key) in public_key_fingerprints.into_iter().enumerate() {
             let (public_key, private_key) =
                 generate_cg_keypair_from_seed(u32::try_from(curve).unwrap(), [42; 32]).unwrap();
+            assert_saved_keypair_matches(curve, &public_key, &private_key);
             assert_eq!(encode(Sha256::digest(public_key)), expected_public_key);
             assert_eq!(
                 encode(Sha256::digest(private_key)),
