@@ -190,6 +190,8 @@ impl ValidatorMPCSecrets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(target_pointer_width = "64", not(feature = "dwallet-mpc-unsafe-mock")))]
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn class_groups_and_pvss_key_pair_from_seed_is_deterministic() {
@@ -198,6 +200,54 @@ mod tests {
         let (second_secrets, second_publics) = ValidatorMPCSecrets::from_seed(&seed);
         assert_eq!(first_secrets, second_secrets);
         assert_eq!(first_publics, second_publics);
+    }
+
+    /// Frozen with real crypto at deployed revision 0d5046dff586258e10fc82541b625fc935893172,
+    /// using the same root-seed labels. Proofs are deliberately excluded from key identity.
+    #[cfg(all(target_pointer_width = "64", not(feature = "dwallet-mpc-unsafe-mock")))]
+    #[test]
+    fn validator_keys_match_deployed_native_fixture() {
+        let seed = RootSeed::new([0xA5u8; 32]);
+        let (secrets, publics) = ValidatorMPCSecrets::from_seed(&seed);
+        let public_keys = (
+            publics.class_groups.map(|(key, _proof)| key),
+            publics.secp256k1_pvss.0,
+            publics.secp256r1_pvss.0,
+            publics.ristretto_pvss.0,
+            publics.vss_hpke_public_key_and_proof.0,
+        );
+        let fixture_secrets = (
+            secrets.class_groups.decryption_key,
+            secrets.secp256k1_pvss_decryption_key,
+            secrets.secp256r1_pvss_decryption_key,
+            secrets.ristretto_pvss_decryption_key,
+            secrets.vss_hpke_secret_key,
+        );
+        assert_eq!(
+            <[u8; 32]>::from(Sha256::digest(bcs::to_bytes(&public_keys).unwrap())),
+            [
+                0xb4, 0xae, 0x27, 0x18, 0x31, 0xfb, 0xd7, 0x9d, 0x25, 0x0d, 0x12, 0x1a, 0xc2, 0xbd,
+                0x4b, 0xda, 0x2b, 0xd7, 0x84, 0x48, 0x3e, 0x83, 0xa2, 0x86, 0x9b, 0x2b, 0x87, 0xc1,
+                0x0e, 0xc1, 0x5f, 0x9e
+            ]
+        );
+        assert_eq!(
+            <[u8; 32]>::from(Sha256::digest(bcs::to_bytes(&fixture_secrets).unwrap())),
+            [
+                0xa3, 0x8a, 0x1e, 0xa1, 0x77, 0x14, 0xc7, 0x6c, 0xf6, 0x22, 0xcc, 0xed, 0xb5, 0x32,
+                0x15, 0xcd, 0xcd, 0x48, 0x0b, 0xf5, 0xe9, 0xd0, 0xbf, 0x4b, 0x54, 0xa9, 0x8f, 0x47,
+                0x9a, 0x1e, 0xe2, 0x07
+            ]
+        );
+        assert_eq!(
+            secrets.class_groups,
+            ClassGroupsSecret::from_seed(&seed).0,
+            "the production sampler must preserve deployed native keys"
+        );
+        assert_eq!(
+            secrets.vss_hpke_secret_key,
+            ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(&seed),
+        );
     }
 
     #[test]

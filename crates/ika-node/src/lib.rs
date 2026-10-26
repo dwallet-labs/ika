@@ -2267,6 +2267,7 @@ impl IkaNode {
         // handoff certificate; the MPC manager takes it as a fixed input.
         network_owned_address_signing_key_id: Option<ObjectID>,
     ) -> Result<ValidatorComponents> {
+        dwallet_mpc_metrics.clear_seed_identity_state();
         // Channel for network-owned-address sign requests (sender unused after
         // pipeline→handler migration; receiver still drained by service loop).
         let (

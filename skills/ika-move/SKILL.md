@@ -227,7 +227,7 @@ This step is NOT needed for shared dWallets (created with `request_dwallet_dkg_w
 
 ```typescript
 import { prepareDKGAsync, UserShareEncryptionKeys, Curve, createRandomSessionIdentifier } from '@ika.xyz/sdk';
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+const keys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, Curve.SECP256K1);
 const bytesToHash = createRandomSessionIdentifier(); // bytes hashed to derive the session identifier
 const dkgData = await prepareDKGAsync(ikaClient, Curve.SECP256K1, keys, bytesToHash, signerAddress);
 const networkKey = await ikaClient.getLatestNetworkEncryptionKey();

@@ -77,10 +77,29 @@ interface ImportDWalletVerificationRequestInput {
 
 ### createClassGroupsKeypair
 
-Create a class groups keypair from a seed for encryption/decryption operations. Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
+Deprecated. This function preserves historical WASM32 seed-to-key derivation in both browsers and
+Node.js, so upgrading the SDK alone keeps existing calls compatible. Use
+`createClassGroupsKeypairV2` to explicitly select the current sampler for new keys.
 
 ```typescript
+/** @deprecated Preserves historical WASM32 keys. */
 async function createClassGroupsKeypair(
+	seed: Uint8Array,
+	curve: Curve,
+): Promise<{
+	encryptionKey: Uint8Array;
+	decryptionKey: Uint8Array;
+}>;
+```
+
+### createClassGroupsKeypairV2
+
+Create a class groups keypair with the current platform-independent sampler. The same seed and
+curve produce the same keys as native Rust. This function does not reproduce keys derived with the
+historical WASM32 sampler.
+
+```typescript
+async function createClassGroupsKeypairV2(
 	seed: Uint8Array,
 	curve: Curve,
 ): Promise<{
@@ -99,14 +118,14 @@ async function createClassGroupsKeypair(
 **Example:**
 
 ```typescript
-import { createClassGroupsKeypair, Curve } from '@ika.xyz/sdk';
+import { createClassGroupsKeypairV2, Curve } from '@ika.xyz/sdk';
 
 // Generate a random seed
 const seed = new Uint8Array(32);
 crypto.getRandomValues(seed);
 
 // Create keypair for SECP256K1
-const { encryptionKey, decryptionKey } = await createClassGroupsKeypair(seed, Curve.SECP256K1);
+const { encryptionKey, decryptionKey } = await createClassGroupsKeypairV2(seed, Curve.SECP256K1);
 
 console.log('Encryption key length:', encryptionKey.length);
 console.log('Decryption key length:', decryptionKey.length);

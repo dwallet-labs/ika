@@ -20,10 +20,12 @@
 
 pub mod binary;
 pub mod cluster;
+pub mod mid_session_upgrade;
 pub mod mpc_timings;
 pub mod process;
 pub mod scenario;
 pub mod sui;
+pub(crate) mod validator_keys;
 pub mod workload;
 
 pub use binary::BinarySpec;

@@ -414,7 +414,7 @@ import {
     parseSignatureFromSignOutput,
     prepareImportedKeyDWalletVerification,
     verifyUserShare, verifySecpSignature, userAndNetworkDKGOutputMatch,
-    createClassGroupsKeypair, encryptSecretShare,
+    createClassGroupsKeypair, createClassGroupsKeypairV2, encryptSecretShare,
 } from '@ika.xyz/sdk';
 
 // Types

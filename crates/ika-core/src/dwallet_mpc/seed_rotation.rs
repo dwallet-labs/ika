@@ -43,52 +43,42 @@
 
 use std::collections::BTreeSet;
 
+use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
 use dwallet_rng::RootSeed;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
+use ika_types::committee::ValidatorEncryptionKeysAndProofs;
 use ika_types::crypto::AuthorityName;
-use ika_types::error::IkaResult;
+use ika_types::error::{IkaError, IkaResult};
 use sui_types::base_types::EpochId;
 use tracing::{error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::validator_metadata::derive_mpc_data_blob;
 
-/// Every `mpc_data` bundle digest this binary can derive from ONE seed.
+/// The `mpc_data` bundle digests this binary emits from one seed.
 ///
-/// The certified digest covers the whole encoded bundle, so it is a function
-/// of the seed AND of the bundle's encoding. Comparing against a single
-/// derived digest therefore makes a future encoding change fleet-fatal: every
-/// validator would derive a new digest while the certificates still carry the
-/// old one, and every validator would resolve to "neither seed matches" on the
-/// same upgrade.
+/// Announcements and operator diagnostics use these digests. The certified
+/// digest covers the entire encoded bundle, including proofs, so a derivation
+/// change can produce a different digest even when the encryption keys match.
+/// [`EpochSeedResolution`] therefore compares the encryption keys in the
+/// authenticated certified bundle with the supported local derivations.
 ///
-/// The comparison is a set membership test instead — "is the certified digest
-/// one this binary can produce from this seed?" — so a binary that can derive
-/// two encodings accepts a certificate written by either.
-///
-/// **Today the set has exactly one member** (`derive_mpc_data_blob` emits
+/// The set has exactly one member today (`derive_mpc_data_blob` emits
 /// `VersionedMPCData::V1` and nothing else), pinned by
-/// `derivable_digest_set_has_exactly_the_encodings_this_binary_emits`. That is
-/// an honest no-op: the tolerance is structural, not yet load-bearing.
-///
-/// **A future encoding bump (`VersionedMPCData::V2`) must** insert BOTH the V1
-/// and the V2 digest here, and must do so a release BEFORE
-/// `derive_mpc_data_blob` starts *emitting* V2: a certificate is written by
-/// the previous epoch's committee running the previous binary, so accepting
-/// has to be deployed ahead of emitting or the fleet resolves to
-/// "neither seed matches" on the upgrade — the exact failure this set exists
-/// to prevent. Drop V1 only once no certificate a live network can still
-/// present carries it.
+/// `derivable_digest_set_has_exactly_the_encodings_this_binary_emits`. Before
+/// emitting a new bundle encoding, readers must already support decoding and
+/// verifying it, while retaining support for every encoding a live handoff
+/// can still reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DerivableDigests {
     digests: BTreeSet<[u8; 32]>,
 }
 
 impl DerivableDigests {
-    /// Derives the full accepted-digest set for `seed`.
+    /// Derives the emitted bundle digests for `seed`.
     pub fn derive(seed: &RootSeed) -> IkaResult<Self> {
         let mut digests = BTreeSet::new();
-        // v1: the only encoding this binary emits. See the type's docs for
-        // what a version bump must add here.
+        // V1 is the only encoding this binary emits.
         digests.insert(ika_network::mpc_artifacts::mpc_data_blob_hash(
             &derive_mpc_data_blob(seed)?,
         ));
@@ -114,8 +104,7 @@ impl DerivableDigests {
         self.digests.is_empty()
     }
 
-    /// The digest this binary *emits* — the one the announcement carries. Used
-    /// only for operator-facing messages; the comparison always uses the set.
+    /// The digest this binary emits in its announcement and operator messages.
     pub fn emitted(&self) -> Option<[u8; 32]> {
         self.digests.iter().next().copied()
     }
@@ -154,21 +143,20 @@ pub fn certified_mpc_data_digests(
 /// Which seed epoch `E` runs on, and whether MPC runs at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EpochSeedDecision {
-    /// No certified digest names this authority: genesis, a true joiner's
-    /// first epoch, or the `E-1` cert not yet installed at boot. Nothing to
-    /// resolve against — run the current seed and leave the epoch to the
-    /// announcement sender's per-tick check. Cert ABSENCE is never evidence
-    /// of a wrong seed.
+    /// No certified digest names this authority: genesis or a true joiner's
+    /// first epoch. Run the current seed and leave identity reporting to the
+    /// announcement sender's per-tick check. Startup must authenticate and
+    /// hydrate any required handoff certificate before reaching this rule.
     NoCertifiedDigest { previous_configured: bool },
-    /// The certified digest is one the CURRENT seed derives. Normal.
+    /// The CURRENT seed derives the certified encryption keys. Normal.
     /// `previous_configured` separates the steady state from "the rotation
     /// completed, the operator can drop the field".
     RunOnCurrent { previous_configured: bool },
-    /// Only the PREVIOUS seed derives the certified digest: a rotation is in
+    /// Only the PREVIOUS seed derives the certified encryption keys: a rotation is in
     /// flight. Epoch `E`'s MPC runs on the previous seed; the sender keeps
     /// announcing the current one.
     RunOnPrevious,
-    /// Neither seed derives the certified digest. The node joins the epoch as
+    /// Neither seed derives the certified encryption keys. The node joins the epoch as
     /// a consensus member that takes no part in MPC. Never an abort.
     NoParticipation { previous_configured: bool },
 }
@@ -185,7 +173,7 @@ pub const SEED_IDENTITY_STATES: &[&str] = &[
     // Current seed is certified AND a previous seed is still configured:
     // the rotation is complete and the field should be removed.
     "rotation_complete",
-    // Genesis / first-epoch joiner / cert not installed.
+    // Genesis / first-epoch joiner.
     "no_certified_digest",
     // Rotation in flight: this epoch's MPC runs on the previous seed.
     "rotating_on_previous_seed",
@@ -244,34 +232,147 @@ impl EpochSeedDecision {
     }
 }
 
-/// The whole decision, as a pure function of the two derivable-digest sets and
-/// the certified digest. No node, no store, no clock.
+/// The whole decision, as a pure function of whether each configured seed
+/// derives the certified encryption keys and whether a certified digest exists
+/// for this authority. No node, no store, no clock.
 ///
 /// Order matters in exactly one place: CURRENT is tested first, so an operator
 /// who points both fields at the same seed gets `RunOnCurrent` (no rotation)
 /// rather than a spurious "rotating" state.
 pub fn resolve_epoch_seed(
-    current: &DerivableDigests,
-    previous: Option<&DerivableDigests>,
-    certified_digest_for_self: Option<[u8; 32]>,
+    current_matches: bool,
+    previous_matches: Option<bool>,
+    has_certified_digest: bool,
 ) -> EpochSeedDecision {
-    let previous_configured = previous.is_some();
-    let Some(certified) = certified_digest_for_self else {
+    let previous_configured = previous_matches.is_some();
+    if !has_certified_digest {
         return EpochSeedDecision::NoCertifiedDigest {
             previous_configured,
         };
-    };
-    if current.contains(&certified) {
+    }
+    if current_matches {
         return EpochSeedDecision::RunOnCurrent {
             previous_configured,
         };
     }
-    if previous.is_some_and(|previous| previous.contains(&certified)) {
+    if previous_matches == Some(true) {
         return EpochSeedDecision::RunOnPrevious;
     }
     EpochSeedDecision::NoParticipation {
         previous_configured,
     }
+}
+
+/// Decode only the blob named by the authenticated handoff or frozen input set.
+/// Proofs remain part of that digest and are verified by the normal MPC input
+/// validation; they are not the identity of the local decryption keys.
+pub(crate) fn decode_certified_mpc_keys(
+    digest: &[u8; 32],
+    blob: &[u8],
+) -> IkaResult<ValidatorEncryptionKeysAndProofs> {
+    if mpc_data_blob_hash(blob) != *digest {
+        return Err(IkaError::Generic {
+            error: "certified validator MPC data hash mismatch".into(),
+        });
+    }
+    let versioned: VersionedMPCData = bcs::from_bytes(blob).map_err(|error| IkaError::Generic {
+        error: format!("invalid certified validator MPC data: {error}"),
+    })?;
+    let VersionedMPCData::V1(data) = versioned;
+    bcs::from_bytes(&data.mpc_data_bytes()).map_err(|error| IkaError::Generic {
+        error: format!("invalid certified validator encryption keys: {error}"),
+    })
+}
+
+fn same_encryption_keys(
+    left: &ValidatorEncryptionKeysAndProofs,
+    right: &ValidatorEncryptionKeysAndProofs,
+) -> bool {
+    left.class_groups
+        .iter()
+        .zip(&right.class_groups)
+        .all(|(left, right)| left.0 == right.0)
+        && left.secp256k1_pvss.0 == right.secp256k1_pvss.0
+        && left.secp256r1_pvss.0 == right.secp256r1_pvss.0
+        && left.ristretto_pvss.0 == right.ristretto_pvss.0
+        && left.vss_hpke_public_key_and_proof.0 == right.vss_hpke_public_key_and_proof.0
+}
+
+/// Public-key matches against the authenticated handoff, excluding proof bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CertifiedKeyMatches {
+    class_group: usize,
+    vss_hpke: bool,
+}
+
+impl CertifiedKeyMatches {
+    fn between(
+        current: &ValidatorEncryptionKeysAndProofs,
+        certified: &ValidatorEncryptionKeysAndProofs,
+    ) -> Self {
+        let class_group = current
+            .class_groups
+            .iter()
+            .zip(&certified.class_groups)
+            .filter(|(current, certified)| current.0 == certified.0)
+            .count()
+            + [
+                current.secp256k1_pvss.0 == certified.secp256k1_pvss.0,
+                current.secp256r1_pvss.0 == certified.secp256r1_pvss.0,
+                current.ristretto_pvss.0 == certified.ristretto_pvss.0,
+            ]
+            .into_iter()
+            .filter(|matches| *matches)
+            .count();
+        Self {
+            class_group,
+            vss_hpke: current.vss_hpke_public_key_and_proof.0
+                == certified.vss_hpke_public_key_and_proof.0,
+        }
+    }
+}
+
+struct DerivedSeedIdentity {
+    digests: DerivableDigests,
+    matches_certified_keys: bool,
+    certified_key_matches: Option<CertifiedKeyMatches>,
+}
+
+fn derive_seed_identity(
+    seed: &RootSeed,
+    certified_digest: Option<[u8; 32]>,
+    certified_keys: Option<&ValidatorEncryptionKeysAndProofs>,
+) -> IkaResult<DerivedSeedIdentity> {
+    let blob = derive_mpc_data_blob(seed)?;
+    let digest = mpc_data_blob_hash(&blob);
+    let digests = DerivableDigests {
+        digests: BTreeSet::from([digest]),
+    };
+    let Some(certified_keys) = certified_keys else {
+        return Ok(DerivedSeedIdentity {
+            digests,
+            matches_certified_keys: false,
+            certified_key_matches: None,
+        });
+    };
+    let current_keys = decode_certified_mpc_keys(&digest, &blob)?;
+    let certified_key_matches = Some(CertifiedKeyMatches::between(&current_keys, certified_keys));
+    Ok(DerivedSeedIdentity {
+        digests,
+        matches_certified_keys: certified_digest == Some(digest)
+            || same_encryption_keys(&current_keys, certified_keys),
+        certified_key_matches,
+    })
+}
+
+pub(crate) fn matches_certified_keys(
+    seed: &RootSeed,
+    digest: &[u8; 32],
+    blob: &[u8],
+) -> IkaResult<bool> {
+    let keys = decode_certified_mpc_keys(digest, blob)?;
+    derive_seed_identity(seed, Some(*digest), Some(&keys))
+        .map(|identity| identity.matches_certified_keys)
 }
 
 /// A resolved epoch: the decision plus the seed the MPC manager must run with
@@ -283,31 +384,51 @@ pub struct EpochSeedResolution {
     current_digests: DerivableDigests,
     previous_digests: Option<DerivableDigests>,
     certified: Option<[u8; 32]>,
+    current_certified_key_matches: Option<CertifiedKeyMatches>,
 }
 
 impl EpochSeedResolution {
-    /// Derives both digest sets and resolves. The derivation is the epoch's
-    /// single most expensive computation, so the previous seed's set is only
-    /// derived when a previous seed is actually configured — i.e. never
-    /// outside a rotation.
+    /// Resolves the seed from the authenticated certified keys.
+    /// Key derivation is expensive, so the previous seed is only derived when
+    /// it is configured — i.e. never outside a rotation.
     pub fn resolve(
         current_seed: RootSeed,
         previous_seed: Option<RootSeed>,
         certified_digest_for_self: Option<[u8; 32]>,
+        certified_blob: Option<&[u8]>,
     ) -> IkaResult<Self> {
-        let current_digests = DerivableDigests::derive(&current_seed)?;
-        let previous_digests = previous_seed
-            .as_ref()
-            .map(DerivableDigests::derive)
+        let certified_keys = certified_digest_for_self
+            .map(|digest| {
+                let blob = certified_blob.ok_or_else(|| IkaError::Generic {
+                    error: "certified validator MPC data is missing at epoch startup".into(),
+                })?;
+                decode_certified_mpc_keys(&digest, blob)
+            })
             .transpose()?;
-        let decision = resolve_epoch_seed(
-            &current_digests,
-            previous_digests.as_ref(),
+        let current_identity = derive_seed_identity(
+            &current_seed,
             certified_digest_for_self,
+            certified_keys.as_ref(),
+        )?;
+        let previous_identity = previous_seed
+            .as_ref()
+            .map(|seed| {
+                derive_seed_identity(seed, certified_digest_for_self, certified_keys.as_ref())
+            })
+            .transpose()?;
+        let previous_digests = previous_identity
+            .as_ref()
+            .map(|identity| identity.digests.clone());
+        let decision = resolve_epoch_seed(
+            current_identity.matches_certified_keys,
+            previous_identity
+                .as_ref()
+                .map(|identity| identity.matches_certified_keys),
+            certified_digest_for_self.is_some(),
         );
         // `RunOnPrevious` is the only case that hands the manager anything but
         // the current seed, and it is only reachable when `previous_seed` is
-        // `Some` (it is the arm that matched the previous digest set).
+        // `Some` (it is the arm that matched the previous seed's keys).
         let mpc_seed = if decision.uses_previous_seed() {
             previous_seed.expect("RunOnPrevious is only produced from a configured previous seed")
         } else {
@@ -316,9 +437,10 @@ impl EpochSeedResolution {
         Ok(Self {
             decision,
             mpc_seed,
-            current_digests,
+            current_digests: current_identity.digests,
             previous_digests,
             certified: certified_digest_for_self,
+            current_certified_key_matches: current_identity.certified_key_matches,
         })
     }
 
@@ -347,8 +469,22 @@ impl EpochSeedResolution {
     /// deliberately set from OUTSIDE the MPC service (a subsystem cannot
     /// report its own stall, `dev-docs/conventions/metrics.md`).
     pub fn report(&self, metrics: &DWalletMPCMetrics, authority: &AuthorityName, epoch: EpochId) {
+        metrics.clear_seed_identity_state();
         metrics.set_seed_identity_state(self.state_label());
-
+        metrics
+            .validator_key_epoch
+            .with_label_values(&["selected"])
+            .set(epoch as i64);
+        if let Some(matches) = &self.current_certified_key_matches {
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["class_group"])
+                .set(matches.class_group as i64);
+            metrics
+                .validator_current_key_certified_matches
+                .with_label_values(&["vss_hpke"])
+                .set(i64::from(matches.vss_hpke));
+        }
         let certified = self
             .certified
             .map(hex::encode)
@@ -366,7 +502,7 @@ impl EpochSeedResolution {
             } => {
                 info!(
                     ?authority,
-                    epoch, "root seed derives the mpc_data bundle certified for this epoch"
+                    epoch, "root seed derives the encryption keys certified for this epoch"
                 );
             }
             EpochSeedDecision::RunOnCurrent {
@@ -396,8 +532,8 @@ impl EpochSeedResolution {
                     epoch,
                     %current,
                     "no certified mpc_data digest for this validator in the prior epoch's \
-                     handoff certificate (genesis, a first-epoch joiner, or the cert not \
-                     yet installed) — running MPC on the current root seed and leaving \
+                     handoff certificate (genesis or a first-epoch joiner) — running \
+                     MPC on the current root seed and leaving \
                      seed identity to the per-tick off-chain check"
                 );
             }
@@ -425,7 +561,7 @@ impl EpochSeedResolution {
                     state = self.state_label(),
                     "NOT PARTICIPATING IN MPC THIS EPOCH: the prior epoch's handoff \
                      certificate deals this validator's shares to mpc_data bundle \
-                     {certified}, which neither the configured root seed ({current}) nor \
+                     {certified}, whose encryption keys neither the configured root seed ({current}) nor \
                      the configured previous root seed ({previous}) derives. This node \
                      cannot decrypt this epoch's shares, so it will run consensus and \
                      every other duty but send no MPC messages at all — deliberately, \
@@ -444,30 +580,222 @@ impl EpochSeedResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+    use dwallet_classgroups_types::ValidatorMPCSecrets;
+    use prometheus::Registry;
 
-    fn digest(n: u8) -> [u8; 32] {
-        [n; 32]
+    fn metric(registry: &Registry, name: &str, label: &str) -> f64 {
+        registry
+            .gather()
+            .iter()
+            .find(|family| family.name() == name)
+            .expect("metric family must be exported")
+            .get_metric()
+            .iter()
+            .find(|metric| metric.get_label().iter().any(|pair| pair.value() == label))
+            .expect("bounded label must be exported")
+            .get_gauge()
+            .value()
     }
 
-    fn set(n: u8) -> DerivableDigests {
-        DerivableDigests::from_digests([digest(n)])
+    #[test]
+    fn validator_key_metrics_clear_stale_selection_and_distinguish_unknown() {
+        let registry = Registry::new();
+        let metrics = DWalletMPCMetrics::new(&registry);
+        let epoch_metric = "ika_dwallet_mpc_validator_key_epoch";
+        let matches_metric = "ika_dwallet_mpc_validator_current_key_certified_matches";
+        assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
+        assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
+        for (decision, matches, expected_matches) in [
+            (
+                EpochSeedDecision::RunOnPrevious,
+                Some(CertifiedKeyMatches {
+                    class_group: 0,
+                    vss_hpke: false,
+                }),
+                0.0,
+            ),
+            (
+                EpochSeedDecision::RunOnCurrent {
+                    previous_configured: true,
+                },
+                Some(CertifiedKeyMatches {
+                    class_group: 6,
+                    vss_hpke: true,
+                }),
+                6.0,
+            ),
+            (
+                EpochSeedDecision::NoParticipation {
+                    previous_configured: false,
+                },
+                Some(CertifiedKeyMatches {
+                    class_group: 0,
+                    vss_hpke: false,
+                }),
+                0.0,
+            ),
+            (
+                EpochSeedDecision::NoCertifiedDigest {
+                    previous_configured: false,
+                },
+                None,
+                -1.0,
+            ),
+        ] {
+            metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .set(6);
+            EpochSeedResolution {
+                decision,
+                mpc_seed: RootSeed::new([0; 32]),
+                current_digests: DerivableDigests::from_digests([[0; 32]]),
+                previous_digests: None,
+                certified: matches.as_ref().map(|_| [0; 32]),
+                current_certified_key_matches: matches,
+            }
+            .report(&metrics, &AuthorityName([1; 32]), 7);
+            assert_eq!(metric(&registry, epoch_metric, "selected"), 7.0);
+            assert_eq!(metric(&registry, epoch_metric, "prepared"), -1.0);
+            assert_eq!(
+                metric(&registry, matches_metric, "class_group"),
+                expected_matches,
+                "uncertified current keys must not be reported as matching"
+            );
+        }
+        metrics.clear_seed_identity_state();
+        assert_eq!(metric(&registry, epoch_metric, "selected"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "class_group"), -1.0);
+        assert_eq!(metric(&registry, matches_metric, "vss_hpke"), -1.0);
+        for state in SEED_IDENTITY_STATES {
+            assert_eq!(
+                metric(&registry, "ika_dwallet_mpc_seed_identity_state", state),
+                0.0
+            );
+        }
+    }
+
+    #[cfg(not(feature = "dwallet-mpc-unsafe-mock"))]
+    #[test]
+    fn certified_key_identity_checks_every_encryption_key() {
+        let blob = include_bytes!("integration_tests/fixtures/legacy-validator-mpc-data.bcs");
+        let digest = mpc_data_blob_hash(blob);
+        let certified = decode_certified_mpc_keys(&digest, blob).unwrap();
+        let other = ValidatorMPCSecrets::from_seed(&RootSeed::new([32; 32])).1;
+        assert!(same_encryption_keys(&certified, &certified));
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &certified),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: true
+            }
+        );
+        for index in 0..certified.class_groups.len() {
+            let mut changed = certified.clone();
+            changed.class_groups[index].0 = other.class_groups[index].0;
+            assert!(
+                !same_encryption_keys(&certified, &changed),
+                "every CRT key must match"
+            );
+            assert_eq!(
+                CertifiedKeyMatches::between(&certified, &changed).class_group,
+                5
+            );
+        }
+        let mut changed = certified.clone();
+        changed.secp256k1_pvss.0 = other.secp256k1_pvss.0;
+        assert!(
+            !same_encryption_keys(&certified, &changed),
+            "secp256k1 PVSS key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
+        );
+        let mut changed = certified.clone();
+        changed.secp256r1_pvss.0 = other.secp256r1_pvss.0;
+        assert!(
+            !same_encryption_keys(&certified, &changed),
+            "secp256r1 PVSS key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
+        );
+        let mut changed = certified.clone();
+        changed.ristretto_pvss.0 = other.ristretto_pvss.0;
+        assert!(
+            !same_encryption_keys(&certified, &changed),
+            "ristretto PVSS key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed).class_group,
+            5
+        );
+        let mut changed = certified.clone();
+        changed.vss_hpke_public_key_and_proof.0 = other.vss_hpke_public_key_and_proof.0;
+        assert!(
+            !same_encryption_keys(&certified, &changed),
+            "VSS HPKE key must match"
+        );
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &changed),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: false
+            }
+        );
+        let mut different_proofs = other.clone();
+        for (keys, original) in different_proofs
+            .class_groups
+            .iter_mut()
+            .zip(&certified.class_groups)
+        {
+            keys.0 = original.0;
+        }
+        different_proofs.secp256k1_pvss.0 = certified.secp256k1_pvss.0;
+        different_proofs.secp256r1_pvss.0 = certified.secp256r1_pvss.0;
+        different_proofs.ristretto_pvss.0 = certified.ristretto_pvss.0;
+        different_proofs.vss_hpke_public_key_and_proof.0 =
+            certified.vss_hpke_public_key_and_proof.0;
+        assert_eq!(
+            CertifiedKeyMatches::between(&certified, &different_proofs),
+            CertifiedKeyMatches {
+                class_group: 6,
+                vss_hpke: true
+            },
+            "proof changes must not look like key rotation"
+        );
+    }
+
+    #[test]
+    fn certified_key_blob_requires_matching_hash_and_valid_encoding() {
+        let invalid = [255];
+        let error = decode_certified_mpc_keys(&[0; 32], &invalid).unwrap_err();
+        assert!(error.to_string().contains("hash mismatch"));
+        let error = decode_certified_mpc_keys(&mpc_data_blob_hash(&invalid), &invalid).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid certified validator MPC data")
+        );
     }
 
     /// All four outcomes of the pure resolution rule.
     #[test]
     fn resolution_covers_current_previous_neither_and_both() {
-        let current = set(1);
-        let previous = set(2);
-
-        // No certified digest — genesis / joiner / cert absent.
+        // No certified digest for this authority — genesis / first-epoch joiner.
         assert_eq!(
-            resolve_epoch_seed(&current, None, None),
+            resolve_epoch_seed(false, None, false),
             EpochSeedDecision::NoCertifiedDigest {
                 previous_configured: false
             }
         );
         assert_eq!(
-            resolve_epoch_seed(&current, Some(&previous), None),
+            resolve_epoch_seed(false, Some(false), false),
             EpochSeedDecision::NoCertifiedDigest {
                 previous_configured: true
             }
@@ -475,13 +803,13 @@ mod tests {
 
         // Current matches: normal, with and without a previous seed.
         assert_eq!(
-            resolve_epoch_seed(&current, None, Some(digest(1))),
+            resolve_epoch_seed(true, None, true),
             EpochSeedDecision::RunOnCurrent {
                 previous_configured: false
             }
         );
         assert_eq!(
-            resolve_epoch_seed(&current, Some(&previous), Some(digest(1))),
+            resolve_epoch_seed(true, Some(false), true),
             EpochSeedDecision::RunOnCurrent {
                 previous_configured: true
             }
@@ -489,20 +817,20 @@ mod tests {
 
         // Only the previous matches: rotation in flight.
         assert_eq!(
-            resolve_epoch_seed(&current, Some(&previous), Some(digest(2))),
+            resolve_epoch_seed(false, Some(true), true),
             EpochSeedDecision::RunOnPrevious
         );
 
         // Neither matches. NEVER an abort — both shapes are a decision to sit
         // the epoch out, and both must be `mpc_active() == false`.
-        let no_previous = resolve_epoch_seed(&current, None, Some(digest(9)));
+        let no_previous = resolve_epoch_seed(false, None, true);
         assert_eq!(
             no_previous,
             EpochSeedDecision::NoParticipation {
                 previous_configured: false
             }
         );
-        let with_previous = resolve_epoch_seed(&current, Some(&previous), Some(digest(9)));
+        let with_previous = resolve_epoch_seed(false, Some(false), true);
         assert_eq!(
             with_previous,
             EpochSeedDecision::NoParticipation {
@@ -513,9 +841,8 @@ mod tests {
         assert!(!with_previous.mpc_active());
 
         // Both point at the same seed: NOT a rotation.
-        let same = DerivableDigests::from_digests([digest(1)]);
         assert_eq!(
-            resolve_epoch_seed(&current, Some(&same), Some(digest(1))),
+            resolve_epoch_seed(true, Some(true), true),
             EpochSeedDecision::RunOnCurrent {
                 previous_configured: true
             }
@@ -636,19 +963,15 @@ mod tests {
         );
     }
 
-    /// Encoding-version tolerance, pinned honestly: this binary emits exactly
-    /// ONE bundle encoding, so the accepted set has exactly one member and the
-    /// tolerance is structural rather than load-bearing today. A version bump
-    /// that adds `VersionedMPCData::V2` must make this 2 (accept both) a
-    /// release BEFORE it starts emitting V2 — see `DerivableDigests`.
+    /// This binary emits exactly one bundle encoding. Its digest set records
+    /// that emitted bundle for announcement diagnostics.
     ///
     /// Also the end-to-end check over the REAL derivation that the pure rule
     /// above cannot make: that two different seeds are actually
     /// distinguishable, and that a rotation hands the manager the seed the
-    /// certificate names rather than the configured one. Each
-    /// `DerivableDigests::derive` runs the full class-groups derivation
-    /// (seconds, even in release), so this does the minimum number of them —
-    /// two — and drives every remaining case through the pure rule.
+    /// certificate names rather than the configured one. Class-groups
+    /// derivation takes seconds even in release, so the remaining decision
+    /// cases reuse these digests without deriving again.
     #[test]
     fn derivable_digest_set_has_exactly_the_encodings_this_binary_emits() {
         let old = RootSeed::new([21u8; 32]);
@@ -659,10 +982,9 @@ mod tests {
         assert_eq!(
             new_digests.len(),
             1,
-            "this binary emits one mpc_data encoding; update this pin AND the \
-             accept-before-emit rule in `DerivableDigests` when that changes"
+            "this binary emits one mpc_data encoding; update this pin when that changes"
         );
-        // The accepted member is precisely what the announcement carries.
+        // The member is precisely what the announcement carries.
         let emitted = ika_network::mpc_artifacts::mpc_data_blob_hash(
             &derive_mpc_data_blob(&new).expect("derive blob"),
         );
@@ -677,9 +999,13 @@ mod tests {
         // A rotation resolves onto the PREVIOUS seed and hands the manager
         // that seed — not the configured (current) one. This is the only
         // assertion that needs the real seeds rather than digests.
-        let rotating =
-            EpochSeedResolution::resolve(new.clone(), Some(old.clone()), Some(old_digest))
-                .expect("resolve");
+        let rotating = EpochSeedResolution::resolve(
+            new.clone(),
+            Some(old.clone()),
+            Some(old_digest),
+            Some(&derive_mpc_data_blob(&old).expect("old blob")),
+        )
+        .expect("resolve");
         assert_eq!(rotating.decision(), EpochSeedDecision::RunOnPrevious);
         assert!(rotating.mpc_active());
         assert_eq!(rotating.mpc_seed(), &old);
@@ -687,14 +1013,18 @@ mod tests {
         // The rest of the cases over the same real digests, through the pure
         // rule (no further derivation).
         assert_eq!(
-            resolve_epoch_seed(&new_digests, Some(&old_digests), new_digests.emitted())
-                .state_label(),
+            resolve_epoch_seed(
+                new_digests.contains(&emitted),
+                Some(old_digests.contains(&emitted)),
+                true
+            )
+            .state_label(),
             "rotation_complete"
         );
         assert_eq!(
-            resolve_epoch_seed(&new_digests, None, Some(old_digest)).state_label(),
+            resolve_epoch_seed(new_digests.contains(&old_digest), None, true).state_label(),
             "awaiting_certification"
         );
-        assert!(!resolve_epoch_seed(&new_digests, None, Some(old_digest)).mpc_active());
+        assert!(!resolve_epoch_seed(new_digests.contains(&old_digest), None, true).mpc_active());
     }
 }

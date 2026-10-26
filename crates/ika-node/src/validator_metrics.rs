@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use hex::encode;
 use prometheus::{
     Gauge, GaugeVec, IntCounter, IntCounterVec, IntGauge, Registry,
     register_gauge_vec_with_registry, register_gauge_with_registry,
@@ -1090,7 +1091,7 @@ fn machine_id_sha256() -> String {
         .into_iter()
         .find_map(|path| fs::read(path).ok())
         .filter(|value| !value.is_empty())
-        .map(|value| format!("{:x}", Sha256::digest(value)))
+        .map(|value| encode(Sha256::digest(value)))
         .unwrap_or_default()
 }
 
@@ -1189,8 +1190,17 @@ fn binary_identity() -> io::Result<(String, u64)> {
 
 fn sha256_reader(mut reader: impl Read) -> io::Result<String> {
     let mut hasher = Sha256::new();
-    io::copy(&mut reader, &mut hasher)?;
-    Ok(format!("{:x}", hasher.finalize()))
+    let mut buffer = [0u8; 8192];
+    loop {
+        let bytes_read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(bytes_read) => bytes_read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(encode(hasher.finalize()))
 }
 
 fn read_cgroup() -> Option<String> {
@@ -1290,6 +1300,10 @@ mod tests {
         assert_eq!(
             sha256_reader(Cursor::new(b"abc")).unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_reader(Cursor::new(vec![b'a'; 1_000_000])).unwrap(),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
         );
     }
 

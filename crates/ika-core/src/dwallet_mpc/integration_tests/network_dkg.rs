@@ -139,6 +139,15 @@ async fn epoch_startup_prepares_inherited_key_material_before_any_round() {
         .prepare_epoch()
         .await
         .expect("certified keys must prepare without a consensus round");
+    assert_eq!(
+        service
+            .dwallet_mpc_metrics()
+            .validator_key_epoch
+            .with_label_values(&["prepared"])
+            .get(),
+        committee.epoch as i64,
+        "successful inherited key preparation must be observable"
+    );
 
     let manager = service.dwallet_mpc_manager();
     assert!(

@@ -29,6 +29,8 @@ Commands that derive encryption keys accept these flags:
 
 **Seed derivation:** When `--seed-file` is omitted, the seed is derived from the active Sui keystore address (or `--address`) using `keccak256(keypair_bytes || index_le_bytes)`. Use `--legacy-hash` for encryption keys registered before the V2 hash fix (only affects non-SECP256K1 curves, since SECP256K1 has curve number 0 in both versions).
 
+The native CLI preserves existing seed-to-key derivation. Use `--legacy-hash` only when the original keys used the old curve-byte hash. To recover keys originally derived by WASM32, use the SDK's `UserShareEncryptionKeys.fromRootSeedKey` or `fromRootSeedKeyLegacyHash`; the native CLI does not emulate historical browser sampling.
+
 ### Payment Args
 
 | Flag | Description |

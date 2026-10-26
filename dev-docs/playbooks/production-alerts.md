@@ -5,6 +5,61 @@ progress, while broken-invariant events can be hidden in an operator's private
 logs. The metrics exist; what must live in the alerting config are the rules
 below.
 
+## Validator encryption-key rollout walkthrough
+
+Inspect every validator's scrape target separately. `seed_identity_state`
+distinguishes the configured current root from an optional previous root.
+The binary upgrade preserves existing validator keys and requires no seed rotation.
+
+1. Before the change, record `ika_current_epoch`,
+   `ika_dwallet_mpc_seed_identity_state` and
+   `ika_dwallet_mpc_validator_key_epoch`. Both `selected` and `prepared` stages
+   should reach the current epoch for an active validator.
+2. After restart, check
+   `ika_dwallet_mpc_validator_current_key_certified_matches`. A certified native
+   key-preserving upgrade reports `class_group=6` and `vss_hpke=1`.
+   A root-seed rotation can report fewer matches while
+   `seed_identity_state{state="rotating_on_previous_seed"}=1`: the validator still
+   decrypts with its previous seed. Keep that seed configured.
+   `-1` means no comparison is available, including before selection and when
+   no certificate names this authority; it never means preservation.
+3. Follow the existing announcement/freeze pipeline using
+   `ika_dwallet_mpc_data_announcements_received`,
+   `ika_dwallet_mpc_data_ready_signal_stake`,
+   `ika_dwallet_mpc_data_freeze_epoch` and `ika_handoff_prepare_waiting`.
+   These summarize committee progress; they do not establish that a particular
+   validator's replacement keys were certified. A change arriving after the
+   freeze can require another epoch.
+4. At the next certified epoch, verify six/one current-key matches and both
+   key epoch stages equal to `ika_current_epoch`. For a root-seed rotation,
+   `rotation_complete=1` means the current seed is usable and the previous-seed
+   config can be removed at a convenient restart. It is not a rotation counter:
+   configuring the same seed twice can also produce that state. Changed proof
+   bytes alone do not mean public keys rotated.
+5. Confirm real MPC progress after preparation: inspect session output
+   participation, completed workloads and `ika_dwallet_mpc_malicious_actors_count`,
+   with no increase in `ika_dwallet_mpc_self_malicious_total`. Key selection and
+   preparation alone cannot establish that this node submitted accepted outputs.
+
+The following identifies a resolved, participating validator that has not
+finished key preparation. Brief startup is normal; investigate sustained values
+using the preparation logs and the handoff barrier signals.
+
+```promql
+(ika_dwallet_mpc_validator_key_epoch{stage="prepared"} < 0)
+and ignoring(stage)
+(ika_dwallet_mpc_validator_key_epoch{stage="selected"} >= 0)
+and ignoring(stage, state)
+(ika_dwallet_mpc_seed_identity_state{state=~"matches|rotation_complete|rotating_on_previous_seed|no_certified_digest"} == 1)
+```
+
+The existing seed-mismatch alert remains necessary: inactive validators
+deliberately leave preparation unset.
+
+```promql
+ika_dwallet_mpc_seed_identity_state{state=~"awaiting_certification|previous_seed_mismatch"} == 1
+```
+
 ## Alert 1: broken invariant observed
 
 ```promql

@@ -488,7 +488,13 @@ verifyAndGetDWalletDKGPublicOutput(
 ### Encryption
 
 ```typescript
+// Deprecated: preserves historical WASM32 seed-to-key derivation.
 createClassGroupsKeypair(seed: Uint8Array, curve: Curve): Promise<{
+    encryptionKey: Uint8Array; decryptionKey: Uint8Array;
+}>
+
+// Explicit opt-in to current sampling, matching native Rust.
+createClassGroupsKeypairV2(seed: Uint8Array, curve: Curve): Promise<{
     encryptionKey: Uint8Array; decryptionKey: Uint8Array;
 }>
 
@@ -527,9 +533,15 @@ reconfigurationPublicOutputToProtocolPublicParameters(
 ### Creation
 
 ```typescript
-// From seed (deterministic, correct curve byte in hash)
-static fromRootSeedKey(
+// New keys: current curve-byte hash and the new platform-independent sampler.
+static fromRootSeedKeyV2(
     rootSeedKey: Uint8Array, curve: Curve
+): Promise<UserShareEncryptionKeys>
+
+// Deprecated: recover existing keys with the deployed WASM32 sampler.
+static fromRootSeedKey(
+    rootSeedKey: Uint8Array, curve: Curve,
+    options?: { legacyHash?: boolean }
 ): Promise<UserShareEncryptionKeys>
 
 // Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
@@ -537,14 +549,14 @@ static fromRootSeedKeyLegacyHash(
     rootSeedKey: Uint8Array, curve: Curve
 ): Promise<UserShareEncryptionKeys>
 
-// From serialized bytes (auto-detects legacy vs fixed)
+// Restores stored key bytes; BCS V1/V2 records the hash, not the sampler.
 static fromShareEncryptionKeysBytes(bytes: Uint8Array): UserShareEncryptionKeys
 ```
 
 ### Serialization
 
 ```typescript
-toShareEncryptionKeysBytes(): Uint8Array  // Preserves legacy/fixed distinction via BCS variant
+toShareEncryptionKeysBytes(): Uint8Array  // Preserves actual key bytes and hash version
 ```
 
 ### Properties

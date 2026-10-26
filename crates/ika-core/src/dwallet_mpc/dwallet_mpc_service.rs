@@ -861,8 +861,16 @@ impl DWalletMPCService {
     /// An uncertified local seed deliberately sits out MPC and must still be
     /// able to join consensus so the network can certify its replacement.
     pub async fn prepare_epoch(&mut self) -> DwalletMPCResult<()> {
+        self.dwallet_mpc_metrics
+            .validator_key_epoch
+            .with_label_values(&["prepared"])
+            .set(-1);
         if self.mpc_active {
             self.dwallet_mpc_manager.prepare_epoch().await?;
+            self.dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .set(self.epoch as i64);
         }
         Ok(())
     }
@@ -3547,28 +3555,34 @@ impl DWalletMPCService {
                 }
             });
 
-        // The certificate names validators by their CONSENSUS key, which is
-        // `epoch_store.name` — not the BLS `protocol_pubkey_bytes` used for
-        // the raw-record self-lookup above. A read failure is treated as
-        // "no certified digest": it is a local storage fault, not evidence
-        // about which seed this node is running, and resolving it as a
-        // mismatch would take a validator out of MPC over a corrupt local
-        // DB read.
-        let certified_digest_for_self = match epoch_store.prior_epoch_mpc_data_digests() {
-            Ok(digests) => digests.get(&epoch_store.name).copied(),
-            Err(err) => {
-                warn!(
-                    error = ?err,
-                    "could not read the prior epoch's handoff certificate for the epoch \
-                     seed resolution; proceeding on the current root seed and leaving \
-                     seed identity to the per-tick off-chain check"
-                );
-                None
-            }
-        };
-        let resolution =
-            EpochSeedResolution::resolve(root_seed, previous_root_seed, certified_digest_for_self)
-                .map_err(DwalletMPCError::IkaError)?;
+        // Startup's handoff barrier has already authenticated the certificate
+        // and hydrated its blobs. Storage failures must not select a different
+        // key derivation from the one the handoff actually names.
+        let certified_digest_for_self = epoch_store
+            .prior_epoch_mpc_data_digests()
+            .map_err(DwalletMPCError::IkaError)?
+            .get(&epoch_store.name)
+            .copied();
+        let certified_blob = certified_digest_for_self
+            .map(|digest| {
+                let perpetual =
+                    epoch_store
+                        .perpetual_tables_handle()
+                        .ok_or_else(|| IkaError::Generic {
+                            error: "missing perpetual store for certified validator keys".into(),
+                        })?;
+                perpetual.get_mpc_artifact_blob(&digest)
+            })
+            .transpose()
+            .map_err(DwalletMPCError::IkaError)?
+            .flatten();
+        let resolution = EpochSeedResolution::resolve(
+            root_seed,
+            previous_root_seed,
+            certified_digest_for_self,
+            certified_blob.as_deref(),
+        )
+        .map_err(DwalletMPCError::IkaError)?;
 
         // NOTE (#2119): the on-chain `mpc_data_bytes` field is DEPRECATED and
         // is no longer read here. It used to be decoded as a bare
@@ -3623,7 +3637,21 @@ mod tests {
             .unwrap()
             .insert(services[0].epoch - 1, handoff_certificate());
         services[0].mpc_active = false;
+        services[0]
+            .dwallet_mpc_metrics
+            .validator_key_epoch
+            .with_label_values(&["prepared"])
+            .set(0);
         services[0].prepare_epoch().await.unwrap();
+        assert_eq!(
+            services[0]
+                .dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .get(),
+            -1,
+            "an inactive validator must not claim prepared keys"
+        );
         assert!(
             services[0]
                 .dwallet_mpc_manager
@@ -3632,6 +3660,17 @@ mod tests {
                 .is_empty()
         );
         assert!(services[0].dwallet_mpc_manager.sessions.is_empty());
+        services[0].mpc_active = true;
+        assert!(services[0].prepare_epoch().await.is_err());
+        assert_eq!(
+            services[0]
+                .dwallet_mpc_metrics
+                .validator_key_epoch
+                .with_label_values(&["prepared"])
+                .get(),
+            -1,
+            "failed inherited key preparation must not report completion"
+        );
     }
 
     fn handoff_certificate() -> CertifiedHandoffAttestation {

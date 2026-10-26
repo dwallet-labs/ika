@@ -244,7 +244,7 @@ export async function generateTestKeypair(testName: string, curve: Curve = Curve
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(seed, curve);
 
 	return {
 		userShareEncryptionKeys,
@@ -261,7 +261,7 @@ export async function generateTestKeypairForImportedKeyDWallet(testName: string)
 	const seed = createDeterministicSeed(testName);
 	const userKeypair = Ed25519Keypair.deriveKeypairFromSeed(toHex(seed));
 
-	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+	const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKeyV2(
 		seed,
 		Curve.SECP256K1,
 	);
