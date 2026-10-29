@@ -6,7 +6,7 @@ import path from 'path';
 import { toHex } from '@mysten/bcs';
 import { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
@@ -82,8 +82,8 @@ export function clearAllTestSeeds(): void {
  * Creates a SuiClient for testing
  */
 export function createTestSuiClient(): ClientWithCoreApi {
-	return new SuiJsonRpcClient({
-		url: process.env.SUI_TESTNET_URL || getJsonRpcFullnodeUrl('localnet'),
+	return new SuiGrpcClient({
+		baseUrl: process.env.SUI_TESTNET_URL || 'http://127.0.0.1:9000',
 		network: 'localnet',
 	});
 }

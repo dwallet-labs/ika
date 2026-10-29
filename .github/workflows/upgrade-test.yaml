@@ -622,6 +622,12 @@ jobs:
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
+          # Literal v1.4.1 cannot decode Validity transactions. Keep this
+          # rollout's setup transactions in its supported format; new-reader
+          # format compatibility is tested separately with Validity enabled.
+          case "$TEST_NAME" in
+            v141_*|malicious_v141) export UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS=1 ;;
+          esac
           # Keep production pool sizing/timing for the rollout gate and the
           # restart-spectator gate (whose sustained internal-presign volume IS
           # the ingredient under test — small pools fill and quiesce, and a

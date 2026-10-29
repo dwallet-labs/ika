@@ -320,6 +320,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (ika-core tests)
         run: cargo check -p ika-core --features test-utils --tests --target x86_64-unknown-linux-gnu
+      - name: Sui Validity checkpoint compatibility
+        run: |
+          set -o pipefail
+          cargo test -p ika-sui-client --lib -- --exact \
+            grpc::tests::validity_checkpoint_preserves_transaction_bytes_and_certified_contents \
+            | tee "$RUNNER_TEMP/sui-validity-checkpoint.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/sui-validity-checkpoint.log"
       - name: Sui RPC vs. response error split pins
         # `ika_sui_client_sui_rpc_errors` is what the fleet's Sui-uplink alert
         # fires on, and the split that keeps a decoding defect off it is

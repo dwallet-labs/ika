@@ -218,6 +218,32 @@ scenario retired it now lives nowhere in the matrix. Any future change that
 reintroduces a storage-model boundary needs a scenario built for it; there is
 none to inherit.
 
+## Sui transaction-format compatibility during rollout
+
+The literal Ika v1.4.1 checkpoint reader cannot decode Sui's
+`TransactionExpiration::Validity` (BCS variant index three). A checkpoint
+containing it fails ingestion even when the transaction is unrelated to Ika.
+The Sui mainnet-v1.82.3 dependencies include the decoder support; updating
+only a transaction producer or disabling simulation does not repair an old
+reader that encounters the format.
+
+For the v1.4.1 upgrade scenarios, CI sets
+`UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS=1`. The harness generates a persisted
+Sui localnet configuration and sets the fullnode's
+`enable-simulate-allowed-proposers` to false. This prevents setup and workload
+simulation from automatically introducing `Validity` before the old committee
+can run. It does not disable Sui's protocol feature or change either Ika
+binary. Other scenarios retain the default localnet behavior.
+
+These runs prove Ika binary-swap compatibility on a chain whose transactions
+the old reader understands; they do not prove that v1.4.1 can operate after
+`Validity` transactions appear. The gRPC regression separately decodes a
+`Validity` checkpoint through both SDK and core types, preserves its original
+transaction bytes and digest, and verifies its certified contents. Production
+readers must be upgraded before encountering unsupported formats; a stalled
+reader must recover its existing cursor with the original checkpoint history,
+never skip checkpoints or rewrite transaction bytes to an older variant.
+
 ## How this is verified
 
 `crates/ika-upgrade-test/` spawns real, separately-compiled

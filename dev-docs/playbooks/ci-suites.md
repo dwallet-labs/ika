@@ -84,6 +84,13 @@ inspect the captured output before retrying it.
 
 ## Upgrade test (out-of-process harness; release validation is MANUAL)
 
+The v1.4.1 scenarios set `UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS=1` in CI.
+For local runs of those scenarios, set it explicitly too: it disables only
+Sui fullnode simulation's automatic proposer restriction so the literal old
+checkpoint reader can finish setup. It does not establish old-reader support
+for the new format. See [the upgrade compatibility contract](../specs/cross-binary-upgrade.md#sui-transaction-format-compatibility-during-rollout).
+
+
 `.github/workflows/upgrade-test.yaml` runs the out-of-process harness
 (`crates/ika-upgrade-test/`) — real, separately-compiled `ika-validator`
 child processes against an external `sui` localnet. Manual dispatch remains
