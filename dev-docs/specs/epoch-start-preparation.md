@@ -34,6 +34,13 @@ deadlock even when the certificate and its artifact blobs are already local.
 The normal epoch loop continues refreshing the objects afterwards. Initial
 publication performs no checkpoint writes or epoch transitions.
 
+Key-ID recovery can derive the identity from the DKG blob alone, even when
+chain state reports reconfiguration completed. Resharing preserves that
+identity, and an initial syncer snapshot can still select the DKG epoch's
+blobs. Requiring a reconfiguration blob here would block startup before the
+epoch loop can refresh the snapshot. The certified output and share checks
+remain mandatory after identity recovery.
+
 The barrier fetches missing validator bundles inline using
 `fetch_missing_prior_cert_mpc_data_blobs`. Waiting for the epoch's periodic
 fetcher would deadlock because that task does not exist yet. A blob cached only

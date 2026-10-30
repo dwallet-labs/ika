@@ -19,9 +19,7 @@ use arc_swap::ArcSwap;
 use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
-use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
-};
+use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -81,12 +79,10 @@ pub fn prepare_missing_key_mappings(
         if data.dkg_at_epoch > anchor_epoch || network_key_id_for(object_id).is_some() {
             continue;
         }
-        if data.network_dkg_public_output.is_empty()
-            || (matches!(
-                data.state,
-                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-            ) && data.current_reconfiguration_public_output.is_empty())
-        {
+        // Resharing preserves the key identity. The DKG blob alone is
+        // sufficient even when chain state already says reconfiguration
+        // completed but the syncer's epoch snapshot still selects DKG data.
+        if data.network_dkg_public_output.is_empty() {
             stranded_network_keys.rcu(|keys| {
                 let mut keys = (**keys).clone();
                 keys.insert(*object_id);
@@ -190,6 +186,7 @@ mod tests {
         VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
     };
     use ika_types::handoff::HandoffAttestation;
+    use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState;
     use std::time::Duration;
 
     /// A key whose `NetworkKeyId` is its `ObjectID`'s bytes — so ordering the
@@ -362,12 +359,10 @@ mod tests {
     #[test]
     fn preparation_requests_missing_blobs_without_waiting_for_mpc_startup() {
         let missing_dkg = ObjectID::random();
-        let missing_reconfiguration = ObjectID::random();
         let fresh = ObjectID::random();
         let (already_mapped, _) = registered_key();
         let overlay = HashMap::from([
             (missing_dkg, (0, Vec::new())),
-            (missing_reconfiguration, (0, vec![1])),
             (fresh, (1, Vec::new())),
             (already_mapped, (0, Vec::new())),
         ])
@@ -391,7 +386,7 @@ mod tests {
         prepare_missing_key_mappings(0, &overlay, &mut derivation_inputs, &stranded);
         assert_eq!(
             **stranded.load(),
-            HashSet::from([missing_dkg, missing_reconfiguration]),
+            HashSet::from([missing_dkg]),
             "preparation must request recovery for incomplete prior-epoch keys only"
         );
         assert!(
@@ -402,18 +397,30 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn preparation_derives_a_mapping_before_mpc_components_exist() {
+        assert_preparation_derives_mapping(true).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preparation_derives_a_mapping_without_reconfiguration_before_mpc_startup() {
+        assert_preparation_derives_mapping(false).await;
+    }
+
+    async fn assert_preparation_derives_mapping(with_reconfiguration: bool) {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let object_id = ObjectID::random();
         let network_dkg_public_output = bcs::to_bytes(&VersionedNetworkDkgOutput::V4(
             include_bytes!("integration_tests/fixtures/dkg_anchor_aggregated.bcs").to_vec(),
         ))
         .unwrap();
-        let current_reconfiguration_public_output =
+        let current_reconfiguration_public_output = if with_reconfiguration {
             bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V4(
                 include_bytes!("integration_tests/fixtures/reconfiguration_output_aggregated.bcs")
                     .to_vec(),
             ))
-            .unwrap();
+            .unwrap()
+        } else {
+            Vec::new()
+        };
         let overlay = HashMap::from([(
             object_id,
             DWalletNetworkEncryptionKeyData {

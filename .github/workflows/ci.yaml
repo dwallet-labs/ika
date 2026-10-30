@@ -254,7 +254,7 @@ jobs:
           cargo test --locked --release -p ika-core --lib \
             dwallet_mpc::network_owned_address_signing_key::tests -- --test-threads=1 \
             | tee "$RUNNER_TEMP/noa-key-preparation.log"
-          grep -qE '^test result: ok\. 9 passed' "$RUNNER_TEMP/noa-key-preparation.log"
+          grep -qE '^test result: ok\. 10 passed' "$RUNNER_TEMP/noa-key-preparation.log"
           cargo test --locked --release -p ika-core --lib -- --exact \
             dwallet_mpc::dwallet_mpc_service::tests::noa_startup_preserves_global_presign_checkpoint \
             dwallet_mpc::dwallet_mpc_service::tests::noa_restart_preserves_later_noa_assignment \
