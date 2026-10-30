@@ -575,6 +575,13 @@ impl ProtocolConfig {
         self.feature_flags.mysticeti_num_leaders_per_round
     }
 
+    /// Keep the existing block subscription wire format on all supported versions.
+    /// Enabling slim propagation requires a protocol-version rollout; do not add a
+    /// serialized feature field to v7, whose capability digest must stay unchanged.
+    pub fn consensus_slim_block_propagation(&self) -> bool {
+        false
+    }
+
     pub fn gc_depth(&self) -> u32 {
         if cfg!(msim) {
             // exercise a very low gc_depth

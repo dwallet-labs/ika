@@ -10,11 +10,16 @@
 //! `scripts/run_sui.sh`. One localnet is shared across binary swaps (realistic:
 //! mainnet upgrades happen on a live chain). Torn down on `Drop`.
 
+use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use serde_yaml::Value;
+use sui_config::SUI_FULLNODE_CONFIG;
+use tempfile::TempDir;
 use tokio::process::{Child, Command};
 
 /// Default localnet endpoints for `sui start` (Sui 1.x).
@@ -27,6 +32,7 @@ pub struct SuiLocalnet {
     faucet_url: String,
     log_path: PathBuf,
     child: Option<Child>,
+    _config_dir: Option<TempDir>,
 }
 
 impl SuiLocalnet {
@@ -40,18 +46,58 @@ impl SuiLocalnet {
         log_path: PathBuf,
         sui_epoch_duration_ms: u64,
     ) -> Result<Self> {
-        let log = std::fs::File::create(&log_path)
+        let log = fs::File::create(&log_path)
             .with_context(|| format!("create sui log {}", log_path.display()))?;
         let stderr = log.try_clone()?;
         tracing::info!(binary = %sui_binary.display(), "spawning sui localnet");
-        let child = Command::new(&sui_binary)
-            .args([
-                "start",
-                "--with-faucet",
-                "--force-regenesis",
-                "--epoch-duration-ms",
-            ])
-            .arg(sui_epoch_duration_ms.to_string())
+        let legacy_transactions =
+            env::var("UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS").is_ok_and(|value| value == "1");
+        let config_dir = if legacy_transactions {
+            let config_dir = tempfile::tempdir()?;
+            let status = Command::new(&sui_binary)
+                .args([
+                    "genesis",
+                    "--with-faucet",
+                    "--committee-size",
+                    "1",
+                    "--working-dir",
+                ])
+                .arg(config_dir.path())
+                .arg("--epoch-duration-ms")
+                .arg(sui_epoch_duration_ms.to_string())
+                .stdout(Stdio::from(log.try_clone()?))
+                .stderr(Stdio::from(log.try_clone()?))
+                .kill_on_drop(true)
+                .status()
+                .await
+                .context("generate Sui upgrade-test genesis")?;
+            if !status.success() {
+                bail!("Sui genesis failed ({status}); see {}", log_path.display());
+            }
+            let fullnode_path = config_dir.path().join(SUI_FULLNODE_CONFIG);
+            let mut config: Value = serde_yaml::from_slice(&fs::read(&fullnode_path)?)?;
+            // Keep the Sui protocol and validator binaries unchanged. Only
+            // stop simulation from introducing a format the OLD reader cannot
+            // decode into checkpoints before the Ika rollout has begun.
+            config["enable-simulate-allowed-proposers"] = Value::Bool(false);
+            fs::write(&fullnode_path, serde_yaml::to_string(&config)?)?;
+            tracing::info!(
+                "Sui simulation proposer restrictions disabled for legacy-reader rollout; Validity acceptance remains enabled"
+            );
+            Some(config_dir)
+        } else {
+            None
+        };
+        let mut command = Command::new(&sui_binary);
+        command.args(["start", "--with-faucet"]);
+        if let Some(config_dir) = &config_dir {
+            command.arg("--network.config").arg(config_dir.path());
+        } else {
+            command
+                .args(["--force-regenesis", "--epoch-duration-ms"])
+                .arg(sui_epoch_duration_ms.to_string());
+        }
+        let child = command
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true)
@@ -63,6 +109,7 @@ impl SuiLocalnet {
             faucet_url: DEFAULT_FAUCET_URL.to_string(),
             log_path,
             child: Some(child),
+            _config_dir: config_dir,
         };
         localnet.wait_until_ready(Duration::from_secs(120)).await?;
         Ok(localnet)

@@ -211,6 +211,14 @@ impl SuiGrpcClient {
         SuiWriter::get_sui_chain_identifier(self).await
     }
 
+    fn decode_full_checkpoint(
+        checkpoint: &proto::Checkpoint,
+    ) -> Result<CheckpointData, TransportError> {
+        FullCheckpoint::try_from(checkpoint)
+            .map(CheckpointData::from)
+            .map_err(|e| TransportError::Encoding(format!("decode full checkpoint: {e}")))
+    }
+
     pub async fn get_full_checkpoint(
         &self,
         sequence_number: CheckpointSequenceNumber,
@@ -901,9 +909,7 @@ impl SuiTransport for SuiGrpcClient {
         let checkpoint = response
             .checkpoint
             .ok_or_else(|| TransportError::NotFound(format!("checkpoint {seq} not found")))?;
-        FullCheckpoint::try_from(&checkpoint)
-            .map(CheckpointData::from)
-            .map_err(|e| TransportError::Encoding(format!("decode full checkpoint: {e}")))
+        Self::decode_full_checkpoint(&checkpoint)
     }
 
     async fn get_checkpoint_summary_by_digest(
@@ -1207,6 +1213,109 @@ impl SuiWriter for SuiGrpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use sui_rpc::field::FieldMaskTree;
+    use sui_rpc::merge::Merge;
+    use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
+    use sui_types::full_checkpoint_content::{ExecutedTransaction, ObjectSet};
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::CheckpointContents;
+    use sui_types::transaction::{
+        AllowedProposers, GasData, ProgrammableTransaction, TransactionDataV1,
+        TransactionExpiration, TransactionKind,
+    };
+
+    #[test]
+    fn validity_checkpoint_preserves_transaction_bytes_and_certified_contents() {
+        let transaction = TransactionData::V1(TransactionDataV1 {
+            kind: TransactionKind::ProgrammableTransaction(ProgrammableTransaction {
+                inputs: vec![],
+                commands: vec![],
+            }),
+            sender: SuiAddress::ZERO,
+            gas_data: GasData {
+                payment: vec![],
+                owner: SuiAddress::ZERO,
+                price: 1,
+                budget: 1_000_000,
+            },
+            expiration: TransactionExpiration::Validity {
+                min_epoch: Some(0),
+                max_epoch: Some(1),
+                min_timestamp: None,
+                max_timestamp: None,
+                chain: ChainIdentifier::from(CheckpointDigest::default()),
+                nonce: 42,
+                allowed_proposers: Some(AllowedProposers {
+                    epoch: 0,
+                    proposers: vec![0, 1].try_into().unwrap(),
+                }),
+            },
+        });
+        let bytes = bcs::to_bytes(&transaction).unwrap();
+        // Exercise the standalone SDK as well as the core decoder used below.
+        let sdk: SdkTransaction = bcs::from_bytes(&bytes).unwrap();
+        assert_eq!(bcs::to_bytes(&sdk).unwrap(), bytes);
+        let mut effects = TransactionEffects::default();
+        *effects.transaction_digest_mut_for_testing() = transaction.digest();
+        let contents =
+            CheckpointContents::new_with_digests_only_for_tests([effects.execution_digests()]);
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: 1,
+            network_total_transactions: 1,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: None,
+            version_specific_data: vec![],
+        };
+        let checkpoint = FullCheckpoint {
+            summary: CertifiedCheckpointSummary::new_from_keypairs_for_testing(
+                summary, &keys, &committee,
+            ),
+            contents,
+            transactions: vec![ExecutedTransaction {
+                transaction,
+                signatures: vec![],
+                effects,
+                events: None,
+                unchanged_loaded_runtime_objects: vec![],
+            }],
+            object_set: ObjectSet::default(),
+        };
+        let mask = FieldMaskTree::from(FullCheckpoint::proto_field_mask());
+        let encoded = proto::Checkpoint::merge_from(&checkpoint, &mask);
+        let decoded = SuiGrpcClient::decode_full_checkpoint(&encoded).unwrap();
+        assert_eq!(decoded.transactions.len(), 1);
+        let persisted = bcs::to_bytes(&decoded).unwrap();
+        let restored: CheckpointData = bcs::from_bytes(&persisted).unwrap();
+        assert_eq!(bcs::to_bytes(&restored).unwrap(), persisted);
+        assert_eq!(
+            bcs::to_bytes(&decoded.transactions[0].transaction.intent_message().value).unwrap(),
+            bytes
+        );
+        assert_eq!(
+            *decoded.transactions[0].transaction.digest(),
+            checkpoint.transactions[0].transaction.digest()
+        );
+        decoded
+            .checkpoint_summary
+            .verify_with_contents(&committee, Some(&decoded.checkpoint_contents))
+            .unwrap();
+
+        // The signature must still reject a modified commitment after decoding.
+        let wrong_contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        assert!(
+            decoded
+                .checkpoint_summary
+                .verify_with_contents(&committee, Some(&wrong_contents))
+                .is_err()
+        );
+    }
 
     #[test]
     fn sdk_proto_object_bcs_decodes_to_core_object() {

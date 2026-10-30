@@ -9,7 +9,7 @@ use crate::{
     system_checkpoints::SystemCheckpointServiceNotify,
 };
 use consensus_core::{TransactionVerifier, ValidationError};
-use consensus_types::block::TransactionIndex;
+use consensus_types::block::{BlockRef, TransactionIndex};
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthoritySignInfoTrait;
 use ika_types::crypto::VerificationObligation;
@@ -212,7 +212,7 @@ fn tx_kind_from_bytes(tx: &[u8]) -> Result<ConsensusTransactionKind, ValidationE
 
 #[async_trait::async_trait]
 impl TransactionVerifier for IkaTxValidator {
-    fn verify_batch(&self, batch: &[&[u8]]) -> Result<(), ValidationError> {
+    fn verify_batch(&self, _block_ref: &BlockRef, batch: &[&[u8]]) -> Result<(), ValidationError> {
         let _scope = monitored_scope("ValidateBatch");
 
         let txs: Vec<_> = batch
@@ -226,7 +226,7 @@ impl TransactionVerifier for IkaTxValidator {
 
     fn verify_and_vote_batch(
         &self,
-        _block_ref: &consensus_types::block::BlockRef,
+        _block_ref: &BlockRef,
         batch: &[&[u8]],
     ) -> Result<Vec<TransactionIndex>, ValidationError> {
         let _scope = monitored_scope("VerifyAndVoteBatch");

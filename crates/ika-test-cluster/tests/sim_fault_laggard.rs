@@ -76,6 +76,24 @@ async fn sim_laggard_entry_window() {
     })
     .await;
 
+    // The epoch store advances before the startup barrier fetches missing
+    // handoff certificates. Wait for durable evidence, not just the epoch
+    // number, before comparing the two completed boundaries.
+    poll_until(
+        Duration::from_secs(120),
+        "all validators persist the epoch-1 and epoch-2 handoff certificates",
+        || {
+            (0..4)
+                .all(|idx| {
+                    let handle = cluster.validator_handle(idx);
+                    let epochs = cluster.handoff_cert_epochs_for_node(&handle);
+                    [1, 2].iter().all(|epoch| epochs.contains(epoch))
+                })
+                .then_some(())
+        },
+    )
+    .await;
+
     // Fork detector: per-epoch handoff attestations must be byte-identical
     // across all validators, laggard included.
     let attestations_by_validator: Vec<BTreeMap<u64, Vec<u8>>> = (0..4)
@@ -85,7 +103,8 @@ async fn sim_laggard_entry_window() {
                 node.state()
                     .perpetual_tables()
                     .iter_certified_handoff_attestations()
-                    .filter_map(Result::ok)
+                    .map(|result| result.expect("read persisted handoff attestation"))
+                    .filter(|(epoch, _)| *epoch <= 2)
                     .map(|(epoch, cert)| {
                         (
                             epoch,

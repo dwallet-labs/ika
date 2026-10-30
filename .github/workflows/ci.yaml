@@ -273,6 +273,20 @@ jobs:
             dwallet_mpc::integration_tests::mid_epoch_restart_keys::missing_prior_cert_blob_is_refetched_from_peers_and_ingested \
             --test-threads=1 | tee "$RUNNER_TEMP/epoch-preparation.log"
           grep -qE '^test result: ok\. 6 passed' "$RUNNER_TEMP/epoch-preparation.log"
+      - name: Run consensus-owned replay regressions
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-core --lib \
+            consensus_manager::replay_tests -- --test-threads=1 \
+            | tee "$RUNNER_TEMP/consensus-replay.log"
+          grep -qE '^test result: ok\. 4 passed' "$RUNNER_TEMP/consensus-replay.log"
+      - name: Run consensus authority identity regression
+        run: |
+          set -o pipefail
+          cargo test --locked --release -p ika-types --lib -- --exact \
+            sui::epoch_start_system::tests::consensus_committee_uses_raw_consensus_key_names \
+            --test-threads=1 | tee "$RUNNER_TEMP/consensus-authority-names.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/consensus-authority-names.log"
       - name: Upload regression logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -281,6 +295,8 @@ jobs:
           path: |
             ${{ runner.temp }}/noa-*.log
             ${{ runner.temp }}/epoch-preparation.log
+            ${{ runner.temp }}/consensus-replay.log
+            ${{ runner.temp }}/consensus-authority-names.log
 
   cargo-check:
     name: Cargo Test Check
@@ -304,6 +320,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (ika-core tests)
         run: cargo check -p ika-core --features test-utils --tests --target x86_64-unknown-linux-gnu
+      - name: Sui Validity checkpoint compatibility
+        run: |
+          set -o pipefail
+          cargo test -p ika-sui-client --lib -- --exact \
+            grpc::tests::validity_checkpoint_preserves_transaction_bytes_and_certified_contents \
+            | tee "$RUNNER_TEMP/sui-validity-checkpoint.log"
+          grep -qE '^test result: ok\. 1 passed' "$RUNNER_TEMP/sui-validity-checkpoint.log"
       - name: Sui RPC vs. response error split pins
         # `ika_sui_client_sui_rpc_errors` is what the fleet's Sui-uplink alert
         # fires on, and the split that keeps a decoding defect off it is

@@ -111,6 +111,17 @@ RAW validator records (`EpochStartValidatorInfoTrait::authority_name`,
 used by `verify_validator_keys`), which are a different name space from
 the committee identity.
 
+**Mysticeti committee labels use the same identity.**
+`build_consensus_committee` passes the raw 32-byte consensus public key to
+`consensus_config::AuthorityName::from_bytes`, using the variable-length
+API merged in MystenLabs/sui#27595. No global length setting or BLS padding
+is needed. Labels, block-signing keys, and Ika committee names therefore
+identify the same validator at each authority index; active validators
+remain ordered by their consensus-key identity. BLS keys are still carried
+separately for certificate verification. This changes Mysticeti's label
+metadata, not block signatures, MPC payloads, or Ika's persisted name
+encoding.
+
 **Encoding width.** `AuthorityName` serializes as the raw 32 bytes,
 always. Through protocol v6 it was those bytes zero-padded into the
 48-byte container the BLS protocol key occupied; v7 flipped the whole

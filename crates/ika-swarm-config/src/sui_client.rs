@@ -37,7 +37,7 @@ use ika_types::sui::{
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
-use move_package_alt_compilation::build_config::BuildConfig as MoveBuildConfig;
+use move_package_compilation::build_config::BuildConfig as MoveBuildConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sui::client_commands::{

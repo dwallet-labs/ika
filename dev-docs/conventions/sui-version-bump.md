@@ -12,8 +12,7 @@ the locations below and runs in CI; it fails the build on drift.
 ## Checklist (current tag: the single `mainnet-v*` or `testnet-v*` pin in root Cargo.toml)
 
 1. **Root `Cargo.toml`** — every Sui git dependency carries the
-   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin (43 occurrences at
-   `mainnet-v1.77.2`; sed them together):
+   `tag = "mainnet-vX.Y.Z"` (or `testnet-vX.Y.Z`) pin; replace them together:
    ```bash
    sed -i "" "s/mainnet-v<OLD>/mainnet-v<NEW>/g" Cargo.toml   # adjust flavor if moving to/from testnet-v
    cargo update   # refresh Cargo.lock for the new revs
@@ -21,7 +20,10 @@ the locations below and runs in CI; it fails the build on drift.
    Also copy the `sui-rust-sdk` revision used by that Sui tag into `sui-crypto`,
    `sui-rpc`, `sui-sdk-types`, and `sui-transaction-builder`. Keeping the old SDK revision
    can compile while silently desynchronizing the client protobuf/BCS and
-   transaction-building surfaces from the fullnode implementation.
+   transaction-building surfaces from the fullnode implementation. Align the
+   FastCrypto revision and the existing async-graphql patch revision with
+   the release lockfile as well; stale companion revisions can break types
+   or APIs even when every Sui tag agrees.
 2. **Excluded workspaces** — `sdk/ika-wasm` (and any other
    workspace-excluded package) has its own `Cargo.lock` that must be
    regenerated; its manifests resolve `workspace = true` deps against
@@ -85,3 +87,11 @@ the locations below and runs in CI; it fails the build on drift.
   ```bash
   ./scripts/check-sui-version-consistency.sh
   ```
+
+## Consensus replay validation
+
+Sui `mainnet-v1.82.3` includes the upstream replay API, so Ika no longer
+patches consensus crates from a fork. Verify that all Sui sources in
+`Cargo.lock` resolve to the release revision. Revalidate full replay pacing,
+readiness, committed-head reporting, and rolling restarts against that exact
+revision after every upgrade.

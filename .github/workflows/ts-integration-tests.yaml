@@ -122,11 +122,11 @@ jobs:
         with:
           version: "latest"
 
-      # The Cargo workspace pins Sui to mainnet-v1.77.2; a mismatched local
+      # The Cargo workspace pins Sui to mainnet-v1.82.3; a mismatched local
       # sui completes DKG but stalls reconfiguration, so pin the binary too.
-      - name: Install Sui mainnet-v1.77.2
+      - name: Install Sui mainnet-v1.82.3
         run: |
-          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.77.2/sui-mainnet-v1.77.2-ubuntu-x86_64.tgz > sui.tgz
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.82.3/sui-mainnet-v1.82.3-ubuntu-x86_64.tgz > sui.tgz
           tar -xzf sui.tgz
           mkdir -p "$HOME/.local/bin"
           cp ./sui "$HOME/.local/bin/sui"
@@ -182,8 +182,11 @@ jobs:
             if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
               echo "sui process died"; tail -40 sui-localnet.log; exit 1
             fi
-            if curl -s -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
-                 -d '{"jsonrpc":"2.0","id":1,"method":"rpc.discover","params":[]}' >/dev/null 2>&1 \
+            if (cd sdk/typescript && node --input-type=module -e '
+                 import { SuiGrpcClient } from "@mysten/sui/grpc";
+                 const client = new SuiGrpcClient({ network: "localnet", baseUrl: "http://127.0.0.1:9000", fetchInit: { signal: AbortSignal.timeout(5000) } });
+                 await client.ledgerService.getServiceInfo({});
+               ') >/dev/null 2>&1 \
                && curl -s http://127.0.0.1:9123 >/dev/null 2>&1; then
               echo "sui localnet + faucet up after $((i*5))s"; exit 0
             fi
