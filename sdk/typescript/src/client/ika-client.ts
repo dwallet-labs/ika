@@ -210,12 +210,12 @@ export class IkaClient {
 			return this.#fetchEncryptionKeys();
 		}
 
-		if (this.cachedEncryptionKeys.size > 0) {
+		if (this.encryptionKeysPromise) {
+			await this.encryptionKeysPromise;
 			return Array.from(this.cachedEncryptionKeys.values());
 		}
 
-		if (this.encryptionKeysPromise) {
-			await this.encryptionKeysPromise;
+		if (this.cachedEncryptionKeys.size > 0) {
 			return Array.from(this.cachedEncryptionKeys.values());
 		}
 
@@ -1136,11 +1136,15 @@ export class IkaClient {
 				};
 
 				encryptionKeys.push(encryptionKey);
-				this.cachedEncryptionKeys.set(keyName, encryptionKey);
 			}
 
 			// Sort by epoch to ensure proper ordering
 			encryptionKeys.sort((a, b) => a.epoch - b.epoch);
+
+			// Replace the cache only once the list is complete and sorted, so a fetch
+			// that fails partway never leaves a partial key set behind, and the cache
+			// iterates in epoch order.
+			this.cachedEncryptionKeys = new Map(encryptionKeys.map((k) => [k.id, k]));
 
 			return encryptionKeys;
 		} catch (error) {
