@@ -1,5 +1,27 @@
 # @ika.xyz/sdk
 
+## 0.6.0
+
+### Minor Changes
+
+- Add `createClassGroupsKeypairV2` and `UserShareEncryptionKeys.fromRootSeedKeyV2`, which derive
+  class-groups encryption keys with portable sampling that matches the native Rust implementation.
+  Use them for all new registrations. `createClassGroupsKeypair` and
+  `UserShareEncryptionKeys.fromRootSeedKey` are deprecated but unchanged, so existing keys still
+  recover byte-for-byte; to move an existing registration to the portable derivation, register fresh
+  keys from `fromRootSeedKeyV2`.
+
+### Patch Changes
+
+- c3d5c9d: Fix `requestPresign` refusing ECDSA presigns for V1 zero-trust secp256k1 dWallets and
+  allowing them for V2 ones: an operator-precedence bug made the dWallet version check read the
+  version one too low.
+- c3d5c9d: Fix the `IkaClient` network encryption key cache: a fetch that fails partway no longer
+  leaves a partial key list for later calls, callers wait for an in-progress fetch instead of
+  reading its cache, and `getLatestNetworkEncryptionKey` returns the highest-epoch key.
+- Updated dependencies
+  - @ika.xyz/ika-wasm@0.4.0
+
 ## 0.5.0
 
 ### Minor Changes
