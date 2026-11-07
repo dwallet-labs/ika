@@ -1,6 +1,6 @@
 'use client';
 
-import { PRF_SALT } from '@fesal-packages/ikavery-core';
+import { PRF_SALT } from '@ika-examples/ikavery-core';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { p256 } from '@noble/curves/nist.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -59,7 +59,7 @@ export async function discoverViaPasskey(
 	const clientDataJSON = base64UrlToBytes(result.response.clientDataJSON);
 	const sigDer = base64UrlToBytes(result.response.signature);
 
-	// Pull PRF output, same shape as @fesal-packages/ikavery-sui-sdk's authenticate helper.
+	// Pull PRF output, same shape as @ika-examples/ikavery-sui-sdk's authenticate helper.
 	const exts = result.clientExtensionResults as {
 		prf?: { results?: { first?: string | ArrayBuffer } };
 	};

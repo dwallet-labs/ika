@@ -32,7 +32,7 @@ const description =
 	'Ikavery places a private key behind a threshold of passkey-bound devices. Recover it any time by signing on a quorum.';
 
 export const metadata: Metadata = {
-	metadataBase: new URL('https://ikavery.xyz'),
+	metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
 	applicationName: 'Ikavery',
 	title: {
 		default: `Ikavery · ${tagline}`,
@@ -50,8 +50,8 @@ export const metadata: Metadata = {
 		'key recovery',
 		'self-custody',
 	],
-	authors: [{ name: 'fesal', url: 'https://github.com/iamknownasfesal' }],
-	creator: 'fesal',
+	authors: [{ name: 'dWallet Labs, Ltd.', url: 'https://dwalletlabs.com' }],
+	creator: 'dWallet Labs, Ltd.',
 	openGraph: {
 		type: 'website',
 		siteName: 'Ikavery',
@@ -64,7 +64,6 @@ export const metadata: Metadata = {
 		card: 'summary_large_image',
 		title: `Ikavery · ${tagline}`,
 		description,
-		creator: '@iamknownasfesal',
 	},
 	robots: {
 		index: true,

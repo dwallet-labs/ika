@@ -1,4 +1,4 @@
-import { moveRecovery } from '@fesal-packages/ikavery-sui-sdk';
+import { moveRecovery } from '@ika-examples/ikavery-sui-sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 
 import { env } from './env';

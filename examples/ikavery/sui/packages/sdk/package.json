@@ -1,13 +1,15 @@
 {
-	"name": "@fesal-packages/ikavery-sui-sdk",
+	"name": "@ika-examples/ikavery-sui-sdk",
+	"private": true,
 	"version": "0.1.0",
-	"description": "Sui-side SDK for the Ikavery dWallet recovery protocol \u2014 passkey-gated key import, threshold approval, and cross-chain sweep flows.",
-	"license": "BSD-3-Clause",
-	"author": "fesal <https://github.com/iamknownasfesal>",
-	"homepage": "https://sui.ikavery.com",
+	"description": "Sui-side SDK for the Ikavery dWallet recovery protocol — passkey-gated key import, threshold approval, and cross-chain sweep flows.",
+	"license": "BSD-3-Clause-Clear",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"homepage": "https://github.com/dwallet-labs/ika/tree/main/examples/ikavery/sui/packages/sdk",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/iamknownasfesal/ikavery"
+		"url": "https://github.com/dwallet-labs/ika",
+		"directory": "examples/ikavery/sui/packages/sdk"
 	},
 	"keywords": [
 		"ika",
@@ -45,7 +47,7 @@
 		"prepublishOnly": "bun run build"
 	},
 	"dependencies": {
-		"@fesal-packages/ikavery-core": "workspace:*",
+		"@ika-examples/ikavery-core": "workspace:*",
 		"@ika.xyz/sdk": "workspace:*",
 		"@mysten/bcs": "catalog:",
 		"@mysten/sui": "catalog:",

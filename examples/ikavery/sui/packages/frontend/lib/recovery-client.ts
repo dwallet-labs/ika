@@ -1,6 +1,6 @@
 'use client';
 
-import { RecoveryClient } from '@fesal-packages/ikavery-sui-sdk';
+import { RecoveryClient } from '@ika-examples/ikavery-sui-sdk';
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 

@@ -1,6 +1,6 @@
 'use client';
 
-import type { TransactionExecuteResult } from '@fesal-packages/ikavery-sui-sdk';
+import type { TransactionExecuteResult } from '@ika-examples/ikavery-sui-sdk';
 import type { UiWallet, UiWalletAccount } from '@mysten/dapp-kit-core';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { Transaction } from '@mysten/sui/transactions';

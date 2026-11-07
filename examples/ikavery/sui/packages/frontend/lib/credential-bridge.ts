@@ -1,10 +1,10 @@
 'use client';
 
-import { authenticate } from '@fesal-packages/ikavery-core';
+import { authenticate } from '@ika-examples/ikavery-core';
 import {
 	credentialFromSerializedSignature,
 	type CredentialInput,
-} from '@fesal-packages/ikavery-sui-sdk';
+} from '@ika-examples/ikavery-sui-sdk';
 import type { UiWallet } from '@mysten/dapp-kit-core';
 
 import type { SignerOption } from '@/components/vault/signer-gas-payer';
@@ -32,7 +32,7 @@ export function signerOptionToIdentity(option: SignerOption): AuthIdentity {
 /**
  * Resolve a worker `credentialRequest` into a `CredentialInput` by routing the
  * challenge through the browser-side primitive that matches the identity:
- *   - passkey  → WebAuthn ceremony (`@fesal-packages/ikavery-sui-sdk` authenticate())
+ *   - passkey  → WebAuthn ceremony (`@ika-examples/ikavery-sui-sdk` authenticate())
  *   - wallet   → wallet's `signPersonalMessage`, then unwrap the serialized
  *                signature into Move's raw scheme + sig + pubkey.
  */

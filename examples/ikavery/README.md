@@ -1,5 +1,9 @@
 # ikavery - Quorum-Gated Key Custody on Sui
 
+> **Reference example, for educational purposes only.** This example shows how
+> to use Ika; it is not a production app. It has not been security audited and is not meant to be deployed or
+> relied on. See the disclaimer in the [examples README](../README.md).
+
 Import an existing private key into an Ika 2PC-MPC dWallet, put it behind a
 t-of-N roster of WebAuthn passkeys or wallet credentials, and recover the assets
 by sweeping them once a quorum signs.
@@ -18,14 +22,6 @@ by sweeping them once a quorum signs.
 
 ---
 
-> **Vendored example.** This app began life at
-> [Iamknownasfesal/ikavery](https://github.com/Iamknownasfesal/ikavery) and was
-> imported into the ika monorepo — Sui half only, since this repository's
-> examples are Ika-on-Sui — where it is licensed under the repository's
-> Clear BSD License (see `LICENSE`). Its packages are installed by pnpm as
-> workspace members, and shared library versions come from the `catalog:` in the
-> root `pnpm-workspace.yaml` rather than from pins here.
-
 ## What This Demo Shows
 
 Most key-recovery stories end at "write down a seed phrase". This one replaces
@@ -42,8 +38,7 @@ custodian.
 - Propose and approve a sweep; the network signs only once the quorum is met
 - Sweep native and token balances (SUI, SPL) to a recovery address
 
-Deployed at [`sui.ikavery.com`](https://sui.ikavery.com): a Move package on Sui
-testnet, passkey-first via WebAuthn PRF.
+It runs as a Move package on Sui testnet, passkey-first via WebAuthn PRF.
 
 ## Getting Started
 
@@ -97,15 +92,15 @@ Each app ships a `.env.example` documenting the public env variables it needs
 
 ```
 packages/
-├── core/              @fesal-packages/ikavery-core         shared cross-chain logic
-└── frontend-ui/       @fesal-packages/ikavery-frontend-ui  design system + primitives
+├── core/              @ika-examples/ikavery-core         shared cross-chain logic
+└── frontend-ui/       @ika-examples/ikavery-frontend-ui  design system + primitives
 sui/packages/
 ├── contracts/recovery/  Move package (recovery::*)
-├── sdk/                 @fesal-packages/ikavery-sui-sdk
+├── sdk/                 @ika-examples/ikavery-sui-sdk
 └── frontend/            ikavery-frontend (Next.js)
 ```
 
-The app is built on `@fesal-packages/ikavery-frontend-ui`, the shared design
+The app is built on `@ika-examples/ikavery-frontend-ui`, the shared design
 system. Further detail: [`sui/README.md`](sui/README.md).
 
 ### Technology Stack
@@ -127,9 +122,7 @@ See [`sui/README.md`](sui/README.md) for the env vars each script needs.
 
 ## Status
 
-Pre-alpha, testnet only. Migrated to the Sui SDK v2 gRPC stack when it was
-vendored here. The upstream project also has a Solana deployment, which is not
-carried in this repository.
+Pre-alpha, testnet only. Built on the Sui SDK v2 gRPC stack.
 
 ## Learn More
 

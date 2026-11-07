@@ -1,5 +1,9 @@
 # KeySpring Demo (Ika Cross-Chain Wallet Demo)
 
+> **Reference example, for educational purposes only.** This example shows how
+> to use Ika; it is not a production app. It has not been security audited and is not meant to be deployed or
+> relied on. See the disclaimer in the [examples README](../README.md).
+
 Create an Ethereum wallet from any browser wallet **or passkey** and send ETH on Base Sepolia — all non-custodially using Ika's distributed key generation.
 
 ---

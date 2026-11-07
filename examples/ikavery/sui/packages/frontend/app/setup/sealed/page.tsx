@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Card } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, Card } from '@ika-examples/ikavery-frontend-ui';
 import {
 	ArrowRight,
 	Check,

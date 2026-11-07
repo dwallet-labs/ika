@@ -4,7 +4,7 @@ import {
 	SOLANA_SIGNATURE_FEE_LAMPORTS,
 	SOLANA_SYSTEM_ACCOUNT_RENT_EXEMPT,
 	SOLANA_TX_SIZE_LIMIT,
-} from '@fesal-packages/ikavery-core';
+} from '@ika-examples/ikavery-core';
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
 import { describe, expect, test } from 'bun:test';

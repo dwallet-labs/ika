@@ -1,4 +1,4 @@
-import { Button, ShellHeader, type ShellHeaderProps } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, ShellHeader, type ShellHeaderProps } from '@ika-examples/ikavery-frontend-ui';
 
 import { WalletConnect } from '@/components/wallet-connect';
 

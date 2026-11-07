@@ -1,6 +1,6 @@
 'use client';
 
-import { cn } from '@fesal-packages/ikavery-frontend-ui';
+import { cn } from '@ika-examples/ikavery-frontend-ui';
 import type * as React from 'react';
 
 export function StepHeader({

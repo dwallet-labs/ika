@@ -1,6 +1,6 @@
 'use client';
 
-import { moveRecovery, type TransactionExecuteResult } from '@fesal-packages/ikavery-sui-sdk';
+import { moveRecovery, type TransactionExecuteResult } from '@ika-examples/ikavery-sui-sdk';
 import { getNetworkConfig } from '@ika.xyz/sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';

@@ -1,6 +1,6 @@
 'use client';
 
-import { authenticate, registerPasskey } from '@fesal-packages/ikavery-core';
+import { authenticate, registerPasskey } from '@ika-examples/ikavery-core';
 import type { UiWallet, UiWalletAccount } from '@mysten/dapp-kit-core';
 import { parseSerializedSignature } from '@mysten/sui/cryptography';
 

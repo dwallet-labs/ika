@@ -1,7 +1,7 @@
 'use client';
 
-import { Button, Card, ProposalDetailSkeleton } from '@fesal-packages/ikavery-frontend-ui';
-import { readRosterChange, type RosterChangeSnapshot } from '@fesal-packages/ikavery-sui-sdk';
+import { Button, Card, ProposalDetailSkeleton } from '@ika-examples/ikavery-frontend-ui';
+import { readRosterChange, type RosterChangeSnapshot } from '@ika-examples/ikavery-sui-sdk';
 import { useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {

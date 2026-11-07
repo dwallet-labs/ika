@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Card } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, Card } from '@ika-examples/ikavery-frontend-ui';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 

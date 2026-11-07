@@ -1,6 +1,6 @@
 'use client';
 
-import { Shell } from '@fesal-packages/ikavery-frontend-ui';
+import { Shell } from '@ika-examples/ikavery-frontend-ui';
 import { AnimatePresence, motion } from 'framer-motion';
 import { usePathname } from 'next/navigation';
 import type * as React from 'react';

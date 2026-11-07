@@ -1,4 +1,4 @@
-import { u64ToLeBytes } from '@fesal-packages/ikavery-core';
+import { u64ToLeBytes } from '@ika-examples/ikavery-core';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 

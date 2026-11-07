@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Card, cn } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, Card, cn } from '@ika-examples/ikavery-frontend-ui';
 import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 import { useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -231,7 +231,7 @@ export default function RecoverPage() {
 			const [solana, splToken, core] = await Promise.all([
 				import('@solana/web3.js'),
 				import('@solana/spl-token'),
-				import('@fesal-packages/ikavery-core'),
+				import('@ika-examples/ikavery-core'),
 			]);
 			const { Connection, PublicKey } = solana;
 			const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = splToken;

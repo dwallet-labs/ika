@@ -1,6 +1,6 @@
 'use client';
 
-import { DisclaimerModal, type DisclaimerClause } from '@fesal-packages/ikavery-frontend-ui';
+import { DisclaimerModal, type DisclaimerClause } from '@ika-examples/ikavery-frontend-ui';
 
 const CLAUSES: DisclaimerClause[] = [
 	{

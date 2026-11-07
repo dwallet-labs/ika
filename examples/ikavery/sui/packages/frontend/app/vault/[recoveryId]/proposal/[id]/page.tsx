@@ -1,7 +1,7 @@
 'use client';
 
-import { Button, Card, cn, Skeleton, SkeletonLine } from '@fesal-packages/ikavery-frontend-ui';
-import { previewProposal, type ProposalSnapshot } from '@fesal-packages/ikavery-sui-sdk';
+import { Button, Card, cn, Skeleton, SkeletonLine } from '@ika-examples/ikavery-frontend-ui';
+import { previewProposal, type ProposalSnapshot } from '@ika-examples/ikavery-sui-sdk';
 import { useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -303,7 +303,7 @@ export default function ProposalPage() {
 			// Broadcast to Solana on the main thread — uses @solana/web3.js
 			// (lazy-imported so it doesn't bloat the proposal-page bundle on idle).
 			const { Connection } = await import('@solana/web3.js');
-			const { broadcastSignedTransactions } = await import('@fesal-packages/ikavery-core');
+			const { broadcastSignedTransactions } = await import('@ika-examples/ikavery-core');
 			const conn = new Connection(env.solanaRpc, 'confirmed');
 			const broadcastResults = await broadcastSignedTransactions(conn, result.signedTransactions, {
 				skipPreflight: false,

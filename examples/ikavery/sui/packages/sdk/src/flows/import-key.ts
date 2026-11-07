@@ -1,4 +1,4 @@
-import { solanaSeedToCanonicalScalar } from '@fesal-packages/ikavery-core';
+import { solanaSeedToCanonicalScalar } from '@ika-examples/ikavery-core';
 import {
 	CoordinatorInnerModule,
 	createRandomSessionIdentifier,

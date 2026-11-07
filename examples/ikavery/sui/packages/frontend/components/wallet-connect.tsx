@@ -1,6 +1,6 @@
 'use client';
 
-import { Button } from '@fesal-packages/ikavery-frontend-ui';
+import { Button } from '@ika-examples/ikavery-frontend-ui';
 import { Wallet } from 'lucide-react';
 import dynamic from 'next/dynamic';
 

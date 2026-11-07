@@ -1,7 +1,7 @@
 'use client';
 
-import { Button, Card, cn } from '@fesal-packages/ikavery-frontend-ui';
-import type { NewMemberInput } from '@fesal-packages/ikavery-sui-sdk';
+import { Button, Card, cn } from '@ika-examples/ikavery-frontend-ui';
+import type { NewMemberInput } from '@ika-examples/ikavery-sui-sdk';
 import type { UiWallet, UiWalletAccount } from '@mysten/dapp-kit-core';
 import { useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { isEnokiWallet } from '@mysten/enoki';

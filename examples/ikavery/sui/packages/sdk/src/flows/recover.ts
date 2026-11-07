@@ -6,7 +6,7 @@ import {
 	rebuildSweepFromIntents,
 	type BundlePreview,
 	type SweepIntent,
-} from '@fesal-packages/ikavery-core';
+} from '@ika-examples/ikavery-core';
 import {
 	CoordinatorInnerModule,
 	createUserSignMessageWithPublicOutput,

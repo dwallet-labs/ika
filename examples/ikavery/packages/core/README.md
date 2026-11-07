@@ -1,20 +1,16 @@
-# @fesal-packages/ikavery-core
+# @ika-examples/ikavery-core
 
-Shared crypto, passkey, and dWallet helpers used by the Ikavery
-[Sui SDK](https://www.npmjs.com/package/@fesal-packages/ikavery-sui-sdk) and
-[Solana SDK](https://www.npmjs.com/package/@fesal-packages/ikavery-solana-sdk).
+Shared crypto, passkey, and dWallet helpers used by the Ikavery Sui SDK
+(`@ika-examples/ikavery-sui-sdk`).
 
-Most consumers want one of the chain-specific SDKs above. Reach for this package
-directly only if you're building primitives outside those flows (raw passkey
+Most consumers want the Sui SDK. Reach for this package directly only if you're
+building primitives outside its flows (raw passkey
 ceremonies, share-encryption identity derivation, sweep-bundle utilities).
 
-## Install
+## In this repository
 
-```bash
-bun add @fesal-packages/ikavery-core
-# or
-pnpm add @fesal-packages/ikavery-core
-```
+A private workspace package of the Ikavery example, consumed through
+`workspace:*`. It is not published.
 
 ## Status
 
@@ -22,4 +18,4 @@ Pre-alpha. Mock signer; not for production custody.
 
 ## License
 
-[BSD-3-Clause](./LICENSE)
+[BSD-3-Clause-Clear](./LICENSE)

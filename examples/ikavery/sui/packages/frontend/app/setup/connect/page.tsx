@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Card, CardContent } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, Card, CardContent } from '@ika-examples/ikavery-frontend-ui';
 import type { UiWallet, UiWalletAccount } from '@mysten/dapp-kit-core';
 import { useWallets } from '@mysten/dapp-kit-react';
 import { isEnokiWallet } from '@mysten/enoki';

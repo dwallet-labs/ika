@@ -1,13 +1,13 @@
 'use client';
 
-import { Button, Card, cn, ProposalCardSkeleton } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, Card, cn, ProposalCardSkeleton } from '@ika-examples/ikavery-frontend-ui';
 import {
 	listEnrollmentSnapshots,
 	listRosterChangeSnapshots,
 	type EnrollmentSnapshot,
 	type ProposalSnapshot,
 	type RosterChangeSnapshot,
-} from '@fesal-packages/ikavery-sui-sdk';
+} from '@ika-examples/ikavery-sui-sdk';
 import { useCurrentAccount } from '@mysten/dapp-kit-react';
 import { fromHex, normalizeSuiAddress } from '@mysten/sui/utils';
 import { useQuery } from '@tanstack/react-query';

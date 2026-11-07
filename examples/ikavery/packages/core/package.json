@@ -1,13 +1,15 @@
 {
-	"name": "@fesal-packages/ikavery-core",
+	"name": "@ika-examples/ikavery-core",
+	"private": true,
 	"version": "0.1.0",
-	"description": "Shared crypto, passkey, and dWallet helpers used by the Ikavery Sui and Solana SDKs.",
-	"license": "BSD-3-Clause",
-	"author": "fesal <https://github.com/iamknownasfesal>",
-	"homepage": "https://ikavery.com",
+	"description": "Shared crypto, passkey, and dWallet helpers used by the Ikavery Sui SDK.",
+	"license": "BSD-3-Clause-Clear",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"homepage": "https://github.com/dwallet-labs/ika/tree/main/examples/ikavery/packages/core",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/iamknownasfesal/ikavery"
+		"url": "https://github.com/dwallet-labs/ika",
+		"directory": "examples/ikavery/packages/core"
 	},
 	"keywords": [
 		"ika",
