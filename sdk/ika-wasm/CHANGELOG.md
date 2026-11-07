@@ -1,5 +1,14 @@
 # @ika.xyz/ika-wasm
 
+## 0.4.0
+
+### Minor Changes
+
+- Add `generate_secp_cg_keypair_from_seed_v2`, which derives class-groups keys with the portable
+  sampler that matches native Rust. `generate_secp_cg_keypair_from_seed` keeps the historical 32-bit
+  WASM sampler, so keys derived before this release are still recovered unchanged. The crypto
+  dependencies now come from the published inkrypto release.
+
 ## 0.3.0
 
 ### Minor Changes
