@@ -16,7 +16,7 @@
 //! is unchanged. Only Ika-touched objects (with their proofs) are kept; all
 //! non-Ika objects plus tx / effects are dropped.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,7 +28,7 @@ use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
 use sui_types::TypeTag;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::CheckpointArtifactsDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
@@ -182,7 +182,8 @@ enum BackfillFailure {
     /// store.
     MissingCommittee,
     /// The blob failed the archive verification (sequence binding, committee
-    /// signature or artifacts digest).
+    /// signature or artifacts digest), or an output object of it is not the
+    /// object the checkpoint attests for its id.
     Verification,
     /// The node's own fullnode could not say whether an object is current.
     CurrencyLookup,
@@ -990,7 +991,8 @@ impl IkaCheckpointPusher {
             .with_label_values(&["verified"])
             .inc();
         // Re-runs the fold-time verification, so the fold below sees exactly
-        // what a fullnode-served checkpoint would.
+        // what a fullnode-served checkpoint would — including that each object
+        // is the output object the checkpoint attests for its id.
         let entries = self
             .build_entries(data)
             .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
@@ -999,8 +1001,6 @@ impl IkaCheckpointPusher {
         let Some((summary, entries)) = entries else {
             return Ok(BackfillSettled::NothingToFold);
         };
-        let entries = bind_objects_to_attested_state(data, entries)
-            .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
 
         let ika_objects = entries.len();
         let (cached, candidates): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| {
@@ -1228,21 +1228,20 @@ impl IkaCheckpointPusher {
     /// Ika-namespace events (notably bag-removal during session
     /// completion via epoch advance), which left consumer caches
     /// stale and produced spurious bag-omission warnings.
+    ///
+    /// Each entry's object is the output object whose reference is the one the
+    /// checkpoint's verified tree attests for its id (see [`attested_output`]),
+    /// so the object a cache-first read serves is the object its proof proves.
+    /// An id the checkpoint ends by deleting or wrapping has no attested object
+    /// and gets no entry.
     fn build_entries(
         &self,
         data: &CheckpointData,
     ) -> anyhow::Result<Option<(CertifiedCheckpointSummary, Vec<VerifiedObjectEntry>)>> {
         let is_end_of_epoch = data.checkpoint_summary.end_of_epoch_data.is_some();
-        let mut ika_object_ids: HashSet<ObjectID> = HashSet::new();
-        for tx in &data.transactions {
-            for output in &tx.output_objects {
-                if object_touches_ika(output, &self.ika_packages) {
-                    ika_object_ids.insert(output.id());
-                }
-            }
-        }
+        let ika_outputs = ika_outputs_by_id(data, &self.ika_packages);
 
-        if !is_end_of_epoch && ika_object_ids.is_empty() {
+        if !is_end_of_epoch && ika_outputs.is_empty() {
             return Ok(None);
         }
 
@@ -1252,8 +1251,8 @@ impl IkaCheckpointPusher {
         let tree = ModifiedObjectTree::new(&artifacts)
             .map_err(|e| anyhow::anyhow!("ModifiedObjectTree: {e}"))?;
 
-        let mut objects_with_proofs = Vec::with_capacity(ika_object_ids.len());
-        for id in &ika_object_ids {
+        let mut attested_objects = Vec::with_capacity(ika_outputs.len());
+        for (id, outputs) in &ika_outputs {
             let Some(object_ref) = tree.get_object_state(*id).copied() else {
                 // Object referenced by an Ika event but not in the
                 // modified-objects set — treat as a benign mismatch and
@@ -1261,6 +1260,16 @@ impl IkaCheckpointPusher {
                 debug!(?id, "ika object not in artifacts; skipping");
                 continue;
             };
+            if !object_ref.2.is_alive() {
+                // A later transaction of the checkpoint deleted or wrapped the
+                // object: the checkpoint attests no object to fold, and the
+                // earlier writes are intermediate states it does not end in.
+                debug!(
+                    ?id,
+                    "ika object deleted or wrapped by the checkpoint; skipping"
+                );
+                continue;
+            }
             let proof = match tree.get_inclusion_proof(object_ref) {
                 Ok(p) => p,
                 Err(e) => {
@@ -1268,47 +1277,59 @@ impl IkaCheckpointPusher {
                     continue;
                 }
             };
-            // Find the full Object in the checkpoint's tx outputs.
-            let object = data
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.output_objects.iter())
-                .find(|o| o.id() == *id)
-                .cloned();
-            let Some(object) = object else {
-                debug!(?id, "ika object id absent from output_objects; skipping");
-                continue;
-            };
-            objects_with_proofs.push(VerifiedObjectEntry {
-                object,
-                checkpoint_seq: *data.checkpoint_summary.sequence_number(),
-                proof,
-                dynamic_field_name_type: String::new(),
-                dynamic_field_name_bcs: Vec::new(),
-            });
+            attested_objects.push((object_ref, proof, outputs.as_slice()));
         }
 
-        if !is_end_of_epoch && objects_with_proofs.is_empty() {
+        if !is_end_of_epoch && attested_objects.is_empty() {
             return Ok(None);
         }
 
-        // Verify the checkpoint against its committee BEFORE folding anything
-        // into the cache, so a direct node caches committee-attested state
-        // rather than whatever its own fullnode served.
+        // Verify the checkpoint against its committee, then bind each object to
+        // the reference the verified tree attests for it, BEFORE folding
+        // anything into the cache, so a direct node caches committee-attested
+        // state rather than whatever its source served.
         let summary = &data.checkpoint_summary;
-        if let Err(e) = self.verify_before_fold(summary, &tree, !objects_with_proofs.is_empty()) {
-            error!(
-                security_critical = true,
-                seq = *summary.sequence_number(),
-                epoch = summary.epoch(),
-                error = %e,
-                "refusing to fold a checkpoint that failed committee verification — \
-                 own fullnode served state that does not verify against the committee"
-            );
-            return Err(e);
-        }
+        let checkpoint_seq = *summary.sequence_number();
+        let started = Instant::now();
+        let verified = self
+            .verify_before_fold(summary, &tree, !attested_objects.is_empty())
+            .and_then(|()| {
+                attested_objects
+                    .into_iter()
+                    .map(|(object_ref, proof, outputs)| {
+                        Ok(VerifiedObjectEntry {
+                            object: attested_output(object_ref, outputs)?.clone(),
+                            checkpoint_seq,
+                            proof,
+                            dynamic_field_name_type: String::new(),
+                            dynamic_field_name_bcs: Vec::new(),
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+            });
+        let objects_with_proofs = match verified {
+            Ok(objects_with_proofs) => objects_with_proofs,
+            Err(e) => {
+                error!(
+                    security_critical = true,
+                    seq = checkpoint_seq,
+                    epoch = summary.epoch(),
+                    error = %e,
+                    "refusing to fold a checkpoint that failed committee verification — \
+                     own fullnode served state that does not verify against the committee"
+                );
+                return Err(e);
+            }
+        };
+        // Record only the success path's cost: a rejection is a security event
+        // surfaced by the log above, not a steady-state latency sample. `_count`
+        // then equals the checkpoints verified before folding, `_sum` the CPU
+        // the committee checks and the object binding added to the fold loop.
+        self.metrics
+            .pusher_fold_verify_seconds
+            .observe(started.elapsed().as_secs_f64());
 
-        Ok(Some((data.checkpoint_summary.clone(), objects_with_proofs)))
+        Ok(Some((summary.clone(), objects_with_proofs)))
     }
 
     /// Verify a checkpoint against its committee BEFORE its objects are folded
@@ -1321,9 +1342,11 @@ impl IkaCheckpointPusher {
     ///   1. the checkpoint summary carries a valid committee quorum signature;
     ///   2. when objects are being folded, the locally-built modified-objects
     ///      tree root matches the committee-signed checkpoint-artifacts digest —
-    ///      binding every inclusion proof derived from that tree to
-    ///      committee-attested state (a real tree root means the proofs the
-    ///      pusher built from it are over genuine objects).
+    ///      binding every reference in that tree, and so every inclusion proof
+    ///      derived from it, to committee-attested state. The tree is built
+    ///      from the effects, so this says nothing about the object contents
+    ///      served alongside them: `build_entries` binds each folded object to
+    ///      its attested reference separately ([`attested_output`]).
     ///
     /// A failure means the fullnode served state that does not verify against
     /// the committee: the caller refuses to fold it (propagating the error, so
@@ -1335,7 +1358,6 @@ impl IkaCheckpointPusher {
         tree: &ModifiedObjectTree,
         folding_objects: bool,
     ) -> anyhow::Result<()> {
-        let started = Instant::now();
         self.committees
             .verify_summary(summary.clone())
             .map_err(|e| {
@@ -1354,60 +1376,63 @@ impl IkaCheckpointPusher {
                 );
             }
         }
-        // Record only the success path's cost: a rejection (the early returns
-        // above) is a security event surfaced by the caller's log, not a
-        // steady-state latency sample. `_count` then equals the checkpoints
-        // committee-verified before folding, `_sum` the CPU the verify added
-        // to the fold loop.
-        self.metrics
-            .pusher_fold_verify_seconds
-            .observe(started.elapsed().as_secs_f64());
         Ok(())
     }
 }
 
-/// Bind each entry's object CONTENTS to the committee-attested state of
-/// `data`, for the archive backfill.
-///
-/// The verification before this point binds the checkpoint's effects to the
-/// committee (artifacts digest over every written reference), and
-/// `build_entries` proves the reference the effects attest for each Ika id —
-/// but pairs that proof with the FIRST output object carrying the id, without
-/// comparing the two. That object is an earlier version when several
-/// transactions of the checkpoint wrote the id, and for a blob from an
-/// untrusted store it could carry any bytes under the right id. A cache-first
-/// read serves the cached object without re-checking its proof, so the
-/// backfill folds only the output object whose reference IS the attested one,
-/// and refuses the checkpoint if there is none.
-fn bind_objects_to_attested_state(
-    data: &CheckpointData,
-    entries: Vec<VerifiedObjectEntry>,
-) -> anyhow::Result<Vec<VerifiedObjectEntry>> {
-    let tree = ModifiedObjectTree::new(&CheckpointArtifacts::from(data))
-        .map_err(|e| anyhow::anyhow!("ModifiedObjectTree over archive blob: {e}"))?;
-    entries
-        .into_iter()
-        .map(|mut entry| {
-            let id = entry.object.id();
-            let attested = tree
-                .get_object_state(id)
-                .copied()
-                .ok_or_else(|| anyhow::anyhow!("object {id} is not in the checkpoint's tree"))?;
-            let object = data
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.output_objects.iter())
-                .find(|object| object.compute_object_reference() == attested)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "no output object of the blob matches the committee-attested reference \
-                         {attested:?} of object {id}"
-                    )
-                })?;
-            entry.object = object.clone();
-            Ok(entry)
+/// Every output object of `data` that touches an Ika package
+/// ([`object_touches_ika`]), by id, in transaction order. One pass over the
+/// checkpoint's outputs, so pairing an attested id with its object is a lookup
+/// instead of a scan of every output per id.
+fn ika_outputs_by_id<'a>(
+    data: &'a CheckpointData,
+    ika: &HashSet<ObjectID>,
+) -> HashMap<ObjectID, Vec<&'a Object>> {
+    data.transactions
+        .iter()
+        .flat_map(|tx| tx.output_objects.iter())
+        .filter(|output| object_touches_ika(output, ika))
+        .fold(HashMap::new(), |mut by_id, output| {
+            by_id.entry(output.id()).or_default().push(output);
+            by_id
         })
-        .collect()
+}
+
+/// The object among `outputs` — the output objects of the checkpoint carrying
+/// one id, in transaction order — whose reference is `attested`, the live
+/// state the checkpoint's committee-verified tree attests for that id.
+///
+/// The inclusion proof folded with the object proves `attested`, and a
+/// cache-first read serves the cached object without re-checking that proof,
+/// so the object must be the one `attested` names, not merely one with its id.
+/// The reference includes the object digest, a hash of the whole object, so
+/// equality binds the contents as well as the version.
+///
+/// An honest checkpoint always has the match. The tree holds, per id, the
+/// reference of the id's last write in the checkpoint (`CheckpointArtifacts`
+/// folds every transaction's written references in order). A live reference
+/// there is an object write, and a transaction's output objects are exactly
+/// the objects of its object writes: Sui derives them from the effects' changed
+/// objects, looked up in the checkpoint's object set by id and version. So the
+/// attested object is among `outputs` — the last of them, since any later write
+/// of the id would be the attested one. (A deleted or wrapped final state has
+/// no object; the caller skips it before getting here.) No match therefore
+/// means the source served object contents the committee did not attest: an
+/// intermediate version in place of the final one, or altered bytes.
+fn attested_output<'a>(attested: ObjectRef, outputs: &[&'a Object]) -> anyhow::Result<&'a Object> {
+    // Last first: in an honest checkpoint that is the match, so one object is
+    // hashed per id.
+    outputs
+        .iter()
+        .rev()
+        .find(|output| output.compute_object_reference() == attested)
+        .copied()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no output object of the checkpoint is the committee-attested reference \
+                 {attested:?}: the source served object contents the committee did not attest"
+            )
+        })
 }
 
 /// Delay before the next archive-backfill attempt after `failures`
@@ -1458,6 +1483,7 @@ mod tests {
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::{BTreeMap, HashMap};
+    use std::io;
     use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1468,6 +1494,8 @@ mod tests {
     };
     use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, TransportError};
     use parking_lot::RwLock;
+    use sui_light_client::proof::base::{Proof, ProofContents, ProofTarget, ProofVerifier};
+    use sui_light_client::proof::ocs::OCSProof;
     use sui_types::base_types::{
         ExecutionDigests, ObjectDigest, SequenceNumber, TransactionDigest,
     };
@@ -1486,6 +1514,8 @@ mod tests {
     use sui_types::parse_sui_type_tag;
     use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
     use tokio::time::{Instant as TokioInstant, sleep};
+    use tracing::Dispatch;
+    use tracing::subscriber::{self, DefaultGuard, NoSubscriber};
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
     use crate::sui_connector::ocs_currency::ChangesetIndex;
@@ -3358,10 +3388,46 @@ mod tests {
         seq: CheckpointSequenceNumber,
         transactions: &[&[Object]],
     ) -> CheckpointData {
+        let transactions: Vec<TestTransaction> = transactions
+            .iter()
+            .map(|written| {
+                let lamport_version = written[0].version();
+                assert!(written.iter().all(|o| o.version() == lamport_version));
+                TestTransaction {
+                    lamport_version,
+                    written,
+                    deleted: &[],
+                    wrapped: &[],
+                }
+            })
+            .collect();
+        checkpoint_of(committee, keys, seq, &transactions)
+    }
+
+    /// One transaction of [`checkpoint_of`], executed at `lamport_version`:
+    /// it writes `written` (each at that version), and deletes `deleted` and
+    /// wraps `wrapped` (each given at the state the transaction consumes).
+    struct TestTransaction<'a> {
+        lamport_version: SequenceNumber,
+        written: &'a [Object],
+        deleted: &'a [Object],
+        wrapped: &'a [Object],
+    }
+
+    /// [`checkpoint_writing`] for transactions that also delete or wrap
+    /// objects. The effects record a deleted or wrapped object as Sui does, so
+    /// the checkpoint's tree attests the deletion or wrap and the transaction
+    /// has no output object for it.
+    fn checkpoint_of(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        transactions: &[TestTransaction],
+    ) -> CheckpointData {
         let transactions: Vec<CheckpointTransaction> = transactions
             .iter()
             .enumerate()
-            .map(|(index, written)| {
+            .map(|(index, test_transaction)| {
                 // A well-formed transaction to carry the effects below.
                 let mut template = TestCheckpointBuilder::new(seq)
                     .start_transaction(index as u8)
@@ -3370,19 +3436,39 @@ mod tests {
                     .transactions
                     .remove(0)
                     .transaction;
-                let lamport_version = written[0].version();
-                assert!(written.iter().all(|o| o.version() == lamport_version));
+                let consumed = |o: &Object, id_deleted: bool| {
+                    EffectsObjectChange::new(
+                        Some(((o.version(), o.digest()), o.owner().clone())),
+                        None,
+                        false,
+                        id_deleted,
+                    )
+                };
+                let changed_objects = test_transaction
+                    .written
+                    .iter()
+                    .map(|o| (o.id(), EffectsObjectChange::new(None, Some(o), true, false)))
+                    .chain(
+                        test_transaction
+                            .deleted
+                            .iter()
+                            .map(|o| (o.id(), consumed(o, true))),
+                    )
+                    .chain(
+                        test_transaction
+                            .wrapped
+                            .iter()
+                            .map(|o| (o.id(), consumed(o, false))),
+                    )
+                    .collect();
                 let effects = TransactionEffects::new_from_execution_v2(
                     ExecutionStatus::Success,
                     committee.epoch(),
                     GasCostSummary::default(),
                     vec![],
                     *transaction.digest(),
-                    lamport_version,
-                    written
-                        .iter()
-                        .map(|o| (o.id(), EffectsObjectChange::new(None, Some(o), true, false)))
-                        .collect(),
+                    test_transaction.lamport_version,
+                    changed_objects,
                     None,
                     None,
                     vec![],
@@ -3392,7 +3478,7 @@ mod tests {
                     effects,
                     events: None,
                     input_objects: vec![],
-                    output_objects: written.to_vec(),
+                    output_objects: test_transaction.written.to_vec(),
                 }
             })
             .collect();
@@ -4011,6 +4097,328 @@ mod tests {
         assert_eq!(backfill_outcome(&fx.metrics, "already_cached"), 1);
     }
 
+    // ---- folded objects are the attested ones ----
+
+    /// Everything logged on this thread while its [`LogGuard`] lives. The
+    /// pusher's tests run on a current-thread runtime, so this sees every line
+    /// a tick logs — used to assert that a refusal is reported as the
+    /// security-critical verification failure, which is the only report the
+    /// scan and the pending-gap repair make of it.
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    /// Keeps the capture installed. `tracing` caches each callsite's interest
+    /// process-wide, computed when the callsite is first hit; while only one
+    /// dispatcher is registered it computes it from the default of whichever
+    /// thread hits the callsite first. A parallel test without a subscriber
+    /// would then cache the shared refusal callsite as uninteresting and the
+    /// capture would miss the line. The idle second dispatcher makes every
+    /// computation consult all live dispatchers, the capture included.
+    struct LogGuard {
+        _capture: DefaultGuard,
+        _idle: Dispatch,
+    }
+
+    impl io::Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn start() -> (Self, LogGuard) {
+            let idle = Dispatch::new(NoSubscriber::default());
+            let logs = Self::default();
+            let writer = logs.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish();
+            let guard = LogGuard {
+                _capture: subscriber::set_default(subscriber),
+                _idle: idle,
+            };
+            (logs, guard)
+        }
+
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock()).into_owned()
+        }
+
+        /// The fold-time refusal: `error!` with `security_critical`, naming
+        /// the checkpoint and why its objects are not the attested ones.
+        fn assert_refused_as_verification(&self, seq: CheckpointSequenceNumber) {
+            let text = self.text();
+            let refusal = text
+                .lines()
+                .find(|line| line.contains("refusing to fold a checkpoint"))
+                .unwrap_or_else(|| panic!("no fold refusal was logged:\n{text}"));
+            for expected in [
+                "ERROR",
+                "security_critical=true",
+                &format!("seq={seq}"),
+                "committee-attested reference",
+            ] {
+                assert!(
+                    refusal.contains(expected),
+                    "the refusal must carry {expected:?}: {refusal}"
+                );
+            }
+        }
+    }
+
+    /// The node's own fullnode serving `checkpoint`, at its head: a tick from
+    /// the fixture's cursor scans exactly that checkpoint.
+    fn fullnode_serving(checkpoint: CheckpointData) -> Arc<dyn SuiTransport> {
+        let seq = *checkpoint.checkpoint_summary.sequence_number();
+        Arc::new(MockTransport {
+            fetch_control: None,
+            latest_summary_pruned: false,
+            latest: checkpoint.checkpoint_summary.clone(),
+            checkpoints: HashMap::from([(seq, checkpoint)]),
+            eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
+        })
+    }
+
+    /// A blob identical to `checkpoint` except that the output object of
+    /// `id` carries other contents: the same id, version and owner, and the
+    /// same summary and effects — so it passes the committee signature and the
+    /// artifacts digest, which covers the effects and not the object bytes.
+    fn with_contents_altered(
+        mut checkpoint: CheckpointData,
+        package: ObjectID,
+        id: ObjectID,
+    ) -> CheckpointData {
+        let output = checkpoint
+            .transactions
+            .iter_mut()
+            .flat_map(|tx| tx.output_objects.iter_mut())
+            .find(|o| o.id() == id)
+            .unwrap();
+        *output = ika_object_with_value(
+            package,
+            id,
+            output.version().value(),
+            output.owner().clone(),
+            1_000_000,
+        );
+        checkpoint
+    }
+
+    /// Several transactions of one checkpoint write the same Ika object — the
+    /// common case for the coordinator and its inner dynamic field. The scan
+    /// folds the version the committee attests for the checkpoint (the last
+    /// write) under a proof that verifies for it, never an earlier write: a
+    /// cache-first read serves the cached object without re-checking its proof.
+    #[tokio::test]
+    async fn scan_folds_the_attested_version_of_an_object_written_twice() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let id = ObjectID::from_single_byte(0xC0);
+        let first_write = ika_object(package, id, 7, owner.clone());
+        let last_write = ika_object_with_value(package, id, 8, owner, 2);
+        let seq = BACKFILL_CURSOR + 1;
+        pusher.transport = fullnode_serving(checkpoint_writing(
+            &fx.committee,
+            &fx.keys,
+            seq,
+            &[slice::from_ref(&first_write), slice::from_ref(&last_write)],
+        ));
+
+        pusher.advance().await.unwrap();
+
+        assert_eq!(pusher.cursor, seq);
+        let snapshot = cache.get(id).expect("the object is cached");
+        assert_eq!(snapshot.source_checkpoint_seq, seq);
+        assert_eq!(
+            snapshot.object.compute_object_reference(),
+            last_write.compute_object_reference(),
+            "the cache must hold the attested (last) write, not an intermediate one"
+        );
+        Proof {
+            targets: ProofTarget::new_ocs_inclusion(snapshot.object.compute_object_reference()),
+            checkpoint_summary: snapshot.summary,
+            proof_contents: ProofContents::ObjectCheckpointStateProof(OCSProof::Inclusion(
+                snapshot.proof,
+            )),
+        }
+        .verify(&fx.committee)
+        .expect("the cached proof verifies for the cached object");
+        assert_eq!(fx.metrics.pusher_fold_verify_seconds.get_sample_count(), 1);
+    }
+
+    /// A checkpoint whose genuine summary and effects come with altered
+    /// contents for one Ika object — here from the node's own fullnode. Nothing
+    /// of it is folded, not even its other, genuine Ika object; the refusal is
+    /// logged as the security-critical verification failure; and the scan stays
+    /// on the checkpoint, failing the tick every time as for any other
+    /// verification failure, without recording a fold-verify latency sample.
+    #[tokio::test]
+    async fn scan_refuses_a_checkpoint_whose_object_contents_are_not_the_attested_ones() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let genuine = ika_object(package, ObjectID::from_single_byte(0xC1), 7, owner.clone());
+        let altered = ika_object(package, ObjectID::from_single_byte(0xC2), 7, owner);
+        let seq = BACKFILL_CURSOR + 1;
+        pusher.transport = fullnode_serving(with_contents_altered(
+            checkpoint_writing(
+                &fx.committee,
+                &fx.keys,
+                seq,
+                &[&[genuine.clone(), altered.clone()]],
+            ),
+            package,
+            altered.id(),
+        ));
+
+        let (logs, _guard) = CapturedLogs::start();
+        for _ in 0..2 {
+            let error = pusher
+                .advance()
+                .await
+                .expect_err("a checkpoint whose objects are not the attested ones must not fold");
+            assert!(
+                error_chain(&error)
+                    .to_string()
+                    .contains("committee-attested reference"),
+                "{error:?}"
+            );
+            assert_eq!(pusher.cursor, BACKFILL_CURSOR);
+        }
+        assert!(cache.is_empty(), "nothing of the checkpoint may fold");
+        assert_eq!(
+            fx.perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(BACKFILL_CURSOR)
+        );
+        assert_eq!(fx.metrics.pusher_pushed_total.get(), 0);
+        assert_eq!(fx.metrics.pusher_fold_verify_seconds.get_sample_count(), 0);
+        logs.assert_refused_as_verification(seq);
+    }
+
+    /// The same refusal on the pending-gap repair from the archive, an
+    /// untrusted store: the blob passes the archive verification — sequence,
+    /// committee signature, and the artifacts digest over its whole object
+    /// set — and is still refused at fold time. Nothing is folded and the gap
+    /// is not repaired; it stays pending for the next attempt.
+    #[tokio::test]
+    async fn archive_gap_repair_refuses_a_blob_whose_object_contents_are_not_the_attested_ones() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let altered = ika_object(
+            package,
+            ObjectID::from_single_byte(0xC2),
+            7,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        );
+        let seq = BACKFILL_CURSOR + 1;
+        let blob = with_contents_altered(
+            checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(&altered)]),
+            package,
+            altered.id(),
+        );
+        pusher
+            .verify_archive_checkpoint(seq, &blob)
+            .expect("the blob passes the archive verification");
+        // The fullnode advertises the checkpoint but never serves it (pruned).
+        pusher.transport = Arc::new(MockTransport {
+            fetch_control: None,
+            latest_summary_pruned: false,
+            latest: blob.checkpoint_summary.clone(),
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
+        });
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(seq, blob)]),
+            ..Default::default()
+        }));
+
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&seq));
+        pusher.pending_gaps.get_mut(&seq).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(6);
+        let (logs, _guard) = CapturedLogs::start();
+        pusher.advance().await.unwrap();
+
+        assert!(
+            pusher.pending_gaps.contains_key(&seq),
+            "the refused blob must not clear the gap"
+        );
+        assert_eq!(fx.metrics.pusher_gap_archive_repairs_total.get(), 0);
+        assert!(cache.is_empty(), "nothing of the blob may fold");
+        logs.assert_refused_as_verification(seq);
+    }
+
+    /// An Ika object written and then deleted or wrapped within one
+    /// checkpoint: the checkpoint attests the deletion or wrap, so no state of
+    /// the object is folded — not the intermediate write — and the checkpoint
+    /// is not refused: its other objects fold and the scan moves on. Refusing
+    /// would stall the scan on an honest checkpoint for good.
+    #[tokio::test]
+    async fn scan_folds_no_state_of_an_object_deleted_or_wrapped_after_its_write() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let object =
+            |byte: u8| ika_object(package, ObjectID::from_single_byte(byte), 7, owner.clone());
+        let (kept, deleted, wrapped) = (object(0xC1), object(0xC2), object(0xC3));
+        let seq = BACKFILL_CURSOR + 1;
+        pusher.transport = fullnode_serving(checkpoint_of(
+            &fx.committee,
+            &fx.keys,
+            seq,
+            &[
+                TestTransaction {
+                    lamport_version: SequenceNumber::from(7u64),
+                    written: &[kept.clone(), deleted.clone(), wrapped.clone()],
+                    deleted: &[],
+                    wrapped: &[],
+                },
+                TestTransaction {
+                    lamport_version: SequenceNumber::from(8u64),
+                    written: &[],
+                    deleted: slice::from_ref(&deleted),
+                    wrapped: slice::from_ref(&wrapped),
+                },
+            ],
+        ));
+
+        pusher.advance().await.unwrap();
+
+        assert_eq!(pusher.cursor, seq);
+        assert_eq!(
+            cache
+                .get(kept.id())
+                .unwrap()
+                .object
+                .compute_object_reference(),
+            kept.compute_object_reference()
+        );
+        assert!(
+            cache.get(deleted.id()).is_none(),
+            "deleted in the checkpoint"
+        );
+        assert!(
+            cache.get(wrapped.id()).is_none(),
+            "wrapped in the checkpoint"
+        );
+    }
+
     /// The direct node's proof provider over a bag whose defining checkpoint
     /// the fullnode has pruned. It lists the bag's live children and reports
     /// their current objects but can no longer rebuild their proofs, so —
@@ -4380,30 +4788,21 @@ mod tests {
             tree.get_object_state(entry_id).copied(),
             Some(entry.compute_object_reference())
         );
-        // Paired the way `build_entries` pairs them, then bound as the backfill
-        // binds them.
-        let entries = ika_objects
-            .iter()
-            .map(|(id, _, _)| {
-                let object_ref = *tree.get_object_state(*id).unwrap();
-                let object = data
-                    .transactions
-                    .iter()
-                    .flat_map(|tx| tx.output_objects.iter())
-                    .find(|o| o.id() == *id)
-                    .unwrap()
-                    .clone();
-                VerifiedObjectEntry {
-                    object,
-                    checkpoint_seq: SEQ,
-                    proof: tree.get_inclusion_proof(object_ref).unwrap(),
-                    dynamic_field_name_type: String::new(),
-                    dynamic_field_name_bcs: Vec::new(),
-                }
-            })
-            .collect();
-        let bound = bind_objects_to_attested_state(&data, entries)
-            .expect("every Ika object of the checkpoint binds to its attested state");
-        assert!(bound.iter().any(|e| e.object.id() == entry_id));
+        // Bound the way `build_entries` binds them: every Ika object the
+        // checkpoint leaves live is an output object at its attested reference.
+        let ika_outputs = ika_outputs_by_id(&data, &ika_packages);
+        for (id, outputs) in &ika_outputs {
+            let attested = *tree.get_object_state(*id).unwrap();
+            if attested.2.is_alive() {
+                attested_output(attested, outputs)
+                    .unwrap_or_else(|e| panic!("Ika object {id} does not bind: {e}"));
+            }
+        }
+        let bound = attested_output(entry.compute_object_reference(), &ika_outputs[&entry_id])
+            .expect("the bag entry binds to its attested state");
+        assert_eq!(
+            bound.compute_object_reference(),
+            entry.compute_object_reference()
+        );
     }
 }
