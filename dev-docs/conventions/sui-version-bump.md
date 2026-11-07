@@ -90,7 +90,7 @@ the locations below and runs in CI; it fails the build on drift.
 
 ## Consensus replay validation
 
-Sui `mainnet-v1.82.3` includes the upstream replay API, so Ika no longer
+Sui `mainnet-v1.83.1` includes the upstream replay API, so Ika no longer
 patches consensus crates from a fork. Verify that all Sui sources in
 `Cargo.lock` resolve to the release revision. Revalidate full replay pacing,
 readiness, committed-head reporting, and rolling restarts against that exact

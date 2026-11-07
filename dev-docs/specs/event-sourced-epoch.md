@@ -88,7 +88,7 @@ derived fields are in memory on `AuthorityPerEpochStore`. State that cannot be
 re-derived belongs in the durable audit linked above. Replay changes neither
 commit ordering nor transaction voting, rejection rules, or serialization.
 
-Sui `mainnet-v1.82.3` supplies the full-replay API from
+Sui `mainnet-v1.83.1` supplies the full-replay API from
 [MystenLabs/sui#27909](https://github.com/MystenLabs/sui/pull/27909),
 variable-length authority labels from
 [MystenLabs/sui#27595](https://github.com/MystenLabs/sui/pull/27595), and
