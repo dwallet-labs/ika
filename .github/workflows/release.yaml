@@ -227,6 +227,16 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           git config --global url."git@github.com:dwallet-labs/inkrypto".insteadOf "https://github.com/dwallet-labs/inkrypto"
 
+      # Cargo checks out the Sui git dependency under
+      # ~/.cargo/git/checkouts/sui-<hash>/<rev>/, and since mainnet-v1.83.1
+      # Sui's sui-replay-2 test data has paths that push past Windows'
+      # 260-character MAX_PATH there ("path too long"). Same fix as
+      # MystenLabs/mvr's release workflow.
+      - name: Allow Git long paths (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --global core.longpaths true
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
