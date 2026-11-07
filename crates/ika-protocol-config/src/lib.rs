@@ -582,6 +582,15 @@ impl ProtocolConfig {
         false
     }
 
+    /// Keep ordering each committed sub-dag's blocks within a round by authority index
+    /// on all supported versions. Shuffling them by a leader-seeded hash changes the
+    /// commit order every validator must agree on, so enabling it requires a
+    /// protocol-version rollout; do not add a serialized feature field to v7, whose
+    /// capability digest must stay unchanged.
+    pub fn shuffle_consensus_commit_blocks(&self) -> bool {
+        false
+    }
+
     pub fn gc_depth(&self) -> u32 {
         if cfg!(msim) {
             // exercise a very low gc_depth

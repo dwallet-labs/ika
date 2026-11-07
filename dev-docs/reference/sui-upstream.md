@@ -10,7 +10,7 @@ inherited.
 ## Where the source is
 
 `Cargo.lock` is authoritative for each crate. All Sui crates, including
-`consensus-core` and `consensus-config`, use upstream `mainnet-v1.82.3` from
+`consensus-core` and `consensus-config`, use upstream `mainnet-v1.83.1` from
 root `Cargo.toml`; there is no consensus fork override. This release includes
 consumer-paced full replay, variable-length authority labels, and shutdown
 and commit-sync recovery fixes. Ika constructs Mysticeti labels from raw

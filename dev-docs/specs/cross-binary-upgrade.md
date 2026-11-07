@@ -223,7 +223,7 @@ none to inherit.
 The literal Ika v1.4.1 checkpoint reader cannot decode Sui's
 `TransactionExpiration::Validity` (BCS variant index three). A checkpoint
 containing it fails ingestion even when the transaction is unrelated to Ika.
-The Sui mainnet-v1.82.3 dependencies include the decoder support; updating
+The Sui mainnet-v1.83.1 dependencies include the decoder support; updating
 only a transaction producer or disabling simulation does not repair an old
 reader that encounters the format.
 
