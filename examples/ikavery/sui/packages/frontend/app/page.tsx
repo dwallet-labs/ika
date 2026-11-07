@@ -8,7 +8,7 @@ import {
 	Tile,
 	TileEyebrow,
 	VaultDial,
-} from '@fesal-packages/ikavery-frontend-ui';
+} from '@ika-examples/ikavery-frontend-ui';
 import {
 	ArrowUpRight,
 	Ban,
@@ -125,7 +125,7 @@ export default function LandingPage() {
 						</div>
 						<pre className="flex-1 px-6 py-5 font-mono text-[13px] leading-[1.7] tabular text-text-2 overflow-x-auto">
 							<code>
-								{`import { importSolanaKey } from "@fesal-packages/ikavery-sui-sdk";
+								{`import { importSolanaKey } from "@ika-examples/ikavery-sui-sdk";
 
 const vault = await importSolanaKey({
   key: solanaSecret,

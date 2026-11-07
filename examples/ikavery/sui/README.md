@@ -1,11 +1,9 @@
 # sui — Move recovery layer
 
-The Sui-deployed half of Ikavery. A Move package (`recovery`) plus a
+The Sui layer of Ikavery. A Move package (`recovery`) plus a
 TypeScript SDK and a Next.js frontend that imports a Solana private key
 into an Ika 2PC-MPC dWallet, places it behind a passkey-gated quorum, and
 sweeps it to a destination wallet on demand.
-
-Live at `sui.ikavery.com` (testnet).
 
 ## Layout
 
@@ -13,7 +11,7 @@ Live at `sui.ikavery.com` (testnet).
 sui/packages/
 ├── contracts/
 │   └── recovery/        Move package (`recovery::*`)
-├── sdk/                 @fesal-packages/ikavery-sui-sdk
+├── sdk/                 @ika-examples/ikavery-sui-sdk
 └── frontend/            ikavery-frontend (Next.js)
 ```
 
@@ -76,7 +74,7 @@ Published in: `sui/packages/contracts/recovery/`
 `packages/frontend/` is a Next.js App Router app with Tailwind v4 + framer +
 shadcn-derived primitives. The shared design system (Shell, Bento,
 DisclaimerModal, VaultDial, motion presets) lives in the workspace package
-`@fesal-packages/ikavery-frontend-ui` and is consumed identically by the
+`@ika-examples/ikavery-frontend-ui` and is consumed identically by the
 Solana frontend at `solana/packages/frontend/`.
 
 The Sui-specific surface is in `components/` (wallet-connect via dapp-kit,

@@ -1,6 +1,6 @@
 'use client';
 
-import { Button } from '@fesal-packages/ikavery-frontend-ui';
+import { Button } from '@ika-examples/ikavery-frontend-ui';
 import { useCurrentAccount, useWalletConnection } from '@mysten/dapp-kit-react';
 import { fromBase64 } from '@mysten/sui/utils';
 import { useQueryClient } from '@tanstack/react-query';

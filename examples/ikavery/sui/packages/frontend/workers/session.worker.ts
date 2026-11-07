@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import type { NewMemberInput } from '@fesal-packages/ikavery-sui-sdk';
+import type { NewMemberInput } from '@ika-examples/ikavery-sui-sdk';
 import {
 	approveEnrollment,
 	approveRecovery,
@@ -21,7 +21,7 @@ import {
 	type CredentialInput,
 	type TransactionExecuteResult,
 	type TransactionExecutor,
-} from '@fesal-packages/ikavery-sui-sdk';
+} from '@ika-examples/ikavery-sui-sdk';
 import { getNetworkConfig, IkaClient, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { SuiGrpcClient } from '@mysten/sui/grpc';

@@ -61,29 +61,16 @@ export function ShellHeader({
 export interface ShellFooterProps {
 	/** Smallcaps tag on the left. Defaults to "Sui · Ika · Solana". */
 	tag?: string;
-	/** Centered "made by" line. Pass a node to override. */
+	/** Centered line between the two tags. Empty unless a node is passed. */
 	attribution?: React.ReactNode;
-	/** Smallcaps tag on the right. Defaults to "© 2026 · open". */
+	/** Smallcaps tag on the right. Defaults to "© 2026 dWallet Labs, Ltd.". */
 	copyright?: string;
 }
 
-const DEFAULT_ATTRIBUTION = (
-	<>
-		made by{' '}
-		<a
-			href="https://github.com/Iamknownasfesal/ikavery"
-			className="not-italic font-display text-text hover:text-clay transition-colors"
-		>
-			fesal
-		</a>{' '}
-		with <span className="not-italic">❤️</span>
-	</>
-);
-
 export function ShellFooter({
 	tag = 'Sui · Ika · Solana',
-	attribution = DEFAULT_ATTRIBUTION,
-	copyright = '© 2026 · open',
+	attribution,
+	copyright = '© 2026 dWallet Labs, Ltd.',
 }: ShellFooterProps = {}) {
 	return (
 		<footer className="hairline-t mt-32">

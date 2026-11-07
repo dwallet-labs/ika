@@ -1,6 +1,6 @@
 // Sui-specific surface only. Chain-agnostic helpers (passkey ceremony,
 // sweep building, BCS schemas, le-bytes, shared types) are exported by
-// @fesal-packages/ikavery-core — import them directly from there.
+// @ika-examples/ikavery-core — import them directly from there.
 export * from './client';
 export * from './constants';
 export * from './crypto/challenges';

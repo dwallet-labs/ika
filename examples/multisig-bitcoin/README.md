@@ -1,5 +1,9 @@
 # bitisi - Bitcoin Multisig on Sui
 
+> **Reference example, for educational purposes only.** This example shows how
+> to use Ika; it is not a production app. It has not been security audited and is not meant to be deployed or
+> relied on. See the disclaimer in the [examples README](../README.md).
+
 **bitisi** is a Bitcoin multisig wallet application built on the Sui blockchain using the IKA protocol for secure multi-party computation (MPC) and distributed key management.
 
 ## ⚠️ CRITICAL WARNING - TESTNET ONLY

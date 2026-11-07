@@ -1,4 +1,4 @@
-import { getGrpcFullnodeUrl } from '@fesal-packages/ikavery-sui-sdk';
+import { getGrpcFullnodeUrl } from '@ika-examples/ikavery-sui-sdk';
 import { createDAppKit } from '@mysten/dapp-kit-core';
 import { enokiWalletsInitializer } from '@mysten/enoki';
 import { SuiGrpcClient } from '@mysten/sui/grpc';

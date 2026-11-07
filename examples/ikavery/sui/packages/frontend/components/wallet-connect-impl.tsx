@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, cn } from '@fesal-packages/ikavery-frontend-ui';
+import { Button, cn } from '@ika-examples/ikavery-frontend-ui';
 import { useCurrentAccount, useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { isEnokiWallet } from '@mysten/enoki';
 import { Check, ChevronDown, Loader2, Wallet, X } from 'lucide-react';

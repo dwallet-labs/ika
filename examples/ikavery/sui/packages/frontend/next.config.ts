@@ -4,9 +4,9 @@ const config: NextConfig = {
 	reactStrictMode: true,
 	transpilePackages: [
 		'@ika.xyz/sdk',
-		'@fesal-packages/ikavery-core',
-		'@fesal-packages/ikavery-frontend-ui',
-		'@fesal-packages/ikavery-sui-sdk',
+		'@ika-examples/ikavery-core',
+		'@ika-examples/ikavery-frontend-ui',
+		'@ika-examples/ikavery-sui-sdk',
 	],
 	experimental: {
 		optimizePackageImports: ['@solana/web3.js', '@solana/spl-token'],

@@ -1,11 +1,11 @@
-import { bytesToHex } from '@fesal-packages/ikavery-frontend-ui';
+import { bytesToHex } from '@ika-examples/ikavery-frontend-ui';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
 import { Secp256r1PublicKey } from '@mysten/sui/keypairs/secp256r1';
 
 import type { Scheme, VaultMember } from './recovery-state';
 
-export { bytesToHex, hexToBytes, truncateAddress } from '@fesal-packages/ikavery-frontend-ui';
+export { bytesToHex, hexToBytes, truncateAddress } from '@ika-examples/ikavery-frontend-ui';
 
 export function schemeLabel(scheme: Scheme): string {
 	if (scheme === 'webauthn') return 'Passkey';

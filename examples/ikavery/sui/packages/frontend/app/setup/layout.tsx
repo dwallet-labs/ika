@@ -1,6 +1,6 @@
 'use client';
 
-import { cn, Shell } from '@fesal-packages/ikavery-frontend-ui';
+import { cn, Shell } from '@ika-examples/ikavery-frontend-ui';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import { usePathname } from 'next/navigation';

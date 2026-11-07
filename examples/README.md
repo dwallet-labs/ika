@@ -1,17 +1,25 @@
 # IKA Project Examples
 
-This directory contains example applications demonstrating the capabilities of the IKA protocol and its integration with blockchain networks.
+This directory contains example applications, **for educational purposes only**, demonstrating the capabilities of the IKA protocol and its integration with blockchain networks.
 
-## ⚠️ IMPORTANT WARNING
+## ⚠️ Disclaimer: for educational purposes only
 
-**These examples are provided for developer testing and educational purposes only.**
+**The applications in this directory are examples, provided for educational
+purposes only, not working products.** They exist to show how to use Ika — the TypeScript SDK, the Move integration and the
+dWallet flows — so you can read the code, run it on testnet, and apply the same
+patterns in your own application.
 
-All examples in this directory:
+They are **not** production-ready applications, they have **not** been security
+audited, and they are not maintained or supported as products. Treat them as a
+reference for understanding how to build on Ika, not as software to deploy or
+rely on.
 
-- **MUST be used on testnet ONLY** (never on mainnet)
-- **Have NOT been audited** and may contain bugs or unexpected behavior
-- **Should NOT be used with real funds** or production wallets
-- Should only be used with test keys and disposable test amounts
+When you run them:
+
+- **Use testnet ONLY** (never mainnet)
+- **Never use real funds** or production wallets and keys; use test keys and
+  disposable test amounts
+- Expect bugs and unexpected behavior
 
 **You assume all risk by proceeding. Use at your own risk.**
 

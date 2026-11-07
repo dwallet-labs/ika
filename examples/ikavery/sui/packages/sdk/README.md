@@ -1,18 +1,14 @@
-# @fesal-packages/ikavery-sui-sdk
+# @ika-examples/ikavery-sui-sdk
 
-Sui-side SDK for the [Ikavery](https://sui.ikavery.com) dWallet recovery
+Sui-side SDK for the Ikavery dWallet recovery
 protocol — passkey-gated key import, threshold approval, and cross-chain sweep
 flows backed by Ika 2PC-MPC.
 
-## Install
+## In this repository
 
-```bash
-bun add @fesal-packages/ikavery-sui-sdk @mysten/sui
-# or
-pnpm add @fesal-packages/ikavery-sui-sdk @mysten/sui
-```
-
-`@fesal-packages/ikavery-core` is a transitive dep — installed automatically.
+A private workspace package of the Ikavery example, consumed through
+`workspace:*`; it depends on `@ika-examples/ikavery-core` the same way. It is
+not published.
 
 ## Quick start
 
@@ -21,7 +17,7 @@ import {
 	buildRecoveryClient,
 	importSolanaKey,
 	readRecoveryState,
-} from '@fesal-packages/ikavery-sui-sdk';
+} from '@ika-examples/ikavery-sui-sdk';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 const suiClient = new SuiJsonRpcClient({
@@ -33,12 +29,10 @@ const client = buildRecoveryClient(suiClient, /* recoveryId */ '0x...');
 const state = await readRecoveryState(client);
 ```
 
-See [sui.ikavery.com](https://sui.ikavery.com) for the full flow.
-
 ## Status
 
 Pre-alpha. Mock signer; not for production custody. Sui testnet only.
 
 ## License
 
-[BSD-3-Clause](./LICENSE)
+[BSD-3-Clause-Clear](./LICENSE)

@@ -1,4 +1,4 @@
-import { buildSweepBundle, SOLANA_SYSTEM_ACCOUNT_RENT_EXEMPT } from '@fesal-packages/ikavery-core';
+import { buildSweepBundle, SOLANA_SYSTEM_ACCOUNT_RENT_EXEMPT } from '@ika-examples/ikavery-core';
 import {
 	Keypair,
 	PublicKey,

@@ -5,7 +5,7 @@ import {
 	type CredentialInput,
 	type NewMemberInput,
 	type TransactionExecuteResult,
-} from '@fesal-packages/ikavery-sui-sdk';
+} from '@ika-examples/ikavery-sui-sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { Transaction } from '@mysten/sui/transactions';

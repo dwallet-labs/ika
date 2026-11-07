@@ -1,6 +1,6 @@
 'use client';
 
-import type { NewMemberInput } from '@fesal-packages/ikavery-sui-sdk';
+import type { NewMemberInput } from '@ika-examples/ikavery-sui-sdk';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 

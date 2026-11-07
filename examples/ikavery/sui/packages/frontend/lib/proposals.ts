@@ -1,6 +1,6 @@
 'use client';
 
-import { previewProposal, type ProposalSnapshot } from '@fesal-packages/ikavery-sui-sdk';
+import { previewProposal, type ProposalSnapshot } from '@ika-examples/ikavery-sui-sdk';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 
 import { buildRecoveryClient } from './recovery-client';

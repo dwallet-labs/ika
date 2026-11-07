@@ -1430,7 +1430,7 @@ export default function Home() {
 						</a>
 						<span>·</span>
 						<a
-							href="https://github.com/iamknownasfesal/key-spring"
+							href="https://github.com/dwallet-labs/ika/tree/main/examples/keyspring"
 							target="_blank"
 							rel="noopener noreferrer"
 							className="link"

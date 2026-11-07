@@ -1,4 +1,4 @@
-import { authenticate, type WebAuthnAssertion } from '@fesal-packages/ikavery-core';
+import { authenticate, type WebAuthnAssertion } from '@ika-examples/ikavery-core';
 import type { Signer } from '@mysten/sui/cryptography';
 import { parseSerializedSignature } from '@mysten/sui/cryptography';
 import type { Transaction, TransactionArgument } from '@mysten/sui/transactions';

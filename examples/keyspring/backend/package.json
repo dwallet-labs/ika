@@ -1,5 +1,6 @@
 {
 	"name": "@demo/backend",
+	"private": true,
 	"version": "1.0.0",
 	"description": "Demo backend for ephemeral keys + DKG with Phantom",
 	"type": "module",

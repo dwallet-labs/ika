@@ -1,6 +1,6 @@
 'use client';
 
-import { Card, cn } from '@fesal-packages/ikavery-frontend-ui';
+import { Card, cn } from '@ika-examples/ikavery-frontend-ui';
 import { useCurrentAccount, useWalletConnection, useWallets } from '@mysten/dapp-kit-react';
 import { parseSerializedSignature } from '@mysten/sui/cryptography';
 import { fromHex, normalizeSuiAddress } from '@mysten/sui/utils';

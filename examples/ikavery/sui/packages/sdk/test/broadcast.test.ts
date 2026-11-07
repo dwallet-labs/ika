@@ -2,7 +2,7 @@ import {
 	assembleSignedTransaction,
 	buildSweepBundle,
 	SOLANA_SYSTEM_ACCOUNT_RENT_EXEMPT,
-} from '@fesal-packages/ikavery-core';
+} from '@ika-examples/ikavery-core';
 import { Keypair, VersionedTransaction } from '@solana/web3.js';
 import { describe, expect, test } from 'bun:test';
 

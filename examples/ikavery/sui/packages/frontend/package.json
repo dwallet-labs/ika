@@ -10,9 +10,9 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@fesal-packages/ikavery-core": "workspace:*",
-		"@fesal-packages/ikavery-frontend-ui": "workspace:*",
-		"@fesal-packages/ikavery-sui-sdk": "workspace:*",
+		"@ika-examples/ikavery-core": "workspace:*",
+		"@ika-examples/ikavery-frontend-ui": "workspace:*",
+		"@ika-examples/ikavery-sui-sdk": "workspace:*",
 		"@ika.xyz/sdk": "workspace:*",
 		"@mysten/dapp-kit-core": "catalog:",
 		"@mysten/dapp-kit-react": "catalog:",

@@ -1,6 +1,6 @@
 'use client';
 
-import { authenticate, registerPasskey } from '@fesal-packages/ikavery-core';
+import { authenticate, registerPasskey } from '@ika-examples/ikavery-core';
 import * as React from 'react';
 
 import { deriveIdentity } from '@/lib/derive';

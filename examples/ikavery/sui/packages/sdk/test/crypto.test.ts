@@ -2,7 +2,7 @@ import {
 	derSigToCompactRaw64,
 	spkiToCompressedP256,
 	u64ToLeBytes,
-} from '@fesal-packages/ikavery-core';
+} from '@ika-examples/ikavery-core';
 import { p256 } from '@noble/curves/nist.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { concatBytes, hexToBytes } from '@noble/hashes/utils.js';
