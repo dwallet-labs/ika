@@ -2374,7 +2374,7 @@ export class IkaTransaction {
 			return;
 		}
 
-		const dWalletVersion = dWallet.state.Active?.public_output?.[0] ?? 0 + 1;
+		const dWalletVersion = (dWallet.state.Active?.public_output?.[0] ?? 0) + 1;
 
 		if (
 			!dWallet.is_imported_key_dwallet &&
