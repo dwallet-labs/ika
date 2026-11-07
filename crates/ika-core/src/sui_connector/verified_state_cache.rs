@@ -26,6 +26,34 @@
 //! ratchet can't re-derive a pruned one. Tombstone eviction on on-chain
 //! deletion is not yet implemented, but the retain window bounds growth
 //! regardless.
+//!
+//! # Pinned checkpoints
+//!
+//! A snapshot whose source checkpoint is in the pinned set
+//! ([`VerifiedStateCache::with_pinned_checkpoints`]) is never pruned. The set is
+//! the checkpoints the pusher backfills from the archive: checkpoints already
+//! pruned upstream whose objects were never folded, typically far older than
+//! the window, so without the pin the next sweep would drop exactly the
+//! snapshot the backfill exists to provide.
+//!
+//! Lifetime. The pin belongs to the snapshot, not to the object id: absorbing a
+//! newer version of the object replaces the snapshot, whose source checkpoint
+//! is then the newer one, so the object is unpinned and ages out with the
+//! window as usual. Nothing pin-specific is persisted — the pinned set is
+//! re-applied from configuration when the cache is built, before the first
+//! absorb and therefore before the first sweep, and it matches the persisted
+//! snapshots by their stored source checkpoint. Removing a sequence from the
+//! list (a later binary dropping it from the built-in list, or an operator from
+//! the config) releases its snapshots to the next sweep.
+//!
+//! Deletion. Without tombstones, an object deleted or wrapped on chain keeps its
+//! last snapshot; a pinned one keeps it until its sequence leaves the list. The
+//! growth is bounded by the Ika objects of the listed checkpoints. Such a
+//! snapshot is not served as a live bag entry: direct bag walks list children
+//! from the node's own fullnode, and the proof provider reuses a snapshot only
+//! when the fullnode reports the identical current object reference. A direct
+//! cache-first read of that exact object id would still return it — the same
+//! exposure every deleted object already has until the window prunes it.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -103,6 +131,9 @@ pub struct VerifiedStateCache {
     /// Floor (`head - window`) at the last prune sweep; the next sweep waits
     /// until the floor rises a stride, so the sweep is amortized O(1) per absorb.
     last_pruned_floor: AtomicU64,
+    /// Source checkpoints whose snapshots the retain-window sweep keeps (see
+    /// the module docs). Set via [`Self::with_pinned_checkpoints`].
+    pinned_checkpoints: BTreeSet<CheckpointSequenceNumber>,
 }
 
 impl VerifiedStateCache {
@@ -117,7 +148,29 @@ impl VerifiedStateCache {
             perpetual: None,
             retain_window: None,
             last_pruned_floor: AtomicU64::new(0),
+            pinned_checkpoints: BTreeSet::new(),
         }
+    }
+
+    /// Keep every snapshot whose source checkpoint is in `checkpoints` out of
+    /// the retain-window sweep (see the module docs for the pin's lifetime).
+    /// Must be applied before the first absorb: the first absorb after a boot
+    /// runs a sweep.
+    pub fn with_pinned_checkpoints(
+        mut self,
+        checkpoints: BTreeSet<CheckpointSequenceNumber>,
+    ) -> Self {
+        self.pinned_checkpoints = checkpoints;
+        self
+    }
+
+    /// Number of cached snapshots whose source checkpoint is `seq`.
+    pub fn snapshots_from_checkpoint(&self, seq: CheckpointSequenceNumber) -> usize {
+        self.objects
+            .read()
+            .values()
+            .filter(|snapshot| snapshot.source_checkpoint_seq == seq)
+            .count()
     }
 
     /// Bound the object cache to snapshots within `window` checkpoints of the
@@ -184,6 +237,7 @@ impl VerifiedStateCache {
             perpetual: Some(perpetual),
             retain_window: None,
             last_pruned_floor: AtomicU64::new(0),
+            pinned_checkpoints: BTreeSet::new(),
         })
     }
 
@@ -334,6 +388,7 @@ impl VerifiedStateCache {
 
     /// Drop every snapshot last modified before `floor` from the in-memory maps
     /// and the persisted column, keeping the parent→children index consistent.
+    /// Snapshots from a pinned checkpoint are kept regardless of `floor`.
     fn prune(&self, floor: CheckpointSequenceNumber) {
         // Retained end-of-epoch checkpoints are served to mirrored peers for
         // their committee ratchet, so they're kept back to the bootstrap anchor
@@ -348,7 +403,11 @@ impl VerifiedStateCache {
             let mut objects = self.objects.write();
             let mut removed = Vec::new();
             objects.retain(|id, snap| {
-                if snap.source_checkpoint_seq < floor {
+                if snap.source_checkpoint_seq < floor
+                    && !self
+                        .pinned_checkpoints
+                        .contains(&snap.source_checkpoint_seq)
+                {
                     removed.push((*id, parent_id(&snap.object)));
                     false
                 } else {
@@ -747,6 +806,110 @@ mod tests {
         assert_eq!(reopened.len(), 1);
         assert!(reopened.get(c.id()).is_some());
         assert!(reopened.get(a.id()).is_none());
+    }
+
+    /// A snapshot from a pinned checkpoint survives every retain-window sweep,
+    /// including the first sweep after a reopen (re-pinned from configuration
+    /// before any absorb), while an unpinned snapshot of the same age is
+    /// pruned. Reopening without the pin releases it to the next sweep, which
+    /// is how a sequence leaving the backfill list stops being retained.
+    #[tokio::test]
+    async fn pinned_snapshot_survives_prune_sweeps_and_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let parent = ObjectID::from_single_byte(0xBA);
+        let obj = |byte: u8| {
+            Object::with_id_owner_version_for_testing(
+                ObjectID::from_single_byte(byte),
+                SequenceNumber::from(1u64),
+                Owner::ObjectOwner(parent.into()),
+            )
+        };
+        let pinned = obj(0xA1);
+        let unpinned = obj(0xB2);
+        let (s_pinned, e_pinned) = signed_entry(&committee, &keys, 10, &pinned);
+        let (s_unpinned, e_unpinned) = signed_entry(&committee, &keys, 20, &unpinned);
+        let (s_head, e_head) = signed_entry(&committee, &keys, 100, &obj(0xC3));
+
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let cache = VerifiedStateCache::open(perpetual.clone())
+            .unwrap()
+            .with_retain_window(Some(30))
+            .with_pinned_checkpoints(BTreeSet::from([10]));
+        cache.absorb_entries(&s_pinned, &[e_pinned]);
+        cache.absorb_entries(&s_unpinned, &[e_unpinned]);
+        cache.absorb_entries(&s_head, &[e_head]);
+
+        // head=100, window=30 → floor=70: both 10 and 20 are below it, only the
+        // pinned one survives, and the children index keeps it.
+        assert!(cache.get(pinned.id()).is_some());
+        assert!(cache.get(unpinned.id()).is_none());
+        assert_eq!(cache.snapshots_from_checkpoint(10), 1);
+        assert!(cache.children_of(parent).contains(&pinned.id()));
+        drop(cache);
+
+        // Reopen with the same pin: the first absorb after boot sweeps, and the
+        // pinned snapshot is still there — in memory and on disk.
+        let reopened = VerifiedStateCache::open(perpetual.clone())
+            .unwrap()
+            .with_retain_window(Some(30))
+            .with_pinned_checkpoints(BTreeSet::from([10]));
+        assert!(reopened.get(pinned.id()).is_some());
+        let (s_later, e_later) = signed_entry(&committee, &keys, 200, &obj(0xD4));
+        reopened.absorb_entries(&s_later, &[e_later]);
+        assert_eq!(reopened.prune_floor(), Some(170));
+        assert!(reopened.get(pinned.id()).is_some());
+        assert!(reopened.get(ObjectID::from_single_byte(0xC3)).is_none());
+        drop(reopened);
+
+        // Reopen WITHOUT the pin: the next sweep prunes it like any other.
+        let unpinned_cache = VerifiedStateCache::open(perpetual)
+            .unwrap()
+            .with_retain_window(Some(30));
+        assert!(unpinned_cache.get(pinned.id()).is_some());
+        let (s_last, e_last) = signed_entry(&committee, &keys, 300, &obj(0xE5));
+        unpinned_cache.absorb_entries(&s_last, &[e_last]);
+        assert!(
+            unpinned_cache.get(pinned.id()).is_none(),
+            "a checkpoint that left the pinned set must be released to the sweep"
+        );
+    }
+
+    /// The pin belongs to the snapshot of the pinned checkpoint, not to the
+    /// object id: once a newer version is absorbed the object follows the
+    /// retain window again.
+    #[tokio::test]
+    async fn a_newer_absorbed_version_unpins_the_object() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0xA1);
+        let owner = Owner::AddressOwner(ObjectID::from_single_byte(0x01).into());
+        let version = |v: u64| {
+            Object::with_id_owner_version_for_testing(id, SequenceNumber::from(v), owner.clone())
+        };
+        let cache = VerifiedStateCache::new()
+            .with_retain_window(Some(30))
+            .with_pinned_checkpoints(BTreeSet::from([10]));
+
+        let (s_pinned, e_pinned) = signed_entry(&committee, &keys, 10, &version(1));
+        cache.absorb_entries(&s_pinned, &[e_pinned]);
+        let (s_newer, e_newer) = signed_entry(&committee, &keys, 50, &version(2));
+        cache.absorb_entries(&s_newer, &[e_newer]);
+        assert_eq!(cache.get(id).unwrap().source_checkpoint_seq, 50);
+        assert_eq!(cache.snapshots_from_checkpoint(10), 0);
+
+        // head=200 → floor=170: the object's snapshot (seq 50) is unpinned and
+        // ages out.
+        let other = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0xB2),
+            SequenceNumber::from(1u64),
+            owner.clone(),
+        );
+        let (s_head, e_head) = signed_entry(&committee, &keys, 200, &other);
+        cache.absorb_entries(&s_head, &[e_head]);
+        assert!(
+            cache.get(id).is_none(),
+            "a newer absorbed version must not inherit the pin"
+        );
     }
 
     #[tokio::test]

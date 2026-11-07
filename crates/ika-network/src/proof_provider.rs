@@ -19,6 +19,7 @@
 //! the same trait either way.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,7 +40,8 @@ use sui_types::messages_checkpoint::{
 use sui_types::object::Object;
 
 use ika_sui_client::grpc::SuiGrpcClient;
-use ika_sui_client::transport::{SuiTransport, TransportError};
+use ika_sui_client::transport::{DynamicFieldEntry, SuiTransport, TransportError};
+use tracing::{debug, warn};
 
 /// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
 /// request may carry — each id costs one inclusion-proof build, so this bounds
@@ -104,6 +106,11 @@ pub struct ProofProviderMetrics {
     /// Children skipped because their previous_transaction or object
     /// hadn't been indexed yet — picked up on the next tick.
     pub dynamic_fields_walk_entries_skipped_transient_total: IntCounter,
+    /// Children skipped because building their proof failed with an encoding
+    /// error — e.g. the defining checkpoint holds a transaction this binary
+    /// cannot decode. The rest of the page is still served; the skipped id is
+    /// reported to the consumer like a pruned one.
+    pub dynamic_fields_walk_entries_skipped_encoding_total: IntCounter,
 
     // -- Static info gauges (set once at startup; value is always 1) --
     /// `role_info{role}` — set to 1 with the validator's role label.
@@ -222,6 +229,12 @@ impl ProofProviderMetrics {
             dynamic_fields_walk_entries_skipped_transient_total: register_int_counter_with_registry!(
                 "ika_ocs_dynamic_fields_walk_entries_skipped_transient_total",
                 "Children skipped due to a transient indexer race; retried next tick",
+                registry,
+            )
+            .unwrap(),
+            dynamic_fields_walk_entries_skipped_encoding_total: register_int_counter_with_registry!(
+                "ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total",
+                "Children skipped because building their proof failed with an encoding error (e.g. an undecodable defining checkpoint); the rest of the page is still served",
                 registry,
             )
             .unwrap(),
@@ -381,7 +394,9 @@ pub trait ProofSnapshotCache: Send + Sync {
     ) -> Option<(VerifiedObjectEntry, CertifiedCheckpointSummary)>;
 }
 
-type ProofBuildResult = Result<
+/// One object's proof as the producer builds it: the defining checkpoint, the
+/// entry, and that checkpoint's summary.
+pub type ProofBuildResult = Result<
     (
         CheckpointSequenceNumber,
         VerifiedObjectEntry,
@@ -390,7 +405,13 @@ type ProofBuildResult = Result<
     TransportError,
 >;
 
-fn recover_pruned_proof(
+/// The producer's fallback when building a proof failed `NotFound` (the
+/// object's defining checkpoint is pruned upstream): serve the cached
+/// snapshot, but only when its object reference equals `current_object_ref`,
+/// the object as the node's Sui source reports it now. Returns the result and
+/// whether the snapshot was used. Public so connector-level tests can drive the
+/// exact rule the provider applies.
+pub fn recover_pruned_proof(
     result: ProofBuildResult,
     proof_snapshot_cache: Option<&dyn ProofSnapshotCache>,
     current_object_ref: ObjectRef,
@@ -406,6 +427,121 @@ fn recover_pruned_proof(
         Some(recovered) => (Ok(recovered), true),
         None => (Err(TransportError::NotFound(reason)), false),
     }
+}
+
+fn record_proof_build_failure(metrics: &ProofProviderMetrics, kind: &str, err: &TransportError) {
+    let reason = match err {
+        TransportError::NotFound(_) => "not_found",
+        TransportError::Encoding(_) => "encoding",
+        TransportError::Network(_) => "network",
+    };
+    metrics
+        .proof_build_failures_total
+        .with_label_values(&[kind, reason])
+        .inc();
+}
+
+/// A listed page's children after proving: the summaries the proven entries
+/// anchor to (one per checkpoint), the entries, and the listed ids that could
+/// not be proven.
+struct ProvenDynamicFields {
+    summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary>,
+    entries: Vec<VerifiedObjectEntry>,
+    skipped_entry_ids: Vec<ObjectID>,
+}
+
+/// Prove each listed dynamic-field child with `prove_entry`, isolating
+/// failures that belong to one entry from failures of the source.
+///
+/// - `NotFound` skips the entry: not indexed yet (picked up next tick), or its
+///   defining checkpoint is pruned and no exact snapshot exists.
+/// - `Encoding` skips the entry: something about THIS entry cannot be decoded
+///   or built — typically its defining checkpoint carries a transaction this
+///   binary cannot decode. Failing the page instead hid every other child of
+///   the collection for as long as that checkpoint stayed undecodable, which
+///   halted the bag event pump outright. Warned once per id per
+///   `UNPROVABLE_ENTRY_WARN_INTERVAL`, since the pump re-walks the bag many
+///   times a second.
+/// - `Network` fails the page: the source itself is unreachable, and the
+///   consumer must back off rather than read a page that silently lost every
+///   entry.
+///
+/// Skipped ids are reported in `skipped_entry_ids`; a direct consumer resolves
+/// them through its verified cache. The listing is untrusted, so a skip only
+/// ever delays delivery and never affects safety.
+async fn prove_listed_dynamic_fields<F, Fut>(
+    listed: Vec<DynamicFieldEntry>,
+    metrics: &ProofProviderMetrics,
+    warned_unprovable_entries: &Cache<ObjectID, ()>,
+    prove_entry: F,
+) -> Result<ProvenDynamicFields, TransportError>
+where
+    F: Fn(ObjectID) -> Fut,
+    Fut: Future<Output = ProofBuildResult>,
+{
+    metrics
+        .dynamic_fields_walk_entries_seen_total
+        .inc_by(listed.len() as u64);
+    let mut page = ProvenDynamicFields {
+        summaries: BTreeMap::new(),
+        entries: Vec::with_capacity(listed.len()),
+        skipped_entry_ids: Vec::new(),
+    };
+    for entry in listed {
+        match prove_entry(entry.object_id).await {
+            Ok((seq, mut verified_entry, summary)) => {
+                // Carry the field key so the consumer can bind this entry
+                // to `parent_id` even when it's an `ObjectTable`/`ObjectBag`
+                // value object (owned by its `Field`, not the collection).
+                verified_entry.dynamic_field_name_type = entry.name_type;
+                verified_entry.dynamic_field_name_bcs = entry.name_value_bcs;
+                page.summaries.entry(seq).or_insert(summary);
+                metrics
+                    .proof_built_total
+                    .with_label_values(&["dynamic_fields_page_entry"])
+                    .inc();
+                metrics.dynamic_fields_walk_entries_returned_total.inc();
+                page.entries.push(verified_entry);
+            }
+            // Children created very recently may not yet be resolvable
+            // (object 404 because the indexer hasn't caught up; or
+            // `get_transaction_checkpoint` 404 because the previous tx
+            // isn't indexed in a checkpoint yet). Skip and let the next
+            // tick pick them up — relayer's listing is untrusted anyway,
+            // so dropping a child only delays delivery, never breaks
+            // safety.
+            Err(TransportError::NotFound(_)) => {
+                metrics
+                    .dynamic_fields_walk_entries_skipped_transient_total
+                    .inc();
+                page.skipped_entry_ids.push(entry.object_id);
+            }
+            Err(error @ TransportError::Encoding(_)) => {
+                record_proof_build_failure(metrics, "dynamic_fields_page_entry", &error);
+                metrics
+                    .dynamic_fields_walk_entries_skipped_encoding_total
+                    .inc();
+                let id = entry.object_id;
+                if warned_unprovable_entries.contains_key(&id) {
+                    debug!(?id, %error, "dynamic-field child still cannot be proven; skipped");
+                } else {
+                    warned_unprovable_entries.insert(id, ()).await;
+                    warn!(
+                        ?id,
+                        %error,
+                        "dynamic-field child cannot be proven (encoding error); skipping it and \
+                         serving the rest of the page"
+                    );
+                }
+                page.skipped_entry_ids.push(id);
+            }
+            Err(error) => {
+                record_proof_build_failure(metrics, "dynamic_fields_page_entry", &error);
+                return Err(error);
+            }
+        }
+    }
+    Ok(page)
 }
 
 #[derive(Clone, Debug)]
@@ -466,6 +602,10 @@ impl ProofCache {
     }
 }
 
+/// How long a dynamic-field child whose proof fails with an encoding error
+/// stays warned about before it is warned again (repeats log at debug).
+const UNPROVABLE_ENTRY_WARN_INTERVAL: Duration = Duration::from_secs(3600);
+
 pub struct LocalProofProvider {
     /// The node's own direct gRPC client. Concrete (not `Arc<dyn SuiTransport>`)
     /// because proof building needs `get_transaction_checkpoint`, which is an
@@ -476,6 +616,9 @@ pub struct LocalProofProvider {
     cache: ProofCache,
     proof_snapshot_cache: Option<Arc<dyn ProofSnapshotCache>>,
     metrics: Arc<ProofProviderMetrics>,
+    /// Dynamic-field children recently warned about as unprovable, so a child
+    /// that stays unprovable warns once per interval rather than on every walk.
+    warned_unprovable_entries: Cache<ObjectID, ()>,
 }
 
 impl LocalProofProvider {
@@ -489,6 +632,10 @@ impl LocalProofProvider {
             cache: ProofCache::new(cfg),
             proof_snapshot_cache: None,
             metrics,
+            warned_unprovable_entries: Cache::builder()
+                .max_capacity(1_024)
+                .time_to_live(UNPROVABLE_ENTRY_WARN_INTERVAL)
+                .build(),
         }
     }
 
@@ -588,15 +735,7 @@ impl LocalProofProvider {
     }
 
     fn record_build_failure(&self, kind: &str, err: &TransportError) {
-        let reason = match err {
-            TransportError::NotFound(_) => "not_found",
-            TransportError::Encoding(_) => "encoding",
-            TransportError::Network(_) => "network",
-        };
-        self.metrics
-            .proof_build_failures_total
-            .with_label_values(&[kind, reason])
-            .inc();
+        record_proof_build_failure(&self.metrics, kind, err);
     }
 }
 
@@ -708,65 +847,20 @@ impl ProofProvider for LocalProofProvider {
             .list_dynamic_fields(request.parent_id, page_size, request.page_token)
             .await?;
 
-        let mut summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary> =
-            BTreeMap::new();
-        let mut entries = Vec::with_capacity(page.entries.len());
-        let mut skipped_entry_ids = Vec::new();
-        self.metrics
-            .dynamic_fields_walk_entries_seen_total
-            .inc_by(page.entries.len() as u64);
-        for entry in page.entries {
-            // Children created very recently may not yet be resolvable
-            // (object 404 because the indexer hasn't caught up; or
-            // `get_transaction_checkpoint` 404 because the previous tx
-            // isn't indexed in a checkpoint yet). Skip and let the next
-            // tick pick them up — relayer's listing is untrusted anyway,
-            // so dropping a child only delays delivery, never breaks
-            // safety.
-            let object = match self.raw.get_object(entry.object_id).await {
-                Ok(o) => o,
-                Err(TransportError::NotFound(_)) => {
-                    self.metrics
-                        .dynamic_fields_walk_entries_skipped_transient_total
-                        .inc();
-                    skipped_entry_ids.push(entry.object_id);
-                    continue;
-                }
-                Err(e) => {
-                    self.record_build_failure("dynamic_fields_page_entry", &e);
-                    return Err(e);
-                }
-            };
-            match self.build_object_entry(object).await {
-                Ok((seq, mut verified_entry, summary)) => {
-                    // Carry the field key so the consumer can bind this entry
-                    // to `parent_id` even when it's an `ObjectTable`/`ObjectBag`
-                    // value object (owned by its `Field`, not the collection).
-                    verified_entry.dynamic_field_name_type = entry.name_type;
-                    verified_entry.dynamic_field_name_bcs = entry.name_value_bcs;
-                    summaries.entry(seq).or_insert(summary);
-                    self.metrics
-                        .proof_built_total
-                        .with_label_values(&["dynamic_fields_page_entry"])
-                        .inc();
-                    self.metrics
-                        .dynamic_fields_walk_entries_returned_total
-                        .inc();
-                    entries.push(verified_entry);
-                }
-                Err(TransportError::NotFound(_)) => {
-                    self.metrics
-                        .dynamic_fields_walk_entries_skipped_transient_total
-                        .inc();
-                    skipped_entry_ids.push(entry.object_id);
-                    continue;
-                }
-                Err(e) => {
-                    self.record_build_failure("dynamic_fields_page_entry", &e);
-                    return Err(e);
-                }
-            }
-        }
+        let ProvenDynamicFields {
+            summaries,
+            entries,
+            skipped_entry_ids,
+        } = prove_listed_dynamic_fields(
+            page.entries,
+            &self.metrics,
+            &self.warned_unprovable_entries,
+            |id| async move {
+                let object = self.raw.get_object(id).await?;
+                self.build_object_entry(object).await
+            },
+        )
+        .await?;
 
         self.metrics
             .proof_build_latency_seconds
@@ -890,5 +984,183 @@ mod tests {
         );
         assert!(!cache_hit);
         assert!(matches!(rejected, Err(TransportError::NotFound(_))));
+    }
+
+    fn listed(byte: u8) -> DynamicFieldEntry {
+        DynamicFieldEntry {
+            object_id: ObjectID::from_single_byte(byte),
+            name_type: "u64".to_string(),
+            name_value_bcs: bcs::to_bytes(&u64::from(byte)).unwrap(),
+        }
+    }
+
+    /// The proof a healthy source builds for the listed child `id`.
+    fn proven(
+        committee: &SuiCommittee,
+        keys: &[AuthorityKeyPair],
+        id: ObjectID,
+        seq: CheckpointSequenceNumber,
+    ) -> ProofBuildResult {
+        let object = Object::with_id_owner_version_for_testing(
+            id,
+            SequenceNumber::from(3u64),
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xFF).into()),
+        );
+        let StaticSnapshotCache { entry, summary } = snapshot_cache(committee, keys, seq, &object);
+        Ok((seq, entry, summary))
+    }
+
+    fn unprovable_entry_cache() -> Cache<ObjectID, ()> {
+        Cache::builder().max_capacity(16).build()
+    }
+
+    /// One child whose proof fails with an encoding error — the shape of a
+    /// defining checkpoint this binary cannot decode — is skipped and reported,
+    /// and every other child of the page is still served. Failing the page
+    /// instead starved the bag event pump of every session in the bag.
+    #[tokio::test]
+    async fn an_entry_failing_with_an_encoding_error_is_skipped_and_the_page_served() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let warned = unprovable_entry_cache();
+        let undecodable = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let result = if id == undecodable {
+                Err(TransportError::Encoding(
+                    "decode full checkpoint: unknown variant index 3".into(),
+                ))
+            } else if id == ObjectID::from_single_byte(0x01) {
+                proven(&committee, &keys, id, 41)
+            } else {
+                proven(&committee, &keys, id, 43)
+            };
+            async move { result }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &warned,
+            prove,
+        )
+        .await
+        .expect("an encoding failure of one entry must not fail the page");
+
+        let served: Vec<ObjectID> = page.entries.iter().map(|e| e.object.id()).collect();
+        assert_eq!(
+            served,
+            vec![
+                ObjectID::from_single_byte(0x01),
+                ObjectID::from_single_byte(0x03)
+            ]
+        );
+        assert_eq!(page.skipped_entry_ids, vec![undecodable]);
+        assert_eq!(
+            page.summaries.keys().copied().collect::<Vec<_>>(),
+            vec![41, 43]
+        );
+        // The field key still rides each served entry.
+        assert_eq!(page.entries[1].dynamic_field_name_type, "u64");
+        assert_eq!(
+            page.entries[1].dynamic_field_name_bcs,
+            bcs::to_bytes(&3u64).unwrap()
+        );
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_encoding_total
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "encoding"])
+                .get(),
+            1
+        );
+        assert_eq!(metrics.dynamic_fields_walk_entries_returned_total.get(), 2);
+        assert!(warned.contains_key(&undecodable));
+    }
+
+    /// A transport failure is not a property of one entry: the page fails, so
+    /// the consumer backs off instead of acting on a page that silently lost
+    /// its entries.
+    #[tokio::test]
+    async fn a_network_error_still_fails_the_page() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let unreachable = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let result = if id == unreachable {
+                Err(TransportError::Network("connection reset".into()))
+            } else {
+                proven(&committee, &keys, id, 41)
+            };
+            async move { result }
+        };
+
+        let result = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &unprovable_entry_cache(),
+            prove,
+        )
+        .await;
+
+        assert!(matches!(result, Err(TransportError::Network(_))));
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "network"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_encoding_total
+                .get(),
+            0
+        );
+    }
+
+    /// NotFound keeps its existing meaning: skipped and reported, not a page
+    /// failure and not counted as an encoding skip.
+    #[tokio::test]
+    async fn a_not_found_entry_is_still_skipped_as_transient() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let pruned = ObjectID::from_single_byte(0x01);
+        let prove = |id: ObjectID| {
+            let result = if id == pruned {
+                Err(TransportError::NotFound("checkpoint pruned".into()))
+            } else {
+                proven(&committee, &keys, id, 41)
+            };
+            async move { result }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02)],
+            &metrics,
+            &unprovable_entry_cache(),
+            prove,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.skipped_entry_ids, vec![pruned]);
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_transient_total
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_encoding_total
+                .get(),
+            0
+        );
     }
 }
