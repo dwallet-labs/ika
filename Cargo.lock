@@ -5014,7 +5014,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-classgroups-types"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "bcs 0.2.1",
  "class_groups",
@@ -5030,7 +5030,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-centralized-party"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "bcs 0.2.1",
@@ -5058,7 +5058,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-mpc-types"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "bcs 0.2.1",
@@ -5080,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "dwallet-rng"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "commitment",
  "fastcrypto",
@@ -6869,7 +6869,7 @@ dependencies = [
 
 [[package]]
 name = "ika"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -6913,7 +6913,7 @@ dependencies = [
 
 [[package]]
 name = "ika-archival"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -7084,7 +7084,7 @@ dependencies = [
 
 [[package]]
 name = "ika-node"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anemo",
  "anemo-tower",
@@ -7155,7 +7155,7 @@ dependencies = [
 
 [[package]]
 name = "ika-proxy"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -7308,7 +7308,7 @@ dependencies = [
 
 [[package]]
 name = "ika-test-cluster"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -7391,7 +7391,7 @@ dependencies = [
 
 [[package]]
 name = "ika-upgrade-test"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "anemo",
  "anyhow",
